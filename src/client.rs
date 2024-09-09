@@ -16,7 +16,6 @@ impl Client {
     }
 
     pub fn connect(&self) {
-        // Attempt to create a server instance
         match Server::new(self.address.clone()) {
             Ok(mut server) => {
                 println!(

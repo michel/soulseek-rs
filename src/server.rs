@@ -1,6 +1,6 @@
 use crate::dispatcher::MessageDispatcher;
 use crate::message::factory::{build_init_message, build_login_message};
-use crate::message::{MessageReader, MessageType};
+use crate::message::MessageReader;
 use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -172,6 +172,8 @@ impl Server {
                 }
             }
         });
+
+        // introduce a channel , get rid of the thread ?
         thread::spawn(move || {
             write_barrier.wait();
 

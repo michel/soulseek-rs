@@ -1,13 +1,4 @@
-use std::{
-    collections::VecDeque,
-    sync::{Arc, Condvar, Mutex},
-};
-
-use crate::{
-    dispatcher::MessageHandler,
-    message::{factory::build_shared_folders_message, Message},
-    server::Room,
-};
+use crate::{dispatcher::MessageHandler, message::Message, server::Room};
 pub struct RoomListHandler;
 
 impl MessageHandler for RoomListHandler {
