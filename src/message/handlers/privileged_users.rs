@@ -1,7 +1,4 @@
-use crate::{
-    dispatcher::MessageHandler,
-    message::{factory::build_shared_folders_message, Message},
-};
+use crate::{dispatcher::MessageHandler, message::Message};
 pub struct PrivilegedUsersHandler;
 
 impl MessageHandler for PrivilegedUsersHandler {
