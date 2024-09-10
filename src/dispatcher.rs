@@ -7,18 +7,19 @@ use crate::{
     server::Context,
 };
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 pub trait MessageHandler {
-    fn handle(&self, message: &mut Message, context: Context);
+    fn handle(&self, message: &mut Message, context: Arc<Mutex<Context>>);
 }
 
 pub struct MessageDispatcher {
     handlers: HashMap<MessageType, Box<dyn MessageHandler + Send + Sync>>,
-    context: Context,
+    context: Arc<Mutex<Context>>,
 }
 
 impl MessageDispatcher {
-    pub fn new(context: Context) -> Self {
+    pub fn new(context: Arc<Mutex<Context>>) -> Self {
         let mut dispatcher = Self {
             handlers: HashMap::new(),
             context,
