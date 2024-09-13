@@ -1,25 +1,5 @@
 use std::str;
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub enum MessageType {
-    Login,
-    PrivilegedUsers,
-    ExcludedSearchPhrases,
-    RoomList,
-    Unknown(u8),
-}
-impl From<u8> for MessageType {
-    fn from(value: u8) -> Self {
-        match value {
-            1 => MessageType::Login,
-            69 => MessageType::PrivilegedUsers,
-            160 => MessageType::ExcludedSearchPhrases,
-            64 => MessageType::RoomList,
-            _ => MessageType::Unknown(value),
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Clone)]
 pub struct Message {
     data: Vec<u8>,
@@ -34,8 +14,99 @@ impl Message {
         }
     }
 
-    pub fn get_message_type(&self) -> MessageType {
-        MessageType::from(self.data[4])
+    // pub fn print_hex(&self) {
+    //     let data = &self.data;
+    //     const BYTES_PER_LINE: usize = 16;
+    //
+    //     let chunks = data.chunks(BYTES_PER_LINE);
+    //     for (i, chunk) in chunks.enumerate() {
+    //         // Print the offset
+    //         print!("{:04x}  ", i * BYTES_PER_LINE);
+    //
+    //         // Print the hexadecimal part
+    //         for j in 0..BYTES_PER_LINE {
+    //             if j < chunk.len() {
+    //                 print!("{:02x} ", chunk[j]);
+    //             } else {
+    //                 print!(" ");
+    //             }
+    //
+    //             // Add extra space in the middle
+    //             if j == 7 {
+    //                 print!(" ");
+    //             }
+    //         }
+    //
+    //         print!("  ");
+    //
+    //         // Print the ASCII part
+    //         let mut i = 0;
+    //         for &byte in chunk {
+    //             i = i + 1;
+    //             if byte.is_ascii_graphic() || byte.is_ascii_whitespace() {
+    //                 print!("{}", byte as char);
+    //             } else {
+    //                 print!(".");
+    //             }
+    //
+    //             if i == 8 {
+    //                 print!(" ");
+    //             }
+    //         }
+    //
+    //         println!();
+    //     }
+    // }
+    //
+    // pub fn print_hex2(&self) -> String {
+    //     let data = &self.data;
+    //     let mut out = String::from("");
+    //     const BYTES_PER_LINE: usize = 16;
+    //
+    //     let chunks = data.chunks(BYTES_PER_LINE);
+    //     for (i, chunk) in chunks.enumerate() {
+    //         // Print the offset
+    //         // out += &format!("{:04x}  ", i * BYTES_PER_LINE);
+    //
+    //         // Print the hexadecimal part
+    //         for j in 0..BYTES_PER_LINE {
+    //             if j < chunk.len() {
+    //                 out += &format!("{:02x} ", chunk[j]);
+    //             } else {
+    //                 // out += &format!(" ");
+    //             }
+    //
+    //             // Add extra space in the middle
+    //             // if j == 7 {
+    //             //     out += &format!(" ");
+    //             // }
+    //         }
+    //
+    //         // // Print the ASCII part
+    //         // let mut i = 0;
+    //         // for &byte in chunk {
+    //         //     i = i + 1;
+    //         //     if byte.is_ascii_graphic() || byte.is_ascii_whitespace() {
+    //         //         print!("{}", byte as char);
+    //         //     } else {messa
+    //         //         print!(".");
+    //         //     }
+    //         //
+    //         //     if i == 8 {
+    //         //         print!(" ");
+    //         //     }
+    //         // }
+    //         //
+    //     }
+    //     println!("{:?}", out.trim());
+    //     return out.trim().into();
+    // }
+
+    pub fn get_message_code_u32(&self) -> u32 {
+        u32::from_le_bytes(self.data[4..8].try_into().unwrap())
+    }
+    pub fn get_message_code(&self) -> u8 {
+        self.data[4]
     }
 
     pub fn new_with_data(data: Vec<u8>) -> Self {
@@ -48,8 +119,19 @@ impl Message {
         self.pointer = pointer;
     }
 
+    // get's the message data
     pub fn get_data(&self) -> Vec<u8> {
         self.data.clone()
+    }
+
+    /// gets buffer with the message length prepended
+    pub fn get_buffer(&self) -> Vec<u8> {
+        let mut b = vec![0u8; 4];
+        let length = self.data.len() as u32;
+        b[0..4].copy_from_slice(&length.to_le_bytes());
+        let mut combined = b;
+        combined.extend(&self.data);
+        combined
     }
 
     pub fn read_string(&mut self) -> String {
@@ -66,6 +148,14 @@ impl Message {
 
         String::from_utf8(data.to_vec()).expect("Failed to read string")
     }
+    pub fn read_raw_hex_str(&mut self, size: usize) -> String {
+        let hex_str = self.data[self.pointer..self.pointer + size]
+            .iter()
+            .map(|byte| format!("{:02x}", byte))
+            .collect::<String>();
+        self.pointer += size;
+        return hex_str;
+    }
 
     pub fn read_int8(&mut self) -> i8 {
         let val = self.data[self.pointer] as i8;
@@ -73,6 +163,7 @@ impl Message {
         val
     }
 
+    #[allow(dead_code)]
     pub fn read_int64(&mut self) -> i64 {
         let val = i64::from_le_bytes([
             self.data[self.pointer],
@@ -103,6 +194,12 @@ impl Message {
         val
     }
 
+    pub fn read_bool(&mut self) -> bool {
+        let val = self.data[self.pointer] == 1;
+        self.pointer += 1;
+        val
+    }
+
     pub fn write_string(&mut self, val: &str) -> &mut Self {
         let length = val.len() as u32;
         self.data.extend_from_slice(&length.to_le_bytes());
@@ -114,18 +211,66 @@ impl Message {
         self.data.extend_from_slice(&value.to_le_bytes());
         self
     }
+    pub fn write_raw_bytes(&mut self, value: Vec<u8>) -> &mut Self {
+        self.data.extend_from_slice(&value);
+        self
+    }
 
+    pub fn write_raw_hex_string(&mut self, val: &str) -> &mut Self {
+        let mut b = Vec::new();
+        for i in (0..val.len()).step_by(2) {
+            let byte_str = &val[i..i + 2];
+            let byte = u8::from_str_radix(byte_str, 16).expect("Invalid hex string");
+            b.push(byte);
+        }
+        self.data.extend_from_slice(&b);
+        self.pointer += b.len();
+        self
+    }
     // pub fn decode(&self) {
-    //     let size =
-    //         u32::from_le_bytes([self.data[0], self.data[1], self.data[2], self.data[3]]) as usize;
-    //     println!("Size: {}", size);
-    //     if size >= 4 {
-    //         let code = u32::from_le_bytes([self.data[4], self.data[5], self.data[6], self.data[7]]);
-    //         println!("Code: {}", code);
-    //     }
+    //     println!("{:?}", self.data);
     // }
 }
 
+#[test]
+fn test_get_buffer() {
+    let message = Message::new_with_data(
+        [
+            26, 0, 0, 0, 219, 178, 47, 28, 11, 0, 0, 0, 116, 104, 101, 32, 119, 101, 101, 107, 101,
+            110, 100,
+        ]
+        .to_vec(),
+    );
+    assert_eq!(
+        message.get_buffer(),
+        [
+            23, 0, 0, 0, 26, 0, 0, 0, 219, 178, 47, 28, 11, 0, 0, 0, 116, 104, 101, 32, 119, 101,
+            101, 107, 101, 110, 100,
+        ]
+        .to_vec()
+    );
+
+    let message = Message::new_with_data(
+        [
+            1, 0, 0, 0, 20, 0, 0, 0, 105, 110, 115, 97, 110, 101, 95, 105, 110, 95, 116, 104, 101,
+            95, 98, 114, 97, 105, 110, 50, 8, 0, 0, 0, 49, 51, 51, 55, 53, 49, 51, 55, 160, 0, 0,
+            0, 32, 0, 0, 0, 50, 101, 100, 102, 53, 49, 100, 48, 51, 55, 57, 52, 51, 55, 56, 102,
+            56, 98, 98, 54, 51, 49, 48, 100, 52, 54, 48, 99, 50, 50, 98, 49, 17, 0, 0, 0,
+        ]
+        .to_vec(),
+    );
+    assert_eq!(
+        message.get_buffer(),
+        [
+            84, 0, 0, 0, 1, 0, 0, 0, 20, 0, 0, 0, 105, 110, 115, 97, 110, 101, 95, 105, 110, 95,
+            116, 104, 101, 95, 98, 114, 97, 105, 110, 50, 8, 0, 0, 0, 49, 51, 51, 55, 53, 49, 51,
+            55, 160, 0, 0, 0, 32, 0, 0, 0, 50, 101, 100, 102, 53, 49, 100, 48, 51, 55, 57, 52, 51,
+            55, 56, 102, 56, 98, 98, 54, 51, 49, 48, 100, 52, 54, 48, 99, 50, 50, 98, 49, 17, 0, 0,
+            0,
+        ]
+        .to_vec()
+    );
+}
 #[test]
 fn test_read_string() {
     let data = vec![

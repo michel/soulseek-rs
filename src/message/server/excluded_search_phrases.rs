@@ -1,10 +1,17 @@
-use std::sync::{Arc, Mutex};
+use crate::{
+    message::{Message, MessageHandler},
+    server::ServerOperation,
+};
+use std::sync::mpsc::Sender;
 
-use crate::{dispatcher::MessageHandler, message::Message, server::Context};
 pub struct ExcludedSearchPhrasesHandler;
 
 impl MessageHandler for ExcludedSearchPhrasesHandler {
-    fn handle(&self, message: &mut Message, _context: Arc<Mutex<Context>>) {
+    fn get_code(&self) -> u8 {
+        160
+    }
+
+    fn handle(&self, message: &mut Message, _sender: Sender<ServerOperation>) {
         let item_count = message.read_int32();
 
         let mut exluded_phrases: Vec<String> = Vec::new();

@@ -1,59 +1,32 @@
-use crate::message::handlers::excluded_search_phrases::ExcludedSearchPhrasesHandler;
-use crate::message::handlers::login::LoginHandler;
-use crate::message::handlers::privileged_users::PrivilegedUsersHandler;
-use crate::message::handlers::room_list::RoomListHandler;
-use crate::{
-    message::{Message, MessageType},
-    server::Context,
-};
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::Sender;
 
-pub trait MessageHandler {
-    fn handle(&self, message: &mut Message, context: Arc<Mutex<Context>>);
-}
+use crate::{
+    message::{handlers::Handlers, message::Message},
+    server::ServerOperation,
+};
 
 pub struct MessageDispatcher {
-    handlers: HashMap<MessageType, Box<dyn MessageHandler + Send + Sync>>,
-    context: Arc<Mutex<Context>>,
+    sender: Sender<ServerOperation>,
+    handlers: Handlers,
 }
 
 impl MessageDispatcher {
-    pub fn new(context: Arc<Mutex<Context>>) -> Self {
-        let mut dispatcher = Self {
-            handlers: HashMap::new(),
-            context,
-        };
-        dispatcher.register_default_handlers();
+    pub fn new(sender: Sender<ServerOperation>, handlers: Handlers) -> Self {
+        let dispatcher = Self { handlers, sender };
         dispatcher
     }
 
-    pub fn register_handler<H: 'static + MessageHandler + Send + Sync>(
-        &mut self,
-        msg_type: MessageType,
-        handler: H,
-    ) -> &mut Self {
-        self.handlers.insert(msg_type, Box::new(handler));
-        self
-    }
-
     pub fn dispatch(&self, message: &mut Message) {
-        if let Some(handler) = self.handlers.get(&message.get_message_type()) {
-            message.set_pointer(8);
-            return handler.handle(message, self.context.clone());
+        let code = message.get_message_code();
+        // println!("message with code: {}", code);
+        match self.handlers.get_handler(code.clone()) {
+            Some(handler) => {
+                message.set_pointer(8);
+                handler.handle(message, self.sender.clone());
+            }
+            None => {
+                println!("No handler found for message code: {:?}", code);
+            }
         }
-        println!(
-            "No handler found for message type: {:?}",
-            message.get_message_type()
-        );
-    }
-    pub fn register_default_handlers(&mut self) {
-        self.register_handler(MessageType::Login, LoginHandler);
-        self.register_handler(MessageType::PrivilegedUsers, PrivilegedUsersHandler);
-        self.register_handler(
-            MessageType::ExcludedSearchPhrases,
-            ExcludedSearchPhrasesHandler,
-        );
-        self.register_handler(MessageType::RoomList, RoomListHandler);
     }
 }
