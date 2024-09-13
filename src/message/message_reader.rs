@@ -34,6 +34,7 @@ impl MessageReader {
         }
     }
 
+    #[cfg(test)]
     pub fn new_with_buffer(buffer: Vec<u8>) -> Self {
         Self {
             buffer: buffer.into(),
@@ -43,7 +44,9 @@ impl MessageReader {
     pub fn read_from_socket(&mut self, stream: &mut TcpStream) -> io::Result<()> {
         let mut temp_buffer = [0; 1024]; // Temporary buffer for reading from the socket
         let bytes_read = stream.read(&mut temp_buffer)?;
-        // println!("Read {} bytes from the socket", bytes_read);
+        if bytes_read == 0 {
+            return Ok(());
+        }
 
         // Add the read bytes to the internal buffer
         self.buffer.extend(&temp_buffer[..bytes_read]);
@@ -75,35 +78,41 @@ impl MessageReader {
     }
 }
 
-#[test]
-fn test_extract_message() {
-    let buffer: Vec<u8> = [
-        8, 0, 0, 0, 117, 115, 101, 114, 110, 97, 109, 101, 8, 0, 0, 0, 112, 97, 115, 115, 119, 111,
-        114, 100, 160, 0, 0, 0, 32, 0, 0, 0, 100, 53, 49, 99, 57, 97, 55, 101, 57, 51, 53, 51, 55,
-        52, 54, 97, 54, 48, 50, 48, 102, 57, 54, 48, 50, 100, 52, 53, 50, 57, 50, 57, 17, 0, 0, 0,
-    ]
-    .to_vec();
-    let mut buffered_reader = MessageReader::new_with_buffer(buffer);
-    let mut message = buffered_reader.extract_message().unwrap().unwrap();
-    assert_eq!(
-        message.get_data(),
-        vec![8, 0, 0, 0, 117, 115, 101, 114, 110, 97, 109, 101]
-    );
-    assert_eq!(message.read_string(), "username");
-}
-#[test]
-fn test_extract_message_incomplete_message() {
-    let incomplete_buffer = vec![1, 2, 3];
-    let mut buffered_reader = MessageReader::new_with_buffer(incomplete_buffer);
+#[cfg(test)]
+mod tests {
+    use crate::message::MessageReader;
 
-    let result = buffered_reader.extract_message();
-    assert_eq!(None, result.unwrap());
+    #[test]
+    fn test_extract_message() {
+        let buffer: Vec<u8> = [
+            8, 0, 0, 0, 117, 115, 101, 114, 110, 97, 109, 101, 8, 0, 0, 0, 112, 97, 115, 115, 119,
+            111, 114, 100, 160, 0, 0, 0, 32, 0, 0, 0, 100, 53, 49, 99, 57, 97, 55, 101, 57, 51, 53,
+            51, 55, 52, 54, 97, 54, 48, 50, 48, 102, 57, 54, 48, 50, 100, 52, 53, 50, 57, 50, 57,
+            17, 0, 0, 0,
+        ]
+        .to_vec();
+        let mut buffered_reader = MessageReader::new_with_buffer(buffer);
+        let mut message = buffered_reader.extract_message().unwrap().unwrap();
+        assert_eq!(
+            message.get_data(),
+            vec![8, 0, 0, 0, 117, 115, 101, 114, 110, 97, 109, 101]
+        );
+        assert_eq!(message.read_string(), "username");
+    }
+    #[test]
+    fn test_extract_message_incomplete_message() {
+        let incomplete_buffer = vec![1, 2, 3];
+        let mut buffered_reader = MessageReader::new_with_buffer(incomplete_buffer);
 
-    let rest: Vec<u8> = buffered_reader
-        .buffer
-        .drain(..buffered_reader.buffer.len())
-        .collect();
+        let result = buffered_reader.extract_message();
+        assert_eq!(None, result.unwrap());
 
-    assert!(buffered_reader.buffer.is_empty());
-    assert_eq!(vec![1, 2, 3], rest);
+        let rest: Vec<u8> = buffered_reader
+            .buffer
+            .drain(..buffered_reader.buffer.len())
+            .collect();
+
+        assert!(buffered_reader.buffer.is_empty());
+        assert_eq!(vec![1, 2, 3], rest);
+    }
 }
