@@ -1,4 +1,9 @@
 pub mod excluded_search_phrases;
+pub mod handlers;
 pub mod login;
+pub mod message_user;
+pub mod parent_min_speed;
+pub mod parent_speed_ratio;
 pub mod privileged_users;
 pub mod room_list;
+pub mod wish_list_interval;

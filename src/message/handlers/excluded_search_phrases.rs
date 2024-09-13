@@ -1,9 +1,14 @@
+use super::handlers::MessageHandler;
+use crate::{message::Message, server::Context};
 use std::sync::{Arc, Mutex};
 
-use crate::{dispatcher::MessageHandler, message::Message, server::Context};
 pub struct ExcludedSearchPhrasesHandler;
 
 impl MessageHandler for ExcludedSearchPhrasesHandler {
+    fn get_code(&self) -> u8 {
+        160
+    }
+
     fn handle(&self, message: &mut Message, _context: Arc<Mutex<Context>>) {
         let item_count = message.read_int32();
 
