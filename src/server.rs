@@ -1,6 +1,7 @@
 use crate::dispatcher::MessageDispatcher;
-use crate::message::factory::{build_init_message, build_login_message};
+use crate::message::factory::{build_file_search_message, build_init_message, build_login_message};
 use crate::message::{Message, MessageReader};
+use std::collections::HashMap;
 use std::io::{self, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::mpsc;
@@ -8,6 +9,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread::{self};
 use std::time::Duration;
+
 #[derive(Debug, Clone)]
 pub struct ServerAddress {
     host: String,
@@ -31,6 +33,7 @@ impl ServerAddress {
 #[derive(Debug)]
 pub struct Context {
     message_sender: Arc<Mutex<Sender<Message>>>,
+    user_messages: HashMap<String, UserMessage>,
     rooms: Rooms,
 }
 
@@ -39,14 +42,61 @@ impl Context {
         Self {
             message_sender,
             rooms: Rooms::new(),
+            user_messages: HashMap::new(),
         }
     }
+
+    pub fn add_message_for_user(&mut self, username: String, message: UserMessage) {
+        self.user_messages.insert(username.to_string(), message);
+    }
+
+    #[allow(dead_code)]
+    pub fn get_messages_for_user(&self, username: String) -> Option<&UserMessage> {
+        self.user_messages.get(&username)
+    }
+
     pub fn get_rooms(&mut self) -> &mut Rooms {
         &mut self.rooms
     }
 
     pub fn queue_message(&self, message: Message) {
         self.message_sender.lock().unwrap().send(message).unwrap();
+    }
+
+    #[cfg(test)]
+    pub fn get_user_messages(&self) -> &HashMap<String, UserMessage> {
+        &self.user_messages
+    }
+}
+#[derive(Debug, Clone)]
+pub struct UserMessage {
+    id: i32,
+    timestamp: i32,
+    username: String,
+    message: String,
+    new_message: bool,
+}
+impl UserMessage {
+    pub fn new(
+        id: i32,
+        timestamp: i32,
+        username: String,
+        message: String,
+        new_message: bool,
+    ) -> Self {
+        Self {
+            id,
+            timestamp,
+            username,
+            message,
+            new_message,
+        }
+    }
+    pub fn print(&self) {
+        println!(
+            "Timestamp: {}. User: {}, Id: #{}, New message: {} Message: {}",
+            self.timestamp, self.username, self.id, self.new_message, self.message
+        );
     }
 }
 
@@ -66,6 +116,7 @@ impl Rooms {
             operated_private_rooms: Vec::new(),
         }
     }
+
     pub fn print(&self) {
         println!("Public rooms ({}):", self.public_rooms.len());
         for room in &self.public_rooms {
@@ -166,12 +217,11 @@ impl Server {
         let barrier = Arc::new(Barrier::new(2));
         let read_barrier = barrier.clone();
         let write_barrier = barrier.clone();
-
-        let dispatcher = MessageDispatcher::new(Arc::clone(&self.context));
+        let self_context = Arc::clone(&self.context);
 
         thread::spawn(move || {
             read_barrier.wait();
-
+            let dispatcher = MessageDispatcher::new(self_context);
             let mut buffered_reader = MessageReader::new();
             loop {
                 match buffered_reader.read_from_socket(&mut read_stream) {
@@ -191,6 +241,7 @@ impl Server {
                 match buffered_reader.extract_message() {
                     Ok(Some(mut message)) => {
                         println!("Received message: {:?}", message.get_data());
+
                         dispatcher.dispatch(&mut message)
                     }
                     Err(e) => {
@@ -227,5 +278,9 @@ impl Server {
         self.queue_message(build_init_message());
         self.queue_message(build_login_message(username, password));
         Ok(())
+    }
+
+    pub fn file_search(&self, token: &str, query: &str) {
+        self.queue_message(build_file_search_message(token, query));
     }
 }

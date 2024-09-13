@@ -3,15 +3,15 @@ use std::sync::{Arc, Mutex};
 use crate::{message::Message, server::Context};
 
 use super::handlers::MessageHandler;
-pub struct PrivilegedUsersHandler;
+pub struct ParentMinSpeedHandler;
 
-impl MessageHandler for PrivilegedUsersHandler {
+impl MessageHandler for ParentMinSpeedHandler {
     fn get_code(&self) -> u8 {
-        69
+        83
     }
 
     fn handle(&self, message: &mut Message, _context: Arc<Mutex<Context>>) {
         let number = message.read_int32();
-        println!("Number of privilaged users: {}", number);
+        println!("Parent min speed: {}", number);
     }
 }

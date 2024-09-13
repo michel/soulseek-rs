@@ -1,25 +1,5 @@
 use std::str;
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub enum MessageType {
-    Login,
-    PrivilegedUsers,
-    ExcludedSearchPhrases,
-    RoomList,
-    Unknown(u8),
-}
-impl From<u8> for MessageType {
-    fn from(value: u8) -> Self {
-        match value {
-            1 => MessageType::Login,
-            69 => MessageType::PrivilegedUsers,
-            160 => MessageType::ExcludedSearchPhrases,
-            64 => MessageType::RoomList,
-            _ => MessageType::Unknown(value),
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Clone)]
 pub struct Message {
     data: Vec<u8>,
@@ -34,8 +14,51 @@ impl Message {
         }
     }
 
-    pub fn get_message_type(&self) -> MessageType {
-        MessageType::from(self.data[4])
+    pub fn print_hex(&self) {
+        let data = &self.data;
+        const BYTES_PER_LINE: usize = 16;
+
+        for (i, chunk) in data.chunks(BYTES_PER_LINE).enumerate() {
+            // Print the offset
+            print!("{:04x}  ", i * BYTES_PER_LINE);
+
+            // Print the hexadecimal part
+            for j in 0..BYTES_PER_LINE {
+                if j < chunk.len() {
+                    print!("{:02x} ", chunk[j]);
+                } else {
+                    print!("   ");
+                }
+
+                // Add extra space in the middle
+                if j == 7 {
+                    print!(" ");
+                }
+            }
+
+            print!("  ");
+
+            // Print the ASCII part
+            let mut i = 0;
+            for &byte in chunk {
+                i = i + 1;
+                if byte.is_ascii_graphic() || byte.is_ascii_whitespace() {
+                    print!("{}", byte as char);
+                } else {
+                    print!(".");
+                }
+
+                if i == 8 {
+                    print!(" ");
+                }
+            }
+
+            println!();
+        }
+    }
+
+    pub fn get_message_code(&self) -> u8 {
+        self.data[4]
     }
 
     pub fn new_with_data(data: Vec<u8>) -> Self {
@@ -73,6 +96,7 @@ impl Message {
         val
     }
 
+    #[allow(dead_code)]
     pub fn read_int64(&mut self) -> i64 {
         let val = i64::from_le_bytes([
             self.data[self.pointer],
@@ -103,6 +127,12 @@ impl Message {
         val
     }
 
+    pub fn read_bool(&mut self) -> bool {
+        let val = self.data[self.pointer] == 1;
+        self.pointer += 1;
+        val
+    }
+
     pub fn write_string(&mut self, val: &str) -> &mut Self {
         let length = val.len() as u32;
         self.data.extend_from_slice(&length.to_le_bytes());
@@ -115,6 +145,11 @@ impl Message {
         self
     }
 
+    pub fn write_raw_hex_string(&mut self, val: &str) -> &mut Self {
+        let hex: String = val.bytes().map(|byte| format!("{:02x}", byte)).collect();
+        self.data.extend_from_slice(hex.as_bytes());
+        self
+    }
     // pub fn decode(&self) {
     //     let size =
     //         u32::from_le_bytes([self.data[0], self.data[1], self.data[2], self.data[3]]) as usize;

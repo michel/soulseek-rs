@@ -1,12 +1,17 @@
 use crate::{
-    dispatcher::MessageHandler,
     message::Message,
     server::{Context, Room},
 };
 use std::sync::{Arc, Mutex};
+
+use super::handlers::MessageHandler;
 pub struct RoomListHandler;
 
 impl MessageHandler for RoomListHandler {
+    fn get_code(&self) -> u8 {
+        64
+    }
+
     fn handle(&self, message: &mut Message, context: Arc<Mutex<Context>>) {
         let mut binding = context.lock().unwrap();
         let rooms = binding.get_rooms();
