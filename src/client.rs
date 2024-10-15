@@ -1,6 +1,13 @@
 use crate::{
+    peer::peer::Peer,
     server::{Server, ServerAddress},
     utils::md5,
+};
+use std::sync::mpsc::{Receiver, Sender};
+use std::thread::{self};
+use std::{
+    sync::mpsc,
+    time::{Duration, Instant},
 };
 
 pub struct Client {
@@ -8,6 +15,10 @@ pub struct Client {
     username: String,
     password: String,
     server: Option<Server>,
+}
+
+pub enum ClientOperation {
+    ConnectToPeer(Peer),
 }
 
 impl Client {
@@ -21,7 +32,11 @@ impl Client {
     }
 
     pub fn connect(&mut self) {
-        self.server = match Server::new(self.address.clone()) {
+        let (channel, message_reader): (Sender<ClientOperation>, Receiver<ClientOperation>) =
+            mpsc::channel();
+
+        // self.read_form_channel(message_reader);
+        self.server = match Server::new(self.address.clone(), channel) {
             Ok(mut server) => {
                 println!(
                     "Connected to server at {}:{}",
@@ -43,11 +58,38 @@ impl Client {
             }
         };
     }
+
+    pub fn read_form_channel(&mut self, message_reader: Receiver<ClientOperation>) {
+        thread::spawn(move || {
+            for operation in message_reader.iter() {
+                match operation {
+                    ClientOperation::ConnectToPeer(peer) => {
+                        println!("Received ConnectToPeer operation");
+                        peer.print();
+                    }
+                }
+            }
+        });
+    }
+
     pub fn search(&self, query: &str) {
+        println!("Searching for {}", query);
         if let Some(server) = &self.server {
             let hash = md5::md5(query);
             let token = hash[0..8].to_string();
-            server.file_search(&token, &query)
+            println!("Token: {}", token);
+
+            server.file_search(&token, &query);
+
+            let timeout = Duration::from_secs(10);
+            let start = Instant::now();
+
+            while true {
+                if start.elapsed() >= timeout {
+                    break;
+                }
+            }
+            println!("search done");
         } else {
             eprintln!("Not connected to server");
         }

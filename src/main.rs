@@ -1,6 +1,7 @@
 mod client;
 mod dispatcher;
 mod message;
+mod peer;
 mod server;
 mod utils;
 
@@ -19,7 +20,4 @@ fn main() {
     );
     client.connect();
     client.search("Trance wax");
-    loop {
-        thread::park();
-    }
 }

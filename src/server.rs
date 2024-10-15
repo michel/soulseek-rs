@@ -1,3 +1,4 @@
+use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
 use crate::message::factory::{build_file_search_message, build_init_message, build_login_message};
 use crate::message::{Message, MessageReader};
@@ -8,7 +9,7 @@ use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread::{self};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 pub struct ServerAddress {
@@ -32,17 +33,21 @@ impl ServerAddress {
 
 #[derive(Debug)]
 pub struct Context {
-    message_sender: Arc<Mutex<Sender<Message>>>,
+    pub logged_in: bool,
+    pub server_channel: Sender<Message>,
+    pub client_channel: Sender<ClientOperation>,
     user_messages: HashMap<String, UserMessage>,
     rooms: Rooms,
 }
 
 impl Context {
-    pub fn new(message_sender: Arc<Mutex<Sender<Message>>>) -> Self {
+    pub fn new(server_channel: Sender<Message>, client_channel: Sender<ClientOperation>) -> Self {
         Self {
-            message_sender,
+            server_channel,
+            client_channel,
             rooms: Rooms::new(),
             user_messages: HashMap::new(),
+            logged_in: false,
         }
     }
 
@@ -60,7 +65,7 @@ impl Context {
     }
 
     pub fn queue_message(&self, message: Message) {
-        self.message_sender.lock().unwrap().send(message).unwrap();
+        self.server_channel.send(message).unwrap();
     }
 
     #[cfg(test)]
@@ -175,18 +180,18 @@ pub struct Server {
 }
 impl Server {
     /// Create a new instance of Server, returning a Result
-    pub fn new(address: ServerAddress) -> Result<Self, io::Error> {
-        let (message_sender, message_reader): (Sender<Message>, Receiver<Message>) =
+    pub fn new(
+        address: ServerAddress,
+        client_channel: Sender<ClientOperation>,
+    ) -> Result<Self, io::Error> {
+        let (message_sender, server_channel): (Sender<Message>, Receiver<Message>) =
             mpsc::channel();
 
-        let context = Arc::new(Mutex::new(Context::new(Arc::new(Mutex::new(
-            message_sender,
-        )))));
+        let context = Arc::new(Mutex::new(Context::new(message_sender, client_channel)));
 
         let server = Self { address, context };
 
-        server.start_read_write_loops(message_reader)?;
-
+        server.start_read_write_loops(server_channel)?;
         Ok(server)
     }
 
@@ -257,13 +262,14 @@ impl Server {
 
             loop {
                 let message = message_reader.recv().unwrap();
-                println!("Sending message from queue: {:?}", message); // Debug log when sending
+                // println!("Sending message from queue: {:?}", message); // Debug log when sending
                 match write_stream.write_all(&message.get_data()) {
-                    Ok(_) => println!("Sent buffered message: {:?}", message),
+                    // Ok(_) => println!("Sent buffered message: {:?}", message),
                     Err(e) => {
                         eprintln!("Failed to send buffered message: {}", e);
                         break;
                     }
+                    Ok(_) => {}
                 }
             }
         });
@@ -277,6 +283,17 @@ impl Server {
     pub fn login(&mut self, username: &str, password: &str) -> Result<(), std::io::Error> {
         self.queue_message(build_init_message());
         self.queue_message(build_login_message(username, password));
+
+        let timeout = Duration::from_secs(10);
+
+        let start = Instant::now();
+
+        while !self.context.lock().unwrap().logged_in {
+            if start.elapsed() >= timeout {
+                panic!("Login timed out");
+            }
+        }
+        println!("Logged in successfully!");
         Ok(())
     }
 
