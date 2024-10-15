@@ -1,3 +1,4 @@
+pub mod connect_to_peer;
 pub mod excluded_search_phrases;
 pub mod handlers;
 pub mod login;
