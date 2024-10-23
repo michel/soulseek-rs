@@ -14,9 +14,10 @@ impl MessageHandler for LoginHandler {
     }
 
     fn handle(&self, message: &mut Message, context: Arc<Mutex<Context>>) {
+        println!("Handling login response");
         let response = message.read_int8();
         if response == 1 {
-            // println!("Login successful");
+            println!("Login successful");
             let greeting = message.read_string();
             println!("Server geeting: {:?}", greeting);
             // Build the shared folders message and queue it
@@ -25,7 +26,7 @@ impl MessageHandler for LoginHandler {
             ctx.queue_message(shared_message);
             ctx.logged_in = true
         } else {
-            println!("Login failed");
+            panic!("Login failed");
         }
     }
 }

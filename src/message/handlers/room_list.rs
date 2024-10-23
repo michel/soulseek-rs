@@ -60,6 +60,6 @@ impl MessageHandler for RoomListHandler {
         for i in 0..num_operated_private_rooms {
             rooms.operated_private_rooms[i as usize].set_number_of_users(message.read_int32());
         }
-        rooms.print();
+        // rooms.print();
     }
 }
