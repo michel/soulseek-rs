@@ -245,7 +245,7 @@ impl Server {
 
                 match buffered_reader.extract_message() {
                     Ok(Some(mut message)) => {
-                        println!("Received message: {:?}", message.get_data());
+                        // println!("Received message: {:?}", message.get_data());
 
                         dispatcher.dispatch(&mut message)
                     }
@@ -280,20 +280,9 @@ impl Server {
         self.context.lock().unwrap().queue_message(message);
     }
 
-    pub fn login(&mut self, username: &str, password: &str) -> Result<(), std::io::Error> {
+    pub fn login(&self, username: &str, password: &str) -> Result<(), std::io::Error> {
         self.queue_message(build_init_message());
         self.queue_message(build_login_message(username, password));
-
-        let timeout = Duration::from_secs(10);
-
-        let start = Instant::now();
-
-        while !self.context.lock().unwrap().logged_in {
-            if start.elapsed() >= timeout {
-                panic!("Login timed out");
-            }
-        }
-        println!("Logged in successfully!");
         Ok(())
     }
 

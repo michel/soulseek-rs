@@ -5,7 +5,8 @@ mod peer;
 mod server;
 mod utils;
 
-use std::thread;
+use std::thread::{self};
+use std::time::Duration;
 
 use client::Client;
 use server::ServerAddress;
@@ -18,6 +19,11 @@ fn main() {
         // String::from("invalid"),
         String::from("13375137"),
     );
+
     client.connect();
-    client.search("Trance wax");
+    client.login();
+    thread::spawn(move || {
+        client.search("Trance wax", Duration::from_secs(10));
+    });
+    thread::sleep(Duration::from_secs(20));
 }

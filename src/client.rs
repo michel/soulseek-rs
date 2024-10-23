@@ -43,13 +43,6 @@ impl Client {
                     server.get_address().get_host(),
                     server.get_address().get_port()
                 );
-
-                // Attempt to login
-                println!("Logging in as {}", self.username);
-
-                if let Err(e) = server.login(&self.username, &self.password) {
-                    eprintln!("Error during login: {}", e);
-                }
                 Some(server)
             }
             Err(e) => {
@@ -57,6 +50,17 @@ impl Client {
                 None
             }
         };
+    }
+    pub fn login(&self) {
+        // Attempt to login
+        println!("Logging in as {}", self.username);
+        if let Some(server) = &self.server {
+            if let Err(e) = server.login(&self.username, &self.password) {
+                eprintln!("Error during login: {}", e);
+            }
+        } else {
+            println!("Not connected to server");
+        }
     }
 
     pub fn read_form_channel(&mut self, message_reader: Receiver<ClientOperation>) {
@@ -72,7 +76,7 @@ impl Client {
         });
     }
 
-    pub fn search(&self, query: &str) {
+    pub fn search(&self, query: &str, timeout: Duration) {
         println!("Searching for {}", query);
         if let Some(server) = &self.server {
             let hash = md5::md5(query);
@@ -81,7 +85,6 @@ impl Client {
 
             server.file_search(&token, &query);
 
-            let timeout = Duration::from_secs(10);
             let start = Instant::now();
 
             while true {

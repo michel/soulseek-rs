@@ -42,7 +42,7 @@ impl Handlers {
         self.register_handler(WishListIntervalHandler);
         self.register_handler(ParentMinSpeedHandler);
         self.register_handler(ParentSpeedRatioHandler);
-        self.register_handler(ConnectToPeerHandler);
+        // self.register_handler(ConnectToPeerHandler);
     }
 
     pub fn register_handler<H: 'static + MessageHandler + Send + Sync>(
