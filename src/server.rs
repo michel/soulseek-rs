@@ -5,11 +5,11 @@ use crate::message::{Message, MessageReader};
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{mpsc, Condvar};
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread::{self};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct ServerAddress {
@@ -33,21 +33,17 @@ impl ServerAddress {
 
 #[derive(Debug)]
 pub struct Context {
-    pub logged_in: bool,
-    pub server_channel: Sender<Message>,
-    pub client_channel: Sender<ClientOperation>,
+    pub logged_in: Option<bool>,
     user_messages: HashMap<String, UserMessage>,
     rooms: Rooms,
 }
 
 impl Context {
-    pub fn new(server_channel: Sender<Message>, client_channel: Sender<ClientOperation>) -> Self {
+    pub fn new() -> Self {
         Self {
-            server_channel,
-            client_channel,
             rooms: Rooms::new(),
             user_messages: HashMap::new(),
-            logged_in: false,
+            logged_in: Option::None,
         }
     }
 
@@ -62,10 +58,6 @@ impl Context {
 
     pub fn get_rooms(&mut self) -> &mut Rooms {
         &mut self.rooms
-    }
-
-    pub fn queue_message(&self, message: Message) {
-        self.server_channel.send(message).unwrap();
     }
 
     #[cfg(test)]
@@ -174,8 +166,15 @@ impl Room {
     // }
 }
 
+pub enum ServerOperation {
+    // ReceivedMessage(Message),
+    LoginStatus(bool),
+    SendMessage(Message),
+}
+
 pub struct Server {
     address: ServerAddress,
+    sender: Sender<ServerOperation>,
     context: Arc<Mutex<Context>>,
 }
 impl Server {
@@ -184,12 +183,16 @@ impl Server {
         address: ServerAddress,
         client_channel: Sender<ClientOperation>,
     ) -> Result<Self, io::Error> {
-        let (message_sender, server_channel): (Sender<Message>, Receiver<Message>) =
+        let (sender, server_channel): (Sender<ServerOperation>, Receiver<ServerOperation>) =
             mpsc::channel();
 
-        let context = Arc::new(Mutex::new(Context::new(message_sender, client_channel)));
+        let context = Arc::new(Mutex::new(Context::new()));
 
-        let server = Self { address, context };
+        let server = Self {
+            address,
+            context,
+            sender,
+        };
 
         server.start_read_write_loops(server_channel)?;
         Ok(server)
@@ -200,7 +203,10 @@ impl Server {
     }
 
     /// Start reading and writing loops in separate threads
-    fn start_read_write_loops(&self, message_reader: Receiver<Message>) -> Result<(), io::Error> {
+    fn start_read_write_loops(
+        &self,
+        server_channel: Receiver<ServerOperation>,
+    ) -> Result<(), io::Error> {
         let socket_address = format!("{}:{}", self.address.host, self.address.port)
             .to_socket_addrs()?
             .next()
@@ -219,16 +225,20 @@ impl Server {
         let mut read_stream = stream.try_clone()?;
         let mut write_stream = stream.try_clone()?;
 
-        let barrier = Arc::new(Barrier::new(2));
+        let barrier = Arc::new(Barrier::new(3));
         let read_barrier = barrier.clone();
         let write_barrier = barrier.clone();
-        let self_context = Arc::clone(&self.context);
+        let done_barrier = barrier.clone();
+        let sender = self.sender.clone();
+        println!("Thread ID: {:?}", std::thread::current().id());
 
         thread::spawn(move || {
             read_barrier.wait();
-            let dispatcher = MessageDispatcher::new(self_context);
+            println!("Thread ID for read: {:?}", std::thread::current().id());
+            let dispatcher = MessageDispatcher::new(sender);
             let mut buffered_reader = MessageReader::new();
             loop {
+                println!("Reading from server {:?}", std::thread::current().id());
                 match buffered_reader.read_from_socket(&mut read_stream) {
                     Ok(_) => {}
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
@@ -243,9 +253,11 @@ impl Server {
                     }
                 }
 
+                println!("Extracting message");
+
                 match buffered_reader.extract_message() {
                     Ok(Some(mut message)) => {
-                        // println!("Received message: {:?}", message.get_data());
+                        println!("Received message: {:?}", message.get_data());
 
                         dispatcher.dispatch(&mut message)
                     }
@@ -257,33 +269,64 @@ impl Server {
             }
         });
 
+        let context = self.context.clone();
         thread::spawn(move || {
             write_barrier.wait();
-
+            println!("Thread ID for write: {:?}", std::thread::current().id());
             loop {
-                let message = message_reader.recv().unwrap();
-                // println!("Sending message from queue: {:?}", message); // Debug log when sending
-                match write_stream.write_all(&message.get_data()) {
-                    // Ok(_) => println!("Sent buffered message: {:?}", message),
-                    Err(e) => {
-                        eprintln!("Failed to send buffered message: {}", e);
-                        break;
+                if let Ok(operation) = server_channel.recv() {
+                    match operation {
+                        ServerOperation::LoginStatus(message) => {
+                            context.lock().unwrap().logged_in = Some(message);
+                        }
+                        ServerOperation::SendMessage(message) => {
+                            println!(
+                                "Sending message: {:?}, {:?}",
+                                message.get_data(),
+                                std::thread::current().id()
+                            );
+                            match write_stream.write_all(&message.get_data()) {
+                                Ok(_) => {}
+                                Err(e) => {
+                                    eprintln!("Error sending message: {}", e);
+                                    break;
+                                }
+                            }
+                        }
                     }
-                    Ok(_) => {}
                 }
             }
         });
+        done_barrier.wait();
         Ok(())
     }
 
     fn queue_message(&self, message: Message) {
-        self.context.lock().unwrap().queue_message(message);
+        self.sender
+            .send(ServerOperation::SendMessage(message))
+            .unwrap();
     }
 
-    pub fn login(&self, username: &str, password: &str) -> Result<(), std::io::Error> {
+    pub fn login(&self, username: &str, password: &str) -> Result<bool, std::io::Error> {
+        println!(
+            "Thread ID sending login message: {:?}",
+            std::thread::current().id()
+        );
+        // Send the login message
         self.queue_message(build_init_message());
         self.queue_message(build_login_message(username, password));
-        Ok(())
+        // wait till server says your logged in or not
+        let mut logged_in;
+        loop {
+            logged_in = self.context.lock().unwrap().logged_in;
+
+            if !logged_in.is_none() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+
+        Ok(logged_in.unwrap())
     }
 
     pub fn file_search(&self, token: &str, query: &str) {

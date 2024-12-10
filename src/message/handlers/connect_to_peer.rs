@@ -1,13 +1,13 @@
 use super::handlers::MessageHandler;
-use crate::{client::ClientOperation, message::Message, peer::peer::Peer, server::Context};
-use std::sync::{Arc, Mutex};
-
+use crate::server::ServerOperation;
+use crate::{message::Message, peer::peer::Peer};
+use std::sync::mpsc::Sender;
 pub struct ConnectToPeerHandler;
 impl MessageHandler for ConnectToPeerHandler {
     fn get_code(&self) -> u8 {
         18
     }
-    fn handle(&self, message: &mut Message, context: Arc<Mutex<Context>>) {
+    fn handle(&self, message: &mut Message, sender: Sender<ServerOperation>) {
         println!("Handling ConnectToPeer message");
         let username = message.read_string();
         let connection_type = message.read_string();
@@ -36,11 +36,11 @@ impl MessageHandler for ConnectToPeerHandler {
             obfuscated_port,
         );
 
-        context
-            .lock()
-            .unwrap()
-            .client_channel
-            .send(ClientOperation::ConnectToPeer(peer))
-            .unwrap_or_default();
+        // context
+        //     .lock()
+        //     .unwrap()
+        //     .client_channel
+        //     .send(ClientOperation::ConnectToPeer(peer))
+        //     .unwrap_or_default();
     }
 }

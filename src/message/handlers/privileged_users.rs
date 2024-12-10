@@ -1,6 +1,6 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc::Sender, Arc, Condvar, Mutex};
 
-use crate::{message::Message, server::Context};
+use crate::{message::Message, server::ServerOperation};
 
 use super::handlers::MessageHandler;
 pub struct PrivilegedUsersHandler;
@@ -10,7 +10,7 @@ impl MessageHandler for PrivilegedUsersHandler {
         69
     }
 
-    fn handle(&self, message: &mut Message, _context: Arc<Mutex<Context>>) {
+    fn handle(&self, message: &mut Message, _sender: Sender<ServerOperation>) {
         let number = message.read_int32();
         println!("Number of privilaged users: {}", number);
     }

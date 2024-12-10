@@ -1,9 +1,9 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc::Sender, Arc, Condvar, Mutex};
 
 use super::handlers::MessageHandler;
 use crate::{
     message::{factory::build_shared_folders_message, Message},
-    server::Context,
+    server::ServerOperation,
 };
 
 pub struct LoginHandler;
@@ -13,21 +13,24 @@ impl MessageHandler for LoginHandler {
         1
     }
 
-    fn handle(&self, message: &mut Message, context: Arc<Mutex<Context>>) {
-        println!("Handling login response");
+    fn handle(&self, message: &mut Message, sender: Sender<ServerOperation>) {
         let response = message.read_int8();
-        if response == 1 {
-            println!("Login successful");
-            let greeting = message.read_string();
-            println!("Server geeting: {:?}", greeting);
-            // Build the shared folders message and queue it
-            let shared_message = build_shared_folders_message(1, 1);
-            let mut ctx = context.lock().unwrap();
-            ctx.queue_message(shared_message);
-            ctx.logged_in = true
-        } else {
-            panic!("Login failed");
+
+        if response != 1 {
+            return sender.send(ServerOperation::LoginStatus(false)).unwrap();
         }
+
+        println!("Login successful");
+        let greeting = message.read_string();
+        println!("Server geeting: {:?}", greeting);
+
+        // Build the shared folders message and queue it
+        let shared_message = build_shared_folders_message(1, 1);
+
+        sender.send(ServerOperation::LoginStatus(true)).unwrap();
+        sender
+            .send(ServerOperation::SendMessage(shared_message))
+            .unwrap();
     }
 }
 

@@ -3,11 +3,13 @@ use crate::{
     server::{Server, ServerAddress},
     utils::md5,
 };
-use std::sync::mpsc::{Receiver, Sender};
-use std::thread::{self};
 use std::{
     sync::mpsc,
     time::{Duration, Instant},
+};
+use std::{
+    sync::mpsc::{Receiver, Sender},
+    thread::sleep,
 };
 
 pub struct Client {
@@ -37,7 +39,7 @@ impl Client {
 
         // self.read_form_channel(message_reader);
         self.server = match Server::new(self.address.clone(), channel) {
-            Ok(mut server) => {
+            Ok(server) => {
                 println!(
                     "Connected to server at {}:{}",
                     server.get_address().get_host(),
@@ -51,32 +53,42 @@ impl Client {
             }
         };
     }
-    pub fn login(&self) {
+    pub fn login(&self) -> Result<bool, std::io::Error> {
         // Attempt to login
         println!("Logging in as {}", self.username);
         if let Some(server) = &self.server {
-            if let Err(e) = server.login(&self.username, &self.password) {
-                eprintln!("Error during login: {}", e);
+            let result = server.login(&self.username, &self.password);
+            if result.unwrap() == true {
+                println!("Logged in as {}", self.username);
+                return Ok(true);
+            } else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Error logging in",
+                ));
             }
         } else {
-            println!("Not connected to server");
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Not connected to server",
+            ));
         }
     }
 
-    pub fn read_form_channel(&mut self, message_reader: Receiver<ClientOperation>) {
-        thread::spawn(move || {
-            for operation in message_reader.iter() {
-                match operation {
-                    ClientOperation::ConnectToPeer(peer) => {
-                        println!("Received ConnectToPeer operation");
-                        peer.print();
-                    }
-                }
-            }
-        });
-    }
+    // pub fn read_form_channel(&mut self, message_reader: Receiver<ClientOperation>) {
+    //     thread::spawn(move || {
+    //         for operation in message_reader.iter() {
+    //             match operation {
+    //                 ClientOperation::ConnectToPeer(peer) => {
+    //                     println!("Received ConnectToPeer operation");
+    //                     peer.print();
+    //                 }
+    //             }
+    //         }
+    //     });
+    // }
 
-    pub fn search(&self, query: &str, timeout: Duration) {
+    pub fn search(&self, query: &str) {
         println!("Searching for {}", query);
         if let Some(server) = &self.server {
             let hash = md5::md5(query);
@@ -84,15 +96,6 @@ impl Client {
             println!("Token: {}", token);
 
             server.file_search(&token, &query);
-
-            let start = Instant::now();
-
-            while true {
-                if start.elapsed() >= timeout {
-                    break;
-                }
-            }
-            println!("search done");
         } else {
             eprintln!("Not connected to server");
         }

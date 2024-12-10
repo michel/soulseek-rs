@@ -44,7 +44,6 @@ impl MessageReader {
     pub fn read_from_socket(&mut self, stream: &mut TcpStream) -> io::Result<()> {
         let mut temp_buffer = [0; 1024]; // Temporary buffer for reading from the socket
         let bytes_read = stream.read(&mut temp_buffer)?;
-        // println!("Read {} bytes from the socket", bytes_read);
 
         // Add the read bytes to the internal buffer
         self.buffer.extend(&temp_buffer[..bytes_read]);

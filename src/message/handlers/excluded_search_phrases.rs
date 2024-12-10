@@ -1,6 +1,6 @@
 use super::handlers::MessageHandler;
-use crate::{message::Message, server::Context};
-use std::sync::{Arc, Mutex};
+use crate::{message::Message, server::ServerOperation};
+use std::sync::mpsc::Sender;
 
 pub struct ExcludedSearchPhrasesHandler;
 
@@ -9,7 +9,7 @@ impl MessageHandler for ExcludedSearchPhrasesHandler {
         160
     }
 
-    fn handle(&self, message: &mut Message, _context: Arc<Mutex<Context>>) {
+    fn handle(&self, message: &mut Message, _sender: Sender<ServerOperation>) {
         let item_count = message.read_int32();
 
         let mut exluded_phrases: Vec<String> = Vec::new();

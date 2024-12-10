@@ -1,21 +1,19 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::collections::HashMap;
 
-use crate::message::handlers::privileged_users::PrivilegedUsersHandler;
-use crate::{message::Message, server::Context};
+use crate::message::Message;
+use crate::{message::handlers::privileged_users::PrivilegedUsersHandler, server::ServerOperation};
+use std::sync::mpsc::Sender;
 
 use super::{
-    connect_to_peer::ConnectToPeerHandler, excluded_search_phrases::ExcludedSearchPhrasesHandler,
-    login::LoginHandler, message_user::MessageUser, parent_min_speed::ParentMinSpeedHandler,
+    excluded_search_phrases::ExcludedSearchPhrasesHandler, login::LoginHandler,
+    message_user::MessageUser, parent_min_speed::ParentMinSpeedHandler,
     parent_speed_ratio::ParentSpeedRatioHandler, room_list::RoomListHandler,
     wish_list_interval::WishListIntervalHandler,
 };
 
 pub trait MessageHandler {
     fn get_code(&self) -> u8;
-    fn handle(&self, message: &mut Message, context: Arc<Mutex<Context>>);
+    fn handle(&self, message: &mut Message, sender: Sender<ServerOperation>);
 }
 pub struct Handlers {
     handlers: HashMap<u8, Box<dyn MessageHandler>>,
