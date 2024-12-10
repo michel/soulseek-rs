@@ -1,9 +1,9 @@
 use super::handlers::MessageHandler;
 use crate::{
     message::Message,
-    server::{Context, UserMessage},
+    server::{ServerOperation, UserMessage},
 };
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::Sender;
 
 pub struct MessageUser;
 
@@ -12,7 +12,7 @@ impl MessageHandler for MessageUser {
         22
     }
 
-    fn handle(&self, message: &mut Message, context: Arc<Mutex<Context>>) {
+    fn handle(&self, message: &mut Message, sender: Sender<ServerOperation>) {
         let id = message.read_int32();
         let timestamp = message.read_int32();
         let username = message.read_string();
@@ -26,10 +26,6 @@ impl MessageHandler for MessageUser {
             new_message,
         );
 
-        context
-            .lock()
-            .unwrap()
-            .add_message_for_user(username.clone(), user_message.clone());
         println!("User message received:",);
         user_message.print()
     }

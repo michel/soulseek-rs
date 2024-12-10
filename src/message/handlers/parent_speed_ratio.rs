@@ -1,6 +1,6 @@
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::Sender;
 
-use crate::{message::Message, server::Context};
+use crate::{message::Message, server::ServerOperation};
 
 use super::handlers::MessageHandler;
 pub struct ParentSpeedRatioHandler;
@@ -11,7 +11,7 @@ impl MessageHandler for ParentSpeedRatioHandler {
         84
     }
 
-    fn handle(&self, message: &mut Message, _context: Arc<Mutex<Context>>) {
+    fn handle(&self, message: &mut Message, sender: Sender<ServerOperation>) {
         let number = message.read_int32();
         println!("Parent min speed: {}", number);
     }
