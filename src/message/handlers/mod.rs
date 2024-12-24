@@ -1,5 +1,6 @@
 pub mod connect_to_peer;
 pub mod excluded_search_phrases;
+pub mod file_search;
 pub mod handlers;
 pub mod login;
 pub mod message_user;

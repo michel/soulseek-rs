@@ -4,9 +4,10 @@ use crate::message::Message;
 use crate::{message::handlers::privileged_users::PrivilegedUsersHandler, server::ServerOperation};
 use std::sync::mpsc::Sender;
 
+use super::connect_to_peer::ConnectToPeerHandler;
 use super::{
-    excluded_search_phrases::ExcludedSearchPhrasesHandler, login::LoginHandler,
-    message_user::MessageUser, parent_min_speed::ParentMinSpeedHandler,
+    excluded_search_phrases::ExcludedSearchPhrasesHandler, file_search::FileSearch,
+    login::LoginHandler, message_user::MessageUser, parent_min_speed::ParentMinSpeedHandler,
     parent_speed_ratio::ParentSpeedRatioHandler, room_list::RoomListHandler,
     wish_list_interval::WishListIntervalHandler,
 };
@@ -40,7 +41,9 @@ impl Handlers {
         self.register_handler(WishListIntervalHandler);
         self.register_handler(ParentMinSpeedHandler);
         self.register_handler(ParentSpeedRatioHandler);
-        // self.register_handler(ConnectToPeerHandler);
+        self.register_handler(PrivilegedUsersHandler);
+        self.register_handler(FileSearch);
+        self.register_handler(ConnectToPeerHandler);
     }
 
     pub fn register_handler<H: 'static + MessageHandler + Send + Sync>(

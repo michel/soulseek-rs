@@ -1,15 +1,20 @@
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
-use crate::message::factory::{build_file_search_message, build_init_message, build_login_message};
+use crate::message::factory::{
+    build_file_search_message, build_init_message, build_login_message, build_no_parent_message,
+    build_set_status_message, build_set_wait_port_message, build_shared_folders_message,
+};
 use crate::message::{Message, MessageReader};
+use crate::peer::listen::Listen;
+use crate::peer::peer::Peer;
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{mpsc, Condvar};
 use std::sync::{Arc, Barrier, Mutex};
-use std::thread::{self};
-use std::time::Duration;
+use std::thread::{self, sleep, JoinHandle};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 pub struct ServerAddress {
@@ -170,12 +175,17 @@ pub enum ServerOperation {
     // ReceivedMessage(Message),
     LoginStatus(bool),
     SendMessage(Message),
+    ConnectToPeer(Peer),
 }
 
+#[derive(Debug)]
 pub struct Server {
     address: ServerAddress,
     sender: Sender<ServerOperation>,
     context: Arc<Mutex<Context>>,
+    read_handle: Option<JoinHandle<()>>,
+    monitor_handle: Option<JoinHandle<()>>,
+    write_handle: Option<JoinHandle<()>>,
 }
 impl Server {
     /// Create a new instance of Server, returning a Result
@@ -188,10 +198,13 @@ impl Server {
 
         let context = Arc::new(Mutex::new(Context::new()));
 
-        let server = Self {
+        let mut server = Self {
             address,
             context,
             sender,
+            read_handle: None,
+            monitor_handle: None,
+            write_handle: None,
         };
 
         server.start_read_write_loops(server_channel)?;
@@ -204,7 +217,7 @@ impl Server {
 
     /// Start reading and writing loops in separate threads
     fn start_read_write_loops(
-        &self,
+        &mut self,
         server_channel: Receiver<ServerOperation>,
     ) -> Result<(), io::Error> {
         let socket_address = format!("{}:{}", self.address.host, self.address.port)
@@ -230,15 +243,12 @@ impl Server {
         let write_barrier = barrier.clone();
         let done_barrier = barrier.clone();
         let sender = self.sender.clone();
-        println!("Thread ID: {:?}", std::thread::current().id());
 
-        thread::spawn(move || {
+        let read_handle = thread::spawn(move || {
             read_barrier.wait();
-            println!("Thread ID for read: {:?}", std::thread::current().id());
             let dispatcher = MessageDispatcher::new(sender);
             let mut buffered_reader = MessageReader::new();
             loop {
-                println!("Reading from server {:?}", std::thread::current().id());
                 match buffered_reader.read_from_socket(&mut read_stream) {
                     Ok(_) => {}
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
@@ -253,11 +263,10 @@ impl Server {
                     }
                 }
 
-                println!("Extracting message");
-
                 match buffered_reader.extract_message() {
                     Ok(Some(mut message)) => {
-                        println!("Received message: {:?}", message.get_data());
+                        println!("Received message: {:?}", message.get_message_code_u32());
+                        // message.print_hex();
 
                         dispatcher.dispatch(&mut message)
                     }
@@ -269,22 +278,24 @@ impl Server {
             }
         });
 
+        let monitor_handle = thread::spawn(move || loop {
+            thread::sleep(Duration::from_secs(1));
+            println!("Stream state: connected={}", stream.peer_addr().is_ok());
+        });
         let context = self.context.clone();
-        thread::spawn(move || {
+        let write_handle = thread::spawn(move || {
             write_barrier.wait();
-            println!("Thread ID for write: {:?}", std::thread::current().id());
             loop {
                 if let Ok(operation) = server_channel.recv() {
                     match operation {
+                        ServerOperation::ConnectToPeer(peer) => peer.print(),
                         ServerOperation::LoginStatus(message) => {
+                            sleep(Duration::from_secs(3));
                             context.lock().unwrap().logged_in = Some(message);
                         }
                         ServerOperation::SendMessage(message) => {
-                            println!(
-                                "Sending message: {:?}, {:?}",
-                                message.get_data(),
-                                std::thread::current().id()
-                            );
+                            message.decode();
+                            message.print_hex2();
                             match write_stream.write_all(&message.get_data()) {
                                 Ok(_) => {}
                                 Err(e) => {
@@ -298,32 +309,59 @@ impl Server {
             }
         });
         done_barrier.wait();
+        self.read_handle = Some(read_handle);
+        self.monitor_handle = Some(monitor_handle);
+        self.write_handle = Some(write_handle);
         Ok(())
     }
 
     fn queue_message(&self, message: Message) {
-        self.sender
-            .send(ServerOperation::SendMessage(message))
-            .unwrap();
+        match self.sender.send(ServerOperation::SendMessage(message)) {
+            Ok(_) => {}
+            Err(e) => println!("Failed to send: {}", e),
+        }
+
+        sleep(Duration::from_millis(500));
+    }
+    fn start_listener(&self) {
+        thread::spawn(move || Listen::new(2234));
     }
 
     pub fn login(&self, username: &str, password: &str) -> Result<bool, std::io::Error> {
-        println!(
-            "Thread ID sending login message: {:?}",
-            std::thread::current().id()
-        );
+        self.start_listener();
         // Send the login message
-        self.queue_message(build_init_message());
+        // self.queue_message(build_init_message());
         self.queue_message(build_login_message(username, password));
-        // wait till server says your logged in or not
+        let context = self.context.clone();
         let mut logged_in;
+        let timeout = Duration::from_secs(5);
+        let start = Instant::now();
+
+        // wait till server says your logged in or not
         loop {
-            logged_in = self.context.lock().unwrap().logged_in;
+            if start.elapsed() > timeout {
+                println!("Timeout waiting for login response");
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "Timeout waiting for login response",
+                ));
+            }
+
+            {
+                logged_in = context.lock().unwrap().logged_in.clone()
+            }
 
             if !logged_in.is_none() {
                 break;
             }
-            thread::sleep(Duration::from_millis(100));
+        }
+
+        if logged_in.unwrap() {
+            println!("Logged in as {}", username);
+            // self.queue_message(build_set_wait_port_message());
+            // self.queue_message(build_shared_folders_message(1, 1));
+            // self.queue_message(build_no_parent_message());
+            // self.queue_message(build_set_status_message(2));
         }
 
         Ok(logged_in.unwrap())
