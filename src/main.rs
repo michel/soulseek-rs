@@ -5,10 +5,9 @@ mod peer;
 mod server;
 mod utils;
 
-use std::{thread::sleep, time::Duration};
-
 use client::Client;
 use server::ServerAddress;
+use std::time::Duration;
 
 fn main() {
     let mut client = Client::new(

@@ -1,12 +1,10 @@
 use crate::{
-    peer::peer::Peer,
     server::{Server, ServerAddress},
     utils::md5,
 };
 use std::sync::mpsc::{Receiver, Sender};
 use std::{
     sync::mpsc,
-    thread,
     time::{Duration, Instant},
 };
 
@@ -76,10 +74,8 @@ impl Client {
         println!("Searching for {}", query);
         if let Some(server) = &self.server {
             let hash = md5::md5(query);
-            let token = hash[0..8].to_string();
-            println!("Token: {}", token);
-
-            server.file_search(&token, &query);
+            let token = u32::from_str_radix(&hash[0..8].to_string(), 16).unwrap();
+            server.file_search(token, &query);
         } else {
             eprintln!("Not connected to server");
         }
