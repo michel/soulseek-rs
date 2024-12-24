@@ -119,8 +119,19 @@ impl Message {
         self.pointer = pointer;
     }
 
+    // get's the message data
     pub fn get_data(&self) -> Vec<u8> {
         self.data.clone()
+    }
+
+    /// gets buffer with the message length prepended
+    pub fn get_buffer(&self) -> Vec<u8> {
+        let mut b = vec![0u8; 4];
+        let length = self.data.len() as u32;
+        b[0..4].copy_from_slice(&length.to_le_bytes());
+        let mut combined = b;
+        combined.extend(&self.data);
+        combined
     }
 
     pub fn read_string(&mut self) -> String {
@@ -203,6 +214,45 @@ impl Message {
     }
 }
 
+#[test]
+fn test_get_buffer() {
+    let message = Message::new_with_data(
+        [
+            26, 0, 0, 0, 219, 178, 47, 28, 11, 0, 0, 0, 116, 104, 101, 32, 119, 101, 101, 107, 101,
+            110, 100,
+        ]
+        .to_vec(),
+    );
+    assert_eq!(
+        message.get_buffer(),
+        [
+            23, 0, 0, 0, 26, 0, 0, 0, 219, 178, 47, 28, 11, 0, 0, 0, 116, 104, 101, 32, 119, 101,
+            101, 107, 101, 110, 100,
+        ]
+        .to_vec()
+    );
+
+    let message = Message::new_with_data(
+        [
+            1, 0, 0, 0, 20, 0, 0, 0, 105, 110, 115, 97, 110, 101, 95, 105, 110, 95, 116, 104, 101,
+            95, 98, 114, 97, 105, 110, 50, 8, 0, 0, 0, 49, 51, 51, 55, 53, 49, 51, 55, 160, 0, 0,
+            0, 32, 0, 0, 0, 50, 101, 100, 102, 53, 49, 100, 48, 51, 55, 57, 52, 51, 55, 56, 102,
+            56, 98, 98, 54, 51, 49, 48, 100, 52, 54, 48, 99, 50, 50, 98, 49, 17, 0, 0, 0,
+        ]
+        .to_vec(),
+    );
+    assert_eq!(
+        message.get_buffer(),
+        [
+            84, 0, 0, 0, 1, 0, 0, 0, 20, 0, 0, 0, 105, 110, 115, 97, 110, 101, 95, 105, 110, 95,
+            116, 104, 101, 95, 98, 114, 97, 105, 110, 50, 8, 0, 0, 0, 49, 51, 51, 55, 53, 49, 51,
+            55, 160, 0, 0, 0, 32, 0, 0, 0, 50, 101, 100, 102, 53, 49, 100, 48, 51, 55, 57, 52, 51,
+            55, 56, 102, 56, 98, 98, 54, 51, 49, 48, 100, 52, 54, 48, 99, 50, 50, 98, 49, 17, 0, 0,
+            0,
+        ]
+        .to_vec()
+    );
+}
 #[test]
 fn test_read_string() {
     let data = vec![

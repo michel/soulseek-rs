@@ -290,13 +290,12 @@ impl Server {
                     match operation {
                         ServerOperation::ConnectToPeer(peer) => peer.print(),
                         ServerOperation::LoginStatus(message) => {
-                            sleep(Duration::from_secs(3));
                             context.lock().unwrap().logged_in = Some(message);
                         }
                         ServerOperation::SendMessage(message) => {
                             message.decode();
                             message.print_hex2();
-                            match write_stream.write_all(&message.get_data()) {
+                            match write_stream.write_all(&message.get_buffer()) {
                                 Ok(_) => {}
                                 Err(e) => {
                                     eprintln!("Error sending message: {}", e);
@@ -320,8 +319,6 @@ impl Server {
             Ok(_) => {}
             Err(e) => println!("Failed to send: {}", e),
         }
-
-        sleep(Duration::from_millis(500));
     }
     fn start_listener(&self) {
         thread::spawn(move || Listen::new(2234));
@@ -367,7 +364,7 @@ impl Server {
         Ok(logged_in.unwrap())
     }
 
-    pub fn file_search(&self, token: &str, query: &str) {
+    pub fn file_search(&self, token: u32, query: &str) {
         self.queue_message(build_file_search_message(token, query));
     }
 }
