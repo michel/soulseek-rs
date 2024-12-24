@@ -17,16 +17,15 @@ impl MessageDispatcher {
     }
 
     pub fn dispatch(&self, message: &mut Message) {
-        match self.handlers.get_handler(message.get_message_code()) {
+        let code = message.get_message_code();
+        println!("message with code: {}", code);
+        match self.handlers.get_handler(code.clone()) {
             Some(handler) => {
                 message.set_pointer(8);
                 handler.handle(message, self.sender.clone());
             }
             None => {
-                println!(
-                    "No handler found for message code: {}",
-                    message.get_message_code()
-                );
+                println!("No handler found for message code: {:?}", code);
             }
         }
     }

@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub struct Peer {
     pub username: String,
     pub connection_type: String,

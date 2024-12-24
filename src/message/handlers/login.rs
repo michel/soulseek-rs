@@ -1,10 +1,7 @@
 use std::sync::{mpsc::Sender, Arc, Condvar, Mutex};
 
 use super::handlers::MessageHandler;
-use crate::{
-    message::{factory::build_shared_folders_message, Message},
-    server::ServerOperation,
-};
+use crate::{message::Message, server::ServerOperation};
 
 pub struct LoginHandler;
 
@@ -24,13 +21,7 @@ impl MessageHandler for LoginHandler {
         let greeting = message.read_string();
         println!("Server geeting: {:?}", greeting);
 
-        // Build the shared folders message and queue it
-        let shared_message = build_shared_folders_message(1, 1);
-
         sender.send(ServerOperation::LoginStatus(true)).unwrap();
-        sender
-            .send(ServerOperation::SendMessage(shared_message))
-            .unwrap();
     }
 }
 

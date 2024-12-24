@@ -3,24 +3,22 @@ use crate::{
     server::{Server, ServerAddress},
     utils::md5,
 };
+use std::sync::mpsc::{Receiver, Sender};
 use std::{
     sync::mpsc,
+    thread,
     time::{Duration, Instant},
-};
-use std::{
-    sync::mpsc::{Receiver, Sender},
-    thread::sleep,
 };
 
 pub struct Client {
     address: ServerAddress,
     username: String,
     password: String,
-    server: Option<Server>,
+    pub server: Option<Server>,
 }
 
 pub enum ClientOperation {
-    ConnectToPeer(Peer),
+    // ConnectToPeer(Peer),
 }
 
 impl Client {
@@ -59,7 +57,6 @@ impl Client {
         if let Some(server) = &self.server {
             let result = server.login(&self.username, &self.password);
             if result.unwrap() == true {
-                println!("Logged in as {}", self.username);
                 return Ok(true);
             } else {
                 return Err(std::io::Error::new(
@@ -75,20 +72,7 @@ impl Client {
         }
     }
 
-    // pub fn read_form_channel(&mut self, message_reader: Receiver<ClientOperation>) {
-    //     thread::spawn(move || {
-    //         for operation in message_reader.iter() {
-    //             match operation {
-    //                 ClientOperation::ConnectToPeer(peer) => {
-    //                     println!("Received ConnectToPeer operation");
-    //                     peer.print();
-    //                 }
-    //             }
-    //         }
-    //     });
-    // }
-
-    pub fn search(&self, query: &str) {
+    pub fn search(&self, query: &str, timeout: Duration) {
         println!("Searching for {}", query);
         if let Some(server) = &self.server {
             let hash = md5::md5(query);
@@ -98,6 +82,16 @@ impl Client {
             server.file_search(&token, &query);
         } else {
             eprintln!("Not connected to server");
+        }
+
+        let start = Instant::now();
+        loop {
+            if start.elapsed() >= timeout {
+                break;
+            }
+        }
+        if let Some(server) = &self.server {
+            println!("server {:?}", server)
         }
     }
 }
