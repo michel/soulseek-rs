@@ -1,24 +1,24 @@
+use std::sync::mpsc::Sender;
+
 use crate::{
-    message::{handlers::handlers::Handlers, Message},
-    server::{Context, ServerOperation},
+    message::{message_handlers::MessageHandelers, Message},
+    server::ServerOperation,
 };
-use std::sync::{mpsc::Sender, Arc, Mutex};
 
 pub struct MessageDispatcher {
     sender: Sender<ServerOperation>,
-    handlers: Handlers,
+    handlers: MessageHandelers,
 }
 
 impl MessageDispatcher {
-    pub fn new(sender: Sender<ServerOperation>) -> Self {
-        let handlers = Handlers::new_with_default_handlers();
+    pub fn new(sender: Sender<ServerOperation>, handlers: MessageHandelers) -> Self {
         let dispatcher = Self { handlers, sender };
         dispatcher
     }
 
     pub fn dispatch(&self, message: &mut Message) {
         let code = message.get_message_code();
-        println!("message with code: {}", code);
+        // println!("message with code: {}", code);
         match self.handlers.get_handler(code.clone()) {
             Some(handler) => {
                 message.set_pointer(8);

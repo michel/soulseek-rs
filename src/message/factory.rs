@@ -1,14 +1,6 @@
 use super::Message;
 use crate::utils::md5;
 
-pub fn build_init_message() -> Message {
-    let mut message = Message::new();
-    message.write_int32(84); // secret init message code (needed for version check)?
-    message.print_hex();
-
-    message
-}
-
 pub fn build_login_message(username: &str, password: &str) -> Message {
     // Message::new_with_data(
     //     [
@@ -48,7 +40,7 @@ pub fn build_shared_folders_message(folder_count: i32, file_count: i32) -> Messa
         .write_int32(file_count)
         .clone()
 }
-pub fn build_file_search_message(token: u32, query: &str) -> Message {
+pub fn build_file_search_message(token: i32, query: &str) -> Message {
     // Message::new_with_data(
     //     [
     //         26, 0, 0, 0, 219, 178, 47, 28, 11, 0, 0, 0, 116, 104, 101, 32, 119, 101, 101, 107, 101,
@@ -59,7 +51,7 @@ pub fn build_file_search_message(token: u32, query: &str) -> Message {
     // .clone()
     Message::new()
         .write_int32(26)
-        .write_int32(13)
+        .write_int32(token)
         .write_string(query)
         .clone()
 }
@@ -75,17 +67,19 @@ pub fn build_no_parent_message() -> Message {
 pub fn build_set_wait_port_message() -> Message {
     Message::new().write_int32(2).write_int32(2234).clone()
 }
-
-pub fn build_ping_message() -> Message {
-    return Message::new().write_int32(32).clone();
+pub fn build_watch_user(token: &str) -> Message {
+    Message::new()
+        .write_raw_bytes([5, 0, 0, 0, 0].to_vec())
+        .write_raw_hex_string(&token)
+        .clone()
 }
 #[test]
-fn test_build_init_message() {
-    let message = build_init_message();
-    let expect: Vec<u8> = [84, 0, 0, 0].to_vec();
+fn test_build_watch_user() {
+    let token = "5b581500";
+    let message = build_watch_user(token);
+    let expect: Vec<u8> = [5, 0, 0, 0, 0, 91, 88, 21, 0].to_vec();
 
-    // println!("{:?}", print_hex(message.get_data()));
-    assert_eq!(expect, message.get_data());
+    assert_eq!(expect, message.get_data())
 }
 
 #[test]
@@ -107,7 +101,7 @@ fn test_build_login_message() {
 
 #[test]
 fn test_build_file_search_message() {
-    let message = build_file_search_message("token", "trance wax");
+    let message = build_file_search_message(12, "trance wax");
     let expect: Vec<u8> = [
         26, 0, 0, 0, 199, 19, 251, 66, 10, 0, 0, 0, 116, 114, 97, 110, 99, 101, 32, 119, 97, 120,
     ]

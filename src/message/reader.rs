@@ -74,10 +74,6 @@ impl MessageReader {
         }
 
         let message_buffer: Vec<u8> = self.buffer.drain(..total_size).collect();
-        println!(
-            "extract_message: got {} bytes, next message length = {}",
-            bytes_read, total_size
-        );
         return Ok(Some(Message::new_with_data(message_buffer)));
     }
 }

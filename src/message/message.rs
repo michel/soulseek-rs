@@ -1,4 +1,4 @@
-use std::{fmt::format, str};
+use std::str;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Message {
@@ -14,93 +14,93 @@ impl Message {
         }
     }
 
-    pub fn print_hex(&self) {
-        let data = &self.data;
-        const BYTES_PER_LINE: usize = 16;
-
-        let chunks = data.chunks(BYTES_PER_LINE);
-        for (i, chunk) in chunks.enumerate() {
-            // Print the offset
-            print!("{:04x}  ", i * BYTES_PER_LINE);
-
-            // Print the hexadecimal part
-            for j in 0..BYTES_PER_LINE {
-                if j < chunk.len() {
-                    print!("{:02x} ", chunk[j]);
-                } else {
-                    print!(" ");
-                }
-
-                // Add extra space in the middle
-                if j == 7 {
-                    print!(" ");
-                }
-            }
-
-            print!("  ");
-
-            // Print the ASCII part
-            let mut i = 0;
-            for &byte in chunk {
-                i = i + 1;
-                if byte.is_ascii_graphic() || byte.is_ascii_whitespace() {
-                    print!("{}", byte as char);
-                } else {
-                    print!(".");
-                }
-
-                if i == 8 {
-                    print!(" ");
-                }
-            }
-
-            println!();
-        }
-    }
-
-    pub fn print_hex2(&self) -> String {
-        let data = &self.data;
-        let mut out = String::from("");
-        const BYTES_PER_LINE: usize = 16;
-
-        let chunks = data.chunks(BYTES_PER_LINE);
-        for (i, chunk) in chunks.enumerate() {
-            // Print the offset
-            // out += &format!("{:04x}  ", i * BYTES_PER_LINE);
-
-            // Print the hexadecimal part
-            for j in 0..BYTES_PER_LINE {
-                if j < chunk.len() {
-                    out += &format!("{:02x} ", chunk[j]);
-                } else {
-                    // out += &format!(" ");
-                }
-
-                // Add extra space in the middle
-                // if j == 7 {
-                //     out += &format!(" ");
-                // }
-            }
-
-            // // Print the ASCII part
-            // let mut i = 0;
-            // for &byte in chunk {
-            //     i = i + 1;
-            //     if byte.is_ascii_graphic() || byte.is_ascii_whitespace() {
-            //         print!("{}", byte as char);
-            //     } else {
-            //         print!(".");
-            //     }
-            //
-            //     if i == 8 {
-            //         print!(" ");
-            //     }
-            // }
-            //
-        }
-        println!("{:?}", out.trim());
-        return out.trim().into();
-    }
+    // pub fn print_hex(&self) {
+    //     let data = &self.data;
+    //     const BYTES_PER_LINE: usize = 16;
+    //
+    //     let chunks = data.chunks(BYTES_PER_LINE);
+    //     for (i, chunk) in chunks.enumerate() {
+    //         // Print the offset
+    //         print!("{:04x}  ", i * BYTES_PER_LINE);
+    //
+    //         // Print the hexadecimal part
+    //         for j in 0..BYTES_PER_LINE {
+    //             if j < chunk.len() {
+    //                 print!("{:02x} ", chunk[j]);
+    //             } else {
+    //                 print!(" ");
+    //             }
+    //
+    //             // Add extra space in the middle
+    //             if j == 7 {
+    //                 print!(" ");
+    //             }
+    //         }
+    //
+    //         print!("  ");
+    //
+    //         // Print the ASCII part
+    //         let mut i = 0;
+    //         for &byte in chunk {
+    //             i = i + 1;
+    //             if byte.is_ascii_graphic() || byte.is_ascii_whitespace() {
+    //                 print!("{}", byte as char);
+    //             } else {
+    //                 print!(".");
+    //             }
+    //
+    //             if i == 8 {
+    //                 print!(" ");
+    //             }
+    //         }
+    //
+    //         println!();
+    //     }
+    // }
+    //
+    // pub fn print_hex2(&self) -> String {
+    //     let data = &self.data;
+    //     let mut out = String::from("");
+    //     const BYTES_PER_LINE: usize = 16;
+    //
+    //     let chunks = data.chunks(BYTES_PER_LINE);
+    //     for (i, chunk) in chunks.enumerate() {
+    //         // Print the offset
+    //         // out += &format!("{:04x}  ", i * BYTES_PER_LINE);
+    //
+    //         // Print the hexadecimal part
+    //         for j in 0..BYTES_PER_LINE {
+    //             if j < chunk.len() {
+    //                 out += &format!("{:02x} ", chunk[j]);
+    //             } else {
+    //                 // out += &format!(" ");
+    //             }
+    //
+    //             // Add extra space in the middle
+    //             // if j == 7 {
+    //             //     out += &format!(" ");
+    //             // }
+    //         }
+    //
+    //         // // Print the ASCII part
+    //         // let mut i = 0;
+    //         // for &byte in chunk {
+    //         //     i = i + 1;
+    //         //     if byte.is_ascii_graphic() || byte.is_ascii_whitespace() {
+    //         //         print!("{}", byte as char);
+    //         //     } else {messa
+    //         //         print!(".");
+    //         //     }
+    //         //
+    //         //     if i == 8 {
+    //         //         print!(" ");
+    //         //     }
+    //         // }
+    //         //
+    //     }
+    //     println!("{:?}", out.trim());
+    //     return out.trim().into();
+    // }
 
     pub fn get_message_code_u32(&self) -> u32 {
         u32::from_le_bytes(self.data[4..8].try_into().unwrap())
@@ -147,6 +147,14 @@ impl Message {
         self.pointer += size;
 
         String::from_utf8(data.to_vec()).expect("Failed to read string")
+    }
+    pub fn read_raw_hex_str(&mut self, size: usize) -> String {
+        let hex_str = self.data[self.pointer..self.pointer + size]
+            .iter()
+            .map(|byte| format!("{:02x}", byte))
+            .collect::<String>();
+        self.pointer += size;
+        return hex_str;
     }
 
     pub fn read_int8(&mut self) -> i8 {
@@ -203,15 +211,25 @@ impl Message {
         self.data.extend_from_slice(&value.to_le_bytes());
         self
     }
-
-    pub fn write_raw_hex_string(&mut self, val: &str) -> &mut Self {
-        let hex: String = val.bytes().map(|byte| format!("{:02x}", byte)).collect();
-        self.data.extend_from_slice(hex.as_bytes());
+    pub fn write_raw_bytes(&mut self, value: Vec<u8>) -> &mut Self {
+        self.data.extend_from_slice(&value);
         self
     }
-    pub fn decode(&self) {
-        println!("{:?}", self.data);
+
+    pub fn write_raw_hex_string(&mut self, val: &str) -> &mut Self {
+        let mut b = Vec::new();
+        for i in (0..val.len()).step_by(2) {
+            let byte_str = &val[i..i + 2];
+            let byte = u8::from_str_radix(byte_str, 16).expect("Invalid hex string");
+            b.push(byte);
+        }
+        self.data.extend_from_slice(&b);
+        self.pointer += b.len();
+        self
     }
+    // pub fn decode(&self) {
+    //     println!("{:?}", self.data);
+    // }
 }
 
 #[test]
