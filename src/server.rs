@@ -1,9 +1,10 @@
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
 use crate::message::factory::{
-    build_file_search_message, build_init_message, build_login_message, build_no_parent_message,
+    build_file_search_message, build_login_message, build_no_parent_message,
     build_set_status_message, build_set_wait_port_message, build_shared_folders_message,
 };
+use crate::message::message_handlers::MessageHandelers;
 use crate::message::{Message, MessageReader};
 use crate::peer::listen::Listen;
 use crate::peer::peer::Peer;
@@ -13,16 +14,16 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Barrier, Mutex};
-use std::thread::{self, sleep, JoinHandle};
+use std::thread::{self};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
-pub struct ServerAddress {
+pub struct PeerAddress {
     host: String,
     port: u16,
 }
 
-impl ServerAddress {
+impl PeerAddress {
     pub fn new(host: String, port: u16) -> Self {
         Self { host, port }
     }
@@ -162,13 +163,6 @@ impl Room {
             self.name, self.number_of_users
         );
     }
-
-    // pub fn get_name(&self) -> &str {
-    //     &self.name
-    // }
-    // pub fn get_number_of_users(&self) -> i32 {
-    //     self.number_of_users
-    // }
 }
 
 pub enum ServerOperation {
@@ -180,17 +174,14 @@ pub enum ServerOperation {
 
 #[derive(Debug)]
 pub struct Server {
-    address: ServerAddress,
+    address: PeerAddress,
     sender: Sender<ServerOperation>,
     context: Arc<Mutex<Context>>,
-    read_handle: Option<JoinHandle<()>>,
-    monitor_handle: Option<JoinHandle<()>>,
-    write_handle: Option<JoinHandle<()>>,
 }
 impl Server {
     /// Create a new instance of Server, returning a Result
     pub fn new(
-        address: ServerAddress,
+        address: PeerAddress,
         client_channel: Sender<ClientOperation>,
     ) -> Result<Self, io::Error> {
         let (sender, server_channel): (Sender<ServerOperation>, Receiver<ServerOperation>) =
@@ -202,16 +193,13 @@ impl Server {
             address,
             context,
             sender,
-            read_handle: None,
-            monitor_handle: None,
-            write_handle: None,
         };
 
-        server.start_read_write_loops(server_channel)?;
+        server.start_read_write_loops(server_channel, client_channel)?;
         Ok(server)
     }
 
-    pub fn get_address(&self) -> &ServerAddress {
+    pub fn get_address(&self) -> &PeerAddress {
         &self.address
     }
 
@@ -219,6 +207,7 @@ impl Server {
     fn start_read_write_loops(
         &mut self,
         server_channel: Receiver<ServerOperation>,
+        client_channel: Sender<ClientOperation>,
     ) -> Result<(), io::Error> {
         let socket_address = format!("{}:{}", self.address.host, self.address.port)
             .to_socket_addrs()?
@@ -244,9 +233,10 @@ impl Server {
         let done_barrier = barrier.clone();
         let sender = self.sender.clone();
 
-        let read_handle = thread::spawn(move || {
+        thread::spawn(move || {
             read_barrier.wait();
-            let dispatcher = MessageDispatcher::new(sender);
+            let message_handlers = MessageHandelers::new_with_server_handlers();
+            let dispatcher = MessageDispatcher::new(sender, message_handlers);
             let mut buffered_reader = MessageReader::new();
             loop {
                 match buffered_reader.read_from_socket(&mut read_stream) {
@@ -265,7 +255,7 @@ impl Server {
 
                 match buffered_reader.extract_message() {
                     Ok(Some(mut message)) => {
-                        println!("Received message: {:?}", message.get_message_code_u32());
+                        // println!("Received message: {:?}", message.get_message_code_u32());
                         // message.print_hex();
 
                         dispatcher.dispatch(&mut message)
@@ -278,27 +268,34 @@ impl Server {
             }
         });
 
-        let monitor_handle = thread::spawn(move || loop {
-            thread::sleep(Duration::from_secs(1));
-            println!("Stream state: connected={}", stream.peer_addr().is_ok());
-        });
+        // let monitor_handle = thread::spawn(move || loop {
+        //     thread::sleep(Duration::from_secs(1));
+        //     println!("Stream state: connected={}", stream.peer_addr().is_ok());
+        // });
         let context = self.context.clone();
-        let write_handle = thread::spawn(move || {
+        thread::spawn(move || {
             write_barrier.wait();
             loop {
                 if let Ok(operation) = server_channel.recv() {
                     match operation {
-                        ServerOperation::ConnectToPeer(peer) => peer.print(),
+                        ServerOperation::ConnectToPeer(peer) => {
+                            match client_channel.send(ClientOperation::ConnectToPeer(peer)) {
+                                Ok(_) => {}
+                                Err(e) => {
+                                    println!("Error sending message: {}", e);
+                                }
+                            }
+                        }
                         ServerOperation::LoginStatus(message) => {
                             context.lock().unwrap().logged_in = Some(message);
                         }
                         ServerOperation::SendMessage(message) => {
-                            message.decode();
-                            message.print_hex2();
+                            // message.decode();
+                            // message.print_hex2();
                             match write_stream.write_all(&message.get_buffer()) {
                                 Ok(_) => {}
                                 Err(e) => {
-                                    eprintln!("Error sending message: {}", e);
+                                    eprintln!("Error writing message to stream : {}", e);
                                     break;
                                 }
                             }
@@ -308,9 +305,6 @@ impl Server {
             }
         });
         done_barrier.wait();
-        self.read_handle = Some(read_handle);
-        self.monitor_handle = Some(monitor_handle);
-        self.write_handle = Some(write_handle);
         Ok(())
     }
 
@@ -327,7 +321,6 @@ impl Server {
     pub fn login(&self, username: &str, password: &str) -> Result<bool, std::io::Error> {
         self.start_listener();
         // Send the login message
-        // self.queue_message(build_init_message());
         self.queue_message(build_login_message(username, password));
         let context = self.context.clone();
         let mut logged_in;
@@ -355,16 +348,16 @@ impl Server {
 
         if logged_in.unwrap() {
             println!("Logged in as {}", username);
-            // self.queue_message(build_set_wait_port_message());
-            // self.queue_message(build_shared_folders_message(1, 1));
-            // self.queue_message(build_no_parent_message());
-            // self.queue_message(build_set_status_message(2));
+            self.queue_message(build_set_wait_port_message());
+            self.queue_message(build_shared_folders_message(1, 1));
+            self.queue_message(build_no_parent_message());
+            self.queue_message(build_set_status_message(2));
         }
 
         Ok(logged_in.unwrap())
     }
 
-    pub fn file_search(&self, token: u32, query: &str) {
+    pub fn file_search(&self, token: i32, query: &str) {
         self.queue_message(build_file_search_message(token, query));
     }
 }

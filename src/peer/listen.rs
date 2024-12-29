@@ -30,7 +30,7 @@ impl Listen {
                 match buffered_reader.extract_message() {
                     Ok(Some(message)) => {
                         println!("Received message: {:?}", message.get_message_code_u32());
-                        message.print_hex();
+                        println!("{:?}", message.get_data());
                     }
                     Err(e) => {
                         println!("Error extracting message: {}", e)
