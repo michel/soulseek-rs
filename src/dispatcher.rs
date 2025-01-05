@@ -1,17 +1,17 @@
 use std::sync::mpsc::Sender;
 
 use crate::{
-    message::{message_handlers::MessageHandelers, Message},
+    message::{handlers::Handlers, message::Message},
     server::ServerOperation,
 };
 
 pub struct MessageDispatcher {
     sender: Sender<ServerOperation>,
-    handlers: MessageHandelers,
+    handlers: Handlers,
 }
 
 impl MessageDispatcher {
-    pub fn new(sender: Sender<ServerOperation>, handlers: MessageHandelers) -> Self {
+    pub fn new(sender: Sender<ServerOperation>, handlers: Handlers) -> Self {
         let dispatcher = Self { handlers, sender };
         dispatcher
     }

@@ -1,3 +1,4 @@
+use crate::message::server::MessageFactory;
 use crate::message::{Message, MessageReader};
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
@@ -6,7 +7,6 @@ use std::thread::{self};
 
 use super::peer::Peer;
 use crate::client::ClientOperation;
-use crate::message::factory::build_watch_user;
 use std::io::{self, Write};
 use std::net::TcpStream;
 use std::net::ToSocketAddrs;
@@ -14,17 +14,19 @@ use std::time::Duration;
 
 pub struct DefaultPeer {
     peer: Peer,
-    client_channel: Sender<ClientOperation>,
+    // client_channel: Sender<ClientOperation>,
     peer_channel: Option<Sender<PeerOperation>>,
 }
+
+#[allow(dead_code)]
 pub enum PeerOperation {
     SendMessage(Message),
 }
 impl DefaultPeer {
-    pub fn new(peer: Peer, client_channel: Sender<ClientOperation>) -> Self {
+    pub fn new(peer: Peer, _client_channel: Sender<ClientOperation>) -> Self {
         Self {
             peer,
-            client_channel,
+            // client_channel,
             peer_channel: None,
         }
     }
@@ -41,7 +43,7 @@ impl DefaultPeer {
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
         if let Some(token) = self.peer.token.clone() {
             stream
-                .write_all(&build_watch_user(&token).get_data())
+                .write_all(&MessageFactory::build_watch_user(&token).get_data())
                 .unwrap();
             // self.queue_message(build_watch_user(&token));
         }
@@ -100,15 +102,14 @@ impl DefaultPeer {
             }
         });
 
-        let px = self.peer.clone();
-        thread::spawn(move || loop {
-            thread::sleep(Duration::from_secs(1));
-            // println!(
-            //     "Default peer ({}) - stream state: connected={}",
-            //     px.host,
-            //     stream.peer_addr().is_ok()
-            // );
-        });
+        // thread::spawn(move || loop {
+        //     thread::sleep(Duration::from_secs(1));
+        //     // println!(
+        //     //     "Default peer ({}) - stream state: connected={}",
+        //     //     px.host,
+        //     //     stream.peer_addr().is_ok()
+        //     // );
+        // });
         thread::spawn(move || {
             write_barrier.wait();
             loop {
@@ -131,11 +132,11 @@ impl DefaultPeer {
         Ok(())
     }
 
-    pub fn queue_message(&self, message: Message) {
-        if let Some(sender) = self.peer_channel.clone() {
-            if let Err(e) = sender.send(PeerOperation::SendMessage(message)) {
-                eprintln!("Failed to send: {}", e);
-            }
-        }
-    }
+    // pub fn queue_message(&self, message: Message) {
+    //     if let Some(sender) = self.peer_channel.clone() {
+    //         if let Err(e) = sender.send(PeerOperation::SendMessage(message)) {
+    //             eprintln!("Failed to send: {}", e);
+    //         }
+    //     }
+    // }
 }

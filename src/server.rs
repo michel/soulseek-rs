@@ -1,14 +1,12 @@
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
-use crate::message::factory::{
-    build_file_search_message, build_login_message, build_no_parent_message,
-    build_set_status_message, build_set_wait_port_message, build_shared_folders_message,
-};
-use crate::message::message_handlers::MessageHandelers;
-use crate::message::{Message, MessageReader};
+use crate::message::server::MessageFactory;
+use crate::message::Handlers;
+use crate::message::Message;
+use crate::message::MessageReader;
 use crate::peer::listen::Listen;
 use crate::peer::peer::Peer;
-use std::collections::HashMap;
+
 use std::io::{self, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::mpsc;
@@ -40,36 +38,26 @@ impl PeerAddress {
 #[derive(Debug)]
 pub struct Context {
     pub logged_in: Option<bool>,
-    user_messages: HashMap<String, UserMessage>,
+    #[allow(dead_code)]
     rooms: Rooms,
 }
 
 impl Context {
     pub fn new() -> Self {
         Self {
+            #[allow(dead_code)]
             rooms: Rooms::new(),
-            user_messages: HashMap::new(),
             logged_in: Option::None,
         }
     }
 
-    pub fn add_message_for_user(&mut self, username: String, message: UserMessage) {
-        self.user_messages.insert(username.to_string(), message);
-    }
-
-    #[allow(dead_code)]
-    pub fn get_messages_for_user(&self, username: String) -> Option<&UserMessage> {
-        self.user_messages.get(&username)
-    }
-
-    pub fn get_rooms(&mut self) -> &mut Rooms {
-        &mut self.rooms
-    }
-
-    #[cfg(test)]
-    pub fn get_user_messages(&self) -> &HashMap<String, UserMessage> {
-        &self.user_messages
-    }
+    // pub fn get_messages_for_user(&self, username: String) -> Option<&UserMessage> {
+    //     self.user_messages.get(&username)
+    // }
+    //
+    // pub fn get_rooms(&mut self) -> &mut Rooms {
+    //     &mut self.rooms
+    // }
 }
 #[derive(Debug, Clone)]
 pub struct UserMessage {
@@ -103,6 +91,7 @@ impl UserMessage {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct Rooms {
     pub public_rooms: Vec<Room>,
@@ -120,6 +109,7 @@ impl Rooms {
         }
     }
 
+    #[allow(dead_code)]
     pub fn print(&self) {
         println!("Public rooms ({}):", self.public_rooms.len());
         for room in &self.public_rooms {
@@ -148,12 +138,14 @@ pub struct Room {
     number_of_users: i32,
 }
 impl Room {
+    #[allow(dead_code)]
     pub fn new(name: String, number_of_users: i32) -> Self {
         Self {
             name,
             number_of_users,
         }
     }
+    #[allow(dead_code)]
     pub fn set_number_of_users(&mut self, number_of_users: i32) {
         self.number_of_users = number_of_users;
     }
@@ -166,9 +158,9 @@ impl Room {
 }
 
 pub enum ServerOperation {
-    // ReceivedMessage(Message),
     LoginStatus(bool),
     SendMessage(Message),
+    #[allow(dead_code)]
     ConnectToPeer(Peer),
 }
 
@@ -235,7 +227,7 @@ impl Server {
 
         thread::spawn(move || {
             read_barrier.wait();
-            let message_handlers = MessageHandelers::new_with_server_handlers();
+            let message_handlers = Handlers::new_with_server_handlers();
             let dispatcher = MessageDispatcher::new(sender, message_handlers);
             let mut buffered_reader = MessageReader::new();
             loop {
@@ -321,7 +313,7 @@ impl Server {
     pub fn login(&self, username: &str, password: &str) -> Result<bool, std::io::Error> {
         self.start_listener();
         // Send the login message
-        self.queue_message(build_login_message(username, password));
+        self.queue_message(MessageFactory::build_login_message(username, password));
         let context = self.context.clone();
         let mut logged_in;
         let timeout = Duration::from_secs(5);
@@ -348,16 +340,16 @@ impl Server {
 
         if logged_in.unwrap() {
             println!("Logged in as {}", username);
-            self.queue_message(build_set_wait_port_message());
-            self.queue_message(build_shared_folders_message(1, 1));
-            self.queue_message(build_no_parent_message());
-            self.queue_message(build_set_status_message(2));
+            self.queue_message(MessageFactory::build_set_wait_port_message());
+            self.queue_message(MessageFactory::build_shared_folders_message(1, 1));
+            self.queue_message(MessageFactory::build_no_parent_message());
+            self.queue_message(MessageFactory::build_set_status_message(2));
         }
 
         Ok(logged_in.unwrap())
     }
 
     pub fn file_search(&self, token: i32, query: &str) {
-        self.queue_message(build_file_search_message(token, query));
+        self.queue_message(MessageFactory::build_file_search_message(token, query));
     }
 }
