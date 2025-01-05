@@ -37,6 +37,7 @@ impl FromStr for ConnectionType {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Peer {
     pub username: String,
     pub connection_type: ConnectionType,
@@ -48,6 +49,7 @@ pub struct Peer {
     pub obfuscated_port: i8,
 }
 impl Peer {
+    #[allow(dead_code)]
     pub fn new(
         username: String,
         connection_type: ConnectionType,
@@ -69,6 +71,7 @@ impl Peer {
             obfuscated_port,
         }
     }
+    #[allow(dead_code)]
     pub fn new_from_message(message: &mut Message) -> Self {
         let username = message.read_string();
         let connection_type: ConnectionType = message.read_string().parse().unwrap();
