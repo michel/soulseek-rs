@@ -31,7 +31,6 @@ impl DefaultPeer {
         }
     }
     pub fn connect(mut self) -> Result<Self, io::Error> {
-        // println!("Connecting to peer {:?}", self.peer);
         let socket_address = format!("{}:{}", self.peer.host, self.peer.port)
             .to_socket_addrs()?
             .next()
@@ -45,7 +44,6 @@ impl DefaultPeer {
             stream
                 .write_all(&MessageFactory::build_watch_user(&token).get_data())
                 .unwrap();
-            // self.queue_message(build_watch_user(&token));
         }
         self.start_read_write_loops(stream).unwrap();
 
@@ -102,14 +100,6 @@ impl DefaultPeer {
             }
         });
 
-        // thread::spawn(move || loop {
-        //     thread::sleep(Duration::from_secs(1));
-        //     // println!(
-        //     //     "Default peer ({}) - stream state: connected={}",
-        //     //     px.host,
-        //     //     stream.peer_addr().is_ok()
-        //     // );
-        // });
         thread::spawn(move || {
             write_barrier.wait();
             loop {
@@ -131,12 +121,4 @@ impl DefaultPeer {
         done_barrier.wait();
         Ok(())
     }
-
-    // pub fn queue_message(&self, message: Message) {
-    //     if let Some(sender) = self.peer_channel.clone() {
-    //         if let Err(e) = sender.send(PeerOperation::SendMessage(message)) {
-    //             eprintln!("Failed to send: {}", e);
-    //         }
-    //     }
-    // }
 }
