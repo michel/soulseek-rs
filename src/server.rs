@@ -1,6 +1,16 @@
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
+use crate::message::server::ConnectToPeerHandler;
+use crate::message::server::ExcludedSearchPhrasesHandler;
+use crate::message::server::FileSearch;
+use crate::message::server::LoginHandler;
 use crate::message::server::MessageFactory;
+use crate::message::server::MessageUser;
+use crate::message::server::ParentMinSpeedHandler;
+use crate::message::server::ParentSpeedRatioHandler;
+use crate::message::server::PrivilegedUsersHandler;
+use crate::message::server::RoomListHandler;
+use crate::message::server::WishListIntervalHandler;
 use crate::message::Handlers;
 use crate::message::Message;
 use crate::message::MessageReader;
@@ -227,8 +237,23 @@ impl Server {
 
         thread::spawn(move || {
             read_barrier.wait();
-            let message_handlers = Handlers::new_with_server_handlers();
-            let dispatcher = MessageDispatcher::new(sender, message_handlers);
+
+            let mut handlers = Handlers::new();
+
+            handlers.register_handler(LoginHandler);
+            handlers.register_handler(RoomListHandler);
+            handlers.register_handler(ExcludedSearchPhrasesHandler);
+            handlers.register_handler(PrivilegedUsersHandler);
+            handlers.register_handler(MessageUser);
+            handlers.register_handler(WishListIntervalHandler);
+            handlers.register_handler(ParentMinSpeedHandler);
+            handlers.register_handler(ParentSpeedRatioHandler);
+            handlers.register_handler(PrivilegedUsersHandler);
+            handlers.register_handler(FileSearch);
+            handlers.register_handler(ConnectToPeerHandler);
+
+            let dispatcher = MessageDispatcher::new(sender, handlers);
+
             let mut buffered_reader = MessageReader::new();
             loop {
                 match buffered_reader.read_from_socket(&mut read_stream) {

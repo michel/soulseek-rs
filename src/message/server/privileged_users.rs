@@ -7,7 +7,7 @@ use crate::{
 
 pub struct PrivilegedUsersHandler;
 
-impl MessageHandler for PrivilegedUsersHandler {
+impl MessageHandler<ServerOperation> for PrivilegedUsersHandler {
     fn get_code(&self) -> u8 {
         69
     }
