@@ -5,9 +5,9 @@ use crate::{
     server::ServerOperation,
 };
 
-pub struct FileSearch;
+pub struct FileSearchHandler;
 
-impl MessageHandler for FileSearch {
+impl MessageHandler<ServerOperation> for FileSearchHandler {
     fn get_code(&self) -> u8 {
         26
     }
