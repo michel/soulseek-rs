@@ -1,5 +1,7 @@
+use crate::dispatcher::MessageDispatcher;
+use crate::message::peer::{FileSearch, FileSearchResponse};
 use crate::message::server::MessageFactory;
-use crate::message::{Message, MessageReader};
+use crate::message::{Handlers, Message, MessageReader};
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Barrier};
@@ -21,6 +23,7 @@ pub struct DefaultPeer {
 #[allow(dead_code)]
 pub enum PeerOperation {
     SendMessage(Message),
+    FileSearchResult(FileSearch),
 }
 impl DefaultPeer {
     pub fn new(peer: Peer, _client_channel: Sender<ClientOperation>) -> Self {
@@ -53,8 +56,8 @@ impl DefaultPeer {
     fn start_read_write_loops(&mut self, stream: TcpStream) -> Result<(), io::Error> {
         let (peer_sender, peer_reader): (Sender<PeerOperation>, Receiver<PeerOperation>) =
             mpsc::channel();
-        self.peer_channel = Some(peer_sender);
 
+        let sender = peer_sender.clone();
         let barrier = Arc::new(Barrier::new(3));
         let read_barrier = barrier.clone();
         let write_barrier = barrier.clone();
@@ -66,6 +69,12 @@ impl DefaultPeer {
         let peer = self.peer.clone();
         thread::spawn(move || {
             read_barrier.wait();
+
+            let mut handlers = Handlers::new();
+            handlers.register_handler(FileSearchResponse);
+
+            let dispatcher = MessageDispatcher::new(sender, handlers);
+
             let mut buffered_reader = MessageReader::new();
             loop {
                 match buffered_reader.read_from_socket(&mut read_stream) {
@@ -86,12 +95,7 @@ impl DefaultPeer {
                 }
 
                 match buffered_reader.extract_message() {
-                    Ok(Some(message)) => {
-                        println!(
-                            "Received message in default peer: {:?}",
-                            message.get_message_code_u32()
-                        );
-                    }
+                    Ok(Some(mut message)) => dispatcher.dispatch(&mut message),
                     Err(e) => {
                         println!("Error extracting message in default peer: {}", e)
                     }
@@ -113,6 +117,9 @@ impl DefaultPeer {
                                     break;
                                 }
                             }
+                        }
+                        PeerOperation::FileSearchResult(file_search) => {
+                            println!("{:?}", file_search)
                         }
                     }
                 }

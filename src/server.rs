@@ -1,6 +1,16 @@
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
+use crate::message::server::ConnectToPeerHandler;
+use crate::message::server::ExcludedSearchPhrasesHandler;
+use crate::message::server::FileSearchHandler;
+use crate::message::server::LoginHandler;
 use crate::message::server::MessageFactory;
+use crate::message::server::MessageUser;
+use crate::message::server::ParentMinSpeedHandler;
+use crate::message::server::ParentSpeedRatioHandler;
+use crate::message::server::PrivilegedUsersHandler;
+use crate::message::server::RoomListHandler;
+use crate::message::server::WishListIntervalHandler;
 use crate::message::Handlers;
 use crate::message::Message;
 use crate::message::MessageReader;
@@ -227,8 +237,23 @@ impl Server {
 
         thread::spawn(move || {
             read_barrier.wait();
-            let message_handlers = Handlers::new_with_server_handlers();
-            let dispatcher = MessageDispatcher::new(sender, message_handlers);
+
+            let mut handlers = Handlers::new();
+
+            handlers.register_handler(LoginHandler);
+            handlers.register_handler(RoomListHandler);
+            handlers.register_handler(ExcludedSearchPhrasesHandler);
+            handlers.register_handler(PrivilegedUsersHandler);
+            handlers.register_handler(MessageUser);
+            handlers.register_handler(WishListIntervalHandler);
+            handlers.register_handler(ParentMinSpeedHandler);
+            handlers.register_handler(ParentSpeedRatioHandler);
+            handlers.register_handler(PrivilegedUsersHandler);
+            handlers.register_handler(FileSearchHandler);
+            handlers.register_handler(ConnectToPeerHandler);
+
+            let dispatcher = MessageDispatcher::new(sender, handlers);
+
             let mut buffered_reader = MessageReader::new();
             loop {
                 match buffered_reader.read_from_socket(&mut read_stream) {
@@ -306,12 +331,12 @@ impl Server {
             Err(e) => println!("Failed to send: {}", e),
         }
     }
-    fn start_listener(&self) {
-        thread::spawn(move || Listen::new(2234));
+    fn start_listener(&self, server_channel: Sender<ServerOperation>) {
+        thread::spawn(move || Listen::new(2234, server_channel));
     }
 
     pub fn login(&self, username: &str, password: &str) -> Result<bool, std::io::Error> {
-        self.start_listener();
+        self.start_listener(self.sender.clone());
         // Send the login message
         self.queue_message(MessageFactory::build_login_message(username, password));
         let context = self.context.clone();

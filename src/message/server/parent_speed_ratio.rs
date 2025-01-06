@@ -8,7 +8,7 @@ use crate::{
 pub struct ParentSpeedRatioHandler;
 
 // The server sends us a speed ratio determining the number of children we can have in the distributed network. The maximum number of children is our upload speed divided by the speed ratio.
-impl MessageHandler for ParentSpeedRatioHandler {
+impl MessageHandler<ServerOperation> for ParentSpeedRatioHandler {
     fn get_code(&self) -> u8 {
         84
     }

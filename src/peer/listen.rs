@@ -1,11 +1,13 @@
+use std::sync::mpsc::Sender;
 use std::{io, net::TcpListener};
 
 use crate::message::MessageReader;
+use crate::server::ServerOperation;
 
 pub struct Listen {}
 
 impl Listen {
-    pub fn new(port: u32) {
+    pub fn new(port: u32, server_channel: Sender<ServerOperation>) {
         println!("starting listener on port {port}");
         let listener = TcpListener::bind(format!("0.0.0.0:{port}")).unwrap();
         for stream in listener.incoming() {
@@ -28,9 +30,28 @@ impl Listen {
                 }
 
                 match buffered_reader.extract_message() {
-                    Ok(Some(message)) => {
-                        println!("Received message: {:?}", message.get_message_code_u32());
+                    Ok(Some(mut message)) => {
+                        println!("Received message: {:?}", message.get_message_code());
                         println!("{:?}", message.get_data());
+                        message.print_hex();
+
+                        if message.get_message_code() == 1 {
+                            let size = message.read_int32();
+                            message.set_pointer(8);
+                            let typex = message.read_string();
+
+                            // let user = message.read_string();
+                            // // let connection_type: ConnectionType =
+                            // //     message.read_string().parse().unwrap();
+                            // // let token = message.read_int32();
+                            //
+                            println!("type: {:?}", typex);
+                            println!("user: {:?}", size);
+
+                            // server_channel
+                            //     .send(ServerOperation::ConnectToPeer(peer))
+                            //     .unwrap();
+                        }
                     }
                     Err(e) => {
                         println!("Error extracting message: {}", e)

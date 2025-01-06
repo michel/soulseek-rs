@@ -1,13 +1,7 @@
 use std::collections::HashMap;
 
-use crate::{message::Message, server::ServerOperation};
+use crate::message::Message;
 use std::sync::mpsc::Sender;
-
-use super::server::{
-    ConnectToPeerHandler, ExcludedSearchPhrasesHandler, FileSearch, LoginHandler, MessageUser,
-    ParentMinSpeedHandler, ParentSpeedRatioHandler, PrivilegedUsersHandler, RoomListHandler,
-    WishListIntervalHandler,
-};
 
 pub trait MessageHandler<Op> {
     fn get_code(&self) -> u8;
@@ -24,23 +18,6 @@ impl<Op> Handlers<Op> {
         }
     }
 
-    pub fn new_with_server_handlers() -> Self {
-        let mut handlers = Self::new();
-        handlers.register_handler(LoginHandler);
-        handlers.register_handler(RoomListHandler);
-        handlers.register_handler(ExcludedSearchPhrasesHandler);
-        handlers.register_handler(PrivilegedUsersHandler);
-        handlers.register_handler(MessageUser);
-        handlers.register_handler(WishListIntervalHandler);
-        handlers.register_handler(ParentMinSpeedHandler);
-        handlers.register_handler(ParentSpeedRatioHandler);
-        handlers.register_handler(PrivilegedUsersHandler);
-        handlers.register_handler(FileSearch);
-        handlers.register_handler(ConnectToPeerHandler);
-        handlers
-    }
-
-    /// Register a handler for this particular `Op`.
     pub fn register_handler<H>(&mut self, handler: H) -> &mut Self
     where
         H: 'static + MessageHandler<Op> + Send + Sync,

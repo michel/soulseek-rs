@@ -3,7 +3,7 @@ use crate::peer::Peer;
 use crate::server::ServerOperation;
 use std::sync::mpsc::Sender;
 pub struct ConnectToPeerHandler;
-impl MessageHandler for ConnectToPeerHandler {
+impl MessageHandler<ServerOperation> for ConnectToPeerHandler {
     fn get_code(&self) -> u8 {
         18
     }

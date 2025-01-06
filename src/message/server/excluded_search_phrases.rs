@@ -6,7 +6,7 @@ use std::sync::mpsc::Sender;
 
 pub struct ExcludedSearchPhrasesHandler;
 
-impl MessageHandler for ExcludedSearchPhrasesHandler {
+impl MessageHandler<ServerOperation> for ExcludedSearchPhrasesHandler {
     fn get_code(&self) -> u8 {
         160
     }

@@ -1,32 +1,28 @@
+use crate::message::{handlers::Handlers, message::Message};
 use std::sync::mpsc::Sender;
 
-use crate::{
-    message::{handlers::Handlers, message::Message},
-    server::ServerOperation,
-};
-
-pub struct MessageDispatcher {
-    sender: Sender<ServerOperation>,
-    handlers: Handlers,
+/// Add `<Op>` to make it generic over any operation type.
+pub struct MessageDispatcher<Op> {
+    sender: Sender<Op>,
+    handlers: Handlers<Op>,
 }
 
-impl MessageDispatcher {
-    pub fn new(sender: Sender<ServerOperation>, handlers: Handlers) -> Self {
-        let dispatcher = Self { handlers, sender };
-        dispatcher
+impl<Op> MessageDispatcher<Op> {
+    pub fn new(sender: Sender<Op>, handlers: Handlers<Op>) -> Self {
+        MessageDispatcher { sender, handlers }
     }
 
     pub fn dispatch(&self, message: &mut Message) {
         let code = message.get_message_code();
-        // println!("message with code: {}", code);
-        match self.handlers.get_handler(code.clone()) {
-            Some(handler) => {
-                message.set_pointer(8);
-                handler.handle(message, self.sender.clone());
-            }
-            None => {
-                println!("No handler found for message code: {:?}", code);
-            }
+
+        if let Some(handler) = self.handlers.get_handler(code) {
+            message.set_pointer(8);
+            handler.handle(message, self.sender.clone());
+        } else {
+            println!(
+                "No handler found for message code: {:?}",
+                message.get_message_code()
+            );
         }
     }
 }

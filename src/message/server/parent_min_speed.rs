@@ -7,7 +7,7 @@ use crate::{
 
 pub struct ParentMinSpeedHandler;
 
-impl MessageHandler for ParentMinSpeedHandler {
+impl MessageHandler<ServerOperation> for ParentMinSpeedHandler {
     fn get_code(&self) -> u8 {
         83
     }

@@ -1,4 +1,4 @@
-use std::str;
+use std::{fmt::Display, str};
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Message {
@@ -14,49 +14,49 @@ impl Message {
         }
     }
 
-    // pub fn print_hex(&self) {
-    //     let data = &self.data;
-    //     const BYTES_PER_LINE: usize = 16;
-    //
-    //     let chunks = data.chunks(BYTES_PER_LINE);
-    //     for (i, chunk) in chunks.enumerate() {
-    //         // Print the offset
-    //         print!("{:04x}  ", i * BYTES_PER_LINE);
-    //
-    //         // Print the hexadecimal part
-    //         for j in 0..BYTES_PER_LINE {
-    //             if j < chunk.len() {
-    //                 print!("{:02x} ", chunk[j]);
-    //             } else {
-    //                 print!(" ");
-    //             }
-    //
-    //             // Add extra space in the middle
-    //             if j == 7 {
-    //                 print!(" ");
-    //             }
-    //         }
-    //
-    //         print!("  ");
-    //
-    //         // Print the ASCII part
-    //         let mut i = 0;
-    //         for &byte in chunk {
-    //             i = i + 1;
-    //             if byte.is_ascii_graphic() || byte.is_ascii_whitespace() {
-    //                 print!("{}", byte as char);
-    //             } else {
-    //                 print!(".");
-    //             }
-    //
-    //             if i == 8 {
-    //                 print!(" ");
-    //             }
-    //         }
-    //
-    //         println!();
-    //     }
-    // }
+    pub fn print_hex(&self) {
+        let data = &self.data;
+        const BYTES_PER_LINE: usize = 16;
+
+        let chunks = data.chunks(BYTES_PER_LINE);
+        for (i, chunk) in chunks.enumerate() {
+            // Print the offset
+            print!("{:04x}  ", i * BYTES_PER_LINE);
+
+            // Print the hexadecimal part
+            for j in 0..BYTES_PER_LINE {
+                if j < chunk.len() {
+                    print!("{:02x} ", chunk[j]);
+                } else {
+                    print!(" ");
+                }
+
+                // Add extra space in the middle
+                if j == 7 {
+                    print!(" ");
+                }
+            }
+
+            print!("  ");
+
+            // Print the ASCII part
+            let mut i = 0;
+            for &byte in chunk {
+                i = i + 1;
+                if byte.is_ascii_graphic() || byte.is_ascii_whitespace() {
+                    print!("{}", byte as char);
+                } else {
+                    print!(".");
+                }
+
+                if i == 8 {
+                    print!(" ");
+                }
+            }
+
+            println!();
+        }
+    }
     //
     // pub fn print_hex2(&self) -> String {
     //     let data = &self.data;
@@ -105,6 +105,7 @@ impl Message {
     pub fn get_message_code_u32(&self) -> u32 {
         u32::from_le_bytes(self.data[4..8].try_into().unwrap())
     }
+
     pub fn get_message_code(&self) -> u8 {
         self.data[4]
     }
@@ -119,9 +120,20 @@ impl Message {
         self.pointer = pointer;
     }
 
-    // get's the message data
+    pub fn get_pointer(&mut self) -> usize {
+        self.pointer
+    }
+
+    pub fn get_size(&mut self) -> usize {
+        self.data.len()
+    }
+
     pub fn get_data(&self) -> Vec<u8> {
         self.data.clone()
+    }
+
+    pub fn get_slice(&self, from: usize, to: usize) -> Vec<u8> {
+        self.data[from..to].to_vec()
     }
 
     /// gets buffer with the message length prepended
