@@ -7,7 +7,7 @@ use crate::{
 
 pub struct FileSearch;
 
-impl MessageHandler for FileSearch {
+impl MessageHandler<ServerOperation> for FileSearch {
     fn get_code(&self) -> u8 {
         26
     }

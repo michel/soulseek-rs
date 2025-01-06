@@ -6,7 +6,7 @@ use std::sync::mpsc::Sender;
 
 pub struct RoomListHandler;
 
-impl MessageHandler for RoomListHandler {
+impl MessageHandler<ServerOperation> for RoomListHandler {
     fn get_code(&self) -> u8 {
         64
     }

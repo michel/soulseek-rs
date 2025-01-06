@@ -9,7 +9,7 @@ pub struct WishListIntervalHandler;
 
 // The server tells us the wishlist search interval.
 // This interval is almost always 12 minutes, or 2 minutes for privileged users.
-impl MessageHandler for WishListIntervalHandler {
+impl MessageHandler<ServerOperation> for WishListIntervalHandler {
     fn get_code(&self) -> u8 {
         104
     }
