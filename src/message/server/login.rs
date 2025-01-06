@@ -1,13 +1,14 @@
 use std::sync::mpsc::Sender;
 
-use crate::{
-    message::{Message, MessageHandler},
-    server::ServerOperation,
-};
+use crate::{message::Message, server::ServerOperation};
+
+// IMPORTANT: note the generic trait is now `MessageHandler<ServerOperation>`
+use crate::message::MessageHandler;
 
 pub struct LoginHandler;
 
-impl MessageHandler for LoginHandler {
+// Implement `MessageHandler` specifically for `ServerOperation`.
+impl MessageHandler<ServerOperation> for LoginHandler {
     fn get_code(&self) -> u8 {
         1
     }
@@ -21,7 +22,7 @@ impl MessageHandler for LoginHandler {
 
         println!("Login successful");
         let greeting = message.read_string();
-        println!("Server geeting: {:?}", greeting);
+        println!("Server greeting: {:?}", greeting);
 
         sender.send(ServerOperation::LoginStatus(true)).unwrap();
     }

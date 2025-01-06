@@ -1,5 +1,5 @@
 use crate::{
-    peer::{default_peer::DefaultPeer, peer::Peer},
+    peer::{DefaultPeer, Peer},
     server::{PeerAddress, Server},
     utils::md5,
 };
