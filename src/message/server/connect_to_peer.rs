@@ -1,5 +1,5 @@
 use crate::message::{Message, MessageHandler};
-use crate::peer::peer::Peer;
+use crate::peer::Peer;
 use crate::server::ServerOperation;
 use std::sync::mpsc::Sender;
 pub struct ConnectToPeerHandler;
