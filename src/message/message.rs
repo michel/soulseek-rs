@@ -1,4 +1,4 @@
-use std::str;
+use std::{fmt::Display, str};
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Message {
@@ -105,6 +105,7 @@ impl Message {
     pub fn get_message_code_u32(&self) -> u32 {
         u32::from_le_bytes(self.data[4..8].try_into().unwrap())
     }
+
     pub fn get_message_code(&self) -> u8 {
         self.data[4]
     }
