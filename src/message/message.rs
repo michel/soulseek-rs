@@ -120,9 +120,20 @@ impl Message {
         self.pointer = pointer;
     }
 
-    // get's the message data
+    pub fn get_pointer(&mut self) -> usize {
+        self.pointer
+    }
+
+    pub fn get_size(&mut self) -> usize {
+        self.data.len()
+    }
+
     pub fn get_data(&self) -> Vec<u8> {
         self.data.clone()
+    }
+
+    pub fn get_slice(&self, from: usize, to: usize) -> Vec<u8> {
+        self.data[from..to].to_vec()
     }
 
     /// gets buffer with the message length prepended

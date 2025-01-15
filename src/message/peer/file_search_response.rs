@@ -19,38 +19,44 @@ pub struct FileSearch {
 }
 impl FileSearch {
     pub fn new_from_message(message: &mut Message) {
-        let username = message.read_string();
-        println!("username: {:?}", username);
-        let current_token = message.read_raw_hex_str(4);
-        let n_files = message.read_int32();
-        let mut files: Vec<File> = Vec::new();
-        for _ in 0..n_files {
-            message.read_int8();
-            let name = message.read_string();
-            let size = message.read_int32();
-            message.read_int32();
-            message.read_string();
-            let n_attribs = message.read_int32();
-            let mut attribs: HashMap<i32, i32> = HashMap::new();
+        let pointer = message.get_pointer();
+        let size = message.get_size();
+        let content: Vec<u8> = message.get_slice(pointer, size);
+        dbg!(content);
 
-            for _ in 0..n_attribs {
-                attribs.insert(message.read_int32(), message.read_int32());
-            }
-            files.push(File {
-                username: username.clone(),
-                name,
-                size,
-                attribs,
-            });
-        }
-        let slots = message.read_int8();
-        let speed = message.read_int32();
+        // let username = message.read_string();
+        // println!("username: {:?}", username);
+        // let current_token = message.read_raw_hex_str(4);
+        // let n_files = message.read_int32();
+        // let mut files: Vec<File> = Vec::new();
+        // for _ in 0..n_files {
+        //     message.read_int8();
+        //     let name = message.read_string();
+        //     let size = message.read_int32();
+        //     message.read_int32();
+        //     message.read_string();
+        //     let n_attribs = message.read_int32();
+        //     let mut attribs: HashMap<i32, i32> = HashMap::new();
+        //
+        //     for _ in 0..n_attribs {
+        //         attribs.insert(message.read_int32(), message.read_int32());
+        //     }
+        //     files.push(File {
+        //         username: username.clone(),
+        //         name,
+        //         size,
+        //         attribs,
+        //     });
+        // }
+        // let slots = message.read_int8();
+        // let speed = message.read_int32();
+        let files: Vec<File> = Vec::new();
 
         Self {
-            current_token,
+            current_token: "".to_string(),
             files,
-            slots,
-            speed,
+            slots: 0,
+            speed: 0,
         };
     }
 }
