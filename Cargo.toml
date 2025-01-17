@@ -2,3 +2,8 @@
 name = "soulseek_download"
 version = "0.1.0"
 edition = "2021"
+flate2 = "1.0"
+
+[dependencies]
+flate2 = "1.0.35"
+zip = "2.2.2"

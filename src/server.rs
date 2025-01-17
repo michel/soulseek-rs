@@ -1,8 +1,9 @@
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
+use crate::message::peer::FileSearch;
 use crate::message::server::ConnectToPeerHandler;
 use crate::message::server::ExcludedSearchPhrasesHandler;
-use crate::message::server::FileSearch;
+use crate::message::server::FileSearchHandler;
 use crate::message::server::LoginHandler;
 use crate::message::server::MessageFactory;
 use crate::message::server::MessageUser;
@@ -249,7 +250,7 @@ impl Server {
             handlers.register_handler(ParentMinSpeedHandler);
             handlers.register_handler(ParentSpeedRatioHandler);
             handlers.register_handler(PrivilegedUsersHandler);
-            handlers.register_handler(FileSearch);
+            handlers.register_handler(FileSearchHandler);
             handlers.register_handler(ConnectToPeerHandler);
 
             let dispatcher = MessageDispatcher::new(sender, handlers);
