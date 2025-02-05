@@ -1,5 +1,5 @@
 use crate::dispatcher::MessageDispatcher;
-use crate::message::peer::FileSearchResponse;
+use crate::message::peer::{FileSearch, FileSearchResponse};
 use crate::message::server::MessageFactory;
 use crate::message::{Handlers, Message, MessageReader};
 use std::sync::mpsc;
@@ -23,6 +23,7 @@ pub struct DefaultPeer {
 #[allow(dead_code)]
 pub enum PeerOperation {
     SendMessage(Message),
+    FileSearchResult(FileSearch),
 }
 impl DefaultPeer {
     pub fn new(peer: Peer, _client_channel: Sender<ClientOperation>) -> Self {
@@ -116,6 +117,9 @@ impl DefaultPeer {
                                     break;
                                 }
                             }
+                        }
+                        PeerOperation::FileSearchResult(file_search) => {
+                            println!("{:?}", file_search)
                         }
                     }
                 }

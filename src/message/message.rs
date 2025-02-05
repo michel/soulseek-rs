@@ -14,49 +14,49 @@ impl Message {
         }
     }
 
-    // pub fn print_hex(&self) {
-    //     let data = &self.data;
-    //     const BYTES_PER_LINE: usize = 16;
-    //
-    //     let chunks = data.chunks(BYTES_PER_LINE);
-    //     for (i, chunk) in chunks.enumerate() {
-    //         // Print the offset
-    //         print!("{:04x}  ", i * BYTES_PER_LINE);
-    //
-    //         // Print the hexadecimal part
-    //         for j in 0..BYTES_PER_LINE {
-    //             if j < chunk.len() {
-    //                 print!("{:02x} ", chunk[j]);
-    //             } else {
-    //                 print!(" ");
-    //             }
-    //
-    //             // Add extra space in the middle
-    //             if j == 7 {
-    //                 print!(" ");
-    //             }
-    //         }
-    //
-    //         print!("  ");
-    //
-    //         // Print the ASCII part
-    //         let mut i = 0;
-    //         for &byte in chunk {
-    //             i = i + 1;
-    //             if byte.is_ascii_graphic() || byte.is_ascii_whitespace() {
-    //                 print!("{}", byte as char);
-    //             } else {
-    //                 print!(".");
-    //             }
-    //
-    //             if i == 8 {
-    //                 print!(" ");
-    //             }
-    //         }
-    //
-    //         println!();
-    //     }
-    // }
+    pub fn print_hex(&self) {
+        let data = &self.data;
+        const BYTES_PER_LINE: usize = 16;
+
+        let chunks = data.chunks(BYTES_PER_LINE);
+        for (i, chunk) in chunks.enumerate() {
+            // Print the offset
+            print!("{:04x}  ", i * BYTES_PER_LINE);
+
+            // Print the hexadecimal part
+            for j in 0..BYTES_PER_LINE {
+                if j < chunk.len() {
+                    print!("{:02x} ", chunk[j]);
+                } else {
+                    print!(" ");
+                }
+
+                // Add extra space in the middle
+                if j == 7 {
+                    print!(" ");
+                }
+            }
+
+            print!("  ");
+
+            // Print the ASCII part
+            let mut i = 0;
+            for &byte in chunk {
+                i = i + 1;
+                if byte.is_ascii_graphic() || byte.is_ascii_whitespace() {
+                    print!("{}", byte as char);
+                } else {
+                    print!(".");
+                }
+
+                if i == 8 {
+                    print!(" ");
+                }
+            }
+
+            println!();
+        }
+    }
     //
     // pub fn print_hex2(&self) -> String {
     //     let data = &self.data;

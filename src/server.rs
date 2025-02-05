@@ -1,6 +1,5 @@
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
-use crate::message::peer::FileSearch;
 use crate::message::server::ConnectToPeerHandler;
 use crate::message::server::ExcludedSearchPhrasesHandler;
 use crate::message::server::FileSearchHandler;
@@ -332,12 +331,12 @@ impl Server {
             Err(e) => println!("Failed to send: {}", e),
         }
     }
-    fn start_listener(&self) {
-        thread::spawn(move || Listen::new(2234));
+    fn start_listener(&self, server_channel: Sender<ServerOperation>) {
+        thread::spawn(move || Listen::new(2234, server_channel));
     }
 
     pub fn login(&self, username: &str, password: &str) -> Result<bool, std::io::Error> {
-        self.start_listener();
+        self.start_listener(self.sender.clone());
         // Send the login message
         self.queue_message(MessageFactory::build_login_message(username, password));
         let context = self.context.clone();
