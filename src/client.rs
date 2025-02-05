@@ -99,7 +99,7 @@ impl Client {
         println!("Searching for {}", query);
         if let Some(server) = &self.server {
             let hash = md5::md5(query);
-            let token = i32::from_str_radix(&hash[0..8].to_string(), 16).unwrap();
+            let token = i32::from_str_radix(&hash[0..5].to_string(), 16).unwrap();
             server.file_search(token, &query);
         } else {
             eprintln!("Not connected to server");

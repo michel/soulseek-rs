@@ -75,10 +75,12 @@ impl MessageHandler<PeerOperation> for FileSearchResponse {
         9
     }
     fn handle(&self, message: &mut Message, sender: Sender<PeerOperation>) {
-        println!("{:?}", message);
-        // let file_search = FileSearch::new_from_message(message);
+        // println!("{:?}", message);
+        let file_search = FileSearch::new_from_message(message);
 
-        // sender.send(ServerOperation::ConnectToPeer(peer)).unwrap();
+        sender
+            .send(PeerOperation::FileSearchResult(file_search))
+            .unwrap();
     }
 }
 
