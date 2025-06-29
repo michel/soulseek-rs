@@ -1,8 +1,7 @@
 use crate::message::{Message, MessageHandler};
 use crate::peer::PeerOperation;
-use flate2::bufread::ZlibDecoder;
+use crate::utils::zlib::deflate;
 use std::collections::HashMap;
-use std::io::Read;
 use std::sync::mpsc::Sender;
 
 #[derive(Debug)]
@@ -20,18 +19,15 @@ pub struct FileSearch {
     pub speed: i32,
 }
 
-fn unzip_buffer(buffer: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let mut z = ZlibDecoder::new(buffer);
-    let mut out: Vec<u8> = Vec::new();
-    z.read_to_end(&mut out).unwrap();
-    Ok(out)
+fn decompress_buffer(buffer: &[u8]) -> Result<Vec<u8>, String> {
+    deflate(buffer)
 }
 impl FileSearch {
     pub fn new_from_message(message: &mut Message) -> Self {
         let pointer = message.get_pointer();
         let size = message.get_size();
         let data: Vec<u8> = message.get_slice(pointer, size);
-        let deflated = unzip_buffer(&data).unwrap();
+        let deflated = decompress_buffer(&data).unwrap();
         let mut message = Message::new_with_data(deflated);
 
         let username = message.read_string();
