@@ -74,7 +74,7 @@ impl MessageReader {
         }
 
         let message_buffer: Vec<u8> = self.buffer.drain(..total_size).collect();
-        return Ok(Some(Message::new_with_data(message_buffer)));
+        Ok(Some(Message::new_with_data(message_buffer)))
     }
 }
 
