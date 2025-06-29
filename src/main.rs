@@ -3,6 +3,7 @@ mod dispatcher;
 mod message;
 mod peer;
 mod server;
+mod types;
 mod utils;
 
 use client::Client;
@@ -23,7 +24,8 @@ fn main() {
     client.connect();
     match client.login() {
         Ok(_) => {
-            client.search("Fantazia", Duration::from_secs(20));
+            let results = client.search("Fantazia", Duration::from_secs(10));
+            println!("Search results: {:?}", results);
         }
         Err(e) => {
             println!("Failed to login: {}", e);

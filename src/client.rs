@@ -1,6 +1,7 @@
 use crate::{
     peer::{DefaultPeer, Peer},
     server::{PeerAddress, Server},
+    types::FileSearch,
     utils::{md5, thread_pool::ThreadPool},
 };
 use std::{
@@ -19,10 +20,12 @@ use std::{
 const MAX_THREADS: usize = 100;
 pub enum ClientOperation {
     ConnectToPeer(Peer),
+    SearchResult(FileSearch),
 }
 struct ClientContext {
     peers: HashMap<String, DefaultPeer>,
     sender: Option<Sender<ClientOperation>>,
+    search_results: Vec<FileSearch>,
     thread_pool: ThreadPool,
 }
 impl ClientContext {
@@ -30,6 +33,7 @@ impl ClientContext {
         Self {
             peers: HashMap::new(),
             sender: None,
+            search_results: Vec::new(),
             thread_pool: ThreadPool::new(MAX_THREADS),
         }
     }
@@ -99,7 +103,7 @@ impl Client {
         }
     }
 
-    pub fn search(&self, query: &str, timeout: Duration) {
+    pub fn search(&self, query: &str, timeout: Duration) -> Vec<FileSearch> {
         println!("Searching for {}", query);
         if let Some(server) = &self.server {
             let hash = md5::md5(query);
@@ -115,9 +119,7 @@ impl Client {
                 break;
             }
         }
-        if let Some(server) = &self.server {
-            println!("server {:?}", server)
-        }
+        return self.context.lock().unwrap().search_results.clone();
     }
 
     fn listen_to_client_operations(
@@ -129,6 +131,13 @@ impl Client {
                 match operation {
                     ClientOperation::ConnectToPeer(peer) => {
                         Self::connect_to_peer(peer, client_context.clone())
+                    }
+                    ClientOperation::SearchResult(file_search) => {
+                        client_context
+                            .lock()
+                            .unwrap()
+                            .search_results
+                            .push(file_search);
                     }
                 }
             }
