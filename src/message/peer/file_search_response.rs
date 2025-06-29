@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct File {
     pub username: String,
     pub name: String,
@@ -12,6 +13,7 @@ pub struct File {
     pub attribs: HashMap<i32, i32>,
 }
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct FileSearch {
     pub token: String,
     pub files: Vec<File>,
