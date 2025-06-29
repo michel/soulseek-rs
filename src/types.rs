@@ -11,7 +11,7 @@ pub struct File {
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub struct FileSearch {
+pub struct FileSearchResult {
     pub token: String,
     pub files: Vec<File>,
     pub slots: i8,
