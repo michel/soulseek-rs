@@ -15,7 +15,7 @@ use crate::message::Handlers;
 use crate::message::Message;
 use crate::message::MessageReader;
 use crate::peer::listen::Listen;
-use crate::peer::peer::Peer;
+use crate::peer::Peer;
 
 use std::io::{self, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -332,7 +332,7 @@ impl Server {
         }
     }
     fn start_listener(&self, server_channel: Sender<ServerOperation>) {
-        thread::spawn(move || Listen::new(2234, server_channel));
+        thread::spawn(move || Listen::start(2234, server_channel));
     }
 
     pub fn login(&self, username: &str, password: &str) -> Result<bool, std::io::Error> {

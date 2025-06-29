@@ -1,4 +1,4 @@
-use crate::{message::message::Message, utils::md5};
+use crate::{message::Message, utils::md5};
 
 pub struct MessageFactory;
 impl MessageFactory {

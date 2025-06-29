@@ -291,15 +291,11 @@ fn decode_trees(r: &mut BitReader) -> Result<(HuffmanTree, HuffmanTree), String>
         } else if sym == 17 {
             // repeat code length 0 for 3..10 times. (3 bits of length)
             let repeat_length = r.read_bits(3)? + 3;
-            for _ in 0..repeat_length {
-                bl.push(0);
-            }
+            bl.resize(bl.len() + repeat_length as usize, 0);
         } else if sym == 18 {
             // repeat code length 0 for 11..138 times. (7 bits of length)
             let repeat_length = r.read_bits(7)? + 11;
-            for _ in 0..repeat_length {
-                bl.push(0);
-            }
+            bl.resize(bl.len() + repeat_length as usize, 0);
         } else {
             return Err("Invalid symbol".to_string());
         }
@@ -362,8 +358,8 @@ mod tests {
 
     #[test]
     fn test_extract_header_success() {
-        let data = vec![120, 156]; // Valid zlib header
-        let result = deflate(&vec![120, 156, 3, 0, 0, 0, 0, 1]); // Minimal valid zlib stream
+        let _data = [120, 156]; // Valid zlib header
+        let result = deflate(&[120, 156, 3, 0, 0, 0, 0, 1]); // Minimal valid zlib stream
         assert!(result.is_ok());
     }
 
