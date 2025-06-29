@@ -25,7 +25,7 @@ impl<Op> Handlers<Op> {
         self.handlers.insert(handler.get_code(), Box::new(handler));
         self
     }
-    pub fn get_handler(&self, code: u8) -> Option<&Box<dyn MessageHandler<Op>>> {
-        self.handlers.get(&code)
+    pub fn get_handler(&self, code: u8) -> Option<&dyn MessageHandler<Op>> {
+        self.handlers.get(&code).map(|v| &**v)
     }
 }

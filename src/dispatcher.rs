@@ -1,4 +1,4 @@
-use crate::message::{handlers::Handlers, message::Message};
+use crate::message::{handlers::Handlers, Message};
 use std::sync::mpsc::Sender;
 
 /// Add `<Op>` to make it generic over any operation type.

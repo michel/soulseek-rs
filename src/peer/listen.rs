@@ -7,7 +7,7 @@ use crate::server::ServerOperation;
 pub struct Listen {}
 
 impl Listen {
-    pub fn new(port: u32, server_channel: Sender<ServerOperation>) {
+    pub fn start(port: u32, _server_channel: Sender<ServerOperation>) {
         println!("starting listener on port {port}");
         let listener = TcpListener::bind(format!("0.0.0.0:{port}")).unwrap();
         for stream in listener.incoming() {

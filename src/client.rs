@@ -136,7 +136,7 @@ impl Client {
         let unlocked_context = context.lock().unwrap();
 
         if let Some(sender) = &unlocked_context.sender {
-            if unlocked_context.peers.get(&peer.username).is_none() {
+            if !unlocked_context.peers.contains_key(&peer.username) {
                 let peer_clone = peer.clone();
                 let sender_clone = sender.clone();
                 thread::spawn(move || {
