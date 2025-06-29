@@ -71,7 +71,7 @@ impl MessageFactory {
     pub fn build_watch_user(token: &str) -> Message {
         Message::new()
             .write_raw_bytes([5, 0, 0, 0, 0].to_vec())
-            .write_raw_hex_string(&token)
+            .write_raw_hex_string(token)
             .clone()
     }
 }

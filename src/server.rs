@@ -355,10 +355,10 @@ impl Server {
             }
 
             {
-                logged_in = context.lock().unwrap().logged_in.clone()
+                logged_in = context.lock().unwrap().logged_in
             }
 
-            if !logged_in.is_none() {
+            if logged_in.is_some() {
                 break;
             }
         }
