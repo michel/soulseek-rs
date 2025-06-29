@@ -1,15 +1,14 @@
 use crate::message::{Message, MessageHandler};
 use crate::peer::PeerOperation;
-use crate::types::{File, FileSearch};
+use crate::types::{File, FileSearchResult};
 use crate::utils::zlib::deflate;
 use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 
-
 fn decompress_buffer(buffer: &[u8]) -> Result<Vec<u8>, String> {
     deflate(buffer)
 }
-impl FileSearch {
+impl FileSearchResult {
     pub fn new_from_message(message: &mut Message) -> Self {
         let pointer = message.get_pointer();
         let size = message.get_size();
@@ -57,7 +56,7 @@ impl MessageHandler<PeerOperation> for FileSearchResponse {
         9
     }
     fn handle(&self, message: &mut Message, sender: Sender<PeerOperation>) {
-        let file_search = FileSearch::new_from_message(message);
+        let file_search = FileSearchResult::new_from_message(message);
 
         sender
             .send(PeerOperation::FileSearchResult(file_search))
@@ -85,7 +84,7 @@ fn test_new_from_message() {
     let mut message = Message::new_with_data(data);
     message.set_pointer(8);
 
-    let file_search = FileSearch::new_from_message(&mut message);
+    let file_search = FileSearchResult::new_from_message(&mut message);
     assert_eq!(file_search.token, "6d2b9434");
     assert_eq!(file_search.files.len(), 2);
     let file = &file_search.files[0];
