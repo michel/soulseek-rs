@@ -53,7 +53,7 @@ pub struct Peer {
     pub obfuscated_port: i8,
 }
 impl Peer {
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, dead_code)]
     pub fn new(
         username: String,
         connection_type: ConnectionType,
@@ -155,3 +155,4 @@ fn test_new_from_message2() {
     assert_eq!(peer.unknown, 1);
     assert_eq!(peer.obfuscated_port, 0);
 }
+
