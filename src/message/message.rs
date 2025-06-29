@@ -1,4 +1,4 @@
-use std::{fmt::Display, str};
+use std::str;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Message {
@@ -42,7 +42,7 @@ impl Message {
             // Print the ASCII part
             let mut i = 0;
             for &byte in chunk {
-                i = i + 1;
+                i += 1;
                 if byte.is_ascii_graphic() || byte.is_ascii_whitespace() {
                     print!("{}", byte as char);
                 } else {
@@ -166,7 +166,7 @@ impl Message {
             .map(|byte| format!("{:02x}", byte))
             .collect::<String>();
         self.pointer += size;
-        return hex_str;
+        hex_str
     }
 
     pub fn read_int8(&mut self) -> i8 {
