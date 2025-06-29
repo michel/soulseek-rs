@@ -1,7 +1,7 @@
 use crate::{
     peer::{DefaultPeer, Peer},
     server::{PeerAddress, Server},
-    utils::md5,
+    utils::{md5, thread_pool::ThreadPool},
 };
 use std::{
     collections::HashMap,
@@ -15,18 +15,22 @@ use std::{
     sync::{mpsc, Arc},
     time::{Duration, Instant},
 };
+
+const MAX_THREADS: usize = 100;
 pub enum ClientOperation {
     ConnectToPeer(Peer),
 }
 struct ClientContext {
     peers: HashMap<String, DefaultPeer>,
     sender: Option<Sender<ClientOperation>>,
+    thread_pool: ThreadPool,
 }
 impl ClientContext {
     pub fn new() -> Self {
         Self {
             peers: HashMap::new(),
             sender: None,
+            thread_pool: ThreadPool::new(MAX_THREADS),
         }
     }
 }
@@ -139,7 +143,7 @@ impl Client {
             if !unlocked_context.peers.contains_key(&peer.username) {
                 let peer_clone = peer.clone();
                 let sender_clone = sender.clone();
-                thread::spawn(move || {
+                unlocked_context.thread_pool.execute(move || {
                     let default_peer = DefaultPeer::new(peer_clone, sender_clone);
                     match default_peer.connect() {
                         Ok(p) => {
