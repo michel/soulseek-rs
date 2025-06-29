@@ -1,8 +1,8 @@
 use std::sync::mpsc::Sender;
 
-use crate::{
-    message::{handlers::MessageHandler, message::Message},
+use crate::{message::handlers::MessageHandler,
     server::ServerOperation,
+    message::Message
 };
 
 pub struct FileSearchHandler;

@@ -7,13 +7,14 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Barrier};
 use std::thread::{self};
 
-use super::peer::Peer;
+use crate::peer::Peer;
 use crate::client::ClientOperation;
 use std::io::{self, Write};
 use std::net::TcpStream;
 use std::net::ToSocketAddrs;
 use std::time::Duration;
 
+#[allow(dead_code)]
 pub struct DefaultPeer {
     peer: Peer,
     // client_channel: Sender<ClientOperation>,
@@ -45,7 +46,7 @@ impl DefaultPeer {
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
         if let Some(token) = self.peer.token.clone() {
             stream
-                .write_all(&MessageFactory::build_watch_user(&token).get_data())
+                .write_all(&MessageFactory::build_watch_user(token.as_str()).get_data())
                 .unwrap();
         }
         self.start_read_write_loops(stream).unwrap();

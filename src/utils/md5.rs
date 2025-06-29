@@ -71,8 +71,8 @@ fn round_one_operations(
     mut b: u32,
     mut c: u32,
     mut d: u32,
-    table: &Vec<u32>,
-    x: &Vec<u32>,
+    table: &[u32],
+    x: &[u32],
 ) -> [u32; 4] {
     let _ = x;
     let _ = table;
@@ -119,8 +119,8 @@ fn round_two_operations(
     mut b: u32,
     mut c: u32,
     mut d: u32,
-    table: &Vec<u32>,
-    x: &Vec<u32>,
+    table: &[u32],
+    x: &[u32],
 ) -> [u32; 4] {
     macro_rules! round2 {
         ( $a:ident, $b:ident, $c:ident, $d:ident, $k:expr, $s:expr, $i:expr) => {
@@ -165,8 +165,8 @@ fn round_three_operations(
     mut b: u32,
     mut c: u32,
     mut d: u32,
-    table: &Vec<u32>,
-    x: &Vec<u32>,
+    table: &[u32],
+    x: &[u32],
 ) -> [u32; 4] {
     macro_rules! round3 {
         ( $a:ident, $b:ident, $c:ident, $d:ident, $k:expr, $s:expr, $i:expr  ) => {
@@ -211,8 +211,8 @@ fn round_four_operations(
     mut b: u32,
     mut c: u32,
     mut d: u32,
-    table: &Vec<u32>,
-    x: &Vec<u32>,
+    table: &[u32],
+    x: &[u32],
 ) -> [u32; 4] {
     macro_rules! round4 {
         ( $a:ident, $b:ident, $c:ident, $d:ident, $k:expr, $s:expr, $i:expr ) => {
@@ -260,8 +260,8 @@ fn convert_u8_chunk_to_u32(chunk: &mut [u8]) -> Vec<u32> {
     // iterate over our block and take
     // our 8 bit ints and convert them to
     // 32 bit integers
-    for i in 0..chunk.len() {
-        temporary_vec.push(chunk[i]);
+    for item in chunk {
+        temporary_vec.push(*item);
         count += 1;
         if count == 4 {
             let temp_arr: [u8; 4] = vec_to_array(temporary_vec.clone());
