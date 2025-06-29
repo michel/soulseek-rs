@@ -1,7 +1,7 @@
 use crate::{
     peer::{DefaultPeer, Peer},
     server::{PeerAddress, Server},
-    types::FileSearch,
+    types::FileSearchResult,
     utils::{md5, thread_pool::ThreadPool},
 };
 use std::{
@@ -20,12 +20,12 @@ use std::{
 const MAX_THREADS: usize = 100;
 pub enum ClientOperation {
     ConnectToPeer(Peer),
-    SearchResult(FileSearch),
+    SearchResult(FileSearchResult),
 }
 struct ClientContext {
     peers: HashMap<String, DefaultPeer>,
     sender: Option<Sender<ClientOperation>>,
-    search_results: Vec<FileSearch>,
+    search_results: Vec<FileSearchResult>,
     thread_pool: ThreadPool,
 }
 impl ClientContext {
@@ -103,7 +103,7 @@ impl Client {
         }
     }
 
-    pub fn search(&self, query: &str, timeout: Duration) -> Vec<FileSearch> {
+    pub fn search(&self, query: &str, timeout: Duration) -> Vec<FileSearchResult> {
         println!("Searching for {}", query);
         if let Some(server) = &self.server {
             let hash = md5::md5(query);
