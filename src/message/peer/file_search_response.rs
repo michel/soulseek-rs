@@ -1,25 +1,10 @@
 use crate::message::{Message, MessageHandler};
 use crate::peer::PeerOperation;
+use crate::types::{File, FileSearch};
 use crate::utils::zlib::deflate;
 use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 
-#[derive(Debug)]
-#[allow(dead_code)]
-pub struct File {
-    pub username: String,
-    pub name: String,
-    pub size: i32,
-    pub attribs: HashMap<i32, i32>,
-}
-#[derive(Debug)]
-#[allow(dead_code)]
-pub struct FileSearch {
-    pub token: String,
-    pub files: Vec<File>,
-    pub slots: i8,
-    pub speed: i32,
-}
 
 fn decompress_buffer(buffer: &[u8]) -> Result<Vec<u8>, String> {
     deflate(buffer)
@@ -72,7 +57,6 @@ impl MessageHandler<PeerOperation> for FileSearchResponse {
         9
     }
     fn handle(&self, message: &mut Message, sender: Sender<PeerOperation>) {
-        // println!("{:?}", message);
         let file_search = FileSearch::new_from_message(message);
 
         sender
