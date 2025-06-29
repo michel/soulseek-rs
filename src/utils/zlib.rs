@@ -1,7 +1,5 @@
 //https://www.rfc-editor.org/rfc/rfc1950
 
-use flate2::bufread::ZlibDecoder;
-
 #[derive(Debug)]
 struct ZlibHeader {
     cm: u8,
@@ -32,13 +30,13 @@ pub fn extract_header(data: &Vec<u8>) -> Result<ZlibHeader, String> {
     if cm != 8 {
         return Err(format!("ZLIB compression method not supported: {}", cmf));
     }
-    return Ok(ZlibHeader {
+    Ok(ZlibHeader {
         cm,
         cinfo,
         fcheck,
         fdict,
         flevel,
-    });
+    })
 }
 
 pub fn extract_block_header(data: &Vec<u8>) -> BlockHeader {
@@ -114,7 +112,7 @@ fn find_symbol(current_code: u32, code_len: u32) -> Option<u32> {
             // Range for symbols 256-279: 0b0000000 to 0b0010111
             if (0..=0b0010111).contains(&reversed_code) {
                 // Symbol = base_symbol + (code - base_code)
-                let symbol = 256 + (reversed_code - 0b0000000);
+                let symbol = 256 + reversed_code;
                 return Some(symbol);
             }
         }
@@ -122,7 +120,7 @@ fn find_symbol(current_code: u32, code_len: u32) -> Option<u32> {
             let reversed_code = reverse_bits(current_code, 8);
             // Range for symbols 0-143: 0b00110000 to 0b10111111
             if (0b00110000..=0b10111111).contains(&reversed_code) {
-                let symbol = 0 + (reversed_code - 0b00110000);
+                let symbol = reversed_code - 0b00110000;
                 return Some(symbol);
             }
             // Range for symbols 280-287: 0b11000000 to 0b11000111
@@ -148,7 +146,7 @@ fn find_symbol(current_code: u32, code_len: u32) -> Option<u32> {
     // If we checked a valid length but the code wasn't in any range for that length.
     None
 }
-pub fn decode_fixed_huffman_symbol(reader: &mut BitReader) -> Result<u32, &'static str> {
+fn decode_fixed_huffman_symbol(reader: &mut BitReader) -> Result<u32, &'static str> {
     let mut current_code = 0u32;
     let mut code_len = 0u32;
     loop {
@@ -355,14 +353,11 @@ impl HuffmanTable {
     }
 }
 
-// --- New Generic Symbol Decoder ---
-/// Decodes one symbol from the stream using the provided Huffman table.
 fn decode_symbol(
     reader: &mut BitReader,
     huffman_table: &HuffmanTable,
 ) -> Result<u32, &'static str> {
     let mut code = 0;
-    let mut len = 0;
 
     // The maximum length for DEFLATE codes is 15 bits.
     for i in 0..15 {
