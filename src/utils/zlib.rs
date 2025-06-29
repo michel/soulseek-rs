@@ -387,7 +387,6 @@ pub fn deflate(data: Vec<u8>) -> Result<Vec<u8>, String> {
     let mut output: Vec<u8> = vec![];
     let header_data = reader.read_bytes(16).unwrap();
     let header = extract_header(&header_data).unwrap();
-    dbg!(header);
 
     // Main loop to process all blocks in the stream.
     loop {
@@ -1175,5 +1174,5 @@ fn test_deflate() {
     ]
     .to_vec();
     let deflated = deflate(data).unwrap();
-    assert_eq!(res, expected)
+    assert_eq!(deflated, expected)
 }
