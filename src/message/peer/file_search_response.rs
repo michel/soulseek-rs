@@ -1,4 +1,3 @@
-use crate::message::server::MessageFactory;
 use crate::message::{Message, MessageHandler};
 use crate::peer::PeerOperation;
 use flate2::bufread::ZlibDecoder;
