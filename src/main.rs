@@ -1,10 +1,11 @@
+#[macro_use]
+mod utils;
 mod client;
 mod dispatcher;
 mod message;
 mod peer;
 mod server;
 mod types;
-mod utils;
 
 use client::Client;
 use server::PeerAddress;
@@ -25,10 +26,10 @@ fn main() {
     match client.login() {
         Ok(_) => {
             let results = client.search("Fantazia", Duration::from_secs(10));
-            println!("Search results: {:?}", results);
+            info!("Search results: {:?}", results);
         }
         Err(e) => {
-            println!("Failed to login: {}", e);
+            error!("Failed to login: {}", e);
         }
     }
 }

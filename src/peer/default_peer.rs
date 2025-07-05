@@ -83,14 +83,14 @@ impl DefaultPeer {
                     Ok(_) => {}
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                     Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
-                        println!(
+                        debug!(
                             "Read operation timed out in default peer {:}:{:}",
                             peer.host, peer.port
                         );
                         continue;
                     }
                     Err(e) => {
-                        eprintln!("Error reading from peer: {}. Terminating read loop.", e);
+                        error!("Error reading from peer: {}. Terminating read loop.", e);
                         let _ = client_channel_for_read.send(ClientOperation::PeerDisconnected(peer.username.clone()));
                         break;
                     }
@@ -99,7 +99,7 @@ impl DefaultPeer {
                 match buffered_reader.extract_message() {
                     Ok(Some(mut message)) => dispatcher.dispatch(&mut message),
                     Err(e) => {
-                        println!(
+                        warn!(
                             "Error extracting message in default peer: {}. Terminating read loop.",
                             e
                         );
@@ -120,7 +120,7 @@ impl DefaultPeer {
                         match operation {
                             PeerOperation::SendMessage(message) => {
                                 if let Err(e) = write_stream.write_all(&message.get_buffer()) {
-                                    eprintln!("Error writing message to stream: {}. Terminating write loop.", e);
+                                    error!("Error writing message to stream: {}. Terminating write loop.", e);
                                     let _ = client_channel.send(ClientOperation::PeerDisconnected(peer_username.clone()));
                                     break;
                                 }
@@ -134,7 +134,7 @@ impl DefaultPeer {
                     }
                     Err(_) => {
                         // The sender has been dropped, the peer is shutting down.
-                        println!("Peer channel closed. Terminating write loop.");
+                        debug!("Peer channel closed. Terminating write loop.");
                         break;
                     }
                 }
@@ -155,19 +155,19 @@ impl Drop for DefaultPeer {
 
         // Join the read thread
         if let Some(handle) = self.read_thread.take() {
-            println!("Joining read thread...");
+            debug!("Joining read thread...");
             match handle.join() {
-                Ok(_) => println!("Read thread joined successfully."),
-                Err(e) => eprintln!("Read thread panicked: {:?}", e),
+                Ok(_) => debug!("Read thread joined successfully."),
+                Err(e) => error!("Read thread panicked: {:?}", e),
             }
         }
 
         // Join the write thread
         if let Some(handle) = self.write_thread.take() {
-            println!("Joining write thread...");
+            debug!("Joining write thread...");
             match handle.join() {
-                Ok(_) => println!("Write thread joined successfully."),
-                Err(e) => eprintln!("Write thread panicked: {:?}", e),
+                Ok(_) => debug!("Write thread joined successfully."),
+                Err(e) => error!("Write thread panicked: {:?}", e),
             }
         }
     }
