@@ -235,8 +235,18 @@ impl Message {
         self.data.extend_from_slice(&value.to_le_bytes());
         self
     }
+
+    pub fn write_int64(&mut self, value: i64) -> &mut Self {
+        self.data.extend_from_slice(&value.to_le_bytes());
+        self
+    }
     pub fn write_raw_bytes(&mut self, value: Vec<u8>) -> &mut Self {
         self.data.extend_from_slice(&value);
+        self
+    }
+
+    pub fn write_bool(&mut self, value: bool) -> &mut Self {
+        self.data.push(if value { 1 } else { 0 });
         self
     }
 

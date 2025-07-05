@@ -26,7 +26,11 @@ fn main() {
     match client.login() {
         Ok(_) => {
             let results = client.search("Fantazia", Duration::from_secs(10));
-            info!("Search results: {:?}", results);
+            println!("Search results: {:?}", results);
+            if !results.is_empty() && !results[0].files.is_empty() {
+                let file = results[0].files[0].clone();
+                client.download(file.name, file.username);
+            }
         }
         Err(e) => {
             error!("Failed to login: {}", e);

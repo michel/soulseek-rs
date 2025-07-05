@@ -1,4 +1,4 @@
-use crate::{message::Message, utils::md5};
+use crate::{message::Message, types::Transfer, utils::md5};
 
 pub struct MessageFactory;
 impl MessageFactory {
@@ -73,6 +73,24 @@ impl MessageFactory {
             .write_raw_bytes([5, 0, 0, 0, 0].to_vec())
             .write_raw_hex_string(token)
             .clone()
+    }
+
+    pub fn build_queue_upload_message(filename: &str) -> Message {
+        Message::new()
+            .write_int32(43)
+            .write_string(filename)
+            .clone()
+    }
+
+    pub fn build_transfer_response_message(transfer: Transfer) -> Message {
+        Message::new()
+            .write_int32(32)
+            .write_bool(true)
+            .write_int64(transfer.size)
+            .clone()
+    }
+    pub fn build_pierce_firewall_message(token: i32) -> Message {
+        Message::new().write_int32(token).clone()
     }
 }
 
