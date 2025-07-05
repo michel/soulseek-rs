@@ -198,8 +198,11 @@ impl Client {
                             let mut context = client_context.lock().unwrap();
                             context.peers.insert(peer.username, p);
                         }
-                        Err(_e) => {
-                            // eprintln!("Error connecting to peer: {:?}", e)
+                        Err(e) => {
+                            // error!(
+                            //     "Can't connect to {} {}:{} - {}",
+                            //     peer.username, peer.host, peer.port, e
+                            // );
                         }
                     }
                 });

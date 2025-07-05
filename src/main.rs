@@ -9,7 +9,7 @@ mod types;
 
 use client::Client;
 use server::PeerAddress;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 // PeerAddress::new(String::from("server.slsknet.org"), 2416),
 fn main() {
