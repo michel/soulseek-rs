@@ -25,7 +25,7 @@ impl MessageHandler<ServerOperation> for MessageUser {
             new_message,
         );
 
-        println!("User message received:",);
+        info!("User message received:");
         user_message.print()
     }
 }

@@ -62,7 +62,7 @@ impl Message {
                 }
             }
 
-            println!();
+            trace!("");
         }
     }
     //

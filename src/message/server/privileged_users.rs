@@ -14,6 +14,6 @@ impl MessageHandler<ServerOperation> for PrivilegedUsersHandler {
 
     fn handle(&self, message: &mut Message, _sender: Sender<ServerOperation>) {
         let number = message.read_int32();
-        println!("Number of privilaged users: {}", number);
+        debug!("Number of privileged users: {}", number);
     }
 }

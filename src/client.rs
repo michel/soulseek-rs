@@ -49,6 +49,7 @@ pub struct Client {
 
 impl Client {
     pub fn new(address: PeerAddress, username: String, password: String) -> Self {
+        crate::utils::logger::init();
         Self {
             address,
             username,
@@ -67,7 +68,7 @@ impl Client {
         // self.read_form_channel(message_reader);
         self.server = match Server::new(self.address.clone(), sender) {
             Ok(server) => {
-                println!(
+                info!(
                     "Connected to server at {}:{}",
                     server.get_address().get_host(),
                     server.get_address().get_port()
@@ -77,7 +78,7 @@ impl Client {
                 Some(server)
             }
             Err(e) => {
-                eprintln!("Error connecting to server: {}", e);
+                error!("Error connecting to server: {}", e);
                 None
             }
         };
@@ -85,7 +86,7 @@ impl Client {
 
     pub fn login(&self) -> Result<bool, std::io::Error> {
         // Attempt to login
-        println!("Logging in as {}", self.username);
+        info!("Logging in as {}", self.username);
         if let Some(server) = &self.server {
             let result = server.login(&self.username, &self.password);
             if result.unwrap() {
@@ -113,13 +114,13 @@ impl Client {
     }
 
     pub fn search(&self, query: &str, timeout: Duration) -> Vec<FileSearchResult> {
-        println!("Searching for {}", query);
+        info!("Searching for {}", query);
         if let Some(server) = &self.server {
             let hash = md5::md5(query);
             let token = i32::from_str_radix(&hash[0..5], 16).unwrap();
             server.file_search(token, query);
         } else {
-            eprintln!("Not connected to server");
+            warn!("Not connected to server");
         }
 
         let start = Instant::now();
@@ -181,7 +182,7 @@ impl Client {
                 });
             }
         } else {
-            eprintln!("No sender found");
+            error!("No sender found");
         }
     }
 }
