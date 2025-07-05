@@ -19,7 +19,7 @@ impl<Op> MessageDispatcher<Op> {
             message.set_pointer(8);
             handler.handle(message, self.sender.clone());
         } else {
-            println!(
+            warn!(
                 "No handler found for message code: {:?}",
                 message.get_message_code()
             );

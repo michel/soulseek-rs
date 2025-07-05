@@ -1,55 +1,8 @@
 use crate::message::{Message, MessageHandler};
 use crate::peer::PeerOperation;
-use crate::types::{File, FileSearchResult};
-use crate::utils::zlib::deflate;
-use std::collections::HashMap;
+use crate::types::FileSearchResult;
 use std::sync::mpsc::Sender;
 
-fn decompress_buffer(buffer: &[u8]) -> Result<Vec<u8>, String> {
-    deflate(buffer)
-}
-impl FileSearchResult {
-    pub fn new_from_message(message: &mut Message) -> Self {
-        let pointer = message.get_pointer();
-        let size = message.get_size();
-        let data: Vec<u8> = message.get_slice(pointer, size);
-        let deflated = decompress_buffer(&data).unwrap();
-        let mut message = Message::new_with_data(deflated);
-
-        let username = message.read_string();
-        let token = message.read_raw_hex_str(4);
-        let n_files = message.read_int32();
-        let mut files: Vec<File> = Vec::new();
-        for _ in 0..n_files {
-            message.read_int8();
-            let name = message.read_string();
-            let size = message.read_int32();
-            message.read_int32();
-            message.read_string();
-            let n_attribs = message.read_int32();
-            let mut attribs: HashMap<i32, i32> = HashMap::new();
-
-            for _ in 0..n_attribs {
-                attribs.insert(message.read_int32(), message.read_int32());
-            }
-            files.push(File {
-                username: username.clone(),
-                name,
-                size,
-                attribs,
-            });
-        }
-        let slots = message.read_int8();
-        let speed = message.read_int32();
-
-        Self {
-            token,
-            files,
-            slots,
-            speed,
-        }
-    }
-}
 pub struct FileSearchResponse;
 impl MessageHandler<PeerOperation> for FileSearchResponse {
     fn get_code(&self) -> u8 {
@@ -85,7 +38,7 @@ fn test_new_from_message() {
     message.set_pointer(8);
 
     let file_search = FileSearchResult::new_from_message(&mut message);
-    assert_eq!(file_search.token, "6d2b9434");
+    assert_eq!(file_search.token, 23);
     assert_eq!(file_search.files.len(), 2);
     let file = &file_search.files[0];
     assert_eq!(

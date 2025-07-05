@@ -20,6 +20,6 @@ impl MessageHandler<ServerOperation> for ExcludedSearchPhrasesHandler {
             let phrase = message.read_string();
             exluded_phrases.push(phrase);
         }
-        println!("Excluded search phrases: {:?}", exluded_phrases);
+        debug!("Excluded search phrases: {:?}", exluded_phrases);
     }
 }

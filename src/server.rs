@@ -15,6 +15,7 @@ use crate::message::Handlers;
 use crate::message::Message;
 use crate::message::MessageReader;
 use crate::peer::listen::Listen;
+use crate::peer::ConnectionType;
 use crate::peer::Peer;
 
 use std::io::{self, Write};
@@ -71,16 +72,16 @@ impl Context {
 }
 #[derive(Debug, Clone)]
 pub struct UserMessage {
-    id: i32,
-    timestamp: i32,
+    id: u32,
+    timestamp: u32,
     username: String,
     message: String,
     new_message: bool,
 }
 impl UserMessage {
     pub fn new(
-        id: i32,
-        timestamp: i32,
+        id: u32,
+        timestamp: u32,
         username: String,
         message: String,
         new_message: bool,
@@ -94,7 +95,7 @@ impl UserMessage {
         }
     }
     pub fn print(&self) {
-        println!(
+        debug!(
             "Timestamp: {}. User: {}, Id: #{}, New message: {} Message: {}",
             self.timestamp, self.username, self.id, self.new_message, self.message
         );
@@ -121,19 +122,19 @@ impl Rooms {
 
     #[allow(dead_code)]
     pub fn print(&self) {
-        println!("Public rooms ({}):", self.public_rooms.len());
+        info!("Public rooms ({}):", self.public_rooms.len());
         for room in &self.public_rooms {
             room.print();
         }
-        println!("Owned private rooms ({}):", self.owned_private_rooms.len());
+        info!("Owned private rooms ({}):", self.owned_private_rooms.len());
         for room in &self.owned_private_rooms {
             room.print();
         }
-        println!("Private rooms ({}):", self.private_rooms.len());
+        info!("Private rooms ({}):", self.private_rooms.len());
         for room in &self.private_rooms {
             room.print();
         }
-        println!(
+        info!(
             "Operated private rooms ({}):",
             self.operated_private_rooms.len()
         );
@@ -160,7 +161,7 @@ impl Room {
         self.number_of_users = number_of_users;
     }
     pub fn print(&self) {
-        println!(
+        debug!(
             "Room: {}, Number of users: {}",
             self.name, self.number_of_users
         );
@@ -172,6 +173,7 @@ pub enum ServerOperation {
     SendMessage(Message),
     #[allow(dead_code)]
     ConnectToPeer(Peer),
+    PierceFirewall(u32),
 }
 
 #[derive(Debug)]
@@ -205,6 +207,10 @@ impl Server {
         &self.address
     }
 
+    pub fn get_sender(&self) -> &Sender<ServerOperation> {
+        &self.sender
+    }
+
     /// Start reading and writing loops in separate threads
     fn start_read_write_loops(
         &mut self,
@@ -216,7 +222,7 @@ impl Server {
             .next()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Invalid address"))?;
 
-        println!(
+        info!(
             "Connecting to server at {}:{}",
             self.address.host, self.address.port
         );
@@ -261,24 +267,31 @@ impl Server {
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                     Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
-                        println!("Read operation timed out");
+                        debug!("Read operation timed out");
                         continue;
                     }
                     Err(e) => {
-                        eprintln!("Error reading from server: {}", e);
+                        error!("Error reading from server: {}", e);
                         break;
                     }
                 }
 
                 match buffered_reader.extract_message() {
                     Ok(Some(mut message)) => {
-                        // println!("Received message: {:?}", message.get_message_code_u32());
-                        // message.print_hex();
+                        // trace!(
+                        //     "[server] ← {:?}",
+                        //     message
+                        //         .get_message_name(
+                        //             MessageType::Server,
+                        //             message.get_message_code() as u32
+                        //         )
+                        //         .map_err(|e| e.to_string())
+                        // );
 
                         dispatcher.dispatch(&mut message)
                     }
                     Err(e) => {
-                        println!("Error extracting message: {}", e)
+                        warn!("Error extracting message: {}", e)
                     }
                     Ok(None) => continue,
                 }
@@ -295,24 +308,56 @@ impl Server {
             loop {
                 if let Ok(operation) = server_channel.recv() {
                     match operation {
-                        ServerOperation::ConnectToPeer(peer) => {
-                            match client_channel.send(ClientOperation::ConnectToPeer(peer)) {
-                                Ok(_) => {}
-                                Err(e) => {
-                                    println!("Error sending message: {}", e);
+                        ServerOperation::ConnectToPeer(peer) => match peer.connection_type {
+                            ConnectionType::P => {
+                                match client_channel.send(ClientOperation::ConnectToPeer(peer)) {
+                                    Ok(_) => {}
+                                    Err(_e) => {}
                                 }
                             }
-                        }
+                            ConnectionType::F => {
+                                match client_channel.send(ClientOperation::PierceFireWall(peer)) {
+                                    Ok(_) => {
+                                        debug!("Sent PierceFireWall operation for F-type connection");
+                                    }
+                                    Err(_e) => {
+                                        error!("Failed to send PierceFireWall operation");
+                                    }
+                                }
+                            }
+                            ConnectionType::D => {}
+                        },
                         ServerOperation::LoginStatus(message) => {
                             context.lock().unwrap().logged_in = Some(message);
                         }
+                        ServerOperation::PierceFirewall(token) => {
+                            let pierce_message = MessageFactory::build_pierce_firewall_message(token);
+                            match write_stream.write_all(&pierce_message.get_buffer()) {
+                                Ok(_) => {
+                                    debug!("Sent PierceFirewall message with token: {}", token);
+                                }
+                                Err(e) => {
+                                    error!("Error writing PierceFirewall message: {}", e);
+                                    break;
+                                }
+                            }
+                        }
                         ServerOperation::SendMessage(message) => {
-                            // message.decode();
-                            // message.print_hex2();
+                            // trace!(
+                            //     "[server] ➡ {:?}",
+                            //     message
+                            //         .get_message_name(
+                            //             MessageType::Server,
+                            //             u32::from_le_bytes(
+                            //                 message.get_slice(0, 4).try_into().unwrap()
+                            //             )
+                            //         )
+                            //         .map_err(|e| e.to_string()),
+                            // );
                             match write_stream.write_all(&message.get_buffer()) {
                                 Ok(_) => {}
                                 Err(e) => {
-                                    eprintln!("Error writing message to stream : {}", e);
+                                    error!("Error writing message to stream : {}", e);
                                     break;
                                 }
                             }
@@ -328,7 +373,7 @@ impl Server {
     fn queue_message(&self, message: Message) {
         match self.sender.send(ServerOperation::SendMessage(message)) {
             Ok(_) => {}
-            Err(e) => println!("Failed to send: {}", e),
+            Err(e) => error!("Failed to send: {}", e),
         }
     }
     fn start_listener(&self, server_channel: Sender<ServerOperation>) {
@@ -347,7 +392,7 @@ impl Server {
         // wait till server says your logged in or not
         loop {
             if start.elapsed() > timeout {
-                println!("Timeout waiting for login response");
+                warn!("Timeout waiting for login response");
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::TimedOut,
                     "Timeout waiting for login response",
@@ -364,9 +409,9 @@ impl Server {
         }
 
         if logged_in.unwrap() {
-            println!("Logged in as {}", username);
+            info!("Logged in as {}", username);
             self.queue_message(MessageFactory::build_set_wait_port_message());
-            self.queue_message(MessageFactory::build_shared_folders_message(1, 1));
+            self.queue_message(MessageFactory::build_shared_folders_message(1, 499));
             self.queue_message(MessageFactory::build_no_parent_message());
             self.queue_message(MessageFactory::build_set_status_message(2));
         }
@@ -374,7 +419,14 @@ impl Server {
         Ok(logged_in.unwrap())
     }
 
-    pub fn file_search(&self, token: i32, query: &str) {
+    pub fn file_search(&self, token: u32, query: &str) {
         self.queue_message(MessageFactory::build_file_search_message(token, query));
+    }
+
+    pub fn pierce_firewall(&self, token: u32) {
+        match self.sender.send(ServerOperation::PierceFirewall(token)) {
+            Ok(_) => {}
+            Err(e) => error!("Failed to send PierceFirewall: {}", e),
+        }
     }
 }

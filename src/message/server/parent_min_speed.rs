@@ -15,6 +15,6 @@ impl MessageHandler<ServerOperation> for ParentMinSpeedHandler {
     fn handle(&self, message: &mut Message, sender: Sender<ServerOperation>) {
         let _ = sender;
         let number = message.read_int32();
-        println!("Parent min speed: {}", number);
+        debug!("Parent min speed: {}", number);
     }
 }

@@ -1,8 +1,11 @@
 use crate::dispatcher::MessageDispatcher;
+use crate::message::peer::get_share_file_list::GetShareFileList;
+use crate::message::peer::transfer_request::TransferRequest;
+use crate::message::peer::upload_failed::UploadFailedHandler;
 use crate::message::peer::FileSearchResponse;
 use crate::message::server::MessageFactory;
-use crate::message::{Handlers, Message, MessageReader};
-use crate::types::FileSearchResult;
+use crate::message::{Handlers, Message, MessageReader, MessageType};
+use crate::types::{FileSearchResult, Transfer};
 
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
@@ -20,7 +23,6 @@ pub struct DefaultPeer {
     peer: Peer,
     peer_channel: Option<Sender<PeerOperation>>,
     client_channel: Sender<ClientOperation>,
-    // Store thread handles for proper lifecycle management
     read_thread: Option<JoinHandle<()>>,
     write_thread: Option<JoinHandle<()>>,
 }
@@ -29,6 +31,7 @@ pub struct DefaultPeer {
 pub enum PeerOperation {
     SendMessage(Message),
     FileSearchResult(FileSearchResult),
+    TransferRequest(Transfer),
 }
 impl DefaultPeer {
     pub fn new(peer: Peer, client_channel: Sender<ClientOperation>) -> Self {
@@ -46,13 +49,14 @@ impl DefaultPeer {
             .next()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Invalid address"))?;
 
-        let mut stream = TcpStream::connect_timeout(&socket_address, Duration::from_secs(10))?;
+        let mut stream = TcpStream::connect_timeout(&socket_address, Duration::from_secs(20))?;
 
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-        if let Some(token) = self.peer.token.clone() {
+
+        if let Some(token) = self.peer.token {
             stream
-                .write_all(&MessageFactory::build_watch_user(token.as_str()).get_data())
+                .write_all(&MessageFactory::build_watch_user(token).get_data())
                 .unwrap();
         }
         self.start_read_write_loops(stream)?;
@@ -64,6 +68,9 @@ impl DefaultPeer {
         let (peer_sender, peer_reader): (Sender<PeerOperation>, Receiver<PeerOperation>) =
             mpsc::channel();
 
+        // Set the peer_channel so transfer_request can send messages
+        self.peer_channel = Some(peer_sender.clone());
+
         let mut read_stream = stream.try_clone()?;
         let mut write_stream = stream; // Use the original stream for writing
 
@@ -74,6 +81,9 @@ impl DefaultPeer {
         self.read_thread = Some(thread::spawn(move || {
             let mut handlers = Handlers::new();
             handlers.register_handler(FileSearchResponse);
+            handlers.register_handler(TransferRequest);
+            handlers.register_handler(GetShareFileList);
+            handlers.register_handler(UploadFailedHandler);
 
             let dispatcher = MessageDispatcher::new(peer_sender, handlers);
 
@@ -83,27 +93,41 @@ impl DefaultPeer {
                     Ok(_) => {}
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                     Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
-                        println!(
+                        debug!(
                             "Read operation timed out in default peer {:}:{:}",
                             peer.host, peer.port
                         );
                         continue;
                     }
                     Err(e) => {
-                        eprintln!("Error reading from peer: {}. Terminating read loop.", e);
-                        let _ = client_channel_for_read.send(ClientOperation::PeerDisconnected(peer.username.clone()));
+                        error!("Error reading from peer: {}. Terminating read loop.", e);
+                        let _ = client_channel_for_read
+                            .send(ClientOperation::PeerDisconnected(peer.username.clone()));
                         break;
                     }
                 }
 
                 match buffered_reader.extract_message() {
-                    Ok(Some(mut message)) => dispatcher.dispatch(&mut message),
+                    Ok(Some(mut message)) => {
+                        trace!(
+                            "[default_peer:{:?}] ← {:?}",
+                            peer.username,
+                            message
+                                .get_message_name(
+                                    MessageType::Peer,
+                                    message.get_message_code() as u32
+                                )
+                                .map_err(|e| e.to_string())
+                        );
+                        dispatcher.dispatch(&mut message)
+                    }
                     Err(e) => {
-                        println!(
+                        warn!(
                             "Error extracting message in default peer: {}. Terminating read loop.",
                             e
                         );
-                        let _ = client_channel_for_read.send(ClientOperation::PeerDisconnected(peer.username.clone()));
+                        let _ = client_channel_for_read
+                            .send(ClientOperation::PeerDisconnected(peer.username.clone()));
                         break;
                     }
                     Ok(None) => continue,
@@ -112,29 +136,62 @@ impl DefaultPeer {
         }));
 
         let client_channel = self.client_channel.clone();
+        let peer_channel = self.peer_channel.clone();
         let peer_username = self.peer.username.clone();
+
         self.write_thread = Some(thread::spawn(move || {
             loop {
                 match peer_reader.recv() {
-                    Ok(operation) => {
-                        match operation {
-                            PeerOperation::SendMessage(message) => {
-                                if let Err(e) = write_stream.write_all(&message.get_buffer()) {
-                                    eprintln!("Error writing message to stream: {}. Terminating write loop.", e);
-                                    let _ = client_channel.send(ClientOperation::PeerDisconnected(peer_username.clone()));
-                                    break;
-                                }
+                    Ok(operation) => match operation {
+                        PeerOperation::SendMessage(message) => {
+                            trace!(
+                                "[default_peer:{:?}] ➡ {:?} - {:?}",
+                                peer_username,
+                                message
+                                    .get_message_name(
+                                        MessageType::Peer,
+                                        u32::from_le_bytes(
+                                            message.get_slice(0, 4).try_into().unwrap()
+                                        )
+                                    )
+                                    .map_err(|e| e.to_string()),
+                                message
+                            );
+
+                            if let Err(e) = write_stream.write_all(&message.get_buffer()) {
+                                error!("Error writing message to stream: {} - {}. Terminating write loop.", peer_username, e);
+                                let _ = client_channel
+                                    .send(ClientOperation::PeerDisconnected(peer_username.clone()));
+                                break;
                             }
-                            PeerOperation::FileSearchResult(file_search) => {
-                                client_channel
-                                    .send(ClientOperation::SearchResult(file_search))
+                        }
+                        PeerOperation::FileSearchResult(file_search) => {
+                            client_channel
+                                .send(ClientOperation::SearchResult(file_search))
+                                .unwrap();
+                        }
+                        PeerOperation::TransferRequest(transfer) => {
+                            debug!(
+                                "[default_peer:{}] transfer request: {:?}",
+                                peer_username, transfer
+                            );
+                            client_channel
+                                .send(ClientOperation::TransferRequest(transfer.clone()))
+                                .unwrap();
+
+                            let transfer_response =
+                                MessageFactory::build_transfer_response_message(transfer.clone());
+
+                            if let Some(sender) = peer_channel.clone() {
+                                sender
+                                    .send(PeerOperation::SendMessage(transfer_response))
                                     .unwrap();
                             }
                         }
-                    }
+                    },
                     Err(_) => {
                         // The sender has been dropped, the peer is shutting down.
-                        println!("Peer channel closed. Terminating write loop.");
+                        debug!("Peer channel closed. Terminating write loop.");
                         break;
                     }
                 }
@@ -143,31 +200,33 @@ impl DefaultPeer {
 
         Ok(())
     }
+
+    pub fn transfer_request(&self, filename: String) -> Result<(), io::Error> {
+        let message = MessageFactory::build_queue_upload_message(&filename);
+        if let Some(sender) = &self.peer_channel {
+            sender.send(PeerOperation::SendMessage(message)).unwrap();
+        }
+        Ok(())
+    }
 }
 
 impl Drop for DefaultPeer {
     fn drop(&mut self) {
-        // Signal threads to shut down (e.g., by dropping the sender half of the channel)
-        // For now, we'll just drop the peer_channel, which will cause the writer thread
-        // to exit its loop. A more robust solution might involve a shared AtomicBool
-        // or a dedicated shutdown channel.
         self.peer_channel = None;
 
-        // Join the read thread
         if let Some(handle) = self.read_thread.take() {
-            println!("Joining read thread...");
+            debug!("Joining read thread...");
             match handle.join() {
-                Ok(_) => println!("Read thread joined successfully."),
-                Err(e) => eprintln!("Read thread panicked: {:?}", e),
+                Ok(_) => debug!("Read thread joined successfully."),
+                Err(e) => error!("Read thread panicked: {:?}", e),
             }
         }
 
-        // Join the write thread
         if let Some(handle) = self.write_thread.take() {
-            println!("Joining write thread...");
+            debug!("Joining write thread...");
             match handle.join() {
-                Ok(_) => println!("Write thread joined successfully."),
-                Err(e) => eprintln!("Write thread panicked: {:?}", e),
+                Ok(_) => debug!("Write thread joined successfully."),
+                Err(e) => error!("Write thread panicked: {:?}", e),
             }
         }
     }

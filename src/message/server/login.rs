@@ -20,9 +20,9 @@ impl MessageHandler<ServerOperation> for LoginHandler {
             return sender.send(ServerOperation::LoginStatus(false)).unwrap();
         }
 
-        println!("Login successful");
+        info!("Login successful");
         let greeting = message.read_string();
-        println!("Server greeting: {:?}", greeting);
+        debug!("Server greeting: {:?}", greeting);
 
         sender.send(ServerOperation::LoginStatus(true)).unwrap();
     }
