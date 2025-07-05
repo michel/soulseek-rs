@@ -1,7 +1,7 @@
 use crate::{
-    peer::{DefaultPeer, Peer},
-    server::{PeerAddress, Server},
-    types::FileSearchResult,
+    peer::{ConnectionType, DefaultPeer, Peer},
+    server::{PeerAddress, Server, ServerOperation},
+    types::{FileSearchResult, Transfer},
     utils::{md5, thread_pool::ThreadPool},
 };
 use std::{
@@ -22,11 +22,15 @@ pub enum ClientOperation {
     ConnectToPeer(Peer),
     SearchResult(FileSearchResult),
     PeerDisconnected(String),
+    TransferRequest(Transfer),
+    PierceFireWall(Peer),
 }
 struct ClientContext {
     peers: HashMap<String, DefaultPeer>,
     sender: Option<Sender<ClientOperation>>,
+    server_sender: Option<Sender<crate::server::ServerOperation>>,
     search_results: Vec<FileSearchResult>,
+    downloads: HashMap<u32, Transfer>,
     thread_pool: ThreadPool,
 }
 impl ClientContext {
@@ -34,7 +38,9 @@ impl ClientContext {
         Self {
             peers: HashMap::new(),
             sender: None,
+            server_sender: None,
             search_results: Vec::new(),
+            downloads: HashMap::new(),
             thread_pool: ThreadPool::new(MAX_THREADS),
         }
     }
@@ -49,6 +55,7 @@ pub struct Client {
 
 impl Client {
     pub fn new(address: PeerAddress, username: String, password: String) -> Self {
+        crate::utils::logger::init();
         Self {
             address,
             username,
@@ -67,17 +74,20 @@ impl Client {
         // self.read_form_channel(message_reader);
         self.server = match Server::new(self.address.clone(), sender) {
             Ok(server) => {
-                println!(
+                info!(
                     "Connected to server at {}:{}",
                     server.get_address().get_host(),
                     server.get_address().get_port()
                 );
 
+                // Store the server sender in the client context
+                self.context.lock().unwrap().server_sender = Some(server.get_sender().clone());
+
                 Self::listen_to_client_operations(message_reader, self.context.clone());
                 Some(server)
             }
             Err(e) => {
-                eprintln!("Error connecting to server: {}", e);
+                error!("Error connecting to server: {}", e);
                 None
             }
         };
@@ -85,7 +95,7 @@ impl Client {
 
     pub fn login(&self) -> Result<bool, std::io::Error> {
         // Attempt to login
-        println!("Logging in as {}", self.username);
+        info!("Logging in as {}", self.username);
         if let Some(server) = &self.server {
             let result = server.login(&self.username, &self.password);
             if result.unwrap() {
@@ -108,18 +118,18 @@ impl Client {
     pub fn remove_peer(&self, username: &str) {
         let mut context = self.context.lock().unwrap();
         if let Some(peer) = context.peers.remove(username) {
-            drop(peer); // Explicitly drop to trigger cleanup
+            drop(peer);
         }
     }
 
     pub fn search(&self, query: &str, timeout: Duration) -> Vec<FileSearchResult> {
-        println!("Searching for {}", query);
+        info!("Searching for {}", query);
         if let Some(server) = &self.server {
             let hash = md5::md5(query);
-            let token = i32::from_str_radix(&hash[0..5], 16).unwrap();
+            let token = u32::from_str_radix(&hash[0..5], 16).unwrap();
             server.file_search(token, query);
         } else {
-            eprintln!("Not connected to server");
+            warn!("Not connected to server");
         }
 
         let start = Instant::now();
@@ -131,6 +141,52 @@ impl Client {
         return self.context.lock().unwrap().search_results.clone();
     }
 
+    pub fn download(&self, filename: String, username: String) -> crate::types::DownloadResult {
+        use crate::types::{DownloadResult, DownloadStatus};
+        use std::time::{Duration, Instant};
+
+        println!("Downloading {} from {}", filename, username);
+        let start_time = Instant::now();
+
+        // Start the download request
+        let context = self.context.lock().unwrap();
+        let download_initiated = context
+            .peers
+            .get(&username)
+            .map(|p| p.transfer_request(filename.clone()))
+            .is_some();
+
+        drop(context);
+
+        let timeout = Duration::from_secs(50);
+        let check_interval = Duration::from_millis(100);
+
+        if !download_initiated {
+            return DownloadResult {
+                filename,
+                username,
+                status: DownloadStatus::Failed,
+                elapsed_time: start_time.elapsed(),
+            };
+        }
+
+        // Non-blocking wait loop
+        while start_time.elapsed() < timeout {
+            // Check download status (for now just wait, actual download logic will be implemented later)
+            std::thread::sleep(check_interval);
+
+            // TODO: Check actual download progress here
+            // For now, we'll just wait for the timeout
+        }
+
+        DownloadResult {
+            filename,
+            username,
+            status: DownloadStatus::TimedOut,
+            elapsed_time: start_time.elapsed(),
+        }
+    }
+
     fn listen_to_client_operations(
         reader: Receiver<ClientOperation>,
         client_context: Arc<Mutex<ClientContext>>,
@@ -139,6 +195,14 @@ impl Client {
             if let Ok(operation) = reader.recv() {
                 match operation {
                     ClientOperation::ConnectToPeer(peer) => {
+                        match peer.connection_type {
+                            ConnectionType::P => (),
+                            ConnectionType::F => {
+                                debug!("Peer with F {:?}", peer)
+                            }
+                            ConnectionType::D => (),
+                        };
+
                         Self::connect_to_peer(peer, client_context.clone())
                     }
                     ClientOperation::SearchResult(file_search) => {
@@ -153,6 +217,16 @@ impl Client {
                         if let Some(peer) = context.peers.remove(&username) {
                             drop(peer); // Explicitly drop to trigger cleanup
                         }
+                    }
+                    ClientOperation::TransferRequest(transfer) => {
+                        client_context
+                            .lock()
+                            .unwrap()
+                            .downloads
+                            .insert(transfer.token, transfer);
+                    }
+                    ClientOperation::PierceFireWall(peer) => {
+                        Self::pierce_firewall(peer, client_context.clone());
                     }
                 }
             }
@@ -174,14 +248,42 @@ impl Client {
                             let mut context = client_context.lock().unwrap();
                             context.peers.insert(peer.username, p);
                         }
-                        Err(_e) => {
-                            // eprintln!("Error connecting to peer: {:?}", e)
+                        Err(e) => {
+                            trace!(
+                                "Can't connect to {} {}:{} {:?} - {}",
+                                peer.username,
+                                peer.host,
+                                peer.port,
+                                peer.connection_type,
+                                e
+                            );
                         }
                     }
                 });
             }
         } else {
-            eprintln!("No sender found");
+            error!("No sender found");
         }
+    }
+    fn pierce_firewall(peer: Peer, client_context: Arc<Mutex<ClientContext>>) {
+        debug!("Piercing firewall for peer: {:?}", peer);
+        
+        let context = client_context.lock().unwrap();
+        if let Some(server_sender) = &context.server_sender {
+            if let Some(token) = peer.token {
+                match server_sender.send(ServerOperation::PierceFirewall(token)) {
+                    Ok(_) => debug!("Sent PierceFirewall message with token: {}", token),
+                    Err(e) => error!("Failed to send PierceFirewall message: {}", e),
+                }
+            } else {
+                error!("No token available for PierceFirewall");
+            }
+        } else {
+            error!("No server sender available for PierceFirewall");
+        }
+        
+        drop(context);
+        // Also try to connect to the peer directly
+        Self::connect_to_peer(peer, client_context);
     }
 }

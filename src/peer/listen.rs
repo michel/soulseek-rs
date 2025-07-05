@@ -8,7 +8,7 @@ pub struct Listen {}
 
 impl Listen {
     pub fn start(port: u32, _server_channel: Sender<ServerOperation>) {
-        println!("starting listener on port {port}");
+        info!("starting listener on port {port}");
         let listener = TcpListener::bind(format!("0.0.0.0:{port}")).unwrap();
         for stream in listener.incoming() {
             let mut read_stream = stream.unwrap();
@@ -20,19 +20,19 @@ impl Listen {
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                     Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
-                        println!("Read operation timed out");
+                        debug!("Read operation timed out");
                         continue;
                     }
                     Err(e) => {
-                        eprintln!("Error reading from server: {}", e);
+                        error!("Error reading from server: {}", e);
                         break;
                     }
                 }
 
                 match buffered_reader.extract_message() {
                     Ok(Some(mut message)) => {
-                        println!("Received message: {:?}", message.get_message_code());
-                        println!("{:?}", message.get_data());
+                        debug!("Received message: {:?}", message.get_message_code());
+                        trace!("{:?}", message.get_data());
                         message.print_hex();
 
                         if message.get_message_code() == 1 {
@@ -45,8 +45,8 @@ impl Listen {
                             // //     message.read_string().parse().unwrap();
                             // // let token = message.read_int32();
                             //
-                            println!("type: {:?}", typex);
-                            println!("user: {:?}", size);
+                            debug!("type: {:?}", typex);
+                            debug!("user: {:?}", size);
 
                             // server_channel
                             //     .send(ServerOperation::ConnectToPeer(peer))
@@ -54,13 +54,13 @@ impl Listen {
                         }
                     }
                     Err(e) => {
-                        println!("Error extracting message: {}", e)
+                        warn!("Error extracting message: {}", e)
                     }
                     Ok(None) => continue,
                 }
             }
 
-            println!("Connection established!");
+            info!("Connection established!");
         }
     }
 }
