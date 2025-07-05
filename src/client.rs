@@ -1,7 +1,7 @@
 use crate::{
     peer::{DefaultPeer, Peer},
     server::{PeerAddress, Server},
-    types::FileSearchResult,
+    types::{FileSearchResult, Transfer},
     utils::{md5, thread_pool::ThreadPool},
 };
 use std::{
@@ -22,11 +22,14 @@ pub enum ClientOperation {
     ConnectToPeer(Peer),
     SearchResult(FileSearchResult),
     PeerDisconnected(String),
+    TransferRequest(Transfer),
+    PierceFireWall(Peer),
 }
 struct ClientContext {
     peers: HashMap<String, DefaultPeer>,
     sender: Option<Sender<ClientOperation>>,
     search_results: Vec<FileSearchResult>,
+    downloads: HashMap<i32, Transfer>,
     thread_pool: ThreadPool,
 }
 impl ClientContext {
@@ -35,6 +38,7 @@ impl ClientContext {
             peers: HashMap::new(),
             sender: None,
             search_results: Vec::new(),
+            downloads: HashMap::new(),
             thread_pool: ThreadPool::new(MAX_THREADS),
         }
     }
@@ -132,6 +136,15 @@ impl Client {
         return self.context.lock().unwrap().search_results.clone();
     }
 
+    pub fn download(&self, filename: String, username: String) {
+        println!("Downloading {} from {}", filename, username);
+        let context = self.context.lock().unwrap();
+        context
+            .peers
+            .get(&username)
+            .map(|p| p.transfer_request(filename));
+    }
+
     fn listen_to_client_operations(
         reader: Receiver<ClientOperation>,
         client_context: Arc<Mutex<ClientContext>>,
@@ -154,6 +167,16 @@ impl Client {
                         if let Some(peer) = context.peers.remove(&username) {
                             drop(peer); // Explicitly drop to trigger cleanup
                         }
+                    }
+                    ClientOperation::TransferRequest(transfer) => {
+                        client_context
+                            .lock()
+                            .unwrap()
+                            .downloads
+                            .insert(transfer.token, transfer);
+                    }
+                    ClientOperation::PierceFireWall(peer) => {
+                        Self::pierce_firewall(peer, client_context.clone());
                     }
                 }
             }
@@ -185,4 +208,5 @@ impl Client {
             error!("No sender found");
         }
     }
+    fn pierce_firewall(peer: Peer, client_context: Arc<Mutex<ClientContext>>) {}
 }

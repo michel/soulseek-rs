@@ -155,4 +155,3 @@ fn test_new_from_message2() {
     assert_eq!(peer.unknown, 1);
     assert_eq!(peer.obfuscated_port, 0);
 }
-

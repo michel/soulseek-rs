@@ -15,6 +15,7 @@ use crate::message::Handlers;
 use crate::message::Message;
 use crate::message::MessageReader;
 use crate::peer::listen::Listen;
+use crate::peer::ConnectionType;
 use crate::peer::Peer;
 
 use std::io::{self, Write};
@@ -295,14 +296,23 @@ impl Server {
             loop {
                 if let Ok(operation) = server_channel.recv() {
                     match operation {
-                        ServerOperation::ConnectToPeer(peer) => {
-                            match client_channel.send(ClientOperation::ConnectToPeer(peer)) {
-                                Ok(_) => {}
-                                Err(e) => {
-                                    error!("Error sending message: {}", e);
+                        ServerOperation::ConnectToPeer(peer) => match peer.connection_type {
+                            ConnectionType::P => {
+                                match client_channel.send(ClientOperation::ConnectToPeer(peer)) {
+                                    Ok(_) => {}
+                                    Err(_e) => {}
                                 }
                             }
-                        }
+                            ConnectionType::F => {
+                                match client_channel.send(ClientOperation::ConnectToPeer(peer)) {
+                                    Ok(_) => {
+                                        // send PierceFireWall
+                                    }
+                                    Err(_e) => {}
+                                }
+                            }
+                            ConnectionType::D => {}
+                        },
                         ServerOperation::LoginStatus(message) => {
                             context.lock().unwrap().logged_in = Some(message);
                         }
