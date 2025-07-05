@@ -1,14 +1,15 @@
+#[macro_use]
+mod utils;
 mod client;
 mod dispatcher;
 mod message;
 mod peer;
 mod server;
 mod types;
-mod utils;
 
 use client::Client;
 use server::PeerAddress;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 // PeerAddress::new(String::from("server.slsknet.org"), 2416),
 fn main() {
@@ -25,10 +26,15 @@ fn main() {
     match client.login() {
         Ok(_) => {
             let results = client.search("Fantazia", Duration::from_secs(10));
-            println!("Search results: {:?}", results);
+            println!("Search results: {} - {:?} ", results.len(), results);
+            if !results.is_empty() && !results[0].files.is_empty() {
+                let file = results[0].files[0].clone();
+                let download_result = client.download(file.name, file.username);
+                println!("Download result: {:?}", download_result);
+            }
         }
         Err(e) => {
-            println!("Failed to login: {}", e);
+            error!("Failed to login: {}", e);
         }
     }
 }
