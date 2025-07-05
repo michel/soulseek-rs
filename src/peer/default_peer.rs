@@ -47,7 +47,7 @@ impl DefaultPeer {
             .next()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Invalid address"))?;
 
-        let mut stream = TcpStream::connect_timeout(&socket_address, Duration::from_secs(10))?;
+        let mut stream = TcpStream::connect_timeout(&socket_address, Duration::from_secs(20))?;
 
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
@@ -93,7 +93,8 @@ impl DefaultPeer {
                     }
                     Err(e) => {
                         error!("Error reading from peer: {}. Terminating read loop.", e);
-                        let _ = client_channel_for_read.send(ClientOperation::PeerDisconnected(peer.username.clone()));
+                        let _ = client_channel_for_read
+                            .send(ClientOperation::PeerDisconnected(peer.username.clone()));
                         break;
                     }
                 }
@@ -105,7 +106,8 @@ impl DefaultPeer {
                             "Error extracting message in default peer: {}. Terminating read loop.",
                             e
                         );
-                        let _ = client_channel_for_read.send(ClientOperation::PeerDisconnected(peer.username.clone()));
+                        let _ = client_channel_for_read
+                            .send(ClientOperation::PeerDisconnected(peer.username.clone()));
                         break;
                     }
                     Ok(None) => continue,
@@ -123,7 +125,9 @@ impl DefaultPeer {
                             PeerOperation::SendMessage(message) => {
                                 if let Err(e) = write_stream.write_all(&message.get_buffer()) {
                                     error!("Error writing message to stream: {}. Terminating write loop.", e);
-                                    let _ = client_channel.send(ClientOperation::PeerDisconnected(peer_username.clone()));
+                                    let _ = client_channel.send(ClientOperation::PeerDisconnected(
+                                        peer_username.clone(),
+                                    ));
                                     break;
                                 }
                             }
@@ -133,6 +137,7 @@ impl DefaultPeer {
                                     .unwrap();
                             }
                             PeerOperation::TransferRequest(transfer) => {
+                                debug!("TransferRequest from {}", transfer.filename);
                                 client_channel
                                     .send(ClientOperation::TransferRequest(transfer))
                                     .unwrap();

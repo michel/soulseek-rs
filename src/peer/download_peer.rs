@@ -19,7 +19,7 @@ use std::time::Duration;
 #[allow(dead_code)]
 pub struct DownloadPeer {
     peer: Peer,
-    peer_channel: Option<Sender<DownloadPeer>>,
+    download_channel: Option<Sender<DownloadPeer>>,
     client_channel: Sender<ClientOperation>,
     read_thread: Option<JoinHandle<()>>,
     write_thread: Option<JoinHandle<()>>,
@@ -65,6 +65,7 @@ impl DownloadPeer {
         let mut write_stream = stream; // Use the original stream for writing
 
         let peer = self.peer.clone();
+        let client_channel_for_read = self.client_channel.clone();
 
         // Spawn the reader thread
         self.read_thread = Some(thread::spawn(move || {
@@ -80,14 +81,16 @@ impl DownloadPeer {
                     Ok(_) => {}
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                     Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
-                        println!(
+                        debug!(
                             "Read operation timed out in default peer {:}:{:}",
                             peer.host, peer.port
                         );
                         continue;
                     }
                     Err(e) => {
-                        eprintln!("Error reading from peer: {}. Terminating read loop.", e);
+                        error!("Error reading from peer: {}. Terminating read loop.", e);
+                        let _ = client_channel_for_read
+                            .send(ClientOperation::PeerDisconnected(peer.username.clone()));
                         break;
                     }
                 }
@@ -95,10 +98,12 @@ impl DownloadPeer {
                 match buffered_reader.extract_message() {
                     Ok(Some(mut message)) => dispatcher.dispatch(&mut message),
                     Err(e) => {
-                        println!(
-                            "Error extracting message in default peer: {}. Terminating read loop.",
+                        warn!(
+                            "Error extracting message in download peer: {}. Terminating read loop.",
                             e
                         );
+                        let _ = client_channel_for_read
+                            .send(ClientOperation::PeerDisconnected(peer.username.clone()));
                         break;
                     }
                     Ok(None) => continue,
@@ -107,32 +112,14 @@ impl DownloadPeer {
         }));
 
         let client_channel = self.client_channel.clone();
+        let peer_username = self.peer.username.clone();
         self.write_thread = Some(thread::spawn(move || {
             loop {
                 match peer_reader.recv() {
-                    Ok(operation) => {
-                        match operation {
-                            DownloadPeer::SendMessage(message) => {
-                                if let Err(e) = write_stream.write_all(&message.get_buffer()) {
-                                    eprintln!("Error writing message to stream: {}. Terminating write loop.", e);
-                                    break;
-                                }
-                            }
-                            DownloadPeer::FileSearchResult(file_search) => {
-                                client_channel
-                                    .send(ClientOperation::SearchResult(file_search))
-                                    .unwrap();
-                            }
-                            DownloadPeer::TransferRequest(transfer) => {
-                                client_channel
-                                    .send(ClientOperation::TransferRequest(transfer))
-                                    .unwrap();
-                            }
-                        }
-                    }
+                    Ok(operation) => match operation {},
                     Err(_) => {
                         // The sender has been dropped, the peer is shutting down.
-                        println!("Peer channel closed. Terminating write loop.");
+                        debug!("Peer channel closed. Terminating write loop.");
                         break;
                     }
                 }
@@ -141,21 +128,6 @@ impl DownloadPeer {
 
         Ok(())
     }
-
-    pub fn transfer_request(&self, filename: String) -> Result<(), io::Error> {
-        let message = MessageFactory::build_queue_upload_message(&filename);
-        if let Some(sender) = &self.peer_channel {
-            if let Err(_e) = sender.send(DownloadPeer::SendMessage(message)) {}
-        }
-        Ok(())
-    }
-
-    pub fn pierce_firewall(&self, token: i32) {
-        let message = MessageFactory::build_pierce_firewall_message(token);
-        if let Some(sender) = &self.peer_channel {
-            if let Err(_e) = sender.send(DownloadPeer::SendMessage(message)) {}
-        }
-    }
 }
 
 impl Drop for DownloadPeer {
@@ -163,18 +135,18 @@ impl Drop for DownloadPeer {
         self.peer_channel = None;
 
         if let Some(handle) = self.read_thread.take() {
-            println!("Joining read thread...");
+            debug!("Joining read thread...");
             match handle.join() {
-                Ok(_) => println!("Read thread joined successfully."),
-                Err(e) => eprintln!("Read thread panicked: {:?}", e),
+                Ok(_) => debug!("Read thread joined successfully."),
+                Err(e) => error!("Read thread panicked: {:?}", e),
             }
         }
 
         if let Some(handle) = self.write_thread.take() {
-            println!("Joining write thread...");
+            debug!("Joining write thread...");
             match handle.join() {
-                Ok(_) => println!("Write thread joined successfully."),
-                Err(e) => eprintln!("Write thread panicked: {:?}", e),
+                Ok(_) => debug!("Write thread joined successfully."),
+                Err(e) => error!("Write thread panicked: {:?}", e),
             }
         }
     }
