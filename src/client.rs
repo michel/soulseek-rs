@@ -21,6 +21,7 @@ const MAX_THREADS: usize = 100;
 pub enum ClientOperation {
     ConnectToPeer(Peer),
     SearchResult(FileSearchResult),
+    PeerDisconnected(String),
 }
 struct ClientContext {
     peers: HashMap<String, DefaultPeer>,
@@ -103,6 +104,14 @@ impl Client {
         }
     }
 
+    #[allow(dead_code)]
+    pub fn remove_peer(&self, username: &str) {
+        let mut context = self.context.lock().unwrap();
+        if let Some(peer) = context.peers.remove(username) {
+            drop(peer); // Explicitly drop to trigger cleanup
+        }
+    }
+
     pub fn search(&self, query: &str, timeout: Duration) -> Vec<FileSearchResult> {
         println!("Searching for {}", query);
         if let Some(server) = &self.server {
@@ -138,6 +147,12 @@ impl Client {
                             .unwrap()
                             .search_results
                             .push(file_search);
+                    }
+                    ClientOperation::PeerDisconnected(username) => {
+                        let mut context = client_context.lock().unwrap();
+                        if let Some(peer) = context.peers.remove(&username) {
+                            drop(peer); // Explicitly drop to trigger cleanup
+                        }
                     }
                 }
             }

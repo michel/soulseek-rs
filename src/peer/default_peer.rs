@@ -36,7 +36,6 @@ impl DefaultPeer {
             peer,
             peer_channel: None,
             client_channel,
-            // Initialize handles as None
             read_thread: None,
             write_thread: None,
         }
@@ -69,6 +68,7 @@ impl DefaultPeer {
         let mut write_stream = stream; // Use the original stream for writing
 
         let peer = self.peer.clone();
+        let client_channel_for_read = self.client_channel.clone();
 
         // Spawn the reader thread
         self.read_thread = Some(thread::spawn(move || {
@@ -91,6 +91,7 @@ impl DefaultPeer {
                     }
                     Err(e) => {
                         eprintln!("Error reading from peer: {}. Terminating read loop.", e);
+                        let _ = client_channel_for_read.send(ClientOperation::PeerDisconnected(peer.username.clone()));
                         break;
                     }
                 }
@@ -102,6 +103,7 @@ impl DefaultPeer {
                             "Error extracting message in default peer: {}. Terminating read loop.",
                             e
                         );
+                        let _ = client_channel_for_read.send(ClientOperation::PeerDisconnected(peer.username.clone()));
                         break;
                     }
                     Ok(None) => continue,
@@ -110,6 +112,7 @@ impl DefaultPeer {
         }));
 
         let client_channel = self.client_channel.clone();
+        let peer_username = self.peer.username.clone();
         self.write_thread = Some(thread::spawn(move || {
             loop {
                 match peer_reader.recv() {
@@ -118,6 +121,7 @@ impl DefaultPeer {
                             PeerOperation::SendMessage(message) => {
                                 if let Err(e) = write_stream.write_all(&message.get_buffer()) {
                                     eprintln!("Error writing message to stream: {}. Terminating write loop.", e);
+                                    let _ = client_channel.send(ClientOperation::PeerDisconnected(peer_username.clone()));
                                     break;
                                 }
                             }
