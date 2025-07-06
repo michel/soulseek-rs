@@ -18,7 +18,7 @@ impl MessageFactory {
         //     ]
         //     .to_vec(),
         // )
-        // .clone()
+        // .clone()fac
         let hash = md5([username, password].join("").as_str());
 
         let mut message = Message::new();
@@ -34,14 +34,14 @@ impl MessageFactory {
         message
     }
 
-    pub fn build_shared_folders_message(folder_count: i32, file_count: i32) -> Message {
+    pub fn build_shared_folders_message(folder_count: u32, file_count: u32) -> Message {
         Message::new()
             .write_int32(35)
             .write_int32(folder_count)
             .write_int32(file_count)
             .clone()
     }
-    pub fn build_file_search_message(token: i32, query: &str) -> Message {
+    pub fn build_file_search_message(token: u32, query: &str) -> Message {
         // Message::new_with_data(
         //     [
         //         26, 0, 0, 0, 219, 178, 47, 28, 11, 0, 0, 0, 116, 104, 101, 32, 119, 101, 101, 107, 101,
@@ -56,7 +56,7 @@ impl MessageFactory {
             .write_string(query)
             .clone()
     }
-    pub fn build_set_status_message(status_code: i32) -> Message {
+    pub fn build_set_status_message(status_code: u32) -> Message {
         Message::new()
             .write_int32(28)
             .write_int32(status_code)
@@ -68,10 +68,10 @@ impl MessageFactory {
     pub fn build_set_wait_port_message() -> Message {
         Message::new().write_int32(2).write_int32(2234).clone()
     }
-    pub fn build_watch_user(token: &str) -> Message {
+    pub fn build_watch_user(token: u32) -> Message {
         Message::new()
             .write_raw_bytes([5, 0, 0, 0, 0].to_vec())
-            .write_raw_hex_string(token)
+            .write_int32(token)
             .clone()
     }
 
@@ -83,20 +83,22 @@ impl MessageFactory {
     }
 
     pub fn build_transfer_response_message(transfer: Transfer) -> Message {
+        debug!("{:?}", transfer);
         Message::new()
-            .write_int32(32)
+            .write_int32(41)
+            .write_int32(transfer.token)
             .write_bool(true)
             .write_int64(transfer.size)
             .clone()
     }
-    pub fn build_pierce_firewall_message(token: i32) -> Message {
+    pub fn build_pierce_firewall_message(token: u32) -> Message {
         Message::new().write_int32(token).clone()
     }
 }
 
 #[test]
 fn test_build_watch_user() {
-    let token = "5b581500";
+    let token: u32 = 223;
     let message = MessageFactory::build_watch_user(token);
     let expect: Vec<u8> = [5, 0, 0, 0, 0, 91, 88, 21, 0].to_vec();
 

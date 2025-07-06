@@ -72,16 +72,16 @@ impl Context {
 }
 #[derive(Debug, Clone)]
 pub struct UserMessage {
-    id: i32,
-    timestamp: i32,
+    id: u32,
+    timestamp: u32,
     username: String,
     message: String,
     new_message: bool,
 }
 impl UserMessage {
     pub fn new(
-        id: i32,
-        timestamp: i32,
+        id: u32,
+        timestamp: u32,
         username: String,
         message: String,
         new_message: bool,
@@ -376,7 +376,7 @@ impl Server {
         if logged_in.unwrap() {
             info!("Logged in as {}", username);
             self.queue_message(MessageFactory::build_set_wait_port_message());
-            self.queue_message(MessageFactory::build_shared_folders_message(1, 1));
+            self.queue_message(MessageFactory::build_shared_folders_message(1, 499));
             self.queue_message(MessageFactory::build_no_parent_message());
             self.queue_message(MessageFactory::build_set_status_message(2));
         }
@@ -384,7 +384,7 @@ impl Server {
         Ok(logged_in.unwrap())
     }
 
-    pub fn file_search(&self, token: i32, query: &str) {
+    pub fn file_search(&self, token: u32, query: &str) {
         self.queue_message(MessageFactory::build_file_search_message(token, query));
     }
 }

@@ -46,11 +46,11 @@ pub struct Peer {
     pub username: String,
     pub connection_type: ConnectionType,
     pub host: String,
-    pub port: i32,
-    pub token: Option<String>,
-    pub privileged: i8,
-    pub unknown: i8,
-    pub obfuscated_port: i8,
+    pub port: u32,
+    pub token: Option<u32>,
+    pub privileged: u8,
+    pub unknown: u8,
+    pub obfuscated_port: u8,
 }
 impl Peer {
     #[allow(clippy::too_many_arguments, dead_code)]
@@ -58,11 +58,11 @@ impl Peer {
         username: String,
         connection_type: ConnectionType,
         host: String,
-        port: i32,
-        token: String,
-        privileged: i8,
-        unknown: i8,
-        obfuscated_port: i8,
+        port: u32,
+        token: u32,
+        privileged: u8,
+        unknown: u8,
+        obfuscated_port: u8,
     ) -> Self {
         Self {
             username,
@@ -78,7 +78,7 @@ impl Peer {
     #[allow(dead_code)]
     pub fn new_from_message(message: &mut Message) -> Self {
         let username = message.read_string();
-        let connection_type: ConnectionType = message.read_string().parse().unwrap();
+        let connection_type = message.read_string().parse().unwrap();
 
         let mut ip: Vec<i32> = vec![];
         for _ in 0..4 {
@@ -94,7 +94,7 @@ impl Peer {
 
         let (port, token, privileged, unknown, obfuscated_port) = (
             message.read_int32(),
-            message.read_raw_hex_str(4),
+            message.read_int32(),
             message.read_int8(),
             message.read_int8(),
             message.read_int8(),

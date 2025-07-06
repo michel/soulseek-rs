@@ -1,10 +1,13 @@
 use crate::dispatcher::MessageDispatcher;
+use crate::message::peer::get_share_file_list::GetShareFileList;
 use crate::message::peer::transfer_request::TransferRequest;
+use crate::message::peer::upload_failed::UploadFailedHandler;
 use crate::message::peer::FileSearchResponse;
 use crate::message::server::MessageFactory;
 use crate::message::{Handlers, Message, MessageReader};
 use crate::types::{FileSearchResult, Transfer};
 
+use std::default;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::{self, JoinHandle};
@@ -51,9 +54,10 @@ impl DefaultPeer {
 
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-        if let Some(token) = self.peer.token.clone() {
+
+        if let Some(token) = self.peer.token {
             stream
-                .write_all(&MessageFactory::build_watch_user(token.as_str()).get_data())
+                .write_all(&MessageFactory::build_watch_user(token).get_data())
                 .unwrap();
         }
         self.start_read_write_loops(stream)?;
@@ -64,6 +68,9 @@ impl DefaultPeer {
     fn start_read_write_loops(&mut self, stream: TcpStream) -> Result<(), io::Error> {
         let (peer_sender, peer_reader): (Sender<PeerOperation>, Receiver<PeerOperation>) =
             mpsc::channel();
+
+        // Set the peer_channel so transfer_request can send messages
+        self.peer_channel = Some(peer_sender.clone());
 
         let mut read_stream = stream.try_clone()?;
         let mut write_stream = stream; // Use the original stream for writing
@@ -76,6 +83,8 @@ impl DefaultPeer {
             let mut handlers = Handlers::new();
             handlers.register_handler(FileSearchResponse);
             handlers.register_handler(TransferRequest);
+            handlers.register_handler(GetShareFileList);
+            handlers.register_handler(UploadFailedHandler);
 
             let dispatcher = MessageDispatcher::new(peer_sender, handlers);
 
@@ -117,33 +126,41 @@ impl DefaultPeer {
 
         let client_channel = self.client_channel.clone();
         let peer_username = self.peer.username.clone();
+        let peer_channel = self.peer_channel.clone();
+
         self.write_thread = Some(thread::spawn(move || {
             loop {
                 match peer_reader.recv() {
-                    Ok(operation) => {
-                        match operation {
-                            PeerOperation::SendMessage(message) => {
-                                if let Err(e) = write_stream.write_all(&message.get_buffer()) {
-                                    error!("Error writing message to stream: {}. Terminating write loop.", e);
-                                    let _ = client_channel.send(ClientOperation::PeerDisconnected(
-                                        peer_username.clone(),
-                                    ));
-                                    break;
-                                }
+                    Ok(operation) => match operation {
+                        PeerOperation::SendMessage(message) => {
+                            debug!("Default peer sending message: {:?}", message);
+                            if let Err(e) = write_stream.write_all(&message.get_buffer()) {
+                                error!("Error writing message to stream: {} - {}. Terminating write loop.", peer_username, e);
+                                let _ = client_channel
+                                    .send(ClientOperation::PeerDisconnected(peer_username.clone()));
+                                break;
                             }
-                            PeerOperation::FileSearchResult(file_search) => {
-                                client_channel
-                                    .send(ClientOperation::SearchResult(file_search))
-                                    .unwrap();
-                            }
-                            PeerOperation::TransferRequest(transfer) => {
-                                debug!("TransferRequest from {}", transfer.filename);
-                                client_channel
-                                    .send(ClientOperation::TransferRequest(transfer))
+                        }
+                        PeerOperation::FileSearchResult(file_search) => {
+                            client_channel
+                                .send(ClientOperation::SearchResult(file_search))
+                                .unwrap();
+                        }
+                        PeerOperation::TransferRequest(transfer) => {
+                            client_channel
+                                .send(ClientOperation::TransferRequest(transfer.clone()))
+                                .unwrap();
+
+                            let transfer_response =
+                                MessageFactory::build_transfer_response_message(transfer.clone());
+
+                            if let Some(sender) = peer_channel.clone() {
+                                sender
+                                    .send(PeerOperation::SendMessage(transfer_response))
                                     .unwrap();
                             }
                         }
-                    }
+                    },
                     Err(_) => {
                         // The sender has been dropped, the peer is shutting down.
                         debug!("Peer channel closed. Terminating write loop.");
@@ -159,7 +176,7 @@ impl DefaultPeer {
     pub fn transfer_request(&self, filename: String) -> Result<(), io::Error> {
         let message = MessageFactory::build_queue_upload_message(&filename);
         if let Some(sender) = &self.peer_channel {
-            if let Err(_e) = sender.send(PeerOperation::SendMessage(message)) {}
+            sender.send(PeerOperation::SendMessage(message)).unwrap();
         }
         Ok(())
     }
