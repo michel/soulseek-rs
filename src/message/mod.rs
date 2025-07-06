@@ -169,27 +169,16 @@ impl Message {
 
         String::from_utf8(data.to_vec()).expect("Failed to read string")
     }
-    pub fn read_raw_hex_str(&mut self, size: usize) -> String {
-        let hex_str = self.data[self.pointer..self.pointer + size]
-            .iter()
-            .fold(String::new(), |mut acc, byte| {
-                use std::fmt::Write;
-                write!(acc, "{:02x}", byte).expect("Failed to write to string");
-                acc
-            });
-        self.pointer += size;
-        hex_str
-    }
 
-    pub fn read_int8(&mut self) -> i8 {
-        let val = self.data[self.pointer] as i8;
+    pub fn read_int8(&mut self) -> u8 {
+        let val = self.data[self.pointer];
         self.pointer += 1;
         val
     }
 
     #[allow(dead_code)]
-    pub fn read_int64(&mut self) -> i64 {
-        let val = i64::from_le_bytes([
+    pub fn read_int64(&mut self) -> u64 {
+        let val = u64::from_le_bytes([
             self.data[self.pointer],
             self.data[self.pointer + 1],
             self.data[self.pointer + 2],
@@ -203,12 +192,12 @@ impl Message {
         val
     }
 
-    pub fn read_int32(&mut self) -> i32 {
+    pub fn read_int32(&mut self) -> u32 {
         if self.pointer + 4 > self.data.len() {
             return 0;
         }
 
-        let val = i32::from_le_bytes([
+        let val = u32::from_le_bytes([
             self.data[self.pointer],
             self.data[self.pointer + 1],
             self.data[self.pointer + 2],
@@ -231,12 +220,12 @@ impl Message {
         self
     }
 
-    pub fn write_int32(&mut self, value: i32) -> &mut Self {
+    pub fn write_int32(&mut self, value: u32) -> &mut Self {
         self.data.extend_from_slice(&value.to_le_bytes());
         self
     }
 
-    pub fn write_int64(&mut self, value: i64) -> &mut Self {
+    pub fn write_int64(&mut self, value: u64) -> &mut Self {
         self.data.extend_from_slice(&value.to_le_bytes());
         self
     }

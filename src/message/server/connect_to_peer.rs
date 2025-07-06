@@ -9,6 +9,11 @@ impl MessageHandler<ServerOperation> for ConnectToPeerHandler {
     }
     fn handle(&self, message: &mut Message, sender: Sender<ServerOperation>) {
         let peer = Peer::new_from_message(message);
+        match peer.connection_type {
+            crate::peer::ConnectionType::P => (),
+            crate::peer::ConnectionType::F => debug!("{:?}", peer),
+            crate::peer::ConnectionType::D => (),
+        }
         sender.send(ServerOperation::ConnectToPeer(peer)).unwrap();
     }
 }

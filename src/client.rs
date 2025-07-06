@@ -1,5 +1,5 @@
 use crate::{
-    peer::{DefaultPeer, Peer},
+    peer::{ConnectionType, DefaultPeer, Peer},
     server::{PeerAddress, Server},
     types::{FileSearchResult, Transfer},
     utils::{md5, thread_pool::ThreadPool},
@@ -29,7 +29,7 @@ struct ClientContext {
     peers: HashMap<String, DefaultPeer>,
     sender: Option<Sender<ClientOperation>>,
     search_results: Vec<FileSearchResult>,
-    downloads: HashMap<i32, Transfer>,
+    downloads: HashMap<u32, Transfer>,
     thread_pool: ThreadPool,
 }
 impl ClientContext {
@@ -113,7 +113,7 @@ impl Client {
     pub fn remove_peer(&self, username: &str) {
         let mut context = self.context.lock().unwrap();
         if let Some(peer) = context.peers.remove(username) {
-            drop(peer); // Explicitly drop to trigger cleanup
+            drop(peer);
         }
     }
 
@@ -121,7 +121,7 @@ impl Client {
         info!("Searching for {}", query);
         if let Some(server) = &self.server {
             let hash = md5::md5(query);
-            let token = i32::from_str_radix(&hash[0..5], 16).unwrap();
+            let token = u32::from_str_radix(&hash[0..5], 16).unwrap();
             server.file_search(token, query);
         } else {
             warn!("Not connected to server");
@@ -136,13 +136,50 @@ impl Client {
         return self.context.lock().unwrap().search_results.clone();
     }
 
-    pub fn download(&self, filename: String, username: String) {
+    pub fn download(&self, filename: String, username: String) -> crate::types::DownloadResult {
+        use crate::types::{DownloadResult, DownloadStatus};
+        use std::time::{Duration, Instant};
+
         println!("Downloading {} from {}", filename, username);
+        let start_time = Instant::now();
+
+        // Start the download request
         let context = self.context.lock().unwrap();
-        context
+        let download_initiated = context
             .peers
             .get(&username)
-            .map(|p| p.transfer_request(filename));
+            .map(|p| p.transfer_request(filename.clone()))
+            .is_some();
+
+        drop(context);
+
+        let timeout = Duration::from_secs(50);
+        let check_interval = Duration::from_millis(100);
+
+        if !download_initiated {
+            return DownloadResult {
+                filename,
+                username,
+                status: DownloadStatus::Failed,
+                elapsed_time: start_time.elapsed(),
+            };
+        }
+
+        // Non-blocking wait loop
+        while start_time.elapsed() < timeout {
+            // Check download status (for now just wait, actual download logic will be implemented later)
+            std::thread::sleep(check_interval);
+
+            // TODO: Check actual download progress here
+            // For now, we'll just wait for the timeout
+        }
+
+        DownloadResult {
+            filename,
+            username,
+            status: DownloadStatus::TimedOut,
+            elapsed_time: start_time.elapsed(),
+        }
     }
 
     fn listen_to_client_operations(
@@ -153,6 +190,14 @@ impl Client {
             if let Ok(operation) = reader.recv() {
                 match operation {
                     ClientOperation::ConnectToPeer(peer) => {
+                        match peer.connection_type {
+                            ConnectionType::P => (),
+                            ConnectionType::F => {
+                                debug!("Peer with F {:?}", peer)
+                            }
+                            ConnectionType::D => (),
+                        };
+
                         Self::connect_to_peer(peer, client_context.clone())
                     }
                     ClientOperation::SearchResult(file_search) => {
@@ -199,10 +244,14 @@ impl Client {
                             context.peers.insert(peer.username, p);
                         }
                         Err(e) => {
-                            // error!(
-                            //     "Can't connect to {} {}:{} - {}",
-                            //     peer.username, peer.host, peer.port, e
-                            // );
+                            trace!(
+                                "Can't connect to {} {}:{} {:?} - {}",
+                                peer.username,
+                                peer.host,
+                                peer.port,
+                                peer.connection_type,
+                                e
+                            );
                         }
                     }
                 });
