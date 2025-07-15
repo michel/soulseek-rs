@@ -273,8 +273,15 @@ impl Server {
 
                 match buffered_reader.extract_message() {
                     Ok(Some(mut message)) => {
-                        // println!("Received message: {:?}", message.get_message_code_u32());
-                        // message.print_hex();
+                        // trace!(
+                        //     "[server] ← {:?}",
+                        //     message
+                        //         .get_message_name(
+                        //             MessageType::Server,
+                        //             message.get_message_code() as u32
+                        //         )
+                        //         .map_err(|e| e.to_string())
+                        // );
 
                         dispatcher.dispatch(&mut message)
                     }
@@ -317,8 +324,17 @@ impl Server {
                             context.lock().unwrap().logged_in = Some(message);
                         }
                         ServerOperation::SendMessage(message) => {
-                            // message.decode();
-                            // message.print_hex2();
+                            // trace!(
+                            //     "[server] ➡ {:?}",
+                            //     message
+                            //         .get_message_name(
+                            //             MessageType::Server,
+                            //             u32::from_le_bytes(
+                            //                 message.get_slice(0, 4).try_into().unwrap()
+                            //             )
+                            //         )
+                            //         .map_err(|e| e.to_string()),
+                            // );
                             match write_stream.write_all(&message.get_buffer()) {
                                 Ok(_) => {}
                                 Err(e) => {

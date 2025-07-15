@@ -8,6 +8,25 @@ pub use message_reader::*;
 
 use std::str;
 
+#[derive(Debug, PartialEq)]
+pub enum MessageType {
+    Server,
+    Peer,
+    PeerInit,
+    Distributed,
+}
+
+#[derive(Debug)]
+pub struct Error(String);
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for Error {}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Message {
     data: Vec<u8>,
@@ -122,9 +141,9 @@ impl Message {
     pub fn new_with_data(data: Vec<u8>) -> Self {
         Self { data, pointer: 0 }
     }
-    // pub fn reset_pointer(&mut self) {
-    //     self.pointer = 0;
-    // }
+    pub fn reset_pointer(&mut self) {
+        self.pointer = 0;
+    }
     pub fn set_pointer(&mut self, pointer: usize) {
         self.pointer = pointer;
     }
@@ -249,6 +268,67 @@ impl Message {
         self.data.extend_from_slice(&b);
         self.pointer += b.len();
         self
+    }
+
+    pub fn get_message_name(&self, msg_type: MessageType, code: u32) -> Result<&str, Error> {
+        match msg_type {
+            MessageType::Server => match code {
+                1 => Ok("Login"),
+                2 => Ok("SetWaitPort"),
+                3 => Ok("GetPeerAddress"),
+                5 => Ok("WatchUser"),
+                6 => Ok("UnwatchUser"),
+                7 => Ok("GetUserStatus"),
+                13 => Ok("SayChatroom"),
+                14 => Ok("JoinRoom"),
+                15 => Ok("LeaveRoom"),
+                18 => Ok("ConnectToPeer"),
+                22 => Ok("MessageUser"),
+                23 => Ok("MessageAcked"),
+                26 => Ok("FileSearch"),
+                28 => Ok("SetStatus"),
+                32 => Ok("ServerPing"),
+                35 => Ok("SharedFoldersFiles"),
+                36 => Ok("GetUserStats"),
+                41 => Ok("Relogged"),
+                42 => Ok("UserSearch"),
+                64 => Ok("RoomList"),
+                92 => Ok("CheckPrivileges"),
+                100 => Ok("AcceptChildren"),
+                102 => Ok("PossibleParents"),
+                1001 => Ok("CantConnectToPeer"),
+                _ => Err(Error(format!("Unknown server message code: {}", code))),
+            },
+            MessageType::PeerInit => match code {
+                0 => Ok("PierceFireWall"),
+                1 => Ok("PeerInit"),
+                _ => Err(Error(format!("Unknown peer init message code: {}", code))),
+            },
+            MessageType::Peer => match code {
+                4 => Ok("GetShareFileList"),
+                5 => Ok("SharedFileListResponse"),
+                9 => Ok("FileSearchResponse"),
+                15 => Ok("UserInfoRequest"),
+                16 => Ok("UserInfoResponse"),
+                36 => Ok("FolderContentsRequest"),
+                37 => Ok("FolderContentsResponse"),
+                40 => Ok("TransferRequest"),
+                41 => Ok("TransferResponse"),
+                43 => Ok("QueueUpload"),
+                44 => Ok("PlaceInQueueResponse"),
+                46 => Ok("UploadFailed"),
+                50 => Ok("UploadDenied"),
+                51 => Ok("PlaceInQueueRequest"),
+                _ => Err(Error(format!("Unknown peer message code: {}", code))),
+            },
+            MessageType::Distributed => match code {
+                3 => Ok("SearchRequest"),
+                4 => Ok("BranchLevel"),
+                5 => Ok("BranchRoot"),
+                93 => Ok("EmbeddedMessage"),
+                _ => Err(Error(format!("Unknown distributed message code: {}", code))),
+            },
+        }
     }
     // pub fn decode(&self) {
     //     println!("{:?}", self.data);
