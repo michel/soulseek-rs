@@ -173,6 +173,7 @@ pub enum ServerOperation {
     SendMessage(Message),
     #[allow(dead_code)]
     ConnectToPeer(Peer),
+    PierceFirewall(u32),
 }
 
 #[derive(Debug)]
@@ -204,6 +205,10 @@ impl Server {
 
     pub fn get_address(&self) -> &PeerAddress {
         &self.address
+    }
+
+    pub fn get_sender(&self) -> &Sender<ServerOperation> {
+        &self.sender
     }
 
     /// Start reading and writing loops in separate threads
@@ -311,17 +316,31 @@ impl Server {
                                 }
                             }
                             ConnectionType::F => {
-                                match client_channel.send(ClientOperation::ConnectToPeer(peer)) {
+                                match client_channel.send(ClientOperation::PierceFireWall(peer)) {
                                     Ok(_) => {
-                                        // send PierceFireWall
+                                        debug!("Sent PierceFireWall operation for F-type connection");
                                     }
-                                    Err(_e) => {}
+                                    Err(_e) => {
+                                        error!("Failed to send PierceFireWall operation");
+                                    }
                                 }
                             }
                             ConnectionType::D => {}
                         },
                         ServerOperation::LoginStatus(message) => {
                             context.lock().unwrap().logged_in = Some(message);
+                        }
+                        ServerOperation::PierceFirewall(token) => {
+                            let pierce_message = MessageFactory::build_pierce_firewall_message(token);
+                            match write_stream.write_all(&pierce_message.get_buffer()) {
+                                Ok(_) => {
+                                    debug!("Sent PierceFirewall message with token: {}", token);
+                                }
+                                Err(e) => {
+                                    error!("Error writing PierceFirewall message: {}", e);
+                                    break;
+                                }
+                            }
                         }
                         ServerOperation::SendMessage(message) => {
                             // trace!(
@@ -402,5 +421,12 @@ impl Server {
 
     pub fn file_search(&self, token: u32, query: &str) {
         self.queue_message(MessageFactory::build_file_search_message(token, query));
+    }
+
+    pub fn pierce_firewall(&self, token: u32) {
+        match self.sender.send(ServerOperation::PierceFirewall(token)) {
+            Ok(_) => {}
+            Err(e) => error!("Failed to send PierceFirewall: {}", e),
+        }
     }
 }

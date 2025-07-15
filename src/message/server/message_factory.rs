@@ -90,7 +90,10 @@ impl MessageFactory {
             .clone()
     }
     pub fn build_pierce_firewall_message(token: u32) -> Message {
-        Message::new().write_int32(token).clone()
+        Message::new()
+            .write_int32(0)  // PierceFirewall message code
+            .write_int32(token)
+            .clone()
     }
 }
 

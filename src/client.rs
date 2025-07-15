@@ -1,6 +1,6 @@
 use crate::{
     peer::{ConnectionType, DefaultPeer, Peer},
-    server::{PeerAddress, Server},
+    server::{PeerAddress, Server, ServerOperation},
     types::{FileSearchResult, Transfer},
     utils::{md5, thread_pool::ThreadPool},
 };
@@ -28,6 +28,7 @@ pub enum ClientOperation {
 struct ClientContext {
     peers: HashMap<String, DefaultPeer>,
     sender: Option<Sender<ClientOperation>>,
+    server_sender: Option<Sender<crate::server::ServerOperation>>,
     search_results: Vec<FileSearchResult>,
     downloads: HashMap<u32, Transfer>,
     thread_pool: ThreadPool,
@@ -37,6 +38,7 @@ impl ClientContext {
         Self {
             peers: HashMap::new(),
             sender: None,
+            server_sender: None,
             search_results: Vec::new(),
             downloads: HashMap::new(),
             thread_pool: ThreadPool::new(MAX_THREADS),
@@ -77,6 +79,9 @@ impl Client {
                     server.get_address().get_host(),
                     server.get_address().get_port()
                 );
+
+                // Store the server sender in the client context
+                self.context.lock().unwrap().server_sender = Some(server.get_sender().clone());
 
                 Self::listen_to_client_operations(message_reader, self.context.clone());
                 Some(server)
@@ -260,5 +265,25 @@ impl Client {
             error!("No sender found");
         }
     }
-    fn pierce_firewall(peer: Peer, client_context: Arc<Mutex<ClientContext>>) {}
+    fn pierce_firewall(peer: Peer, client_context: Arc<Mutex<ClientContext>>) {
+        debug!("Piercing firewall for peer: {:?}", peer);
+        
+        let context = client_context.lock().unwrap();
+        if let Some(server_sender) = &context.server_sender {
+            if let Some(token) = peer.token {
+                match server_sender.send(ServerOperation::PierceFirewall(token)) {
+                    Ok(_) => debug!("Sent PierceFirewall message with token: {}", token),
+                    Err(e) => error!("Failed to send PierceFirewall message: {}", e),
+                }
+            } else {
+                error!("No token available for PierceFirewall");
+            }
+        } else {
+            error!("No server sender available for PierceFirewall");
+        }
+        
+        drop(context);
+        // Also try to connect to the peer directly
+        Self::connect_to_peer(peer, client_context);
+    }
 }
