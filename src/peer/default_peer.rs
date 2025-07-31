@@ -1,7 +1,5 @@
 use crate::dispatcher::MessageDispatcher;
-use crate::message::peer::get_share_file_list::GetShareFileList;
-use crate::message::peer::transfer_request::TransferRequest;
-use crate::message::peer::upload_failed::UploadFailedHandler;
+use crate::message::peer::{GetShareFileList, TransferRequest, UploadFailedHandler};
 use crate::message::peer::FileSearchResponse;
 use crate::message::server::MessageFactory;
 use crate::message::{Handlers, Message, MessageReader, MessageType};
@@ -17,6 +15,8 @@ use std::io::{self, Write};
 use std::net::TcpStream;
 use std::net::ToSocketAddrs;
 use std::time::Duration;
+
+use crate::{debug, error, info, trace, warn};
 
 #[allow(dead_code)]
 pub struct DefaultPeer {

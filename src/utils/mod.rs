@@ -4,4 +4,5 @@ pub mod md5;
 pub mod thread_pool;
 pub mod zlib;
 
-pub use md5::*;
+// Re-export commonly used items
+pub use md5::md5;

@@ -14,7 +14,7 @@ use crate::message::server::WishListIntervalHandler;
 use crate::message::Handlers;
 use crate::message::Message;
 use crate::message::MessageReader;
-use crate::peer::listen::Listen;
+use crate::peer::{listen::Listen};
 use crate::peer::ConnectionType;
 use crate::peer::Peer;
 
@@ -25,6 +25,8 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread::{self};
 use std::time::{Duration, Instant};
+
+use crate::{debug, error, info, trace, warn};
 
 #[derive(Debug, Clone)]
 pub struct PeerAddress {

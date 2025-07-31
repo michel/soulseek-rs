@@ -1,6 +1,8 @@
 use crate::message::{handlers::Handlers, Message};
 use std::sync::mpsc::Sender;
 
+use crate::{debug, error, info, trace, warn};
+
 /// Add `<Op>` to make it generic over any operation type.
 pub struct MessageDispatcher<Op> {
     sender: Sender<Op>,
