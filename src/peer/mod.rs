@@ -1,8 +1,9 @@
-pub mod default_peer;
-pub use default_peer::*;
-
-pub mod download_peer;
+mod default_peer;
+mod download_peer;
 pub mod listen;
+
+// Re-export commonly used items
+pub use default_peer::{DefaultPeer, PeerOperation};
 
 use crate::message::Message;
 use core::fmt;

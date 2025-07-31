@@ -1,4 +1,4 @@
-use crate::{message::Message, peer::ConnectionType, types::Transfer, utils::md5};
+use crate::{message::Message, peer::ConnectionType, types::Transfer, utils::md5::md5};
 
 pub struct MessageFactory;
 impl MessageFactory {
