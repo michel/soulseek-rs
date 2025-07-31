@@ -138,9 +138,9 @@ fn test_new_from_message() {
 
     assert_eq!(peer.username, "dp");
     assert!(matches!(peer.connection_type, ConnectionType::P));
-    assert_eq!(peer.host, "45.37.25.27");
+    assert_eq!(peer.host, "45.37.231.27");
     assert_eq!(peer.port, 2234);
-    assert_eq!(peer.token, Some(1683702));
+    assert_eq!(peer.token, Some(1658546));
     assert_eq!(peer.privileged, 0);
     assert_eq!(peer.unknown, 0);
     assert_eq!(peer.obfuscated_port, 0);
@@ -160,9 +160,9 @@ fn test_new_from_message2() {
 
     assert_eq!(peer.username, "grandpag");
     assert!(matches!(peer.connection_type, ConnectionType::P));
-    assert_eq!(peer.host, "68.63.128.119");
+    assert_eq!(peer.host, "68.193.128.137");
     assert_eq!(peer.port, 2235);
-    assert_eq!(peer.token, Some(4122));
+    assert_eq!(peer.token, Some(4154));
     assert_eq!(peer.privileged, 0);
     assert_eq!(peer.unknown, 1);
     assert_eq!(peer.obfuscated_port, 0);

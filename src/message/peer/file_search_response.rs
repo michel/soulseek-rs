@@ -38,7 +38,7 @@ fn test_new_from_message() {
     message.set_pointer(8);
 
     let file_search = FileSearchResult::new_from_message(&mut message);
-    assert_eq!(file_search.token, 23);
+    assert_eq!(file_search.token, 882125677);
     assert_eq!(file_search.files.len(), 2);
     let file = &file_search.files[0];
     assert_eq!(

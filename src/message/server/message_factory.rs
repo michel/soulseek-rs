@@ -114,7 +114,7 @@ impl MessageFactory {
 fn test_build_watch_user() {
     let token: u32 = 223;
     let message = MessageFactory::build_watch_user(token);
-    let expect: Vec<u8> = [5, 0, 0, 0, 0, 91, 88, 21, 0].to_vec();
+    let expect: Vec<u8> = [5, 0, 0, 0, 0, 223, 0, 0, 0].to_vec();
 
     assert_eq!(expect, message.get_data())
 }
