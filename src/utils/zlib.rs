@@ -98,7 +98,10 @@ fn inflate(r: &mut BitReader) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-fn inflate_block_no_compression(r: &mut BitReader, o: &mut Vec<u8>) -> Result<(), String> {
+fn inflate_block_no_compression(
+    r: &mut BitReader,
+    o: &mut Vec<u8>,
+) -> Result<(), String> {
     let len = r.read_bytes(2)?;
     let _nlen = r.read_bytes(2)?;
     for _ in 0..len {
@@ -168,19 +171,20 @@ fn decode_symbol(r: &mut BitReader, t: &HuffmanTree) -> Result<u32, String> {
 }
 
 const LENGTH_EXTRA_BITS: [usize; 29] = [
-    0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5,
+    5, 5, 5, 0,
 ];
 const LENGTH_BASE: [u32; 29] = [
-    3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131,
-    163, 195, 227, 258,
+    3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59,
+    67, 83, 99, 115, 131, 163, 195, 227, 258,
 ];
 const DISTANCE_EXTRA_BITS: [usize; 30] = [
-    0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13,
-    13,
+    0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10,
+    11, 11, 12, 12, 13, 13,
 ];
 const DISTANCE_BASE: [u32; 30] = [
-    1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537,
-    2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
+    1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513,
+    769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
 ];
 
 fn inflate_block_data(
@@ -203,7 +207,8 @@ fn inflate_block_data(
             if sym_idx >= LENGTH_EXTRA_BITS.len() {
                 return Err("Invalid length symbol".to_string());
             }
-            let length = r.read_bits(LENGTH_EXTRA_BITS[sym_idx])? + LENGTH_BASE[sym_idx];
+            let length =
+                r.read_bits(LENGTH_EXTRA_BITS[sym_idx])? + LENGTH_BASE[sym_idx];
             let dist_sym = decode_symbol(r, distance_tree)?;
             if dist_sym as usize >= DISTANCE_EXTRA_BITS.len() {
                 return Err("Invalid distance symbol".to_string());
@@ -250,7 +255,9 @@ const CODE_LENGTH_CODES_ORDER: [usize; 19] = [
     16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15,
 ];
 
-fn decode_trees(r: &mut BitReader) -> Result<(HuffmanTree, HuffmanTree), String> {
+fn decode_trees(
+    r: &mut BitReader,
+) -> Result<(HuffmanTree, HuffmanTree), String> {
     // The number of literal/length codes
     let hlit = r.read_bits(5)? + 257;
 
@@ -263,12 +270,14 @@ fn decode_trees(r: &mut BitReader) -> Result<(HuffmanTree, HuffmanTree), String>
     // Read code lengths for the code length alphabet
     let mut code_length_tree_bl = vec![0; 19];
     for i in 0..hclen as usize {
-        code_length_tree_bl[CODE_LENGTH_CODES_ORDER[i]] = r.read_bits(3)? as usize;
+        code_length_tree_bl[CODE_LENGTH_CODES_ORDER[i]] =
+            r.read_bits(3)? as usize;
     }
 
     // Construct code length tree
     let code_length_alphabet: Vec<u32> = (0..19).collect();
-    let code_length_tree = bl_list_to_tree(&code_length_tree_bl, &code_length_alphabet);
+    let code_length_tree =
+        bl_list_to_tree(&code_length_tree_bl, &code_length_alphabet);
 
     // Read literal/length + distance code length list
     let mut bl = Vec::new();
@@ -303,20 +312,28 @@ fn decode_trees(r: &mut BitReader) -> Result<(HuffmanTree, HuffmanTree), String>
 
     // Construct trees
     let literal_length_alphabet: Vec<u32> = (0..286).collect();
-    let literal_length_tree = bl_list_to_tree(&bl[..hlit as usize], &literal_length_alphabet);
+    let literal_length_tree =
+        bl_list_to_tree(&bl[..hlit as usize], &literal_length_alphabet);
 
     let distance_alphabet: Vec<u32> = (0..30).collect();
-    let distance_tree = bl_list_to_tree(&bl[hlit as usize..], &distance_alphabet);
+    let distance_tree =
+        bl_list_to_tree(&bl[hlit as usize..], &distance_alphabet);
 
     Ok((literal_length_tree, distance_tree))
 }
 
-fn inflate_block_dynamic(r: &mut BitReader, o: &mut Vec<u8>) -> Result<(), String> {
+fn inflate_block_dynamic(
+    r: &mut BitReader,
+    o: &mut Vec<u8>,
+) -> Result<(), String> {
     let (literal_length_tree, distance_tree) = decode_trees(r)?;
     inflate_block_data(r, &literal_length_tree, &distance_tree, o)
 }
 
-fn inflate_block_fixed(r: &mut BitReader, o: &mut Vec<u8>) -> Result<(), String> {
+fn inflate_block_fixed(
+    r: &mut BitReader,
+    o: &mut Vec<u8>,
+) -> Result<(), String> {
     let mut bl = Vec::new();
     bl.extend(vec![8; 144]); // 0-143: 8 bits
     bl.extend(vec![9; 112]); // 144-255: 9 bits
@@ -377,7 +394,8 @@ mod tests {
     fn test_deflate() {
         // Test data from the original test - this should work with our new implementation
         let data = vec![
-            120, 156, 203, 72, 205, 201, 201, 87, 8, 207, 47, 202, 73, 1, 0, 24, 11, 4, 93,
+            120, 156, 203, 72, 205, 201, 201, 87, 8, 207, 47, 202, 73, 1, 0,
+            24, 11, 4, 93,
         ];
         let result = deflate(&data);
         assert!(result.is_ok());
@@ -388,35 +406,44 @@ mod tests {
     #[test]
     fn test_deflate2() {
         let data = vec![
-            120, 156, 99, 103, 96, 96, 72, 201, 79, 201, 76, 79, 204, 203, 213, 158, 98, 194, 4,
-            228, 50, 250, 3, 9, 7, 135, 162, 156, 148, 194, 188, 152, 228, 252, 220, 130, 156, 212,
-            146, 212, 24, 231, 196, 188, 228, 204, 252, 188, 212, 226, 152, 144, 162, 210, 226,
-            226, 212, 28, 93, 67, 75, 115, 75, 93, 119, 160, 144, 130, 91, 126, 145, 66, 72, 70,
-            170, 66, 120, 106, 106, 118, 106, 94, 138, 174, 161, 89, 82, 102, 137, 174, 137, 137,
-            142, 161, 119, 70, 149, 94, 90, 78, 98, 114, 203, 175, 243, 32, 163, 193, 128, 25, 100,
-            7, 16, 23, 0, 9, 22, 32, 237, 178, 134, 129, 129, 21, 72, 11, 128, 196, 243, 176, 217,
-            29, 156, 153, 151, 158, 147, 90, 12, 54, 95, 193, 216, 84, 193, 200, 192, 200, 36, 198,
-            45, 181, 168, 40, 53, 57, 91, 193, 37, 177, 60, 79, 71, 193, 55, 177, 44, 181, 40, 19,
-            200, 13, 78, 76, 42, 74, 85, 80, 83, 240, 75, 45, 7, 10, 38, 103, 100, 2, 221, 167,
-            139, 238, 66, 5, 13, 144, 17, 154, 96, 167, 173, 228, 215, 98, 68, 119, 218, 74, 6, 76,
-            167, 49, 60, 153, 202, 200, 160, 199, 128, 0, 0, 161, 99, 76, 142,
+            120, 156, 99, 103, 96, 96, 72, 201, 79, 201, 76, 79, 204, 203, 213,
+            158, 98, 194, 4, 228, 50, 250, 3, 9, 7, 135, 162, 156, 148, 194,
+            188, 152, 228, 252, 220, 130, 156, 212, 146, 212, 24, 231, 196,
+            188, 228, 204, 252, 188, 212, 226, 152, 144, 162, 210, 226, 226,
+            212, 28, 93, 67, 75, 115, 75, 93, 119, 160, 144, 130, 91, 126, 145,
+            66, 72, 70, 170, 66, 120, 106, 106, 118, 106, 94, 138, 174, 161,
+            89, 82, 102, 137, 174, 137, 137, 142, 161, 119, 70, 149, 94, 90,
+            78, 98, 114, 203, 175, 243, 32, 163, 193, 128, 25, 100, 7, 16, 23,
+            0, 9, 22, 32, 237, 178, 134, 129, 129, 21, 72, 11, 128, 196, 243,
+            176, 217, 29, 156, 153, 151, 158, 147, 90, 12, 54, 95, 193, 216,
+            84, 193, 200, 192, 200, 36, 198, 45, 181, 168, 40, 53, 57, 91, 193,
+            37, 177, 60, 79, 71, 193, 55, 177, 44, 181, 40, 19, 200, 13, 78,
+            76, 42, 74, 85, 80, 83, 240, 75, 45, 7, 10, 38, 103, 100, 2, 221,
+            167, 139, 238, 66, 5, 13, 144, 17, 154, 96, 167, 173, 228, 215, 98,
+            68, 119, 218, 74, 6, 76, 167, 49, 60, 153, 202, 200, 160, 199, 128,
+            0, 0, 161, 99, 76, 142,
         ];
         let expect = vec![
-            7, 0, 0, 0, 100, 111, 100, 105, 103, 97, 110, 109, 43, 148, 52, 2, 0, 0, 0, 1, 79, 0,
-            0, 0, 64, 64, 114, 108, 100, 113, 110, 92, 99, 111, 109, 112, 108, 101, 116, 101, 92,
-            67, 97, 110, 99, 105, 111, 110, 101, 115, 92, 84, 114, 117, 115, 115, 101, 108, 45, 49,
-            57, 55, 57, 45, 71, 111, 110, 101, 32, 70, 111, 114, 32, 84, 104, 101, 32, 87, 101,
-            101, 107, 101, 110, 100, 45, 49, 54, 98, 105, 116, 45, 52, 52, 44, 49, 75, 104, 122,
-            46, 102, 108, 97, 99, 132, 250, 207, 2, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 1, 0, 0, 0,
-            112, 1, 0, 0, 4, 0, 0, 0, 68, 172, 0, 0, 5, 0, 0, 0, 16, 0, 0, 0, 1, 110, 0, 0, 0, 64,
-            64, 114, 108, 100, 113, 110, 92, 99, 111, 109, 112, 108, 101, 116, 101, 92, 83, 105,
-            110, 103, 108, 101, 115, 32, 87, 101, 101, 107, 32, 51, 53, 32, 50, 48, 50, 52, 92, 70,
-            101, 114, 114, 101, 99, 107, 32, 68, 97, 119, 110, 44, 32, 77, 97, 118, 101, 114, 105,
-            99, 107, 32, 83, 97, 98, 114, 101, 32, 38, 32, 78, 101, 119, 32, 77, 97, 99, 104, 105,
-            110, 101, 32, 45, 32, 70, 111, 114, 32, 84, 104, 101, 32, 87, 101, 101, 107, 101, 110,
-            100, 32, 40, 50, 48, 50, 52, 41, 46, 102, 108, 97, 99, 169, 15, 42, 1, 0, 0, 0, 0, 0,
-            0, 0, 0, 3, 0, 0, 0, 1, 0, 0, 0, 169, 0, 0, 0, 4, 0, 0, 0, 68, 172, 0, 0, 5, 0, 0, 0,
-            16, 0, 0, 0, 0, 228, 149, 1, 0, 46, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            7, 0, 0, 0, 100, 111, 100, 105, 103, 97, 110, 109, 43, 148, 52, 2,
+            0, 0, 0, 1, 79, 0, 0, 0, 64, 64, 114, 108, 100, 113, 110, 92, 99,
+            111, 109, 112, 108, 101, 116, 101, 92, 67, 97, 110, 99, 105, 111,
+            110, 101, 115, 92, 84, 114, 117, 115, 115, 101, 108, 45, 49, 57,
+            55, 57, 45, 71, 111, 110, 101, 32, 70, 111, 114, 32, 84, 104, 101,
+            32, 87, 101, 101, 107, 101, 110, 100, 45, 49, 54, 98, 105, 116, 45,
+            52, 52, 44, 49, 75, 104, 122, 46, 102, 108, 97, 99, 132, 250, 207,
+            2, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 1, 0, 0, 0, 112, 1, 0, 0, 4,
+            0, 0, 0, 68, 172, 0, 0, 5, 0, 0, 0, 16, 0, 0, 0, 1, 110, 0, 0, 0,
+            64, 64, 114, 108, 100, 113, 110, 92, 99, 111, 109, 112, 108, 101,
+            116, 101, 92, 83, 105, 110, 103, 108, 101, 115, 32, 87, 101, 101,
+            107, 32, 51, 53, 32, 50, 48, 50, 52, 92, 70, 101, 114, 114, 101,
+            99, 107, 32, 68, 97, 119, 110, 44, 32, 77, 97, 118, 101, 114, 105,
+            99, 107, 32, 83, 97, 98, 114, 101, 32, 38, 32, 78, 101, 119, 32,
+            77, 97, 99, 104, 105, 110, 101, 32, 45, 32, 70, 111, 114, 32, 84,
+            104, 101, 32, 87, 101, 101, 107, 101, 110, 100, 32, 40, 50, 48, 50,
+            52, 41, 46, 102, 108, 97, 99, 169, 15, 42, 1, 0, 0, 0, 0, 0, 0, 0,
+            0, 3, 0, 0, 0, 1, 0, 0, 0, 169, 0, 0, 0, 4, 0, 0, 0, 68, 172, 0, 0,
+            5, 0, 0, 0, 16, 0, 0, 0, 0, 228, 149, 1, 0, 46, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0,
         ]
         .to_vec();
         let result = deflate(&data);
@@ -427,4 +454,3 @@ mod tests {
         assert_eq!(decompressed, expect);
     }
 }
-
