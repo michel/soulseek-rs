@@ -6,7 +6,7 @@ pub mod peer;
 pub mod server;
 
 // Re-export commonly used items
-pub use handlers::{MessageHandler, Handlers};
+pub use handlers::{Handlers, MessageHandler};
 pub use message_reader::MessageReader;
 
 use std::str;
@@ -269,7 +269,8 @@ impl Message {
         let mut b = Vec::new();
         for i in (0..val.len()).step_by(2) {
             let byte_str = &val[i..i + 2];
-            let byte = u8::from_str_radix(byte_str, 16).expect("Invalid hex string");
+            let byte =
+                u8::from_str_radix(byte_str, 16).expect("Invalid hex string");
             b.push(byte);
         }
         self.data.extend_from_slice(&b);
@@ -277,7 +278,11 @@ impl Message {
         self
     }
 
-    pub fn get_message_name(&self, msg_type: MessageType, code: u32) -> Result<&str, Error> {
+    pub fn get_message_name(
+        &self,
+        msg_type: MessageType,
+        code: u32,
+    ) -> Result<&str, Error> {
         match msg_type {
             MessageType::Server => match code {
                 1 => Ok("Login"),
@@ -304,12 +309,17 @@ impl Message {
                 100 => Ok("AcceptChildren"),
                 102 => Ok("PossibleParents"),
                 1001 => Ok("CantConnectToPeer"),
-                _ => Err(Error(format!("Unknown server message code: {}", code))),
+                _ => {
+                    Err(Error(format!("Unknown server message code: {}", code)))
+                }
             },
             MessageType::PeerInit => match code {
                 0 => Ok("PierceFireWall"),
                 1 => Ok("PeerInit"),
-                _ => Err(Error(format!("Unknown peer init message code: {}", code))),
+                _ => Err(Error(format!(
+                    "Unknown peer init message code: {}",
+                    code
+                ))),
             },
             MessageType::Peer => match code {
                 4 => Ok("GetShareFileList"),
@@ -333,7 +343,10 @@ impl Message {
                 4 => Ok("BranchLevel"),
                 5 => Ok("BranchRoot"),
                 93 => Ok("EmbeddedMessage"),
-                _ => Err(Error(format!("Unknown distributed message code: {}", code))),
+                _ => Err(Error(format!(
+                    "Unknown distributed message code: {}",
+                    code
+                ))),
             },
         }
     }
@@ -346,37 +359,40 @@ impl Message {
 fn test_get_buffer() {
     let message = Message::new_with_data(
         [
-            26, 0, 0, 0, 219, 178, 47, 28, 11, 0, 0, 0, 116, 104, 101, 32, 119, 101, 101, 107, 101,
-            110, 100,
+            26, 0, 0, 0, 219, 178, 47, 28, 11, 0, 0, 0, 116, 104, 101, 32, 119,
+            101, 101, 107, 101, 110, 100,
         ]
         .to_vec(),
     );
     assert_eq!(
         message.get_buffer(),
         [
-            23, 0, 0, 0, 26, 0, 0, 0, 219, 178, 47, 28, 11, 0, 0, 0, 116, 104, 101, 32, 119, 101,
-            101, 107, 101, 110, 100,
+            23, 0, 0, 0, 26, 0, 0, 0, 219, 178, 47, 28, 11, 0, 0, 0, 116, 104,
+            101, 32, 119, 101, 101, 107, 101, 110, 100,
         ]
         .to_vec()
     );
 
     let message = Message::new_with_data(
         [
-            1, 0, 0, 0, 20, 0, 0, 0, 105, 110, 115, 97, 110, 101, 95, 105, 110, 95, 116, 104, 101,
-            95, 98, 114, 97, 105, 110, 50, 8, 0, 0, 0, 49, 51, 51, 55, 53, 49, 51, 55, 160, 0, 0,
-            0, 32, 0, 0, 0, 50, 101, 100, 102, 53, 49, 100, 48, 51, 55, 57, 52, 51, 55, 56, 102,
-            56, 98, 98, 54, 51, 49, 48, 100, 52, 54, 48, 99, 50, 50, 98, 49, 17, 0, 0, 0,
+            1, 0, 0, 0, 20, 0, 0, 0, 105, 110, 115, 97, 110, 101, 95, 105, 110,
+            95, 116, 104, 101, 95, 98, 114, 97, 105, 110, 50, 8, 0, 0, 0, 49,
+            51, 51, 55, 53, 49, 51, 55, 160, 0, 0, 0, 32, 0, 0, 0, 50, 101,
+            100, 102, 53, 49, 100, 48, 51, 55, 57, 52, 51, 55, 56, 102, 56, 98,
+            98, 54, 51, 49, 48, 100, 52, 54, 48, 99, 50, 50, 98, 49, 17, 0, 0,
+            0,
         ]
         .to_vec(),
     );
     assert_eq!(
         message.get_buffer(),
         [
-            84, 0, 0, 0, 1, 0, 0, 0, 20, 0, 0, 0, 105, 110, 115, 97, 110, 101, 95, 105, 110, 95,
-            116, 104, 101, 95, 98, 114, 97, 105, 110, 50, 8, 0, 0, 0, 49, 51, 51, 55, 53, 49, 51,
-            55, 160, 0, 0, 0, 32, 0, 0, 0, 50, 101, 100, 102, 53, 49, 100, 48, 51, 55, 57, 52, 51,
-            55, 56, 102, 56, 98, 98, 54, 51, 49, 48, 100, 52, 54, 48, 99, 50, 50, 98, 49, 17, 0, 0,
-            0,
+            84, 0, 0, 0, 1, 0, 0, 0, 20, 0, 0, 0, 105, 110, 115, 97, 110, 101,
+            95, 105, 110, 95, 116, 104, 101, 95, 98, 114, 97, 105, 110, 50, 8,
+            0, 0, 0, 49, 51, 51, 55, 53, 49, 51, 55, 160, 0, 0, 0, 32, 0, 0, 0,
+            50, 101, 100, 102, 53, 49, 100, 48, 51, 55, 57, 52, 51, 55, 56,
+            102, 56, 98, 98, 54, 51, 49, 48, 100, 52, 54, 48, 99, 50, 50, 98,
+            49, 17, 0, 0, 0,
         ]
         .to_vec()
     );
@@ -394,9 +410,9 @@ fn test_read_string() {
 #[test]
 fn test_read_string_2() {
     let data = vec![
-        50, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 81, 170, 162, 77, 32, 0, 0, 0, 101, 102, 99, 97,
-        51, 52, 102, 99, 52, 99, 56, 98, 101, 56, 98, 55, 101, 102, 51, 56, 97, 102, 50, 54, 50,
-        52, 100, 101, 53, 52, 54, 52, 0,
+        50, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 81, 170, 162, 77, 32, 0, 0, 0,
+        101, 102, 99, 97, 51, 52, 102, 99, 52, 99, 56, 98, 101, 56, 98, 55,
+        101, 102, 51, 56, 97, 102, 50, 54, 50, 52, 100, 101, 53, 52, 54, 52, 0,
     ];
     let mut test_data = Message::new_with_data(data);
     test_data.set_pointer(9);

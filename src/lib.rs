@@ -22,4 +22,3 @@ pub use server::PeerAddress;
 pub use types::{
     DownloadResult, DownloadStatus, File, FileSearchResult, Transfer,
 };
-

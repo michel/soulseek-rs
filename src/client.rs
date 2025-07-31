@@ -55,7 +55,11 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(address: PeerAddress, username: String, password: String) -> Self {
+    pub fn new(
+        address: PeerAddress,
+        username: String,
+        password: String,
+    ) -> Self {
         crate::utils::logger::init();
         Self {
             address,
@@ -67,8 +71,10 @@ impl Client {
     }
 
     pub fn connect(&mut self) {
-        let (sender, message_reader): (Sender<ClientOperation>, Receiver<ClientOperation>) =
-            mpsc::channel();
+        let (sender, message_reader): (
+            Sender<ClientOperation>,
+            Receiver<ClientOperation>,
+        ) = mpsc::channel();
 
         self.context.lock().unwrap().sender = Some(sender.clone());
 
@@ -82,9 +88,13 @@ impl Client {
                 );
 
                 // Store the server sender in the client context
-                self.context.lock().unwrap().server_sender = Some(server.get_sender().clone());
+                self.context.lock().unwrap().server_sender =
+                    Some(server.get_sender().clone());
 
-                Self::listen_to_client_operations(message_reader, self.context.clone());
+                Self::listen_to_client_operations(
+                    message_reader,
+                    self.context.clone(),
+                );
                 Some(server)
             }
             Err(e) => {
@@ -123,7 +133,11 @@ impl Client {
         }
     }
 
-    pub fn search(&self, query: &str, timeout: Duration) -> Vec<FileSearchResult> {
+    pub fn search(
+        &self,
+        query: &str,
+        timeout: Duration,
+    ) -> Vec<FileSearchResult> {
         info!("Searching for {}", query);
         if let Some(server) = &self.server {
             let hash = md5::md5(query);
@@ -142,7 +156,11 @@ impl Client {
         return self.context.lock().unwrap().search_results.clone();
     }
 
-    pub fn download(&self, filename: String, username: String) -> crate::types::DownloadResult {
+    pub fn download(
+        &self,
+        filename: String,
+        username: String,
+    ) -> crate::types::DownloadResult {
         use crate::types::{DownloadResult, DownloadStatus};
         use std::time::{Duration, Instant};
 
@@ -243,7 +261,8 @@ impl Client {
                 let peer_clone = peer.clone();
                 let sender_clone = sender.clone();
                 unlocked_context.thread_pool.execute(move || {
-                    let default_peer = DefaultPeer::new(peer_clone, sender_clone);
+                    let default_peer =
+                        DefaultPeer::new(peer_clone, sender_clone);
                     match default_peer.connect() {
                         Ok(p) => {
                             let mut context = client_context.lock().unwrap();
@@ -268,13 +287,19 @@ impl Client {
     }
     fn pierce_firewall(peer: Peer, client_context: Arc<Mutex<ClientContext>>) {
         debug!("Piercing firewall for peer: {:?}", peer);
-        
+
         let context = client_context.lock().unwrap();
         if let Some(server_sender) = &context.server_sender {
             if let Some(token) = peer.token {
-                match server_sender.send(ServerOperation::PierceFirewall(token)) {
-                    Ok(_) => debug!("Sent PierceFirewall message with token: {}", token),
-                    Err(e) => error!("Failed to send PierceFirewall message: {}", e),
+                match server_sender.send(ServerOperation::PierceFirewall(token))
+                {
+                    Ok(_) => debug!(
+                        "Sent PierceFirewall message with token: {}",
+                        token
+                    ),
+                    Err(e) => {
+                        error!("Failed to send PierceFirewall message: {}", e)
+                    }
                 }
             } else {
                 error!("No token available for PierceFirewall");
@@ -282,7 +307,7 @@ impl Client {
         } else {
             error!("No server sender available for PierceFirewall");
         }
-        
+
         drop(context);
         // Also try to connect to the peer directly
         Self::connect_to_peer(peer, client_context);
