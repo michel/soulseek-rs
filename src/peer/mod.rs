@@ -1,6 +1,7 @@
 pub mod default_peer;
-
 pub use default_peer::*;
+
+pub mod download_peer;
 pub mod listen;
 
 use crate::message::Message;
@@ -37,6 +38,17 @@ impl FromStr for ConnectionType {
             "D" => Ok(ConnectionType::D),
             _ => Err(ParseConnectionTypeError),
         }
+    }
+}
+
+impl fmt::Display for ConnectionType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let s = match self {
+            ConnectionType::P => "P",
+            ConnectionType::F => "F",
+            ConnectionType::D => "D",
+        };
+        write!(f, "{}", s)
     }
 }
 
@@ -128,7 +140,7 @@ fn test_new_from_message() {
     assert!(matches!(peer.connection_type, ConnectionType::P));
     assert_eq!(peer.host, "45.37.25.27");
     assert_eq!(peer.port, 2234);
-    assert_eq!(peer.token, Some("b24e1900".to_string()));
+    assert_eq!(peer.token, Some(1683702));
     assert_eq!(peer.privileged, 0);
     assert_eq!(peer.unknown, 0);
     assert_eq!(peer.obfuscated_port, 0);
@@ -150,7 +162,7 @@ fn test_new_from_message2() {
     assert!(matches!(peer.connection_type, ConnectionType::P));
     assert_eq!(peer.host, "68.63.128.119");
     assert_eq!(peer.port, 2235);
-    assert_eq!(peer.token, Some("3a100000".to_string()));
+    assert_eq!(peer.token, Some(4122));
     assert_eq!(peer.privileged, 0);
     assert_eq!(peer.unknown, 1);
     assert_eq!(peer.obfuscated_port, 0);
