@@ -423,6 +423,7 @@ impl Server {
         self.queue_message(MessageFactory::build_file_search_message(token, query));
     }
 
+    #[allow(dead_code)]
     pub fn pierce_firewall(&self, token: u32) {
         match self.sender.send(ServerOperation::PierceFirewall(token)) {
             Ok(_) => {}
