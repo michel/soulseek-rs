@@ -26,7 +26,8 @@ use std::sync::{Arc, Barrier, Mutex};
 use std::thread::{self};
 use std::time::{Duration, Instant};
 
-use crate::{debug, error, info, trace, warn};
+use crate::{debug, error, info, warn};
+
 
 #[derive(Debug, Clone)]
 pub struct PeerAddress {

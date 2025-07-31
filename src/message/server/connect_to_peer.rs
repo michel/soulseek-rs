@@ -1,4 +1,4 @@
-use crate::{debug, error, info, trace, warn};
+use crate::trace;
 use crate::message::{Message, MessageHandler};
 use crate::peer::{ConnectionType, Peer};
 use crate::server::ServerOperation;
