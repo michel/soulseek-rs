@@ -14,7 +14,7 @@ use crate::message::server::WishListIntervalHandler;
 use crate::message::Handlers;
 use crate::message::Message;
 use crate::message::MessageReader;
-use crate::peer::{listen::Listen};
+use crate::peer::listen::Listen;
 use crate::peer::ConnectionType;
 use crate::peer::Peer;
 
@@ -27,7 +27,6 @@ use std::thread::{self};
 use std::time::{Duration, Instant};
 
 use crate::{debug, error, info, warn};
-
 
 #[derive(Debug, Clone)]
 pub struct PeerAddress {
@@ -100,7 +99,11 @@ impl UserMessage {
     pub fn print(&self) {
         debug!(
             "Timestamp: {}. User: {}, Id: #{}, New message: {} Message: {}",
-            self.timestamp, self.username, self.id, self.new_message, self.message
+            self.timestamp,
+            self.username,
+            self.id,
+            self.new_message,
+            self.message
         );
     }
 }
@@ -191,8 +194,10 @@ impl Server {
         address: PeerAddress,
         client_channel: Sender<ClientOperation>,
     ) -> Result<Self, io::Error> {
-        let (sender, server_channel): (Sender<ServerOperation>, Receiver<ServerOperation>) =
-            mpsc::channel();
+        let (sender, server_channel): (
+            Sender<ServerOperation>,
+            Receiver<ServerOperation>,
+        ) = mpsc::channel();
 
         let context = Arc::new(Mutex::new(Context::new()));
 
@@ -220,17 +225,26 @@ impl Server {
         server_channel: Receiver<ServerOperation>,
         client_channel: Sender<ClientOperation>,
     ) -> Result<(), io::Error> {
-        let socket_address = format!("{}:{}", self.address.host, self.address.port)
-            .to_socket_addrs()?
-            .next()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Invalid address"))?;
+        let socket_address =
+            format!("{}:{}", self.address.host, self.address.port)
+                .to_socket_addrs()?
+                .next()
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "Invalid address",
+                    )
+                })?;
 
         info!(
             "Connecting to server at {}:{}",
             self.address.host, self.address.port
         );
 
-        let stream = TcpStream::connect_timeout(&socket_address, Duration::from_secs(10))?;
+        let stream = TcpStream::connect_timeout(
+            &socket_address,
+            Duration::from_secs(10),
+        )?;
 
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
@@ -267,8 +281,12 @@ impl Server {
             loop {
                 match buffered_reader.read_from_socket(&mut read_stream) {
                     Ok(_) => {}
-                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
-                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        continue
+                    }
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        continue
+                    }
                     Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
                         debug!("Read operation timed out");
                         continue;
@@ -311,31 +329,42 @@ impl Server {
             loop {
                 if let Ok(operation) = server_channel.recv() {
                     match operation {
-                        ServerOperation::ConnectToPeer(peer) => match peer.connection_type {
-                            ConnectionType::P => {
-                                match client_channel.send(ClientOperation::ConnectToPeer(peer)) {
-                                    Ok(_) => {}
-                                    Err(_e) => {}
-                                }
-                            }
-                            ConnectionType::F => {
-                                match client_channel.send(ClientOperation::PierceFireWall(peer)) {
-                                    Ok(_) => {
-                                        debug!("Sent PierceFireWall operation for F-type connection");
-                                    }
-                                    Err(_e) => {
-                                        error!("Failed to send PierceFireWall operation");
+                        ServerOperation::ConnectToPeer(peer) => {
+                            match peer.connection_type {
+                                ConnectionType::P => {
+                                    match client_channel.send(
+                                        ClientOperation::ConnectToPeer(peer),
+                                    ) {
+                                        Ok(_) => {}
+                                        Err(_e) => {}
                                     }
                                 }
+                                ConnectionType::F => {
+                                    match client_channel.send(
+                                        ClientOperation::PierceFireWall(peer),
+                                    ) {
+                                        Ok(_) => {
+                                            debug!("Sent PierceFireWall operation for F-type connection");
+                                        }
+                                        Err(_e) => {
+                                            error!("Failed to send PierceFireWall operation");
+                                        }
+                                    }
+                                }
+                                ConnectionType::D => {}
                             }
-                            ConnectionType::D => {}
-                        },
+                        }
                         ServerOperation::LoginStatus(message) => {
                             context.lock().unwrap().logged_in = Some(message);
                         }
                         ServerOperation::PierceFirewall(token) => {
-                            let pierce_message = MessageFactory::build_pierce_firewall_message(token);
-                            match write_stream.write_all(&pierce_message.get_buffer()) {
+                            let pierce_message =
+                                MessageFactory::build_pierce_firewall_message(
+                                    token,
+                                );
+                            match write_stream
+                                .write_all(&pierce_message.get_buffer())
+                            {
                                 Ok(_) => {
                                     debug!("Sent PierceFirewall message with token: {}", token);
                                 }
@@ -357,10 +386,14 @@ impl Server {
                             //         )
                             //         .map_err(|e| e.to_string()),
                             // );
-                            match write_stream.write_all(&message.get_buffer()) {
+                            match write_stream.write_all(&message.get_buffer())
+                            {
                                 Ok(_) => {}
                                 Err(e) => {
-                                    error!("Error writing message to stream : {}", e);
+                                    error!(
+                                        "Error writing message to stream : {}",
+                                        e
+                                    );
                                     break;
                                 }
                             }
@@ -383,10 +416,16 @@ impl Server {
         thread::spawn(move || Listen::start(2234, server_channel));
     }
 
-    pub fn login(&self, username: &str, password: &str) -> Result<bool, std::io::Error> {
+    pub fn login(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<bool, std::io::Error> {
         self.start_listener(self.sender.clone());
         // Send the login message
-        self.queue_message(MessageFactory::build_login_message(username, password));
+        self.queue_message(MessageFactory::build_login_message(
+            username, password,
+        ));
         let context = self.context.clone();
         let mut logged_in;
         let timeout = Duration::from_secs(5);
@@ -414,7 +453,9 @@ impl Server {
         if logged_in.unwrap() {
             info!("Logged in as {}", username);
             self.queue_message(MessageFactory::build_set_wait_port_message());
-            self.queue_message(MessageFactory::build_shared_folders_message(1, 499));
+            self.queue_message(MessageFactory::build_shared_folders_message(
+                1, 499,
+            ));
             self.queue_message(MessageFactory::build_no_parent_message());
             self.queue_message(MessageFactory::build_set_status_message(2));
         }
@@ -423,7 +464,9 @@ impl Server {
     }
 
     pub fn file_search(&self, token: u32, query: &str) {
-        self.queue_message(MessageFactory::build_file_search_message(token, query));
+        self.queue_message(MessageFactory::build_file_search_message(
+            token, query,
+        ));
     }
 
     #[allow(dead_code)]

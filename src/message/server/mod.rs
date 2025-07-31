@@ -22,4 +22,3 @@ pub use parent_speed_ratio::ParentSpeedRatioHandler;
 pub use privileged_users::PrivilegedUsersHandler;
 pub use room_list::RoomListHandler;
 pub use wish_list_interval::WishListIntervalHandler;
-
