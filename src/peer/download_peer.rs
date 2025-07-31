@@ -498,10 +498,10 @@ mod tests {
     #[test]
     fn test_stream_processor_new() {
         let processor = StreamProcessor::new(true, 123);
-        assert_eq!(processor.no_pierce, true);
+        assert!(processor.no_pierce);
         assert_eq!(processor.token, 123);
         assert_eq!(processor.total_bytes, 0);
-        assert_eq!(processor.received, false);
+        assert!(!processor.received);
     }
 
     #[test]
