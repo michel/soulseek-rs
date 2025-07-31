@@ -1,5 +1,6 @@
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
+use crate::error::{Result, SoulseekRs};
 use crate::message::server::ConnectToPeerHandler;
 use crate::message::server::ExcludedSearchPhrasesHandler;
 use crate::message::server::FileSearchHandler;
@@ -199,7 +200,7 @@ impl Server {
     pub fn new(
         address: PeerAddress,
         client_channel: Sender<ClientOperation>,
-    ) -> Result<Self, io::Error> {
+    ) -> std::result::Result<Self, io::Error> {
         let (sender, server_channel): (
             Sender<ServerOperation>,
             Receiver<ServerOperation>,
@@ -230,7 +231,7 @@ impl Server {
         &mut self,
         server_channel: Receiver<ServerOperation>,
         client_channel: Sender<ClientOperation>,
-    ) -> Result<(), io::Error> {
+    ) -> std::result::Result<(), io::Error> {
         let socket_address =
             format!("{}:{}", self.address.host, self.address.port)
                 .to_socket_addrs()?
@@ -422,11 +423,7 @@ impl Server {
         thread::spawn(move || Listen::start(2234, server_channel));
     }
 
-    pub fn login(
-        &self,
-        username: &str,
-        password: &str,
-    ) -> Result<bool, std::io::Error> {
+    pub fn login(&self, username: &str, password: &str) -> Result<bool> {
         self.start_listener(self.sender.clone());
         // Send the login message
         self.queue_message(MessageFactory::build_login_message(
@@ -441,10 +438,7 @@ impl Server {
         loop {
             if start.elapsed() > timeout {
                 warn!("Timeout waiting for login response");
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    "Timeout waiting for login response",
-                ));
+                return Err(SoulseekRs::Timeout);
             }
 
             {

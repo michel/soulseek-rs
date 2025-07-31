@@ -1,5 +1,5 @@
 fn main() {
-    use soulseek_download::{Client, PeerAddress};
+    use soulseek_rs::{Client, PeerAddress};
     use std::time::Duration;
 
     let mut client = Client::new(
@@ -10,15 +10,25 @@ fn main() {
 
     client.connect();
     match client.login() {
-        Ok(_) => {
-            let results = client.search("Fantazia", Duration::from_secs(10));
-            println!("Search results: {} - {:?} ", results.len(), results);
-            if !results.is_empty() && !results[0].files.is_empty() {
-                let file = results[0].files[0].clone();
-                let download_result = client.download(file.name, file.username);
-                println!("Download result: {:?}", download_result);
+        Ok(_) => match client.search("Fantazia", Duration::from_secs(10)) {
+            Ok(results) => {
+                println!("Search results: {} - {:?} ", results.len(), results);
+                if !results.is_empty() && !results[0].files.is_empty() {
+                    let file = results[0].files[0].clone();
+                    match client.download(file.name, file.username) {
+                        Ok(download_result) => {
+                            println!("Download result: {:?}", download_result);
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to download: {}", e);
+                        }
+                    }
+                }
             }
-        }
+            Err(e) => {
+                eprintln!("Failed to search: {}", e);
+            }
+        },
         Err(e) => {
             eprintln!("Failed to login: {}", e);
         }

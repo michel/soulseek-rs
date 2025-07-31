@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "soulseek_download"
+name = "soulseek-rs"
 version = "0.1.0"

@@ -9,7 +9,10 @@ impl MessageHandler<PeerOperation> for FileSearchResponse {
         9
     }
     fn handle(&self, message: &mut Message, sender: Sender<PeerOperation>) {
-        let file_search = FileSearchResult::new_from_message(message);
+        let file_search = match FileSearchResult::new_from_message(message) {
+            Ok(result) => result,
+            Err(_) => return, // Skip malformed search results
+        };
 
         sender
             .send(PeerOperation::FileSearchResult(file_search))
@@ -40,7 +43,7 @@ fn test_new_from_message() {
     let mut message = Message::new_with_data(data);
     message.set_pointer(8);
 
-    let file_search = FileSearchResult::new_from_message(&mut message);
+    let file_search = FileSearchResult::new_from_message(&mut message).unwrap();
     assert_eq!(file_search.token, 882125677);
     assert_eq!(file_search.files.len(), 2);
     let file = &file_search.files[0];

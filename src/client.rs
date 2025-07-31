@@ -1,4 +1,5 @@
 use crate::{
+    error::{Result, SoulseekRs},
     peer::{ConnectionType, DefaultPeer, Peer},
     server::{PeerAddress, Server, ServerOperation},
     types::{FileSearchResult, Transfer},
@@ -17,7 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{debug, error, info, trace, warn};
+use crate::{debug, error, info, trace};
 const MAX_THREADS: usize = 100;
 pub enum ClientOperation {
     ConnectToPeer(Peer),
@@ -104,24 +105,18 @@ impl Client {
         };
     }
 
-    pub fn login(&self) -> Result<bool, std::io::Error> {
+    pub fn login(&self) -> Result<bool> {
         // Attempt to login
         info!("Logging in as {}", self.username);
         if let Some(server) = &self.server {
-            let result = server.login(&self.username, &self.password);
-            if result.unwrap() {
+            let result = server.login(&self.username, &self.password)?;
+            if result {
                 Ok(true)
             } else {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Error logging in",
-                ))
+                Err(SoulseekRs::AuthenticationFailed)
             }
         } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Not connected to server",
-            ))
+            Err(SoulseekRs::NotConnected)
         }
     }
 
@@ -137,14 +132,14 @@ impl Client {
         &self,
         query: &str,
         timeout: Duration,
-    ) -> Vec<FileSearchResult> {
+    ) -> Result<Vec<FileSearchResult>> {
         info!("Searching for {}", query);
         if let Some(server) = &self.server {
             let hash = md5::md5(query);
-            let token = u32::from_str_radix(&hash[0..5], 16).unwrap();
+            let token = u32::from_str_radix(&hash[0..5], 16)?;
             server.file_search(token, query);
         } else {
-            warn!("Not connected to server");
+            return Err(SoulseekRs::NotConnected);
         }
 
         let start = Instant::now();
@@ -153,14 +148,14 @@ impl Client {
                 break;
             }
         }
-        return self.context.lock().unwrap().search_results.clone();
+        Ok(self.context.lock().unwrap().search_results.clone())
     }
 
     pub fn download(
         &self,
         filename: String,
         username: String,
-    ) -> crate::types::DownloadResult {
+    ) -> Result<crate::types::DownloadResult> {
         use crate::types::{DownloadResult, DownloadStatus};
         use std::time::{Duration, Instant};
 
@@ -181,12 +176,12 @@ impl Client {
         let check_interval = Duration::from_millis(100);
 
         if !download_initiated {
-            return DownloadResult {
+            return Ok(DownloadResult {
                 filename,
                 username,
                 status: DownloadStatus::Failed,
                 elapsed_time: start_time.elapsed(),
-            };
+            });
         }
 
         // Non-blocking wait loop
@@ -198,12 +193,12 @@ impl Client {
             // For now, we'll just wait for the timeout
         }
 
-        DownloadResult {
+        Ok(DownloadResult {
             filename,
             username,
             status: DownloadStatus::TimedOut,
             elapsed_time: start_time.elapsed(),
-        }
+        })
     }
 
     fn listen_to_client_operations(

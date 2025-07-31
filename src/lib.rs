@@ -1,6 +1,7 @@
 // Core modules
 pub mod client;
 pub mod dispatcher;
+pub mod error;
 pub mod message;
 pub mod peer;
 pub mod server;
@@ -18,6 +19,7 @@ pub mod prelude {
 
 // Re-export commonly used types
 pub use client::Client;
+pub use error::{Result, SoulseekRs};
 pub use server::PeerAddress;
 pub use types::{
     DownloadResult, DownloadStatus, File, FileSearchResult, Transfer,
