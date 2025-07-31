@@ -4,6 +4,13 @@ use crate::{
 
 pub struct MessageFactory;
 impl MessageFactory {
+    pub fn build_get_peer_address(username: &str) -> Message {
+        let mut message = Message::new();
+
+        message.write_int32(3);
+        message.write_string(username);
+        message
+    }
     pub fn build_login_message(username: &str, password: &str) -> Message {
         // Message::new_with_data(
         //     [
@@ -31,9 +38,8 @@ impl MessageFactory {
             .write_string(password)
             .write_int32(157) // version
             .write_string(&hash)
-            .write_int32(100); //minor version
-
-        message
+            .write_int32(100)
+            .clone()
     }
 
     pub fn build_shared_folders_message(
@@ -47,14 +53,6 @@ impl MessageFactory {
             .clone()
     }
     pub fn build_file_search_message(token: u32, query: &str) -> Message {
-        // Message::new_with_data(
-        //     [
-        //         26, 0, 0, 0, 219, 178, 47, 28, 11, 0, 0, 0, 116, 104, 101, 32, 119, 101, 101, 107, 101,
-        //         110, 100, 0, 0,
-        //     ]
-        //     .to_vec(),
-        // )
-        // .clone()
         Message::new()
             .write_int32(26)
             .write_int32(token)
@@ -68,10 +66,15 @@ impl MessageFactory {
             .clone()
     }
     pub fn build_no_parent_message() -> Message {
-        Message::new().write_int32(71).write_int32(1).clone()
+        Message::new().write_int32(71).write_bool(true).clone()
     }
-    pub fn build_set_wait_port_message() -> Message {
-        Message::new().write_int32(2).write_int32(2234).clone()
+    pub fn build_set_wait_port_message(port: u32) -> Message {
+        Message::new()
+            .write_int32(2)
+            .write_int32(port)
+            // .write_int32(0)
+            // .write_int32(port) // should be different port
+            .clone()
     }
     pub fn build_watch_user(token: u32) -> Message {
         Message::new()
@@ -87,11 +90,23 @@ impl MessageFactory {
             .clone()
     }
 
+    pub fn build_transfer_request_message(
+        filename: &str,
+        token: u32,
+    ) -> Message {
+        Message::new()
+            .write_int32(40) // code
+            .write_int32(0) // direction
+            .write_int32(token)
+            .write_string(filename)
+            .clone()
+    }
     pub fn build_transfer_response_message(transfer: Transfer) -> Message {
         Message::new()
             .write_int32(41)
             .write_int32(transfer.token)
             .write_bool(true)
+            .write_int64(transfer.size)
             .clone()
     }
     pub fn build_pierce_firewall_message(token: u32) -> Message {
@@ -108,6 +123,7 @@ impl MessageFactory {
         token: u32,
     ) -> Message {
         Message::new()
+            .write_int8(1)
             .write_string(own_username)
             .write_string(&connection_type.to_string())
             .write_int32(token)

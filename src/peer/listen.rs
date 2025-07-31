@@ -1,27 +1,26 @@
 use std::sync::mpsc::Sender;
 use std::{io, net::TcpListener};
 
+use crate::client::ClientOperation;
 use crate::message::MessageReader;
-use crate::server::ServerOperation;
 
+use crate::peer::NewPeer;
 use crate::{debug, error, info, trace, warn};
 
 pub struct Listen {}
 
 impl Listen {
-    pub fn start(port: u32, _server_channel: Sender<ServerOperation>) {
+    pub fn start(port: u32, client_sender: Sender<ClientOperation>) {
         info!("starting listener on port {port}");
         let listener = TcpListener::bind(format!("0.0.0.0:{port}")).unwrap();
         for stream in listener.incoming() {
             let mut read_stream = stream.unwrap();
+            let mut stop = false;
 
             let mut buffered_reader = MessageReader::new();
-            loop {
+            while !stop {
                 match buffered_reader.read_from_socket(&mut read_stream) {
                     Ok(_) => {}
-                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        continue
-                    }
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                         continue
                     }
@@ -37,39 +36,50 @@ impl Listen {
 
                 match buffered_reader.extract_message() {
                     Ok(Some(mut message)) => {
-                        debug!(
-                            "Received message: {:?}",
-                            message.get_message_code()
+                        message.set_pointer(4);
+                        let message_code = message.read_int8();
+
+                        trace!(
+                            "[listener] Received message with code: {}",
+                            message_code
                         );
-                        trace!("{:?}", message.get_data());
-                        message.print_hex();
 
-                        if message.get_message_code() == 1 {
-                            let size = message.read_int32();
-                            message.set_pointer(8);
-                            let typex = message.read_string();
+                        match message_code {
+                            0 => {
+                                let token = message.read_string();
+                                debug!("[listener] received Pierce Firewall, token: {}", token);
+                            }
+                            1 => {
+                                let tcp_stream =
+                                    read_stream.try_clone().unwrap();
+                                let new_peer = NewPeer::new_from_message(
+                                    &mut message,
+                                    tcp_stream,
+                                );
 
-                            // let user = message.read_string();
-                            // // let connection_type: ConnectionType =
-                            // //     message.read_string().parse().unwrap();
-                            // // let token = message.read_int32();
-                            //
-                            debug!("type: {:?}", typex);
-                            debug!("user: {:?}", size);
-
-                            // server_channel
-                            //     .send(ServerOperation::ConnectToPeer(peer))
-                            //     .unwrap();
+                                trace!("[listener] Handling peer init message: {:?}",new_peer);
+                                client_sender
+                                    .send(ClientOperation::NewPeer(new_peer))
+                                    .unwrap();
+                                stop = true;
+                                debug!("[listener] stop");
+                            }
+                            _ => {
+                                debug!(
+                                    "[listener] unknown message_code: {}",
+                                    message_code
+                                )
+                            }
                         }
                     }
                     Err(e) => {
-                        warn!("Error extracting message: {}", e)
+                        warn!("[listener] Error extracting message: {}", e)
                     }
                     Ok(None) => continue,
                 }
             }
 
-            info!("Connection established!");
+            // info!("[listener] Connection established!");
         }
     }
 }
