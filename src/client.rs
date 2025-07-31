@@ -17,6 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::{debug, error, info, trace, warn};
 const MAX_THREADS: usize = 100;
 pub enum ClientOperation {
     ConnectToPeer(Peer),

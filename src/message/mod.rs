@@ -1,10 +1,13 @@
+pub use crate::{debug, error, info, trace, warn};
+
 pub mod handlers;
-pub mod message_reader;
+mod message_reader;
 pub mod peer;
 pub mod server;
 
-pub use handlers::*;
-pub use message_reader::*;
+// Re-export commonly used items
+pub use handlers::{MessageHandler, Handlers};
+pub use message_reader::MessageReader;
 
 use std::str;
 
