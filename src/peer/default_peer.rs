@@ -9,6 +9,7 @@ use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
+use crate::{debug, error, trace, warn};
 use crate::client::ClientOperation;
 use crate::peer::Peer;
 use std::io::{self, Write};
@@ -16,7 +17,7 @@ use std::net::TcpStream;
 use std::net::ToSocketAddrs;
 use std::time::Duration;
 
-use crate::{debug, error, info, trace, warn};
+
 
 #[allow(dead_code)]
 pub struct DefaultPeer {
