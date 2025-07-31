@@ -5,11 +5,10 @@ mod message_reader;
 pub mod peer;
 pub mod server;
 
-// Re-export commonly used items
 pub use handlers::{Handlers, MessageHandler};
 pub use message_reader::MessageReader;
 
-use std::str;
+use std::{str, usize};
 
 #[derive(Debug, PartialEq)]
 #[allow(dead_code)]
@@ -148,6 +147,10 @@ impl Message {
         self.data[4]
     }
 
+    pub fn get_message_code_send(&self) -> u8 {
+        self.data[0]
+    }
+
     pub fn new_with_data(data: Vec<u8>) -> Self {
         Self { data, pointer: 0 }
     }
@@ -222,6 +225,21 @@ impl Message {
         val
     }
 
+    pub fn read_raw_byte(&mut self) -> Vec<u8> {
+        if self.pointer + 4 > self.data.len() {
+            return vec![];
+        }
+
+        let val = vec![
+            self.data[self.pointer],
+            self.data[self.pointer + 1],
+            self.data[self.pointer + 2],
+            self.data[self.pointer + 3],
+        ];
+        self.pointer += 4;
+        val
+    }
+
     pub fn read_int32(&mut self) -> u32 {
         if self.pointer + 4 > self.data.len() {
             return 0;
@@ -247,6 +265,11 @@ impl Message {
         let length = val.len() as u32;
         self.data.extend_from_slice(&length.to_le_bytes());
         self.data.extend_from_slice(val.as_bytes());
+        self
+    }
+
+    pub fn write_int8(&mut self, value: u8) -> &mut Self {
+        self.data.extend_from_slice(&value.to_le_bytes());
         self
     }
 
@@ -311,9 +334,16 @@ impl Message {
                 41 => Ok("Relogged"),
                 42 => Ok("UserSearch"),
                 64 => Ok("RoomList"),
+                69 => Ok("PrivilegedUsers"),
+                71 => Ok("HaveNoParent"),
+                83 => Ok("ParentMinSpeed"),
+                84 => Ok("ParentSpeedRatio"),
                 92 => Ok("CheckPrivileges"),
+                93 => Ok("EmbeddedMessage"),
                 100 => Ok("AcceptChildren"),
                 102 => Ok("PossibleParents"),
+                104 => Ok("WishlistInterval"),
+                160 => Ok("ExcludedSearchPhrases"),
                 1001 => Ok("CantConnectToPeer"),
                 _ => {
                     Err(Error(format!("Unknown server message code: {}", code)))

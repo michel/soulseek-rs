@@ -2,12 +2,38 @@ mod default_peer;
 mod download_peer;
 pub mod listen;
 
-// Re-export commonly used items
 pub use default_peer::{DefaultPeer, PeerOperation};
+pub use download_peer::DownloadPeer;
 
 use crate::message::Message;
 use core::fmt;
-use std::str::FromStr;
+use std::{net::TcpStream, str::FromStr};
+
+#[derive(Debug)]
+#[allow(dead_code)]
+pub struct NewPeer {
+    pub username: String,
+    pub connection_type: ConnectionType,
+    pub token: u32,
+    pub tcp_stream: TcpStream,
+}
+impl NewPeer {
+    pub fn new_from_message(
+        message: &mut Message,
+        tcp_stream: TcpStream,
+    ) -> Self {
+        let username = message.read_string();
+        let connection_type = message.read_string().parse().unwrap();
+        let token = message.read_int32();
+
+        Self {
+            username,
+            connection_type,
+            token,
+            tcp_stream,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum ConnectionType {
@@ -16,7 +42,6 @@ pub enum ConnectionType {
     D,
 }
 
-// Define the error type
 #[derive(Debug, Clone)]
 pub struct ParseConnectionTypeError;
 
@@ -28,7 +53,6 @@ impl fmt::Display for ParseConnectionTypeError {
 
 impl std::error::Error for ParseConnectionTypeError {}
 
-// Implement FromStr for ConnectionType
 impl FromStr for ConnectionType {
     type Err = ParseConnectionTypeError;
 
@@ -61,9 +85,9 @@ pub struct Peer {
     pub host: String,
     pub port: u32,
     pub token: Option<u32>,
-    pub privileged: u8,
-    pub unknown: u8,
-    pub obfuscated_port: u8,
+    pub privileged: Option<u8>,
+    pub unknown: Option<u8>,
+    pub obfuscated_port: Option<u8>,
 }
 impl Peer {
     #[allow(clippy::too_many_arguments, dead_code)]
@@ -72,7 +96,7 @@ impl Peer {
         connection_type: ConnectionType,
         host: String,
         port: u32,
-        token: u32,
+        token: Option<u32>,
         privileged: u8,
         unknown: u8,
         obfuscated_port: u8,
@@ -82,10 +106,10 @@ impl Peer {
             connection_type,
             host,
             port,
-            token: Some(token),
-            privileged,
-            unknown,
-            obfuscated_port,
+            token,
+            privileged: Some(privileged),
+            unknown: Some(unknown),
+            obfuscated_port: Some(obfuscated_port),
         }
     }
     #[allow(dead_code)]
@@ -119,9 +143,9 @@ impl Peer {
             host,
             port,
             token: Some(token),
-            privileged,
-            unknown,
-            obfuscated_port,
+            privileged: Some(privileged),
+            unknown: Some(unknown),
+            obfuscated_port: Some(obfuscated_port),
         }
     }
 }
@@ -142,9 +166,9 @@ fn test_new_from_message() {
     assert_eq!(peer.host, "45.37.231.27");
     assert_eq!(peer.port, 2234);
     assert_eq!(peer.token, Some(1658546));
-    assert_eq!(peer.privileged, 0);
-    assert_eq!(peer.unknown, 0);
-    assert_eq!(peer.obfuscated_port, 0);
+    assert_eq!(peer.privileged, Some(0));
+    assert_eq!(peer.unknown, Some(0));
+    assert_eq!(peer.obfuscated_port, Some(0));
 }
 
 #[test]
@@ -158,6 +182,8 @@ fn test_new_from_message2() {
     let mut message = Message::new_with_data(data);
     message.set_pointer(8);
 
+    println!("code: {}", message.get_message_code_u32());
+
     let peer = Peer::new_from_message(&mut message);
 
     assert_eq!(peer.username, "grandpag");
@@ -165,7 +191,7 @@ fn test_new_from_message2() {
     assert_eq!(peer.host, "68.193.128.137");
     assert_eq!(peer.port, 2235);
     assert_eq!(peer.token, Some(4154));
-    assert_eq!(peer.privileged, 0);
-    assert_eq!(peer.unknown, 1);
-    assert_eq!(peer.obfuscated_port, 0);
+    assert_eq!(peer.privileged, Some(0));
+    assert_eq!(peer.unknown, Some(1));
+    assert_eq!(peer.obfuscated_port, Some(0));
 }

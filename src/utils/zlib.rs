@@ -17,7 +17,7 @@ impl BitReader {
         }
     }
 
-    fn read_byte(&mut self) -> Result<u8, String> {
+    fn read_byte(&mut self) -> std::result::Result<u8, String> {
         self.numbits = 0; // discard unread bits
         if self.pos >= self.mem.len() {
             return Err("End of data".to_string());
@@ -27,7 +27,7 @@ impl BitReader {
         Ok(b)
     }
 
-    fn read_bit(&mut self) -> Result<u8, String> {
+    fn read_bit(&mut self) -> std::result::Result<u8, String> {
         if self.numbits <= 0 {
             self.b = self.read_byte()?;
             self.numbits = 8;
@@ -39,7 +39,7 @@ impl BitReader {
         Ok(bit)
     }
 
-    fn read_bits(&mut self, n: usize) -> Result<u32, String> {
+    fn read_bits(&mut self, n: usize) -> std::result::Result<u32, String> {
         let mut o = 0u32;
         for i in 0..n {
             o |= (self.read_bit()? as u32) << i;
@@ -47,7 +47,7 @@ impl BitReader {
         Ok(o)
     }
 
-    fn read_bytes(&mut self, n: usize) -> Result<u32, String> {
+    fn read_bytes(&mut self, n: usize) -> std::result::Result<u32, String> {
         // read bytes as an integer in little-endian
         let mut o = 0u32;
         for i in 0..n {
@@ -57,32 +57,38 @@ impl BitReader {
     }
 }
 
-pub fn deflate(input: &[u8]) -> Result<Vec<u8>, String> {
+use crate::error::{Result, SoulseekRs};
+
+pub fn deflate(input: &[u8]) -> Result<Vec<u8>> {
     let mut r = BitReader::new(input.to_vec());
     let cmf = r.read_byte()?;
     let cm = cmf & 15; // Compression method
     if cm != 8 {
         // only CM=8 is supported
-        return Err("invalid CM".to_string());
+        return Err(SoulseekRs::CompressionError("invalid CM".to_string()));
     }
     let cinfo = (cmf >> 4) & 15; // Compression info
     if cinfo > 7 {
-        return Err("invalid CINFO".to_string());
+        return Err(SoulseekRs::CompressionError("invalid CINFO".to_string()));
     }
     let flg = r.read_byte()?;
     if ((cmf as u32) * 256 + (flg as u32)) % 31 != 0 {
-        return Err("CMF+FLG checksum failed".to_string());
+        return Err(SoulseekRs::CompressionError(
+            "CMF+FLG checksum failed".to_string(),
+        ));
     }
     let fdict = (flg >> 5) & 1; // preset dictionary?
     if fdict != 0 {
-        return Err("preset dictionary not supported".to_string());
+        return Err(SoulseekRs::CompressionError(
+            "preset dictionary not supported".to_string(),
+        ));
     }
-    let out = inflate(&mut r)?; // decompress DEFLATE data
+    let out = inflate(&mut r).map_err(SoulseekRs::CompressionError)?; // decompress DEFLATE data
     let _adler32 = r.read_bytes(4)?; // Adler-32 checksum (for this exercise, we ignore it)
     Ok(out)
 }
 
-fn inflate(r: &mut BitReader) -> Result<Vec<u8>, String> {
+fn inflate(r: &mut BitReader) -> std::result::Result<Vec<u8>, String> {
     let mut bfinal = 0;
     let mut out = Vec::new();
     while bfinal == 0 {
@@ -101,7 +107,7 @@ fn inflate(r: &mut BitReader) -> Result<Vec<u8>, String> {
 fn inflate_block_no_compression(
     r: &mut BitReader,
     o: &mut Vec<u8>,
-) -> Result<(), String> {
+) -> std::result::Result<(), String> {
     let len = r.read_bytes(2)?;
     let _nlen = r.read_bytes(2)?;
     for _ in 0..len {
@@ -157,7 +163,10 @@ impl HuffmanTree {
     }
 }
 
-fn decode_symbol(r: &mut BitReader, t: &HuffmanTree) -> Result<u32, String> {
+fn decode_symbol(
+    r: &mut BitReader,
+    t: &HuffmanTree,
+) -> std::result::Result<u32, String> {
     let mut node = &t.root;
     while node.left.is_some() || node.right.is_some() {
         let b = r.read_bit()?;
@@ -192,7 +201,7 @@ fn inflate_block_data(
     literal_length_tree: &HuffmanTree,
     distance_tree: &HuffmanTree,
     out: &mut Vec<u8>,
-) -> Result<(), String> {
+) -> std::result::Result<(), String> {
     loop {
         let sym = decode_symbol(r, literal_length_tree)?;
         if sym <= 255 {
@@ -257,7 +266,7 @@ const CODE_LENGTH_CODES_ORDER: [usize; 19] = [
 
 fn decode_trees(
     r: &mut BitReader,
-) -> Result<(HuffmanTree, HuffmanTree), String> {
+) -> std::result::Result<(HuffmanTree, HuffmanTree), String> {
     // The number of literal/length codes
     let hlit = r.read_bits(5)? + 257;
 
@@ -325,7 +334,7 @@ fn decode_trees(
 fn inflate_block_dynamic(
     r: &mut BitReader,
     o: &mut Vec<u8>,
-) -> Result<(), String> {
+) -> std::result::Result<(), String> {
     let (literal_length_tree, distance_tree) = decode_trees(r)?;
     inflate_block_data(r, &literal_length_tree, &distance_tree, o)
 }
@@ -333,7 +342,7 @@ fn inflate_block_dynamic(
 fn inflate_block_fixed(
     r: &mut BitReader,
     o: &mut Vec<u8>,
-) -> Result<(), String> {
+) -> std::result::Result<(), String> {
     let mut bl = Vec::new();
     bl.extend(vec![8; 144]); // 0-143: 8 bits
     bl.extend(vec![9; 112]); // 144-255: 9 bits

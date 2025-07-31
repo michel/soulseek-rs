@@ -3,15 +3,23 @@ use std::sync::mpsc::Sender;
 
 use crate::warn;
 
-/// Add `<Op>` to make it generic over any operation type.
 pub struct MessageDispatcher<Op> {
+    owner_name: String,
     sender: Sender<Op>,
     handlers: Handlers<Op>,
 }
 
 impl<Op> MessageDispatcher<Op> {
-    pub fn new(sender: Sender<Op>, handlers: Handlers<Op>) -> Self {
-        MessageDispatcher { sender, handlers }
+    pub fn new(
+        owner_name: String,
+        sender: Sender<Op>,
+        handlers: Handlers<Op>,
+    ) -> Self {
+        MessageDispatcher {
+            owner_name,
+            sender,
+            handlers,
+        }
     }
 
     pub fn dispatch(&self, message: &mut Message) {
@@ -22,7 +30,8 @@ impl<Op> MessageDispatcher<Op> {
             handler.handle(message, self.sender.clone());
         } else {
             warn!(
-                "No handler found for message code: {:?}",
+                "[{}:dispatcher] No handler found for message code: {}",
+                self.owner_name,
                 message.get_message_code()
             );
         }
