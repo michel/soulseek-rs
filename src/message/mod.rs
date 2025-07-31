@@ -37,6 +37,12 @@ pub struct Message {
     pointer: usize,
 }
 
+impl Default for Message {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Message {
     pub fn new() -> Self {
         Self {
