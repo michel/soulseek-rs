@@ -41,7 +41,10 @@ impl MessageReader {
         }
     }
 
-    pub fn read_from_socket(&mut self, stream: &mut TcpStream) -> io::Result<()> {
+    pub fn read_from_socket(
+        &mut self,
+        stream: &mut TcpStream,
+    ) -> io::Result<()> {
         let mut temp_buffer = [0; 1024]; // Temporary buffer for reading from the socket
         let bytes_read = stream.read(&mut temp_buffer)?;
         if bytes_read == 0 {
@@ -85,10 +88,11 @@ mod tests {
     #[test]
     fn test_extract_message() {
         let buffer: Vec<u8> = [
-            8, 0, 0, 0, 117, 115, 101, 114, 110, 97, 109, 101, 8, 0, 0, 0, 112, 97, 115, 115, 119,
-            111, 114, 100, 160, 0, 0, 0, 32, 0, 0, 0, 100, 53, 49, 99, 57, 97, 55, 101, 57, 51, 53,
-            51, 55, 52, 54, 97, 54, 48, 50, 48, 102, 57, 54, 48, 50, 100, 52, 53, 50, 57, 50, 57,
-            17, 0, 0, 0,
+            8, 0, 0, 0, 117, 115, 101, 114, 110, 97, 109, 101, 8, 0, 0, 0, 112,
+            97, 115, 115, 119, 111, 114, 100, 160, 0, 0, 0, 32, 0, 0, 0, 100,
+            53, 49, 99, 57, 97, 55, 101, 57, 51, 53, 51, 55, 52, 54, 97, 54,
+            48, 50, 48, 102, 57, 54, 48, 50, 100, 52, 53, 50, 57, 50, 57, 17,
+            0, 0, 0,
         ]
         .to_vec();
         let mut buffered_reader = MessageReader::new_with_buffer(buffer);
@@ -102,7 +106,8 @@ mod tests {
     #[test]
     fn test_extract_message_incomplete_message() {
         let incomplete_buffer = vec![1, 2, 3];
-        let mut buffered_reader = MessageReader::new_with_buffer(incomplete_buffer);
+        let mut buffered_reader =
+            MessageReader::new_with_buffer(incomplete_buffer);
 
         let result = buffered_reader.extract_message();
         assert_eq!(None, result.unwrap());

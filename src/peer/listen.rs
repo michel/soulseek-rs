@@ -19,8 +19,12 @@ impl Listen {
             loop {
                 match buffered_reader.read_from_socket(&mut read_stream) {
                     Ok(_) => {}
-                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
-                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        continue
+                    }
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        continue
+                    }
                     Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
                         debug!("Read operation timed out");
                         continue;
@@ -33,7 +37,10 @@ impl Listen {
 
                 match buffered_reader.extract_message() {
                     Ok(Some(mut message)) => {
-                        debug!("Received message: {:?}", message.get_message_code());
+                        debug!(
+                            "Received message: {:?}",
+                            message.get_message_code()
+                        );
                         trace!("{:?}", message.get_data());
                         message.print_hex();
 

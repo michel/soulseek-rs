@@ -1,7 +1,7 @@
-use crate::trace;
 use crate::message::{Message, MessageHandler};
 use crate::peer::{ConnectionType, Peer};
 use crate::server::ServerOperation;
+use crate::trace;
 use std::sync::mpsc::Sender;
 pub struct ConnectToPeerHandler;
 impl MessageHandler<ServerOperation> for ConnectToPeerHandler {
