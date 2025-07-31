@@ -55,6 +55,12 @@ pub struct Context {
     rooms: Rooms,
 }
 
+impl Default for Context {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Context {
     pub fn new() -> Self {
         Self {

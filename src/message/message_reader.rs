@@ -27,6 +27,12 @@ pub struct MessageReader {
     buffer: VecDeque<u8>,
 }
 
+impl Default for MessageReader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MessageReader {
     pub fn new() -> Self {
         Self {

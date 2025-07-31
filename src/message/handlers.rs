@@ -11,6 +11,12 @@ pub struct Handlers<Op> {
     handlers: HashMap<u8, Box<dyn MessageHandler<Op>>>,
 }
 
+impl<Op> Default for Handlers<Op> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<Op> Handlers<Op> {
     pub fn new() -> Self {
         Self {
