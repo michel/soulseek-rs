@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{message::Message, utils::zlib::deflate};
+use crate::{error::Result, message::Message, utils::zlib::deflate};
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -30,11 +30,11 @@ pub struct FileSearchResult {
 }
 
 impl FileSearchResult {
-    pub fn new_from_message(message: &mut Message) -> Self {
+    pub fn new_from_message(message: &mut Message) -> Result<Self> {
         let pointer = message.get_pointer();
         let size = message.get_size();
         let data: Vec<u8> = message.get_slice(pointer, size);
-        let deflated = deflate(&data).unwrap();
+        let deflated = deflate(&data)?;
         let mut message = Message::new_with_data(deflated);
 
         let username = message.read_string();
@@ -63,12 +63,12 @@ impl FileSearchResult {
         let slots = message.read_int8();
         let speed = message.read_int32();
 
-        Self {
+        Ok(Self {
             token,
             files,
             slots,
             speed,
-        }
+        })
     }
 }
 
