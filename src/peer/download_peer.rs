@@ -8,13 +8,16 @@ use std::thread::sleep;
 use std::time::Duration;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct DownloadPaths {
     final_path: String,
     incomplete_path: String,
 }
 
+#[allow(dead_code)]
 struct FileManager;
 
+#[allow(dead_code)]
 impl FileManager {
     fn create_download_paths(
         output_path: Option<String>,
@@ -57,6 +60,7 @@ impl FileManager {
     }
 }
 
+#[allow(dead_code)]
 struct StreamProcessor {
     no_pierce: bool,
     token: u32,
@@ -64,6 +68,7 @@ struct StreamProcessor {
     received: bool,
 }
 
+#[allow(dead_code)]
 impl StreamProcessor {
     fn new(no_pierce: bool, token: u32) -> Self {
         Self {
@@ -125,6 +130,7 @@ pub struct DownloadPeer {
     no_pierce: bool,
 }
 
+#[allow(dead_code)]
 impl DownloadPeer {
     #[allow(dead_code)]
     pub fn new(
