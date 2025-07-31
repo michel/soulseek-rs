@@ -9,6 +9,7 @@ pub use message_reader::*;
 use std::str;
 
 #[derive(Debug, PartialEq)]
+#[allow(dead_code)]
 pub enum MessageType {
     Server,
     Peer,
@@ -141,6 +142,7 @@ impl Message {
     pub fn new_with_data(data: Vec<u8>) -> Self {
         Self { data, pointer: 0 }
     }
+    #[allow(dead_code)]
     pub fn reset_pointer(&mut self) {
         self.pointer = 0;
     }
@@ -244,6 +246,7 @@ impl Message {
         self
     }
 
+    #[allow(dead_code)]
     pub fn write_int64(&mut self, value: u64) -> &mut Self {
         self.data.extend_from_slice(&value.to_le_bytes());
         self
@@ -258,6 +261,7 @@ impl Message {
         self
     }
 
+    #[allow(dead_code)]
     pub fn write_raw_hex_string(&mut self, val: &str) -> &mut Self {
         let mut b = Vec::new();
         for i in (0..val.len()).step_by(2) {

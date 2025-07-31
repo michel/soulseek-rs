@@ -73,6 +73,7 @@ impl FileSearchResult {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Transfer {
     pub direction: u32,
     pub token: u32,
@@ -81,6 +82,7 @@ pub struct Transfer {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct DownloadResult {
     pub filename: String,
     pub username: String,
@@ -89,6 +91,7 @@ pub struct DownloadResult {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum DownloadStatus {
     Pending,
     InProgress,

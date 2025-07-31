@@ -1,4 +1,4 @@
-use crate::{message::Message, types::Transfer, utils::md5};
+use crate::{message::Message, peer::ConnectionType, types::Transfer, utils::md5};
 
 pub struct MessageFactory;
 impl MessageFactory {
@@ -91,7 +91,20 @@ impl MessageFactory {
     }
     pub fn build_pierce_firewall_message(token: u32) -> Message {
         Message::new()
-            .write_int32(0)  // PierceFirewall message code
+            .write_int32(0) // PierceFirewall message code
+            .write_int32(token)
+            .clone()
+    }
+
+    #[allow(dead_code)]
+    pub fn build_peer_init_message(
+        own_username: &str,
+        connection_type: ConnectionType,
+        token: u32,
+    ) -> Message {
+        Message::new()
+            .write_string(own_username)
+            .write_string(&connection_type.to_string())
             .write_int32(token)
             .clone()
     }
