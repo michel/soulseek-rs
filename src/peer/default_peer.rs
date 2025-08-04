@@ -5,7 +5,7 @@ use crate::message::peer::{
 };
 use crate::message::server::MessageFactory;
 use crate::message::{Handlers, Message, MessageReader, MessageType};
-use crate::types::{FileSearchResult, Transfer};
+use crate::types::{Download, FileSearchResult, Transfer};
 
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
@@ -236,8 +236,14 @@ impl DefaultPeer {
         Ok(())
     }
 
-    pub fn transfer_request(&self, filename: String) -> Result<(), io::Error> {
-        let message = MessageFactory::build_queue_upload_message(&filename);
+    pub fn transfer_request(
+        &self,
+        download: Download,
+    ) -> Result<(), io::Error> {
+        let message = MessageFactory::build_transfer_request_message(
+            &download.filename,
+            download.token,
+        );
         if let Some(sender) = &self.peer_channel {
             sender.send(PeerOperation::SendMessage(message)).unwrap();
         }

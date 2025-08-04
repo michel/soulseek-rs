@@ -7,7 +7,7 @@ use crate::{error::Result, message::Message, utils::zlib::deflate};
 pub struct File {
     pub username: String,
     pub name: String,
-    pub size: u32,
+    pub size: u64,
     pub attribs: HashMap<u32, u32>,
 }
 pub struct UploadFailed {
@@ -27,6 +27,7 @@ pub struct FileSearchResult {
     pub files: Vec<File>,
     pub slots: u8,
     pub speed: u32,
+    pub username: String,
 }
 
 impl FileSearchResult {
@@ -44,8 +45,7 @@ impl FileSearchResult {
         for _ in 0..n_files {
             message.read_int8();
             let name = message.read_string();
-            let size = message.read_int32();
-            message.read_int32();
+            let size = message.read_int64();
             message.read_string();
             let n_attribs = message.read_int32();
             let mut attribs: HashMap<u32, u32> = HashMap::new();
@@ -68,6 +68,7 @@ impl FileSearchResult {
             files,
             slots,
             speed,
+            username,
         })
     }
 }
@@ -78,6 +79,13 @@ pub struct Transfer {
     pub direction: u32,
     pub token: u32,
     pub filename: String,
+    pub size: u64,
+}
+#[derive(Debug, Clone)]
+pub struct Download {
+    pub username: String,
+    pub filename: String,
+    pub token: u32,
     pub size: u64,
 }
 

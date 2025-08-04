@@ -87,6 +87,17 @@ impl MessageFactory {
             .clone()
     }
 
+    pub fn build_transfer_request_message(
+        filename: &str,
+        token: u32,
+    ) -> Message {
+        Message::new()
+            .write_int32(40) // code
+            .write_int32(0) // direction
+            .write_int32(token)
+            .write_string(filename)
+            .clone()
+    }
     pub fn build_transfer_response_message(transfer: Transfer) -> Message {
         Message::new()
             .write_int32(41)
