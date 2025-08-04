@@ -1,8 +1,8 @@
 use crate::{
     error::{Result, SoulseekRs},
-    peer::{ConnectionType, DefaultPeer, Peer},
+    peer::{ConnectionType, DefaultPeer, DownloadPeer, Peer},
     server::{PeerAddress, Server, ServerOperation},
-    types::{FileSearchResult, Transfer},
+    types::{Download, FileSearchResult, Transfer},
     utils::{md5, thread_pool::ThreadPool},
 };
 use std::{
@@ -32,7 +32,7 @@ struct ClientContext {
     sender: Option<Sender<ClientOperation>>,
     server_sender: Option<Sender<crate::server::ServerOperation>>,
     search_results: Vec<FileSearchResult>,
-    downloads: HashMap<u32, Transfer>,
+    downloads: HashMap<u32, Download>,
     thread_pool: ThreadPool,
 }
 impl ClientContext {
@@ -95,6 +95,7 @@ impl Client {
                 Self::listen_to_client_operations(
                     message_reader,
                     self.context.clone(),
+                    self.username.clone(),
                 );
                 Some(server)
             }
@@ -155,19 +156,29 @@ impl Client {
         &self,
         filename: String,
         username: String,
+        size: u64,
     ) -> Result<crate::types::DownloadResult> {
         use crate::types::{DownloadResult, DownloadStatus};
         use std::time::{Duration, Instant};
 
-        println!("Downloading {} from {}", filename, username);
         let start_time = Instant::now();
 
-        // Start the download request
-        let context = self.context.lock().unwrap();
+        let hash = md5::md5(&filename);
+        let token = u32::from_str_radix(&hash[0..5], 16)?;
+
+        let download = Download {
+            username: username.clone(),
+            filename: filename.clone(),
+            token,
+            size,
+        };
+
+        let mut context = self.context.lock().unwrap();
+        context.downloads.insert(token, download.clone());
         let download_initiated = context
             .peers
             .get(&username)
-            .map(|p| p.transfer_request(filename.clone()))
+            .map(|p| p.transfer_request(download.clone()))
             .is_some();
 
         drop(context);
@@ -204,6 +215,7 @@ impl Client {
     fn listen_to_client_operations(
         reader: Receiver<ClientOperation>,
         client_context: Arc<Mutex<ClientContext>>,
+        own_username: String,
     ) {
         thread::spawn(move || loop {
             if let Ok(operation) = reader.recv() {
@@ -217,7 +229,11 @@ impl Client {
                             ConnectionType::D => (),
                         };
 
-                        Self::connect_to_peer(peer, client_context.clone())
+                        Self::connect_to_peer(
+                            peer,
+                            client_context.clone(),
+                            own_username.clone(),
+                        )
                     }
                     ClientOperation::SearchResult(file_search) => {
                         client_context
@@ -232,22 +248,24 @@ impl Client {
                             drop(peer); // Explicitly drop to trigger cleanup
                         }
                     }
-                    ClientOperation::TransferRequest(transfer) => {
-                        client_context
-                            .lock()
-                            .unwrap()
-                            .downloads
-                            .insert(transfer.token, transfer);
-                    }
                     ClientOperation::PierceFireWall(peer) => {
-                        Self::pierce_firewall(peer, client_context.clone());
+                        Self::pierce_firewall(
+                            peer,
+                            client_context.clone(),
+                            own_username.clone(),
+                        );
                     }
+                    ClientOperation::TransferRequest(transfer) => todo!(),
                 }
             }
         });
     }
 
-    fn connect_to_peer(peer: Peer, client_context: Arc<Mutex<ClientContext>>) {
+    fn connect_to_peer(
+        peer: Peer,
+        client_context: Arc<Mutex<ClientContext>>,
+        own_username: String,
+    ) {
         let context = client_context.clone();
         let unlocked_context = context.lock().unwrap();
 
@@ -256,22 +274,48 @@ impl Client {
                 let peer_clone = peer.clone();
                 let sender_clone = sender.clone();
                 unlocked_context.thread_pool.execute(move || {
-                    let default_peer =
-                        DefaultPeer::new(peer_clone, sender_clone);
-                    match default_peer.connect() {
-                        Ok(p) => {
-                            let mut context = client_context.lock().unwrap();
-                            context.peers.insert(peer.username, p);
+                    match peer.connection_type {
+                        ConnectionType::P => {
+                            let default_peer =
+                                DefaultPeer::new(peer_clone, sender_clone);
+                            match default_peer.connect() {
+                                Ok(p) => {
+                                    let mut context =
+                                        client_context.lock().unwrap();
+                                    context.peers.insert(peer.username, p);
+                                }
+                                Err(e) => {
+                                    trace!(
+                                        "Can't connect to {} {}:{} {:?} - {}",
+                                        peer.username,
+                                        peer.host,
+                                        peer.port,
+                                        peer.connection_type,
+                                        e
+                                    );
+                                }
+                            }
                         }
-                        Err(e) => {
-                            trace!(
-                                "Can't connect to {} {}:{} {:?} - {}",
+
+                        ConnectionType::F => {
+                            let context = client_context.lock().unwrap();
+                            // let download = if(Some(token)  {
+                            //     let download = context.downloads.get(&peer.token.unwrap());
+                            // }
+
+                            let download_peer = DownloadPeer::new(
                                 peer.username,
                                 peer.host,
                                 peer.port,
-                                peer.connection_type,
-                                e
+                                peer.token.unwrap(),
+                                false,
+                                own_username.clone(),
                             );
+                            // download_peer.download_file(
+                            //     );
+                        }
+                        ConnectionType::D => {
+                            error!("ConnectionType::D not implemented")
                         }
                     }
                 });
@@ -280,7 +324,11 @@ impl Client {
             error!("No sender found");
         }
     }
-    fn pierce_firewall(peer: Peer, client_context: Arc<Mutex<ClientContext>>) {
+    fn pierce_firewall(
+        peer: Peer,
+        client_context: Arc<Mutex<ClientContext>>,
+        own_username: String,
+    ) {
         debug!("Piercing firewall for peer: {:?}", peer);
 
         let context = client_context.lock().unwrap();
@@ -305,6 +353,6 @@ impl Client {
 
         drop(context);
         // Also try to connect to the peer directly
-        Self::connect_to_peer(peer, client_context);
+        Self::connect_to_peer(peer, client_context, own_username);
     }
 }

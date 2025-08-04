@@ -4,6 +4,7 @@ pub mod listen;
 
 // Re-export commonly used items
 pub use default_peer::{DefaultPeer, PeerOperation};
+pub use download_peer::DownloadPeer;
 
 use crate::message::Message;
 use core::fmt;
