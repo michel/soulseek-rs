@@ -1,3 +1,5 @@
+use soulseek_rs::FileSearchResult;
+
 fn main() {
     use soulseek_rs::{Client, PeerAddress};
     use std::time::Duration;
@@ -14,8 +16,8 @@ fn main() {
             .search("Super flu Believe Believe", Duration::from_secs(10))
         {
             Ok(results) => {
-                if !results.is_empty() && !results[0].files.is_empty() {
-                    let file = results[0].files[0].clone();
+                if let Some(result) = results.iter().find(|r| !r.files.is_empty()) {
+                    let file = result.files[0].clone();
                     match client.download(file.name, file.username, file.size) {
                         Ok(download_result) => {
                             println!("Download result: {:?}", download_result);
@@ -24,6 +26,8 @@ fn main() {
                             eprintln!("Failed to download: {}", e);
                         }
                     }
+                } else {
+                    eprint!("No results")
                 }
             }
             Err(e) => {

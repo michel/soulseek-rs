@@ -232,6 +232,14 @@ impl DefaultPeer {
                             "[default_peer:{:}] TransferResponse for {}",
                             peer_username, transfer.token
                         );
+
+                        debug!("[default_peer:{}] Disconnecting after TransferResponse", peer_username);
+                        client_channel
+                            .send(ClientOperation::PeerDisconnected(
+                                peer_username.clone(),
+                            ))
+                            .unwrap();
+                        break;
                     }
                     PeerOperation::TransferResponse {
                         token,
