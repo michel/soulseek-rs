@@ -1,7 +1,8 @@
 use crate::dispatcher::MessageDispatcher;
 use crate::message::peer::FileSearchResponse;
 use crate::message::peer::{
-    GetShareFileList, TransferRequest, UploadFailedHandler,
+    GetShareFileList, PlaceInQueueResponse, TransferRequest, TransferResponse,
+    UploadFailedHandler,
 };
 use crate::message::server::MessageFactory;
 use crate::message::{Handlers, Message, MessageReader, MessageType};
@@ -12,7 +13,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
 use crate::client::ClientOperation;
-use crate::peer::Peer;
+use crate::peer::{default_peer, Peer};
 use crate::{debug, error, trace, warn};
 use std::io::{self, Write};
 use std::net::TcpStream;
@@ -33,6 +34,15 @@ pub enum PeerOperation {
     SendMessage(Message),
     FileSearchResult(FileSearchResult),
     TransferRequest(Transfer),
+    TransferResponse {
+        token: u32,
+        allowed: bool,
+        reason: Option<String>,
+    },
+    PlaceInQueueResponse {
+        filename: String,
+        place: u32,
+    },
 }
 impl DefaultPeer {
     pub fn new(peer: Peer, client_channel: Sender<ClientOperation>) -> Self {
@@ -86,6 +96,7 @@ impl DefaultPeer {
         let mut write_stream = stream; // Use the original stream for writing
 
         let peer = self.peer.clone();
+        let peer_clone = self.peer.clone();
         let client_channel_for_read = self.client_channel.clone();
 
         // Spawn the reader thread
@@ -93,8 +104,10 @@ impl DefaultPeer {
             let mut handlers = Handlers::new();
             handlers.register_handler(FileSearchResponse);
             handlers.register_handler(TransferRequest);
+            handlers.register_handler(TransferResponse);
             handlers.register_handler(GetShareFileList);
             handlers.register_handler(UploadFailedHandler);
+            handlers.register_handler(PlaceInQueueResponse);
 
             let dispatcher = MessageDispatcher::new(peer_sender, handlers);
 
@@ -113,7 +126,7 @@ impl DefaultPeer {
                         continue;
                     }
                     Err(e) => {
-                        error!("Error reading from peer: {}. Terminating read loop.", e);
+                        error!("[default_peer:{}] Error reading from peer:  {}. Terminating read loop.",peer.username, e);
                         let _ = client_channel_for_read.send(
                             ClientOperation::PeerDisconnected(
                                 peer.username.clone(),
@@ -158,77 +171,107 @@ impl DefaultPeer {
         let peer_channel = self.peer_channel.clone();
         let peer_username = self.peer.username.clone();
 
-        self.write_thread = Some(thread::spawn(move || {
-            loop {
-                match peer_reader.recv() {
-                    Ok(operation) => {
-                        match operation {
-                            PeerOperation::SendMessage(message) => {
-                                trace!(
-                                    "[default_peer:{:?}] ➡ {:?} - {:?}",
-                                    peer_username,
-                                    message
-                                        .get_message_name(
-                                            MessageType::Peer,
-                                            u32::from_le_bytes(
-                                                message
-                                                    .get_slice(0, 4)
-                                                    .try_into()
-                                                    .unwrap()
-                                            )
-                                        )
-                                        .map_err(|e| e.to_string()),
-                                    message
-                                );
+        self.write_thread = Some(thread::spawn(move || loop {
+            match peer_reader.recv() {
+                Ok(operation) => match operation {
+                    PeerOperation::SendMessage(message) => {
+                        trace!(
+                            "[default_peer:{:?}] ➡ {:?} - {:?}",
+                            peer_username,
+                            message
+                                .get_message_name(
+                                    MessageType::Peer,
+                                    u32::from_le_bytes(
+                                        message
+                                            .get_slice(0, 4)
+                                            .try_into()
+                                            .unwrap()
+                                    )
+                                )
+                                .map_err(|e| e.to_string()),
+                            message
+                        );
 
-                                if let Err(e) = write_stream
-                                    .write_all(&message.get_buffer())
-                                {
-                                    error!("Error writing message to stream: {} - {}. Terminating write loop.", peer_username, e);
-                                    let _ = client_channel.send(
-                                        ClientOperation::PeerDisconnected(
-                                            peer_username.clone(),
-                                        ),
-                                    );
-                                    break;
-                                }
-                            }
-                            PeerOperation::FileSearchResult(file_search) => {
-                                client_channel
-                                    .send(ClientOperation::SearchResult(
-                                        file_search,
-                                    ))
-                                    .unwrap();
-                            }
-                            PeerOperation::TransferRequest(transfer) => {
-                                debug!(
-                                    "[default_peer:{}] transfer request: {:?}",
-                                    peer_username, transfer
-                                );
-                                client_channel
-                                    .send(ClientOperation::TransferRequest(
-                                        transfer.clone(),
-                                    ))
-                                    .unwrap();
-
-                                let transfer_response =
-                                MessageFactory::build_transfer_response_message(transfer.clone());
-
-                                if let Some(sender) = peer_channel.clone() {
-                                    sender
-                                        .send(PeerOperation::SendMessage(
-                                            transfer_response,
-                                        ))
-                                        .unwrap();
-                                }
-                            }
+                        if let Err(e) =
+                            write_stream.write_all(&message.get_buffer())
+                        {
+                            error!("Error writing message to stream: {} - {}. Terminating write loop.", peer_username, e);
+                            let _ = client_channel.send(
+                                ClientOperation::PeerDisconnected(
+                                    peer_username.clone(),
+                                ),
+                            );
+                            break;
                         }
                     }
-                    Err(_) => {
-                        // The sender has been dropped, the peer is shutting down.
-                        debug!("Peer channel closed. Terminating write loop.");
-                        break;
+                    PeerOperation::FileSearchResult(file_search) => {
+                        client_channel
+                            .send(ClientOperation::SearchResult(file_search))
+                            .unwrap();
                     }
+                    PeerOperation::TransferRequest(transfer) => {
+                        debug!(
+                            "[default_peer:{:}] TransferRequest for {}",
+                            peer_username, transfer.token
+                        );
+
+                        let transfer_response =
+                            MessageFactory::build_transfer_response_message(
+                                transfer.clone(),
+                            );
+
+                        if let Some(sender) = peer_channel.clone() {
+                            sender
+                                .send(PeerOperation::SendMessage(
+                                    transfer_response,
+                                ))
+                                .unwrap();
+                        }
+
+                        debug!(
+                            "[default_peer:{:}] TransferResponse for {}",
+                            peer_username, transfer.token
+                        );
+                    }
+                    PeerOperation::TransferResponse {
+                        token,
+                        allowed,
+                        reason,
+                    } => {
+                        debug!(
+                                    "[default_peer:{}] transfer response token: {} allowed: {}",
+                                    peer_username, token, allowed
+                                );
+
+                        if !allowed {
+                            if let Some(reason_text) = reason {
+                                debug!(
+                                        "[default_peer:{}] Transfer rejected: {} - token {}, I will receive TransferRequest soon...",
+                                        peer_username.clone(),
+                                        reason_text,
+                                        token
+                                    );
+                            }
+                        } else {
+                            debug!("[default_peer:{:}] Transfer allowed, ready to connect with token {:}",peer_username, token);
+                            client_channel
+                                .send(ClientOperation::DownloadFromPeer(
+                                    token,
+                                    peer_clone.clone(),
+                                ))
+                                .unwrap();
+                        }
+                    }
+                    PeerOperation::PlaceInQueueResponse { filename, place } => {
+                        debug!(
+                            "[default_peer:{}] Place in queue response - file: {}, place: {}",
+                            peer_username, filename, place
+                        );
+                    }
+                },
+                Err(_) => {
+                    debug!("[default_peer:{}] Peer channel closed. Terminating write loop.", peer_username);
+                    break;
                 }
             }
         }));

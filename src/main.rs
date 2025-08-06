@@ -14,16 +14,9 @@ fn main() {
             .search("Super flu Believe Believe", Duration::from_secs(10))
         {
             Ok(results) => {
-                if let Some(file) = results
-                    .iter()
-                    .find(|res| res.username == "betsos76")
-                    .map(|res| &res.files[0])
-                {
-                    match client.download(
-                        file.name.to_string(),
-                        file.username.to_string(),
-                        file.size,
-                    ) {
+                if !results.is_empty() && !results[0].files.is_empty() {
+                    let file = results[0].files[0].clone();
+                    match client.download(file.name, file.username, file.size) {
                         Ok(download_result) => {
                             println!("Download result: {:?}", download_result);
                         }

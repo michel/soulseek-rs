@@ -2,7 +2,7 @@ use crate::{
     error::{Result, SoulseekRs},
     peer::{ConnectionType, DefaultPeer, DownloadPeer, Peer},
     server::{PeerAddress, Server, ServerOperation},
-    types::{Download, FileSearchResult, Transfer},
+    types::{Download, FileSearchResult},
     utils::{md5, thread_pool::ThreadPool},
 };
 use std::{
@@ -19,13 +19,13 @@ use std::{
 };
 
 use crate::{debug, error, info, trace};
-const MAX_THREADS: usize = 100;
+const MAX_THREADS: usize = 50;
 pub enum ClientOperation {
     ConnectToPeer(Peer),
     SearchResult(FileSearchResult),
     PeerDisconnected(String),
-    TransferRequest(Transfer),
     PierceFireWall(Peer),
+    DownloadFromPeer(u32, Peer),
 }
 struct ClientContext {
     peers: HashMap<String, DefaultPeer>,
@@ -62,12 +62,17 @@ impl Client {
         password: String,
     ) -> Self {
         crate::utils::logger::init();
+        let context = Arc::new(Mutex::new(ClientContext::new()));
+        debug!(
+            "ThreadPool initialized with {} threads",
+            context.lock().unwrap().thread_pool.thread_count()
+        );
         Self {
             address,
             username,
             password,
             server: None,
-            context: Arc::new(Mutex::new(ClientContext::new())),
+            context,
         }
     }
 
@@ -174,6 +179,7 @@ impl Client {
         };
 
         let mut context = self.context.lock().unwrap();
+        debug!("token {}", token);
         context.downloads.insert(token, download.clone());
         let download_initiated = context
             .peers
@@ -183,7 +189,7 @@ impl Client {
 
         drop(context);
 
-        let timeout = Duration::from_secs(50);
+        let timeout = Duration::from_secs(150);
         let check_interval = Duration::from_millis(100);
 
         if !download_initiated {
@@ -255,7 +261,43 @@ impl Client {
                             own_username.clone(),
                         );
                     }
-                    ClientOperation::TransferRequest(transfer) => todo!(),
+
+                    ClientOperation::DownloadFromPeer(token, peer) => {
+                        let maybe_download = {
+                            let client_context = client_context.lock().unwrap();
+                            client_context.downloads.get(&token).cloned()
+                        };
+                        let own_username = own_username.clone();
+
+                        match maybe_download {
+                            Some(download) => {
+                                thread::spawn(move || {
+                                    let download_peer = DownloadPeer::new(
+                                        download.username.clone(),
+                                        peer.host,
+                                        peer.port,
+                                        download.token,
+                                        true,
+                                        own_username,
+                                    );
+                                    download_peer
+                                        .download_file(
+                                            Some(download.size as usize),
+                                            Some(String::from(
+                                                "/tmp/download.txt",
+                                            )),
+                                        )
+                                        .unwrap();
+                                });
+                            }
+                            None => {
+                                error!(
+                                    "Can't find download with token {:?}",
+                                    token
+                                );
+                            }
+                        };
+                    }
                 }
             }
         });
