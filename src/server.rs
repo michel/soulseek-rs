@@ -15,7 +15,6 @@ use crate::message::server::WishListIntervalHandler;
 use crate::message::Handlers;
 use crate::message::Message;
 use crate::message::MessageReader;
-use crate::peer::listen::Listen;
 use crate::peer::ConnectionType;
 use crate::peer::Peer;
 

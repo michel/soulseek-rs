@@ -14,12 +14,7 @@ impl MessageHandler<PeerOperation> for TransferResponse {
     fn handle(&self, message: &mut Message, sender: Sender<PeerOperation>) {
         let token = message.read_int32();
         let allowed = message.read_int8();
-
-        let reason = if allowed == 0 {
-            Some(message.read_string())
-        } else {
-            None
-        };
+        let reason = (allowed == 0).then(|| message.read_string());
 
         sender
             .send(PeerOperation::TransferResponse {
@@ -30,4 +25,3 @@ impl MessageHandler<PeerOperation> for TransferResponse {
             .unwrap();
     }
 }
-
