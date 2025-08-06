@@ -1,6 +1,7 @@
 use crate::{
     message::{Message, MessageHandler},
     peer::PeerOperation,
+    trace,
     types::Transfer,
 };
 use std::sync::mpsc::Sender;
@@ -11,6 +12,7 @@ impl MessageHandler<PeerOperation> for TransferRequest {
         40
     }
     fn handle(&self, message: &mut Message, sender: Sender<PeerOperation>) {
+        trace!("transfer_response: {:?}", message.get_buffer());
         let transfer = Transfer::new_from_message(message);
 
         sender

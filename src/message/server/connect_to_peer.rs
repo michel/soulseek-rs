@@ -1,7 +1,6 @@
 use crate::message::{Message, MessageHandler};
-use crate::peer::{ConnectionType, Peer};
+use crate::peer::Peer;
 use crate::server::ServerOperation;
-use crate::trace;
 use std::sync::mpsc::Sender;
 pub struct ConnectToPeerHandler;
 impl MessageHandler<ServerOperation> for ConnectToPeerHandler {
@@ -10,12 +9,6 @@ impl MessageHandler<ServerOperation> for ConnectToPeerHandler {
     }
     fn handle(&self, message: &mut Message, sender: Sender<ServerOperation>) {
         let peer = Peer::new_from_message(message);
-        match peer.connection_type {
-            ConnectionType::P => (),
-            ConnectionType::F => trace!("[server] ConnectToPeer {:?}", peer),
-            ConnectionType::D => (),
-        }
-
         sender.send(ServerOperation::ConnectToPeer(peer)).unwrap();
     }
 }

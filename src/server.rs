@@ -196,7 +196,6 @@ pub struct Server {
     context: Arc<Mutex<Context>>,
 }
 impl Server {
-    /// Create a new instance of Server, returning a Result
     pub fn new(
         address: PeerAddress,
         client_channel: Sender<ClientOperation>,
@@ -305,19 +304,7 @@ impl Server {
                 }
 
                 match buffered_reader.extract_message() {
-                    Ok(Some(mut message)) => {
-                        // trace!(
-                        //     "[server] ← {:?}",
-                        //     message
-                        //         .get_message_name(
-                        //             MessageType::Server,
-                        //             message.get_message_code() as u32
-                        //         )
-                        //         .map_err(|e| e.to_string())
-                        // );
-
-                        dispatcher.dispatch(&mut message)
-                    }
+                    Ok(Some(mut message)) => dispatcher.dispatch(&mut message),
                     Err(e) => {
                         warn!("Error extracting message: {}", e)
                     }
@@ -337,6 +324,11 @@ impl Server {
                 if let Ok(operation) = server_channel.recv() {
                     match operation {
                         ServerOperation::ConnectToPeer(peer) => {
+                            debug!(
+                                "[server] ConnectToPeer {} - ConnectionType {}",
+                                peer.username, peer.connection_type
+                            );
+
                             match peer.connection_type {
                                 ConnectionType::P => {
                                     match client_channel.send(
@@ -419,12 +411,7 @@ impl Server {
             Err(e) => error!("Failed to send: {}", e),
         }
     }
-    fn start_listener(&self, server_channel: Sender<ServerOperation>) {
-        thread::spawn(move || Listen::start(2234, server_channel));
-    }
-
     pub fn login(&self, username: &str, password: &str) -> Result<bool> {
-        self.start_listener(self.sender.clone());
         // Send the login message
         self.queue_message(MessageFactory::build_login_message(
             username, password,

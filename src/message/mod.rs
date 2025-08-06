@@ -9,7 +9,7 @@ pub mod server;
 pub use handlers::{Handlers, MessageHandler};
 pub use message_reader::MessageReader;
 
-use std::str;
+use std::{str, usize};
 
 #[derive(Debug, PartialEq)]
 #[allow(dead_code)]
@@ -219,6 +219,21 @@ impl Message {
             self.data[self.pointer + 7],
         ]);
         self.pointer += 8;
+        val
+    }
+
+    pub fn read_raw_byte(&mut self) -> Vec<u8> {
+        if self.pointer + 4 > self.data.len() {
+            return vec![];
+        }
+
+        let val = vec![
+            self.data[self.pointer],
+            self.data[self.pointer + 1],
+            self.data[self.pointer + 2],
+            self.data[self.pointer + 3],
+        ];
+        self.pointer += 4;
         val
     }
 
