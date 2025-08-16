@@ -5,7 +5,7 @@ use crate::message::peer::{
     UploadFailedHandler,
 };
 use crate::message::server::MessageFactory;
-use crate::message::{Handlers, Message, MessageReader, MessageType};
+use crate::message::{self, Handlers, Message, MessageReader, MessageType};
 use crate::types::{Download, FileSearchResult, Transfer};
 
 use std::sync::mpsc;
@@ -13,7 +13,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
 use crate::client::ClientOperation;
-use crate::peer::{default_peer, Peer};
+use crate::peer::Peer;
 use crate::{debug, error, trace, warn};
 use std::io::{self, Write};
 use std::net::TcpStream;
@@ -35,7 +35,7 @@ pub enum PeerOperation {
     FileSearchResult(FileSearchResult),
     TransferRequest(Transfer),
     TransferResponse {
-        token: u32,
+        token: Vec<u8>,
         allowed: bool,
         reason: Option<String>,
     },
@@ -70,7 +70,7 @@ impl DefaultPeer {
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
-        if let Some(token) = self.peer.token {
+        if let Some(token) = self.peer.token.clone() {
             stream
                 .write_all(&MessageFactory::build_watch_user(token).get_data())
                 .unwrap();
@@ -126,7 +126,7 @@ impl DefaultPeer {
                         continue;
                     }
                     Err(e) => {
-                        error!("[default_peer:{}] Error reading from peer:  {}. Terminating read loop.",peer.username, e);
+                        error!("[default_peer:{}] Error reading from peer:  {}. Terminating read loop.", peer.username, e);
                         let _ = client_channel_for_read.send(
                             ClientOperation::PeerDisconnected(
                                 peer.username.clone(),
@@ -175,22 +175,11 @@ impl DefaultPeer {
             match peer_reader.recv() {
                 Ok(operation) => match operation {
                     PeerOperation::SendMessage(message) => {
-                        trace!(
-                            "[default_peer:{:?}] ➡ {:?} - {:?}",
-                            peer_username,
-                            message
-                                .get_message_name(
-                                    MessageType::Peer,
-                                    u32::from_le_bytes(
-                                        message
-                                            .get_slice(0, 4)
-                                            .try_into()
-                                            .unwrap()
-                                    )
-                                )
-                                .map_err(|e| e.to_string()),
-                            message
-                        );
+                        let buff = &message.get_buffer();
+
+                        // if peer_username == "GOLGOTO" {
+                        debug!("[default_peer:{}] {:?}", peer_username, buff);
+                        // }
 
                         if let Err(e) =
                             write_stream.write_all(&message.get_buffer())
@@ -211,35 +200,35 @@ impl DefaultPeer {
                     }
                     PeerOperation::TransferRequest(transfer) => {
                         debug!(
-                            "[default_peer:{:}] TransferRequest for {}",
+                            "[default_peer:{:}] TransferRequest for {:?}",
                             peer_username, transfer.token
                         );
+
+                        client_channel
+                            .send(ClientOperation::ChangeDownload(
+                                transfer.clone(),
+                                peer_username.clone(),
+                            ))
+                            .unwrap();
 
                         let transfer_response =
                             MessageFactory::build_transfer_response_message(
                                 transfer.clone(),
                             );
 
+                        thread::sleep(Duration::from_secs(2));
+
                         if let Some(sender) = peer_channel.clone() {
                             sender
                                 .send(PeerOperation::SendMessage(
-                                    transfer_response,
+                                    transfer_response.clone(),
                                 ))
                                 .unwrap();
-                        }
-
-                        debug!(
-                            "[default_peer:{:}] TransferResponse for {}",
-                            peer_username, transfer.token
+                            debug!(
+                            "[default_peer:{:}] Sent TransferResponse for token {:?}, {:?}",
+                            peer_username, transfer.token, &transfer_response.get_buffer()
                         );
-
-                        debug!("[default_peer:{}] Disconnecting after TransferResponse", peer_username);
-                        client_channel
-                            .send(ClientOperation::PeerDisconnected(
-                                peer_username.clone(),
-                            ))
-                            .unwrap();
-                        break;
+                        }
                     }
                     PeerOperation::TransferResponse {
                         token,
@@ -247,21 +236,26 @@ impl DefaultPeer {
                         reason,
                     } => {
                         debug!(
-                                    "[default_peer:{}] transfer response token: {} allowed: {}",
+                                    "[default_peer:{}] transfer response token: {:?} allowed: {}",
                                     peer_username, token, allowed
                                 );
 
                         if !allowed {
+                            client_channel
+                                .send(ClientOperation::RemoveDownload(
+                                    token.clone(),
+                                ))
+                                .unwrap();
                             if let Some(reason_text) = reason {
                                 debug!(
-                                        "[default_peer:{}] Transfer rejected: {} - token {}, I will receive TransferRequest soon...",
+                                        "[default_peer:{}] Transfer rejected: {} - token {:?}, I will receive TransferRequest soon...",
                                         peer_username.clone(),
                                         reason_text,
-                                        token
+                                        token.clone()
                                     );
                             }
                         } else {
-                            debug!("[default_peer:{:}] Transfer allowed, ready to connect with token {:}",peer_username, token);
+                            debug!("[default_peer:{:}] Transfer allowed, ready to connect with token {:?}",peer_username, token);
                             client_channel
                                 .send(ClientOperation::DownloadFromPeer(
                                     token,

@@ -1,22 +1,25 @@
-use soulseek_rs::FileSearchResult;
-
 fn main() {
     use soulseek_rs::{Client, PeerAddress};
     use std::time::Duration;
 
     let mut client = Client::new(
         PeerAddress::new(String::from("server.slsknet.org"), 2242),
-        String::from("insane_in_the_brain3"),
+        String::from("insane_in_the_brain2"),
         String::from("13375137"),
     );
 
     client.connect();
     match client.login() {
         Ok(_) => match client
-            .search("Super flu Believe Believe", Duration::from_secs(10))
+            .search("Super flu Believe", Duration::from_secs(20))
         {
             Ok(results) => {
-                if let Some(result) = results.iter().find(|r| !r.files.is_empty()) {
+                if let Some(result) = results.iter().find(|r| {
+                    !r.files.is_empty()
+                        && r.username != "Mus4Mus022"
+                        && r.username != "Slackman2505"
+                        && r.username == "GOLGOTO"
+                }) {
                     let file = result.files[0].clone();
                     match client.download(file.name, file.username, file.size) {
                         Ok(download_result) => {
