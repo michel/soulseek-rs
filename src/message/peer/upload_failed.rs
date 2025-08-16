@@ -8,7 +8,7 @@ use std::sync::mpsc::Sender;
 
 pub struct UploadFailedHandler;
 impl MessageHandler<PeerOperation> for UploadFailedHandler {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         46
     }
     fn handle(&self, message: &mut Message, _sender: Sender<PeerOperation>) {

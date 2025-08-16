@@ -6,7 +6,7 @@ use std::sync::mpsc::Sender;
 
 pub struct GetShareFileList;
 impl MessageHandler<PeerOperation> for GetShareFileList {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         4
     }
     fn handle(&self, _message: &mut Message, sender: Sender<PeerOperation>) {
