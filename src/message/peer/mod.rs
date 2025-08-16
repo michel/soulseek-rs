@@ -1,3 +1,4 @@
+pub mod distributed;
 mod file_search_response;
 mod get_share_file_list;
 mod transfer_request;

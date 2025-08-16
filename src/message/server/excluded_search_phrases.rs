@@ -8,7 +8,7 @@ use std::sync::mpsc::Sender;
 pub struct ExcludedSearchPhrasesHandler;
 
 impl MessageHandler<ServerOperation> for ExcludedSearchPhrasesHandler {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         160
     }
 

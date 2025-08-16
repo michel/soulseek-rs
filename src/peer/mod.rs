@@ -1,14 +1,41 @@
 mod default_peer;
+mod distributed_peer;
 mod download_peer;
 pub mod listen;
 
 // Re-export commonly used items
 pub use default_peer::{DefaultPeer, PeerOperation};
+pub use distributed_peer::DistributedPeer;
 pub use download_peer::DownloadPeer;
+
+// ADD THIS ENUM
+#[allow(dead_code)]
+pub enum PeerConnection {
+    Default(DefaultPeer),
+    Distributed(DistributedPeer),
+}
+
+impl PeerConnection {
+    pub fn transfer_request(
+        &self,
+        download: crate::types::Download,
+    ) -> Result<(), std::io::Error> {
+        match self {
+            PeerConnection::Default(peer) => peer.transfer_request(download),
+            PeerConnection::Distributed(_) => {
+                // Distributed peers don't handle transfer requests
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "Distributed peers don't support transfer requests",
+                ))
+            }
+        }
+    }
+}
 
 use crate::{info, message::Message};
 use core::fmt;
-use std::{os::macos::raw, str::FromStr};
+use std::str::FromStr;
 
 #[derive(Debug, Clone)]
 pub enum ConnectionType {

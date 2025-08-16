@@ -9,6 +9,7 @@ use crate::message::server::MessageFactory;
 use crate::message::server::MessageUser;
 use crate::message::server::ParentMinSpeedHandler;
 use crate::message::server::ParentSpeedRatioHandler;
+use crate::message::server::PossibleParentsHandler;
 use crate::message::server::PrivilegedUsersHandler;
 use crate::message::server::RoomListHandler;
 use crate::message::server::WishListIntervalHandler;
@@ -280,6 +281,7 @@ impl Server {
             handlers.register_handler(PrivilegedUsersHandler);
             handlers.register_handler(FileSearchHandler);
             handlers.register_handler(ConnectToPeerHandler);
+            handlers.register_handler(PossibleParentsHandler);
 
             let dispatcher = MessageDispatcher::new(sender, handlers);
 

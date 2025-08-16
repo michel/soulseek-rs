@@ -1,6 +1,7 @@
 use crate::{
     error::{Result, SoulseekRs},
-    peer::{ConnectionType, DefaultPeer, DownloadPeer, Peer},
+    message::peer::distributed::SearchRequestInfo,
+    peer::{ConnectionType, DefaultPeer, DistributedPeer, DownloadPeer, Peer, PeerConnection},
     server::{PeerAddress, Server, ServerOperation},
     types::{Download, FileSearchResult},
     utils::{md5, thread_pool::ThreadPool},
@@ -14,6 +15,7 @@ use std::{
         Mutex,
     },
     thread,
+    time::{SystemTime, UNIX_EPOCH},
 };
 use std::{
     sync::{mpsc, Arc},
@@ -30,9 +32,10 @@ pub enum ClientOperation {
     DownloadFromPeer(Vec<u8>, Peer),
     ChangeDownload(Transfer, String),
     RemoveDownload(Vec<u8>),
+    DistributedSearch(SearchRequestInfo),
 }
 struct ClientContext {
-    peers: HashMap<String, DefaultPeer>,
+    peers: HashMap<String, PeerConnection>,
     sender: Option<Sender<ClientOperation>>,
     server_sender: Option<Sender<crate::server::ServerOperation>>,
     search_results: Vec<FileSearchResult>,
@@ -85,6 +88,13 @@ impl Client {
             Sender<ClientOperation>,
             Receiver<ClientOperation>,
         ) = mpsc::channel();
+
+        // Start the peer listener in a background thread
+        let sender_for_listen = sender.clone();
+        thread::spawn(move || {
+            // Port 2234 matches what we send in SetWaitPort
+            crate::peer::listen::Listen::start(2234, sender_for_listen);
+        });
 
         self.context.lock().unwrap().sender = Some(sender.clone());
 
@@ -172,8 +182,11 @@ impl Client {
 
         let start_time = Instant::now();
 
-        let hash = md5::md5(&filename);
-        let token = u32::from_str_radix(&hash[0..5], 16)?;
+        let token = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_nanos() as u32;
+
         let token_bytes = token.to_le_bytes().to_vec();
 
         let download = Download {
@@ -327,6 +340,21 @@ impl Client {
                         let mut ctx = client_context.lock().unwrap();
                         ctx.downloads.remove(&token).unwrap();
                     }
+                    ClientOperation::DistributedSearch(search_info) => {
+                        debug!("Received distributed search from {}: '{}'", search_info.username, search_info.query);
+                        
+                        // NOTE: This requires you to have a way to search your own shared files.
+                        // For now, we will respond with an empty list.
+                        let local_matches: Vec<crate::types::File> = vec![];
+
+                        if !local_matches.is_empty() {
+                            // Here you would implement the logic to check if you are already connected
+                            // to search_info.username. If not, you'd call get_peer_address, cache
+                            // the results, and send them upon connection. This is a complex step
+                            // that can be implemented later.
+                            info!("Found {} local matches for query '{}', but sending results is not yet implemented.", local_matches.len(), search_info.query);
+                        }
+                    }
                 }
             }
         });
@@ -353,7 +381,7 @@ impl Client {
                                 Ok(p) => {
                                     let mut context =
                                         client_context.lock().unwrap();
-                                    context.peers.insert(peer.username, p);
+                                    context.peers.insert(peer.username, PeerConnection::Default(p));
                                 }
                                 Err(e) => {
                                     trace!(
@@ -388,7 +416,17 @@ impl Client {
                             // //     );
                         }
                         ConnectionType::D => {
-                            error!("ConnectionType::D not implemented")
+                            let dist_peer = DistributedPeer::new(peer_clone, sender_clone);
+                            match dist_peer.connect(&own_username) {
+                                Ok(p) => {
+                                    info!("Connected to DistributedPeer: {}", peer.username);
+                                    let mut context = client_context.lock().unwrap();
+                                    context.peers.insert(peer.username, PeerConnection::Distributed(p));
+                                }
+                                Err(e) => {
+                                    error!("Failed to connect to DistributedPeer {}: {}", peer.username, e);
+                                }
+                            }
                         }
                     }
                 });

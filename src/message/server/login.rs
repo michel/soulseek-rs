@@ -10,7 +10,7 @@ pub struct LoginHandler;
 
 // Implement `MessageHandler` specifically for `ServerOperation`.
 impl MessageHandler<ServerOperation> for LoginHandler {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         1
     }
 
