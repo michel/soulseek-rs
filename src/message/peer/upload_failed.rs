@@ -1,4 +1,4 @@
-use crate::info;
+
 use crate::{
     message::{Message, MessageHandler},
     peer::PeerOperation,
@@ -11,8 +11,13 @@ impl MessageHandler<PeerOperation> for UploadFailedHandler {
     fn get_code(&self) -> u32 {
         46
     }
-    fn handle(&self, message: &mut Message, _sender: Sender<PeerOperation>) {
+    fn handle(&self, message: &mut Message, sender: Sender<PeerOperation>) {
         let upload_failed = UploadFailed::new_from_message(message);
-        info!("Upload failed for ${}", upload_failed.filename);
+        
+        sender
+            .send(PeerOperation::UploadFailed {
+                filename: upload_failed.filename,
+            })
+            .unwrap();
     }
 }

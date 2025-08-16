@@ -16,9 +16,9 @@ fn main() {
             Ok(results) => {
                 if let Some(result) = results.iter().find(|r| {
                     !r.files.is_empty()
-                    // && r.username != "Mus4Mus022"
-                    // && r.username != "Slackman2505"
-                    // && r.username == "MisterDanielson"
+                        && r.username != "Mus4Mus022"
+                        && r.username != "Slackman2505"
+                        && r.username == "fuleu"
                 }) {
                     let file = result.files[0].clone();
                     match client.download(file.name, file.username, file.size) {

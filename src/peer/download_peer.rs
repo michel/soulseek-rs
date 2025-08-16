@@ -189,7 +189,7 @@ impl DownloadPeer {
                 &MessageFactory::build_pierce_firewall_message(
                     self.token.clone(),
                 )
-                .get_data(),
+                .get_buffer(),
             )?;
         }
         Ok(())
