@@ -10,11 +10,12 @@ use crate::types::{Download, FileSearchResult, Transfer};
 
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use crate::client::ClientOperation;
 use crate::peer::Peer;
-use crate::{debug, error, trace, warn};
+use crate::{debug, error, info, trace, warn};
 use std::io::{self, Write};
 use std::net::TcpStream;
 use std::net::ToSocketAddrs;
@@ -27,6 +28,7 @@ pub struct DefaultPeer {
     client_channel: Sender<ClientOperation>,
     pub read_thread: Option<JoinHandle<()>>,
     write_thread: Option<JoinHandle<()>>,
+    has_active_download: Arc<Mutex<bool>>,
 }
 
 #[allow(dead_code)]
@@ -43,6 +45,9 @@ pub enum PeerOperation {
         filename: String,
         place: u32,
     },
+    UploadFailed {
+        filename: String,
+    },
 }
 impl DefaultPeer {
     pub fn new(peer: Peer, client_channel: Sender<ClientOperation>) -> Self {
@@ -52,6 +57,7 @@ impl DefaultPeer {
             client_channel,
             read_thread: None,
             write_thread: None,
+            has_active_download: Arc::new(Mutex::new(false)),
         }
     }
     pub fn connect(mut self) -> Result<Self, io::Error> {
@@ -101,6 +107,7 @@ impl DefaultPeer {
         let peer = self.peer.clone();
         let peer_clone = self.peer.clone();
         let client_channel_for_read = self.client_channel.clone();
+        let has_active_download_read = self.has_active_download.clone();
 
         // Spawn the reader thread
         self.read_thread = Some(thread::spawn(move || {
@@ -141,14 +148,16 @@ impl DefaultPeer {
 
                 match buffered_reader.extract_message() {
                     Ok(Some(mut message)) => {
-                        // Log raw bytes for debugging
+                        // Log raw bytes for debugging - only for download peers
                         let message_code = message.get_message_code_u32();
-                        debug!(
-                            "[default_peer:{}] INCOMING RAW (code {}): {:?}",
-                            peer.username,
-                            message_code,
-                            message.get_data()
-                        );
+                        if *has_active_download_read.lock().unwrap() {
+                            debug!(
+                                "[default_peer:{}] INCOMING RAW (code {}): {:?}",
+                                peer.username,
+                                message_code,
+                                message.get_data()
+                            );
+                        }
 
                         trace!(
                             "[default_peer:{:?}] ← {:?}",
@@ -182,6 +191,7 @@ impl DefaultPeer {
         let client_channel = self.client_channel.clone();
         let peer_channel = self.peer_channel.clone();
         let peer_username = self.peer.username.clone();
+        let has_active_download_write = self.has_active_download.clone();
 
         self.write_thread = Some(thread::spawn(move || loop {
             match peer_reader.recv() {
@@ -189,10 +199,12 @@ impl DefaultPeer {
                     PeerOperation::SendMessage(message) => {
                         let buff = message.get_buffer();
 
-                        debug!(
-                            "[default_peer:{}] OUTGOING RAW: {:?}",
-                            peer_username, buff
-                        );
+                        if *has_active_download_write.lock().unwrap() {
+                            debug!(
+                                "[default_peer:{}] OUTGOING RAW: {:?}",
+                                peer_username, buff
+                            );
+                        }
 
                         if let Err(e) = write_stream.write_all(&buff) {
                             error!("Error writing message to stream: {} - {}. Terminating write loop.", peer_username, e);
@@ -281,6 +293,12 @@ impl DefaultPeer {
                             peer_username, filename, place
                         );
                     }
+                    PeerOperation::UploadFailed { filename } => {
+                        info!(
+                            "[default_peer:{}] Upload failed for {}",
+                            peer_username, filename
+                        );
+                    }
                 },
                 Err(_) => {
                     debug!("[default_peer:{}] Peer channel closed. Terminating write loop.", peer_username);
@@ -296,6 +314,9 @@ impl DefaultPeer {
         &self,
         download: Download,
     ) -> Result<(), io::Error> {
+        // Set the flag to indicate this peer has an active download
+        *self.has_active_download.lock().unwrap() = true;
+        
         let message = MessageFactory::build_transfer_request_message(
             &download.filename,
             download.token,

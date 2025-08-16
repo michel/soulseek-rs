@@ -21,7 +21,6 @@ use crate::peer::Peer;
 
 use std::io::{self, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::process;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Barrier, Mutex};
@@ -342,17 +341,19 @@ impl Server {
                                     }
                                 }
                                 ConnectionType::F => {
-                                    info!("ConnectionType::F in server!");
-                                    process::exit(1);
-
+                                    info!("Received ConnectToPeer with type F for user {}, preparing for download.", peer.username);
+                                    let token =
+                                        peer.token.clone().unwrap_or_default();
                                     match client_channel.send(
-                                        ClientOperation::PierceFireWall(peer),
+                                        ClientOperation::DownloadFromPeer(
+                                            token, peer,
+                                        ),
                                     ) {
                                         Ok(_) => {
-                                            debug!("Sent PierceFireWall operation for F-type connection");
+                                            debug!("Sent DownloadFromPeer operation for F-type connection");
                                         }
                                         Err(_e) => {
-                                            error!("Failed to send PierceFireWall operation");
+                                            error!("Failed to send DownloadFromPeer operation");
                                         }
                                     }
                                 }

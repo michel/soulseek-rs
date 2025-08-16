@@ -1,7 +1,10 @@
 use crate::{
     error::{Result, SoulseekRs},
     message::peer::distributed::SearchRequestInfo,
-    peer::{ConnectionType, DefaultPeer, DistributedPeer, DownloadPeer, Peer, PeerConnection},
+    peer::{
+        ConnectionType, DefaultPeer, DistributedPeer, DownloadPeer, Peer,
+        PeerConnection,
+    },
     server::{PeerAddress, Server, ServerOperation},
     types::{Download, FileSearchResult},
     utils::{md5, thread_pool::ThreadPool},
@@ -9,7 +12,6 @@ use crate::{
 };
 use std::{
     collections::HashMap,
-    process,
     sync::{
         mpsc::{Receiver, Sender},
         Mutex,
@@ -206,7 +208,7 @@ impl Client {
 
         drop(context);
 
-        let timeout = Duration::from_secs(150);
+        let timeout = Duration::from_secs(60*5);
         let check_interval = Duration::from_millis(100);
 
         if !download_initiated {
@@ -341,8 +343,11 @@ impl Client {
                         ctx.downloads.remove(&token).unwrap();
                     }
                     ClientOperation::DistributedSearch(search_info) => {
-                        debug!("Received distributed search from {}: '{}'", search_info.username, search_info.query);
-                        
+                        debug!(
+                            "Received distributed search from {}: '{}'",
+                            search_info.username, search_info.query
+                        );
+
                         // NOTE: This requires you to have a way to search your own shared files.
                         // For now, we will respond with an empty list.
                         let local_matches: Vec<crate::types::File> = vec![];
@@ -397,23 +402,37 @@ impl Client {
                         }
 
                         ConnectionType::F => {
-                            error!("ConnectionType::F in client!!!!");
-                            process::exit(1);
-                            // let context = client_context.lock().unwrap();
-                            // // let download = if(Some(token)  {
-                            // //     let download = context.downloads.get(&peer.token.unwrap());
-                            // // }
-                            //
-                            // let download_peer = DownloadPeer::new(
-                            //     peer.username,
-                            //     peer.host,
-                            //     peer.port,
-                            //     peer.token.unwrap(),
-                            //     false,
-                            //     own_username.clone(),
-                            // );
-                            // // download_peer.download_file(
-                            // //     );
+                            debug!("Received ConnectToPeer with ConnectionType::F for {}", peer.username);
+                            let context = client_context.lock().unwrap();
+                            
+                            // Look up the download using the token
+                            if let Some(token) = &peer.token {
+                                if let Some(download) = context.downloads.get(token) {
+                                    let download_clone = download.clone();
+                                    let download_peer = DownloadPeer::new(
+                                        peer.username.clone(),
+                                        peer.host,
+                                        peer.port,
+                                        token.clone(),
+                                        false,  // no_pierce = false for F-type
+                                        own_username.clone(),
+                                    );
+                                    drop(context);  // Release the lock before spawning thread
+                                    thread::spawn(move || {
+                                        match download_peer.download_file(
+                                            Some(download_clone.size as usize),
+                                            Some(String::from("/tmp/download.txt")),
+                                        ) {
+                                            Ok(_) => debug!("Download completed successfully"),
+                                            Err(e) => error!("Download failed: {}", e),
+                                        }
+                                    });
+                                } else {
+                                    error!("No download found for token {:?}", token);
+                                }
+                            } else {
+                                error!("No token provided in F-type ConnectToPeer");
+                            }
                         }
                         ConnectionType::D => {
                             let dist_peer = DistributedPeer::new(peer_clone, sender_clone);

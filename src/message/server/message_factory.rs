@@ -99,12 +99,12 @@ impl MessageFactory {
         Message::new()
             .write_int32(41)
             .write_raw_bytes(transfer.token)
-            .write_int8(1)
+            .write_int8(1)  // allowed = true
             .clone()
     }
     pub fn build_pierce_firewall_message(token: Vec<u8>) -> Message {
         Message::new()
-            .write_int32(0) // PierceFirewall message code
+            .write_int8(0) // PierceFirewall message code
             .write_raw_bytes(token)
             .clone()
     }
