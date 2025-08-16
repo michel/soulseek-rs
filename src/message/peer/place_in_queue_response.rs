@@ -7,8 +7,8 @@ use std::sync::mpsc::Sender;
 pub struct PlaceInQueueResponse;
 
 impl MessageHandler<PeerOperation> for PlaceInQueueResponse {
-    fn get_code(&self) -> u8 {
-        43
+    fn get_code(&self) -> u32 {
+        44
     }
 
     fn handle(&self, message: &mut Message, sender: Sender<PeerOperation>) {

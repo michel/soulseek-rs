@@ -15,15 +15,17 @@ impl<Op> MessageDispatcher<Op> {
     }
 
     pub fn dispatch(&self, message: &mut Message) {
-        let code = message.get_message_code();
+        // Correctly read the 4-byte message code after the 4-byte length
+        message.set_pointer(4); 
+        let code = message.read_int32(); // This reads the u32 code and advances the pointer to 8
 
         if let Some(handler) = self.handlers.get_handler(code) {
-            message.set_pointer(8);
+            // The pointer is now correctly positioned at the start of the payload
             handler.handle(message, self.sender.clone());
         } else {
             warn!(
-                "No handler found for message code: {:?}",
-                message.get_message_code()
+                "No handler found for peer message code: {}",
+                code
             );
         }
     }
