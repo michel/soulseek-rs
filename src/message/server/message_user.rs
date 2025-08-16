@@ -9,7 +9,7 @@ use std::sync::mpsc::Sender;
 pub struct MessageUser;
 
 impl MessageHandler<ServerOperation> for MessageUser {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         22
     }
 

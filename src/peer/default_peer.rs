@@ -5,7 +5,7 @@ use crate::message::peer::{
     UploadFailedHandler,
 };
 use crate::message::server::MessageFactory;
-use crate::message::{self, Handlers, Message, MessageReader, MessageType};
+use crate::message::{Handlers, Message, MessageReader, MessageType};
 use crate::types::{Download, FileSearchResult, Transfer};
 
 use std::sync::mpsc;
@@ -25,7 +25,7 @@ pub struct DefaultPeer {
     peer: Peer,
     peer_channel: Option<Sender<PeerOperation>>,
     client_channel: Sender<ClientOperation>,
-    read_thread: Option<JoinHandle<()>>,
+    pub read_thread: Option<JoinHandle<()>>,
     write_thread: Option<JoinHandle<()>>,
 }
 
@@ -66,13 +66,16 @@ impl DefaultPeer {
             &socket_address,
             Duration::from_secs(20),
         )?;
+        stream.set_nodelay(true)?;
 
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
         if let Some(token) = self.peer.token.clone() {
             stream
-                .write_all(&MessageFactory::build_watch_user(token).get_data())
+                .write_all(
+                    &MessageFactory::build_watch_user(token).get_buffer(),
+                )
                 .unwrap();
         }
         self.start_read_write_loops(stream)?;
@@ -80,7 +83,7 @@ impl DefaultPeer {
         Ok(self)
     }
 
-    fn start_read_write_loops(
+    pub fn start_read_write_loops(
         &mut self,
         stream: TcpStream,
     ) -> Result<(), io::Error> {
@@ -138,6 +141,15 @@ impl DefaultPeer {
 
                 match buffered_reader.extract_message() {
                     Ok(Some(mut message)) => {
+                        // Log raw bytes for debugging
+                        let message_code = message.get_message_code_u32();
+                        debug!(
+                            "[default_peer:{}] INCOMING RAW (code {}): {:?}",
+                            peer.username,
+                            message_code,
+                            message.get_data()
+                        );
+
                         trace!(
                             "[default_peer:{:?}] ← {:?}",
                             peer.username,
@@ -175,15 +187,14 @@ impl DefaultPeer {
             match peer_reader.recv() {
                 Ok(operation) => match operation {
                     PeerOperation::SendMessage(message) => {
-                        let buff = &message.get_buffer();
+                        let buff = message.get_buffer();
 
-                        // if peer_username == "GOLGOTO" {
-                        debug!("[default_peer:{}] {:?}", peer_username, buff);
-                        // }
+                        debug!(
+                            "[default_peer:{}] OUTGOING RAW: {:?}",
+                            peer_username, buff
+                        );
 
-                        if let Err(e) =
-                            write_stream.write_all(&message.get_buffer())
-                        {
+                        if let Err(e) = write_stream.write_all(&buff) {
                             error!("Error writing message to stream: {} - {}. Terminating write loop.", peer_username, e);
                             let _ = client_channel.send(
                                 ClientOperation::PeerDisconnected(
@@ -241,11 +252,11 @@ impl DefaultPeer {
                                 );
 
                         if !allowed {
-                            client_channel
-                                .send(ClientOperation::RemoveDownload(
-                                    token.clone(),
-                                ))
-                                .unwrap();
+                            // client_channel
+                            //     .send(ClientOperation::RemoveDownload(
+                            //         token.clone(),
+                            //     ))
+                            //     .unwrap();
                             if let Some(reason_text) = reason {
                                 debug!(
                                         "[default_peer:{}] Transfer rejected: {} - token {:?}, I will receive TransferRequest soon...",

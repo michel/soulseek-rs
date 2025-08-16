@@ -29,9 +29,9 @@ impl MessageFactory {
             .write_int32(1)
             .write_string(username)
             .write_string(password)
-            .write_int32(157) // version
+            .write_int32(160) // version
             .write_string(&hash)
-            .write_int32(100); //minor version
+            .write_int32(17); //minor version
 
         message
     }
@@ -74,10 +74,7 @@ impl MessageFactory {
         Message::new().write_int32(2).write_int32(2234).clone()
     }
     pub fn build_watch_user(token: Vec<u8>) -> Message {
-        Message::new()
-            .write_raw_bytes([5, 0, 0, 0, 0].to_vec())
-            .write_raw_bytes(token)
-            .clone()
+        Message::new().write_int8(0).write_raw_bytes(token).clone()
     }
 
     pub fn build_queue_upload_message(filename: &str) -> Message {
@@ -112,6 +109,16 @@ impl MessageFactory {
             .clone()
     }
 
+    pub fn build_parent_ip_message(ip: Vec<u8>) -> Message {
+        Message::new()
+            .write_int32(73)
+            .write_int8(ip[0])
+            .write_int8(ip[1])
+            .write_int8(ip[2])
+            .write_int8(ip[3])
+            .clone()
+    }
+
     #[allow(dead_code)]
     pub fn build_peer_init_message(
         own_username: &str,
@@ -119,6 +126,7 @@ impl MessageFactory {
         token: Vec<u8>,
     ) -> Message {
         Message::new()
+            .write_int8(1)
             .write_string(own_username)
             .write_string(&connection_type.to_string())
             .write_raw_bytes(token)

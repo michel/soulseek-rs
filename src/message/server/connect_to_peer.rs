@@ -4,7 +4,7 @@ use crate::server::ServerOperation;
 use std::sync::mpsc::Sender;
 pub struct ConnectToPeerHandler;
 impl MessageHandler<ServerOperation> for ConnectToPeerHandler {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         18
     }
     fn handle(&self, message: &mut Message, sender: Sender<ServerOperation>) {

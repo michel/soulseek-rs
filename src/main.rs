@@ -4,7 +4,7 @@ fn main() {
 
     let mut client = Client::new(
         PeerAddress::new(String::from("server.slsknet.org"), 2242),
-        String::from("insane_in_the_brain2"),
+        String::from("insane_in_the_brain3"),
         String::from("13375137"),
     );
 
@@ -16,9 +16,9 @@ fn main() {
             Ok(results) => {
                 if let Some(result) = results.iter().find(|r| {
                     !r.files.is_empty()
-                        && r.username != "Mus4Mus022"
-                        && r.username != "Slackman2505"
-                        && r.username == "GOLGOTO"
+                    // && r.username != "Mus4Mus022"
+                    // && r.username != "Slackman2505"
+                    // && r.username == "MisterDanielson"
                 }) {
                     let file = result.files[0].clone();
                     match client.download(file.name, file.username, file.size) {

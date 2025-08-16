@@ -180,7 +180,7 @@ impl DownloadPeer {
                 super::ConnectionType::F,
                 self.token.clone(),
             );
-            stream.write_all(&message.get_data())?;
+            stream.write_all(&message.get_buffer())?;
             sleep(Duration::from_millis(1000));
             stream
                 .write_all(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])?;

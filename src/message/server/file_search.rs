@@ -9,7 +9,7 @@ use crate::{
 pub struct FileSearchHandler;
 
 impl MessageHandler<ServerOperation> for FileSearchHandler {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         26
     }
     fn handle(&self, message: &mut Message, _sender: Sender<ServerOperation>) {
