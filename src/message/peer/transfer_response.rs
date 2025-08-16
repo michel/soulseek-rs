@@ -14,7 +14,7 @@ impl MessageHandler<PeerOperation> for TransferResponse {
     fn handle(&self, message: &mut Message, sender: Sender<PeerOperation>) {
         let token = message.read_raw_bytes(4);
         let allowed = message.read_int8();
-        
+
         let reason = if allowed == 0 {
             // When not allowed, read the reason string
             Some(message.read_string())

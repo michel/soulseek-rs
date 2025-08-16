@@ -5,6 +5,7 @@ pub mod error;
 pub mod message;
 pub mod peer;
 pub mod server;
+pub mod share;
 pub mod types;
 #[macro_use]
 pub mod utils;

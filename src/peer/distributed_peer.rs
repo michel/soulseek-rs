@@ -147,4 +147,3 @@ impl Drop for DistributedPeer {
         }
     }
 }
-

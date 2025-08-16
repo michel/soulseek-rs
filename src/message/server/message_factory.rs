@@ -99,7 +99,7 @@ impl MessageFactory {
         Message::new()
             .write_int32(41)
             .write_raw_bytes(transfer.token)
-            .write_int8(1)  // allowed = true
+            .write_int8(1) // allowed = true
             .clone()
     }
     pub fn build_pierce_firewall_message(token: Vec<u8>) -> Message {
@@ -130,6 +130,53 @@ impl MessageFactory {
             .write_string(own_username)
             .write_string(&connection_type.to_string())
             .write_raw_bytes(token)
+            .clone()
+    }
+
+    pub fn build_get_peer_address_message(username: &str) -> Message {
+        Message::new().write_int32(3).write_string(username).clone()
+    }
+
+    pub fn build_file_search_result_message(
+        files: Vec<crate::share::SharedFile>,
+        token: Vec<u8>,
+        own_username: String,
+    ) -> Message {
+        use crate::utils::zlib::deflate_raw;
+
+        // Build the inner message that will be compressed
+        let mut inner = Message::new();
+        inner.write_string(&own_username);
+        inner.write_raw_bytes(token);
+        inner.write_int32(files.len() as u32);
+
+        for file in files {
+            inner.write_int8(0); // code
+            inner.write_string(&file.value.name);
+            inner.write_int64(file.value.size);
+            inner.write_string(""); // ext
+
+            // Write attributes (like bitrate for audio files)
+            let attribs = &file.value.attribs;
+            inner.write_int32(attribs.len() as u32);
+            for (key, value) in attribs {
+                inner.write_int32(*key);
+                inner.write_int32(*value);
+            }
+        }
+
+        inner.write_int8(1); // slots available
+        inner.write_int32(123); // speed (arbitrary value)
+        inner.write_int32(0); // in queue
+
+        // Compress the inner message
+        let compressed =
+            deflate_raw(&inner.get_data()).unwrap_or_else(|_| inner.get_data());
+
+        // Build the outer message
+        Message::new()
+            .write_int32(9) // FileSearchResult message code
+            .write_raw_bytes(compressed)
             .clone()
     }
 }

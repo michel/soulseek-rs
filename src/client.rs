@@ -1,11 +1,13 @@
 use crate::{
     error::{Result, SoulseekRs},
     message::peer::distributed::SearchRequestInfo,
+    message::server::MessageFactory,
     peer::{
         ConnectionType, DefaultPeer, DistributedPeer, DownloadPeer, Peer,
         PeerConnection,
     },
     server::{PeerAddress, Server, ServerOperation},
+    share::{Shared, SharedFile},
     types::{Download, FileSearchResult},
     utils::{md5, thread_pool::ThreadPool},
     Transfer,
@@ -43,6 +45,9 @@ struct ClientContext {
     search_results: Vec<FileSearchResult>,
     downloads: HashMap<Vec<u8>, Download>,
     thread_pool: ThreadPool,
+    shared: Shared,
+    peer_search_matches: HashMap<String, HashMap<Vec<u8>, Vec<SharedFile>>>,
+    current_login: String,
 }
 impl ClientContext {
     pub fn new() -> Self {
@@ -53,6 +58,9 @@ impl ClientContext {
             search_results: Vec::new(),
             downloads: HashMap::new(),
             thread_pool: ThreadPool::new(MAX_THREADS),
+            shared: Shared::new(),
+            peer_search_matches: HashMap::new(),
+            current_login: String::new(),
         }
     }
 }
@@ -62,6 +70,8 @@ pub struct Client {
     password: String,
     server: Option<Server>,
     context: Arc<Mutex<ClientContext>>,
+    #[allow(dead_code)]
+    shared_folders: Vec<String>,
 }
 
 impl Client {
@@ -70,18 +80,34 @@ impl Client {
         username: String,
         password: String,
     ) -> Self {
+        Self::new_with_shares(address, username, password, vec![])
+    }
+
+    pub fn new_with_shares(
+        address: PeerAddress,
+        username: String,
+        password: String,
+        shared_folders: Vec<String>,
+    ) -> Self {
         crate::utils::logger::init();
         let context = Arc::new(Mutex::new(ClientContext::new()));
         debug!(
             "ThreadPool initialized with {} threads",
             context.lock().unwrap().thread_pool.thread_count()
         );
+
+        // Scan shared folders
+        for folder in &shared_folders {
+            context.lock().unwrap().shared.scan_folder(folder);
+        }
+
         Self {
             address,
             username,
             password,
             server: None,
             context,
+            shared_folders,
         }
     }
 
@@ -133,6 +159,9 @@ impl Client {
         if let Some(server) = &self.server {
             let result = server.login(&self.username, &self.password)?;
             if result {
+                // Store the current login username
+                self.context.lock().unwrap().current_login =
+                    self.username.clone();
                 Ok(true)
             } else {
                 Err(SoulseekRs::AuthenticationFailed)
@@ -208,7 +237,7 @@ impl Client {
 
         drop(context);
 
-        let timeout = Duration::from_secs(60*5);
+        let timeout = Duration::from_secs(60 * 5);
         let check_interval = Duration::from_millis(100);
 
         if !download_initiated {
@@ -348,16 +377,47 @@ impl Client {
                             search_info.username, search_info.query
                         );
 
-                        // NOTE: This requires you to have a way to search your own shared files.
-                        // For now, we will respond with an empty list.
-                        let local_matches: Vec<crate::types::File> = vec![];
+                        // Search our shared files
+                        let mut ctx = client_context.lock().unwrap();
+                        let local_matches =
+                            ctx.shared.search(&search_info.query);
 
                         if !local_matches.is_empty() {
-                            // Here you would implement the logic to check if you are already connected
-                            // to search_info.username. If not, you'd call get_peer_address, cache
-                            // the results, and send them upon connection. This is a complex step
-                            // that can be implemented later.
-                            info!("Found {} local matches for query '{}', but sending results is not yet implemented.", local_matches.len(), search_info.query);
+                            debug!(
+                                "Found {} local matches for query '{}'",
+                                local_matches.len(),
+                                search_info.query
+                            );
+
+                            // Check if we're already connected to the searching user
+                            if let Some(peer_conn) =
+                                ctx.peers.get(&search_info.username)
+                            {
+                                // Send the results immediately
+                                peer_conn.file_search_result(
+                                    local_matches,
+                                    search_info.ticket,
+                                    ctx.current_login.clone(),
+                                );
+                            } else {
+                                // Cache the results for when we connect
+                                let user_matches = ctx
+                                    .peer_search_matches
+                                    .entry(search_info.username.clone())
+                                    .or_insert_with(HashMap::new);
+                                user_matches
+                                    .insert(search_info.ticket, local_matches);
+
+                                // Request peer address from server to establish connection
+                                if let Some(server_sender) = &ctx.server_sender
+                                {
+                                    debug!("Caching search results for {} and requesting peer address", search_info.username);
+                                    // Send GetPeerAddress message through the server
+                                    server_sender.send(ServerOperation::SendMessage(
+                                        MessageFactory::build_get_peer_address_message(&search_info.username)
+                                    )).unwrap();
+                                }
+                            }
                         }
                     }
                 }
@@ -386,6 +446,15 @@ impl Client {
                                 Ok(p) => {
                                     let mut context =
                                         client_context.lock().unwrap();
+
+                                    // Check if we have cached search results for this peer
+                                    if let Some(cached_results) = context.peer_search_matches.get(&peer.username) {
+                                        for (ticket, files) in cached_results.clone() {
+                                            p.file_search_result(files, ticket, context.current_login.clone());
+                                        }
+                                        // Clear the cache after sending
+                                        context.peer_search_matches.remove(&peer.username);
+                                    }
                                     context.peers.insert(peer.username, PeerConnection::Default(p));
                                 }
                                 Err(e) => {
@@ -404,8 +473,6 @@ impl Client {
                         ConnectionType::F => {
                             debug!("Received ConnectToPeer with ConnectionType::F for {}", peer.username);
                             let context = client_context.lock().unwrap();
-                            
-                            // Look up the download using the token
                             if let Some(token) = &peer.token {
                                 if let Some(download) = context.downloads.get(token) {
                                     let download_clone = download.clone();

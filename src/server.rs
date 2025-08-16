@@ -1,9 +1,12 @@
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
 use crate::error::{Result, SoulseekRs};
+use crate::message::server::CannotConnectToPeerHandler;
 use crate::message::server::ConnectToPeerHandler;
 use crate::message::server::ExcludedSearchPhrasesHandler;
 use crate::message::server::FileSearchHandler;
+use crate::message::server::GetUserStatsHandler;
+use crate::message::server::GetUserStatusHandler;
 use crate::message::server::LoginHandler;
 use crate::message::server::MessageFactory;
 use crate::message::server::MessageUser;
@@ -281,6 +284,9 @@ impl Server {
             handlers.register_handler(FileSearchHandler);
             handlers.register_handler(ConnectToPeerHandler);
             handlers.register_handler(PossibleParentsHandler);
+            handlers.register_handler(GetUserStatusHandler);
+            handlers.register_handler(GetUserStatsHandler);
+            handlers.register_handler(CannotConnectToPeerHandler);
 
             let dispatcher = MessageDispatcher::new(sender, handlers);
 
@@ -460,6 +466,12 @@ impl Server {
     pub fn file_search(&self, token: u32, query: &str) {
         self.queue_message(MessageFactory::build_file_search_message(
             token, query,
+        ));
+    }
+
+    pub fn get_peer_address(&self, username: &str) {
+        self.queue_message(MessageFactory::build_get_peer_address_message(
+            username,
         ));
     }
 
