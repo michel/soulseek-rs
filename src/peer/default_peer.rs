@@ -216,7 +216,7 @@ impl DefaultPeer {
                                 transfer.clone(),
                             );
 
-                        thread::sleep(Duration::from_secs(2));
+                        thread::sleep(Duration::from_millis(200));
 
                         if let Some(sender) = peer_channel.clone() {
                             sender

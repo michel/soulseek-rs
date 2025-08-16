@@ -112,7 +112,11 @@ impl Transfer {
         let direction = message.read_int32();
         let token = message.read_raw_bytes(4);
         let filename = message.read_string();
-        let size = message.read_int64();
+        let size = if direction == 1 {
+            message.read_int64()
+        } else {
+            0
+        };
 
         Self {
             direction,

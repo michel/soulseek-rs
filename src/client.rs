@@ -307,9 +307,8 @@ impl Client {
                             Some(existing) => {
                                 existing.filename = transfer.filename;
                                 existing.username = username;
-                                if transfer.direction == 1 {
-                                    existing.size = transfer.size;
-                                }
+                                existing.size = transfer.size;
+                                existing.token = transfer.token;
                             }
                             None => {
                                 ctx.downloads.insert(
