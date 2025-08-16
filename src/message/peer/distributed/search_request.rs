@@ -29,11 +29,15 @@ impl MessageHandler<ClientOperation> for SearchRequest {
         let username = message.read_string();
         let ticket = message.read_raw_bytes(4);
         let query = message.read_string();
-        
+
         info!("Received distributed search from {}: '{}'", username, query);
-        
-        let search_info = SearchRequestInfo { username, ticket, query };
-        
+
+        let search_info = SearchRequestInfo {
+            username,
+            ticket,
+            query,
+        };
+
         let _ = sender.send(ClientOperation::DistributedSearch(search_info));
     }
 }

@@ -1,8 +1,8 @@
 use crate::dispatcher::MessageDispatcher;
 use crate::message::peer::FileSearchResponse;
 use crate::message::peer::{
-    GetShareFileList, PlaceInQueueResponse, TransferRequest, TransferResponse,
-    UploadFailedHandler,
+    FolderContentsRequestHandler, GetShareFileList, PlaceInQueueResponse,
+    QueueFailedHandler, TransferRequest, TransferResponse, UploadFailedHandler,
 };
 use crate::message::server::MessageFactory;
 use crate::message::{Handlers, Message, MessageReader, MessageType};
@@ -118,6 +118,8 @@ impl DefaultPeer {
             handlers.register_handler(GetShareFileList);
             handlers.register_handler(UploadFailedHandler);
             handlers.register_handler(PlaceInQueueResponse);
+            handlers.register_handler(FolderContentsRequestHandler);
+            handlers.register_handler(QueueFailedHandler);
 
             let dispatcher = MessageDispatcher::new(peer_sender, handlers);
 
@@ -316,7 +318,7 @@ impl DefaultPeer {
     ) -> Result<(), io::Error> {
         // Set the flag to indicate this peer has an active download
         *self.has_active_download.lock().unwrap() = true;
-        
+
         let message = MessageFactory::build_transfer_request_message(
             &download.filename,
             download.token,
@@ -325,6 +327,30 @@ impl DefaultPeer {
             sender.send(PeerOperation::SendMessage(message)).unwrap();
         }
         Ok(())
+    }
+
+    pub fn file_search_result(
+        &self,
+        files: Vec<crate::share::SharedFile>,
+        ticket: Vec<u8>,
+        own_username: String,
+    ) {
+        debug!(
+            "[default_peer:{}] Sending {} search results with ticket {:?}",
+            self.peer.username,
+            files.len(),
+            ticket
+        );
+
+        let message = MessageFactory::build_file_search_result_message(
+            files,
+            ticket,
+            own_username,
+        );
+
+        if let Some(sender) = &self.peer_channel {
+            sender.send(PeerOperation::SendMessage(message)).unwrap();
+        }
     }
 }
 

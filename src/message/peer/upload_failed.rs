@@ -1,4 +1,3 @@
-
 use crate::{
     message::{Message, MessageHandler},
     peer::PeerOperation,
@@ -13,7 +12,7 @@ impl MessageHandler<PeerOperation> for UploadFailedHandler {
     }
     fn handle(&self, message: &mut Message, sender: Sender<PeerOperation>) {
         let upload_failed = UploadFailed::new_from_message(message);
-        
+
         sender
             .send(PeerOperation::UploadFailed {
                 filename: upload_failed.filename,

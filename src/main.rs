@@ -18,7 +18,7 @@ fn main() {
                     !r.files.is_empty()
                         && r.username != "Mus4Mus022"
                         && r.username != "Slackman2505"
-                        && r.username == "fuleu"
+                        && r.username != "Hangfire"
                 }) {
                     let file = result.files[0].clone();
                     match client.download(file.name, file.username, file.size) {

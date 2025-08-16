@@ -59,6 +59,59 @@ impl BitReader {
 
 use crate::error::{Result, SoulseekRs};
 
+/// Simple zlib compression using fixed Huffman coding
+/// This is a basic implementation that creates valid zlib streams
+pub fn deflate_raw(input: &[u8]) -> Result<Vec<u8>> {
+    // For now, we'll use uncompressed blocks for simplicity
+    // This creates valid but unoptimized zlib data
+
+    let mut output = Vec::new();
+
+    // Zlib header
+    output.push(0x78); // CMF: deflate, 32K window
+    output.push(0x9C); // FLG: default compression
+
+    // Process input in chunks (max 65535 bytes per uncompressed block)
+    let mut pos = 0;
+    while pos < input.len() {
+        let remaining = input.len() - pos;
+        let chunk_size = remaining.min(65535);
+        let is_final = pos + chunk_size >= input.len();
+
+        // Block header: BFINAL (1 bit) + BTYPE (2 bits, 00 = uncompressed)
+        output.push(if is_final { 0x01 } else { 0x00 });
+
+        // LEN and NLEN (length and one's complement)
+        let len = chunk_size as u16;
+        let nlen = !len;
+        output.extend_from_slice(&len.to_le_bytes());
+        output.extend_from_slice(&nlen.to_le_bytes());
+
+        // Raw data
+        output.extend_from_slice(&input[pos..pos + chunk_size]);
+
+        pos += chunk_size;
+    }
+
+    // Adler-32 checksum
+    let adler = adler32(input);
+    output.extend_from_slice(&adler.to_be_bytes());
+
+    Ok(output)
+}
+
+fn adler32(data: &[u8]) -> u32 {
+    let mut a = 1u32;
+    let mut b = 0u32;
+
+    for byte in data {
+        a = (a + *byte as u32) % 65521;
+        b = (b + a) % 65521;
+    }
+
+    (b << 16) | a
+}
+
 pub fn deflate(input: &[u8]) -> Result<Vec<u8>> {
     let mut r = BitReader::new(input.to_vec());
     let cmf = r.read_byte()?;

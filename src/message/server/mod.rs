@@ -1,20 +1,26 @@
+mod cannot_connect_to_peer;
 mod connect_to_peer;
 mod excluded_search_phrases;
 mod file_search;
+mod get_user_stats;
+mod get_user_status;
 mod login;
 mod message_factory;
 mod message_user;
 mod parent_min_speed;
-mod possible_parents;
 mod parent_speed_ratio;
+mod possible_parents;
 mod privileged_users;
 mod room_list;
 mod wish_list_interval;
 
 // Re-export handlers
+pub use cannot_connect_to_peer::CannotConnectToPeerHandler;
 pub use connect_to_peer::ConnectToPeerHandler;
 pub use excluded_search_phrases::ExcludedSearchPhrasesHandler;
 pub use file_search::FileSearchHandler;
+pub use get_user_stats::GetUserStatsHandler;
+pub use get_user_status::GetUserStatusHandler;
 pub use login::LoginHandler;
 pub use message_factory::MessageFactory;
 pub use message_user::MessageUser;

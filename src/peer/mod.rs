@@ -31,6 +31,22 @@ impl PeerConnection {
             }
         }
     }
+
+    pub fn file_search_result(
+        &self,
+        files: Vec<crate::share::SharedFile>,
+        ticket: Vec<u8>,
+        own_username: String,
+    ) {
+        match self {
+            PeerConnection::Default(peer) => {
+                peer.file_search_result(files, ticket, own_username);
+            }
+            PeerConnection::Distributed(_) => {
+                // Distributed peers don't handle file search results directly
+            }
+        }
+    }
 }
 
 use crate::{info, message::Message};

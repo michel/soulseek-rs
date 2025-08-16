@@ -1,6 +1,6 @@
 use crate::client::ClientOperation;
-use crate::message::{Message, MessageHandler};
 use crate::debug;
+use crate::message::{Message, MessageHandler};
 use std::sync::mpsc::Sender;
 
 pub struct BranchLevel;
