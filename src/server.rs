@@ -20,13 +20,14 @@ use crate::peer::Peer;
 
 use std::io::{self, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::process;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread::{self};
 use std::time::{Duration, Instant};
 
-use crate::{debug, error, info, warn};
+use crate::{debug, error, info, trace, warn};
 
 #[derive(Debug, Clone)]
 pub struct PeerAddress {
@@ -185,7 +186,7 @@ pub enum ServerOperation {
     SendMessage(Message),
     #[allow(dead_code)]
     ConnectToPeer(Peer),
-    PierceFirewall(u32),
+    PierceFirewall(Vec<u8>),
 }
 
 #[derive(Debug)]
@@ -323,9 +324,10 @@ impl Server {
                 if let Ok(operation) = server_channel.recv() {
                     match operation {
                         ServerOperation::ConnectToPeer(peer) => {
-                            debug!(
+                            trace!(
                                 "[server] ConnectToPeer {} - ConnectionType {}",
-                                peer.username, peer.connection_type
+                                peer.username,
+                                peer.connection_type
                             );
 
                             match peer.connection_type {
@@ -338,6 +340,9 @@ impl Server {
                                     }
                                 }
                                 ConnectionType::F => {
+                                    info!("ConnectionType::F in server!");
+                                    process::exit(1);
+
                                     match client_channel.send(
                                         ClientOperation::PierceFireWall(peer),
                                     ) {
@@ -358,13 +363,13 @@ impl Server {
                         ServerOperation::PierceFirewall(token) => {
                             let pierce_message =
                                 MessageFactory::build_pierce_firewall_message(
-                                    token,
+                                    token.clone(),
                                 );
                             match write_stream
                                 .write_all(&pierce_message.get_buffer())
                             {
                                 Ok(_) => {
-                                    debug!("Sent PierceFirewall message with token: {}", token);
+                                    debug!("Sent PierceFirewall message with token: {:?}", token);
                                 }
                                 Err(e) => {
                                     error!("Error writing PierceFirewall message: {}", e);
@@ -440,7 +445,7 @@ impl Server {
             info!("Logged in as {}", username);
             self.queue_message(MessageFactory::build_set_wait_port_message());
             self.queue_message(MessageFactory::build_shared_folders_message(
-                1, 499,
+                1, 1,
             ));
             self.queue_message(MessageFactory::build_no_parent_message());
             self.queue_message(MessageFactory::build_set_status_message(2));
@@ -456,7 +461,7 @@ impl Server {
     }
 
     #[allow(dead_code)]
-    pub fn pierce_firewall(&self, token: u32) {
+    pub fn pierce_firewall(&self, token: Vec<u8>) {
         match self.sender.send(ServerOperation::PierceFirewall(token)) {
             Ok(_) => {}
             Err(e) => error!("Failed to send PierceFirewall: {}", e),

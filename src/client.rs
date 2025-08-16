@@ -4,9 +4,11 @@ use crate::{
     server::{PeerAddress, Server, ServerOperation},
     types::{Download, FileSearchResult},
     utils::{md5, thread_pool::ThreadPool},
+    Transfer,
 };
 use std::{
     collections::HashMap,
+    process,
     sync::{
         mpsc::{Receiver, Sender},
         Mutex,
@@ -25,14 +27,16 @@ pub enum ClientOperation {
     SearchResult(FileSearchResult),
     PeerDisconnected(String),
     PierceFireWall(Peer),
-    DownloadFromPeer(u32, Peer),
+    DownloadFromPeer(Vec<u8>, Peer),
+    ChangeDownload(Transfer, String),
+    RemoveDownload(Vec<u8>),
 }
 struct ClientContext {
     peers: HashMap<String, DefaultPeer>,
     sender: Option<Sender<ClientOperation>>,
     server_sender: Option<Sender<crate::server::ServerOperation>>,
     search_results: Vec<FileSearchResult>,
-    downloads: HashMap<u32, Download>,
+    downloads: HashMap<Vec<u8>, Download>,
     thread_pool: ThreadPool,
 }
 impl ClientContext {
@@ -170,17 +174,17 @@ impl Client {
 
         let hash = md5::md5(&filename);
         let token = u32::from_str_radix(&hash[0..5], 16)?;
+        let token_bytes = token.to_le_bytes().to_vec();
 
         let download = Download {
             username: username.clone(),
             filename: filename.clone(),
-            token,
+            token: token_bytes.clone(),
             size,
         };
 
         let mut context = self.context.lock().unwrap();
-        debug!("token {}", token);
-        context.downloads.insert(token, download.clone());
+        context.downloads.insert(token_bytes, download.clone());
         let download_initiated = context
             .peers
             .get(&username)
@@ -261,7 +265,6 @@ impl Client {
                             own_username.clone(),
                         );
                     }
-
                     ClientOperation::DownloadFromPeer(token, peer) => {
                         let maybe_download = {
                             let client_context = client_context.lock().unwrap();
@@ -297,6 +300,33 @@ impl Client {
                                 );
                             }
                         };
+                    }
+                    ClientOperation::ChangeDownload(transfer, username) => {
+                        let mut ctx = client_context.lock().unwrap();
+                        match ctx.downloads.get_mut(&transfer.token) {
+                            Some(existing) => {
+                                existing.filename = transfer.filename;
+                                existing.username = username;
+                                if transfer.direction == 1 {
+                                    existing.size = transfer.size;
+                                }
+                            }
+                            None => {
+                                ctx.downloads.insert(
+                                    transfer.token.clone(),
+                                    Download {
+                                        username,
+                                        token: transfer.token.clone(),
+                                        filename: transfer.filename,
+                                        size: transfer.size,
+                                    },
+                                );
+                            }
+                        }
+                    }
+                    ClientOperation::RemoveDownload(token) => {
+                        let mut ctx = client_context.lock().unwrap();
+                        ctx.downloads.remove(&token).unwrap();
                     }
                 }
             }
@@ -340,21 +370,23 @@ impl Client {
                         }
 
                         ConnectionType::F => {
-                            let context = client_context.lock().unwrap();
-                            // let download = if(Some(token)  {
-                            //     let download = context.downloads.get(&peer.token.unwrap());
-                            // }
-
-                            let download_peer = DownloadPeer::new(
-                                peer.username,
-                                peer.host,
-                                peer.port,
-                                peer.token.unwrap(),
-                                false,
-                                own_username.clone(),
-                            );
-                            // download_peer.download_file(
-                            //     );
+                            error!("ConnectionType::F in client!!!!");
+                            process::exit(1);
+                            // let context = client_context.lock().unwrap();
+                            // // let download = if(Some(token)  {
+                            // //     let download = context.downloads.get(&peer.token.unwrap());
+                            // // }
+                            //
+                            // let download_peer = DownloadPeer::new(
+                            //     peer.username,
+                            //     peer.host,
+                            //     peer.port,
+                            //     peer.token.unwrap(),
+                            //     false,
+                            //     own_username.clone(),
+                            // );
+                            // // download_peer.download_file(
+                            // //     );
                         }
                         ConnectionType::D => {
                             error!("ConnectionType::D not implemented")
@@ -375,11 +407,12 @@ impl Client {
 
         let context = client_context.lock().unwrap();
         if let Some(server_sender) = &context.server_sender {
-            if let Some(token) = peer.token {
-                match server_sender.send(ServerOperation::PierceFirewall(token))
+            if let Some(token) = peer.token.clone() {
+                match server_sender
+                    .send(ServerOperation::PierceFirewall(token.clone()))
                 {
                     Ok(_) => debug!(
-                        "Sent PierceFirewall message with token: {}",
+                        "Sent PierceFirewall message with token: {:?}",
                         token
                     ),
                     Err(e) => {

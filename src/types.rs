@@ -77,7 +77,7 @@ impl FileSearchResult {
 #[allow(dead_code)]
 pub struct Transfer {
     pub direction: u32,
-    pub token: u32,
+    pub token: Vec<u8>,
     pub filename: String,
     pub size: u64,
 }
@@ -85,7 +85,7 @@ pub struct Transfer {
 pub struct Download {
     pub username: String,
     pub filename: String,
-    pub token: u32,
+    pub token: Vec<u8>,
     pub size: u64,
 }
 
@@ -110,7 +110,7 @@ pub enum DownloadStatus {
 impl Transfer {
     pub fn new_from_message(message: &mut Message) -> Self {
         let direction = message.read_int32();
-        let token = message.read_int32();
+        let token = message.read_raw_bytes(4);
         let filename = message.read_string();
         let size = message.read_int64();
 

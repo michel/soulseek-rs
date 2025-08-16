@@ -22,11 +22,11 @@ impl FileManager {
     fn create_download_paths(
         output_path: Option<String>,
         username: &str,
-        token: u32,
+        token: Vec<u8>,
     ) -> DownloadPaths {
         let final_path = match output_path {
             Some(path) if !path.is_empty() => path,
-            _ => format!("/tmp/{}_{}.mp3", username, token),
+            _ => format!("/tmp/{}_{:?}.mp3", username, token),
         };
         let incomplete_path = format!("{}.incomplete", final_path);
 
@@ -63,14 +63,14 @@ impl FileManager {
 #[allow(dead_code)]
 struct StreamProcessor {
     no_pierce: bool,
-    token: u32,
+    token: Vec<u8>,
     total_bytes: usize,
     received: bool,
 }
 
 #[allow(dead_code)]
 impl StreamProcessor {
-    fn new(no_pierce: bool, token: u32) -> Self {
+    fn new(no_pierce: bool, token: Vec<u8>) -> Self {
         Self {
             no_pierce,
             token,
@@ -126,7 +126,7 @@ pub struct DownloadPeer {
     host: String,
     port: u32,
     own_username: String,
-    token: u32,
+    token: Vec<u8>,
     no_pierce: bool,
 }
 
@@ -137,7 +137,7 @@ impl DownloadPeer {
         username: String,
         host: String,
         port: u32,
-        token: u32,
+        token: Vec<u8>,
         no_pierce: bool,
         own_username: String,
     ) -> Self {
@@ -178,7 +178,7 @@ impl DownloadPeer {
             let message = MessageFactory::build_peer_init_message(
                 &self.own_username,
                 super::ConnectionType::F,
-                self.token,
+                self.token.clone(),
             );
             stream.write_all(&message.get_data())?;
             sleep(Duration::from_millis(1000));
@@ -186,8 +186,10 @@ impl DownloadPeer {
                 .write_all(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])?;
         } else {
             stream.write_all(
-                &MessageFactory::build_pierce_firewall_message(self.token)
-                    .get_data(),
+                &MessageFactory::build_pierce_firewall_message(
+                    self.token.clone(),
+                )
+                .get_data(),
             )?;
         }
         Ok(())
@@ -205,7 +207,7 @@ impl DownloadPeer {
             let paths = FileManager::create_download_paths(
                 Some(output_path),
                 &self.own_username,
-                self.token,
+                self.token.clone(),
             );
             let writer =
                 Some(FileManager::create_temp_file(&paths.incomplete_path)?);
@@ -318,7 +320,7 @@ mod tests {
     #[test]
     pub fn test_connect_no_pierce() {
         let (port, messages) = build_test_server();
-        let token = 33;
+        let token = [1, 2, 3, 4].to_vec();
         let download_peer = DownloadPeer::new(
             "test_user".to_string(),
             "127.0.0.1".to_string(),
@@ -330,17 +332,18 @@ mod tests {
         let _ = download_peer.download_file(None, None).unwrap();
 
         // Give the client time to send messages
+
         thread::sleep(Duration::from_millis(10));
 
         let received_messages = messages.lock().unwrap();
         assert_eq!(received_messages.len(), 1);
-        assert_eq!(received_messages[0], vec![0, 0, 0, 0, 33, 0, 0, 0]);
+        assert_eq!(received_messages[0], vec![0, 0, 0, 0, 1, 2, 3, 4]);
     }
 
     #[test]
     pub fn test_connect_with_pierce() {
         let (port, messages) = build_test_server();
-        let token = 33;
+        let token = [1, 2, 3, 4].to_vec();
         let download_peer = DownloadPeer::new(
             "test_user".to_string(),
             "127.0.0.1".to_string(),
@@ -360,7 +363,7 @@ mod tests {
             received_messages[0],
             vec![
                 12, 0, 0, 0, 111, 119, 110, 95, 117, 115, 101, 114, 110, 97,
-                109, 101, 1, 0, 0, 0, 70, 33, 0, 0, 0
+                109, 101, 1, 0, 0, 0, 70, 1, 2, 3, 4
             ]
         );
 
@@ -409,11 +412,12 @@ mod tests {
 
         thread::sleep(Duration::from_millis(10));
 
+        let token = [1, 2, 3, 4].to_vec();
         let download_peer = DownloadPeer::new(
             "remote_user".to_string(),
             "127.0.0.1".to_string(),
             port as u32,
-            42,
+            token,
             false,
             "test_user".to_string(),
         );
@@ -437,10 +441,11 @@ mod tests {
 
     #[test]
     fn test_file_manager_create_paths_with_custom_path() {
+        let token = [1, 2, 3, 4].to_vec();
         let paths = FileManager::create_download_paths(
             Some("custom/path.mp3".to_string()),
             "user",
-            123,
+            token,
         );
         assert_eq!(paths.final_path, "custom/path.mp3");
         assert_eq!(paths.incomplete_path, "custom/path.mp3.incomplete");
@@ -448,20 +453,30 @@ mod tests {
 
     #[test]
     fn test_file_manager_create_paths_with_default() {
-        let paths = FileManager::create_download_paths(None, "testuser", 456);
-        assert_eq!(paths.final_path, "/tmp/testuser_456.mp3");
-        assert_eq!(paths.incomplete_path, "/tmp/testuser_456.mp3.incomplete");
+        let token = [1, 2, 3, 4].to_vec();
+
+        let paths = FileManager::create_download_paths(None, "testuser", token);
+        assert_eq!(paths.final_path, "/tmp/testuser_[1, 2, 3, 4].mp3");
+        assert_eq!(
+            paths.incomplete_path,
+            "/tmp/testuser_[1, 2, 3, 4].mp3.incomplete"
+        );
     }
 
     #[test]
     fn test_file_manager_create_paths_with_empty_string() {
+        let token = [1, 2, 3, 4].to_vec();
+
         let paths = FileManager::create_download_paths(
             Some("".to_string()),
             "user",
-            789,
+            token,
         );
-        assert_eq!(paths.final_path, "/tmp/user_789.mp3");
-        assert_eq!(paths.incomplete_path, "/tmp/user_789.mp3.incomplete");
+        assert_eq!(paths.final_path, "/tmp/user_[1, 2, 3, 4].mp3");
+        assert_eq!(
+            paths.incomplete_path,
+            "/tmp/user_[1, 2, 3, 4].mp3.incomplete"
+        );
     }
 
     #[test]
@@ -497,16 +512,18 @@ mod tests {
 
     #[test]
     fn test_stream_processor_new() {
-        let processor = StreamProcessor::new(true, 123);
+        let token = [1, 2, 3, 4].to_vec();
+        let processor = StreamProcessor::new(true, token.clone());
         assert!(processor.no_pierce);
-        assert_eq!(processor.token, 123);
+        assert_eq!(processor.token, token.clone());
         assert_eq!(processor.total_bytes, 0);
         assert!(!processor.received);
     }
 
     #[test]
     fn test_stream_processor_should_continue() {
-        let processor = StreamProcessor::new(false, 123);
+        let token = [1, 2, 3, 4].to_vec();
+        let processor = StreamProcessor::new(false, token);
 
         // Without expected size, should always continue
         assert!(processor.should_continue(None));
@@ -517,7 +534,8 @@ mod tests {
 
     #[test]
     fn test_stream_processor_should_continue_with_limit() {
-        let mut processor = StreamProcessor::new(false, 123);
+        let token = [1, 2, 3, 4].to_vec();
+        let mut processor = StreamProcessor::new(false, token);
         processor.total_bytes = 150;
 
         // Should not continue if over limit
@@ -529,7 +547,8 @@ mod tests {
 
     #[test]
     fn test_stream_processor_process_data_chunk() {
-        let mut processor = StreamProcessor::new(false, 123);
+        let token = [1, 2, 3, 4].to_vec();
+        let mut processor = StreamProcessor::new(false, token);
         let data = b"test data";
         let mut writer = None;
 
@@ -544,7 +563,7 @@ mod tests {
             "user".to_string(),
             "invalid-host".to_string(),
             9999,
-            123,
+            [1, 2, 3, 4].to_vec(),
             false,
             "own_user".to_string(),
         );

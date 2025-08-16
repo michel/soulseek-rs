@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
-use std::thread;
+use std::{env, thread};
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
@@ -75,28 +75,36 @@ impl Worker {
         total_threads: usize,
     ) -> Worker {
         let thread = thread::spawn(move || loop {
+            let log = env::var("LOG_WORKER")
+                .unwrap_or_else(|_| "false".to_string())
+                == "true";
             let job = receiver.lock().unwrap().recv();
             match job {
                 Ok(job) => {
                     let active =
                         active_threads.fetch_add(1, Ordering::SeqCst) + 1;
-                    trace!(
-                        "Thread {} started job (active: {}/{})",
-                        id,
-                        active,
-                        total_threads
-                    );
+                    if log {
+                        trace!(
+                            "Thread {} started job (active: {}/{})",
+                            id,
+                            active,
+                            total_threads
+                        );
+                    }
 
                     job();
 
                     let active =
                         active_threads.fetch_sub(1, Ordering::SeqCst) - 1;
-                    trace!(
-                        "Thread {} finished job (active: {}/{})",
-                        id,
-                        active,
-                        total_threads
-                    );
+
+                    if log {
+                        trace!(
+                            "Thread {} finished job (active: {}/{})",
+                            id,
+                            active,
+                            total_threads
+                        );
+                    }
                 }
                 Err(_) => {
                     break;

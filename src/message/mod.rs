@@ -175,6 +175,15 @@ impl Message {
         self.data[from..to].to_vec()
     }
 
+    pub fn read_raw_bytes(&mut self, size: usize) -> Vec<u8> {
+        if self.pointer + size > self.data.len() {
+            return vec![];
+        }
+        let val = self.data[self.pointer..self.pointer + size].to_vec();
+        self.pointer += size;
+        val
+    }
+
     /// gets buffer with the message length prepended
     pub fn get_buffer(&self) -> Vec<u8> {
         let mut b = vec![0u8; 4];
@@ -266,6 +275,10 @@ impl Message {
     }
 
     pub fn write_int32(&mut self, value: u32) -> &mut Self {
+        self.data.extend_from_slice(&value.to_le_bytes());
+        self
+    }
+    pub fn write_int8(&mut self, value: u8) -> &mut Self {
         self.data.extend_from_slice(&value.to_le_bytes());
         self
     }

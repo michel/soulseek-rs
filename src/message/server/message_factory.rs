@@ -73,10 +73,10 @@ impl MessageFactory {
     pub fn build_set_wait_port_message() -> Message {
         Message::new().write_int32(2).write_int32(2234).clone()
     }
-    pub fn build_watch_user(token: u32) -> Message {
+    pub fn build_watch_user(token: Vec<u8>) -> Message {
         Message::new()
             .write_raw_bytes([5, 0, 0, 0, 0].to_vec())
-            .write_int32(token)
+            .write_raw_bytes(token)
             .clone()
     }
 
@@ -89,26 +89,26 @@ impl MessageFactory {
 
     pub fn build_transfer_request_message(
         filename: &str,
-        token: u32,
+        token: Vec<u8>,
     ) -> Message {
         Message::new()
             .write_int32(40) // code
             .write_int32(0) // direction
-            .write_int32(token)
+            .write_raw_bytes(token)
             .write_string(filename)
             .clone()
     }
     pub fn build_transfer_response_message(transfer: Transfer) -> Message {
         Message::new()
             .write_int32(41)
-            .write_int32(transfer.token)
-            .write_bool(true)
+            .write_raw_bytes(transfer.token)
+            .write_int8(1)
             .clone()
     }
-    pub fn build_pierce_firewall_message(token: u32) -> Message {
+    pub fn build_pierce_firewall_message(token: Vec<u8>) -> Message {
         Message::new()
             .write_int32(0) // PierceFirewall message code
-            .write_int32(token)
+            .write_raw_bytes(token)
             .clone()
     }
 
@@ -116,21 +116,21 @@ impl MessageFactory {
     pub fn build_peer_init_message(
         own_username: &str,
         connection_type: ConnectionType,
-        token: u32,
+        token: Vec<u8>,
     ) -> Message {
         Message::new()
             .write_string(own_username)
             .write_string(&connection_type.to_string())
-            .write_int32(token)
+            .write_raw_bytes(token)
             .clone()
     }
 }
 
 #[test]
 fn test_build_watch_user() {
-    let token: u32 = 223;
+    let token = [2, 3, 3, 4].to_vec();
     let message = MessageFactory::build_watch_user(token);
-    let expect: Vec<u8> = [5, 0, 0, 0, 0, 223, 0, 0, 0].to_vec();
+    let expect: Vec<u8> = [5, 0, 0, 0, 0, 2, 3, 3, 4].to_vec();
 
     assert_eq!(expect, message.get_data())
 }

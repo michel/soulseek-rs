@@ -6,9 +6,9 @@ pub mod listen;
 pub use default_peer::{DefaultPeer, PeerOperation};
 pub use download_peer::DownloadPeer;
 
-use crate::message::Message;
+use crate::{info, message::Message};
 use core::fmt;
-use std::str::FromStr;
+use std::{os::macos::raw, str::FromStr};
 
 #[derive(Debug, Clone)]
 pub enum ConnectionType {
@@ -61,7 +61,7 @@ pub struct Peer {
     pub connection_type: ConnectionType,
     pub host: String,
     pub port: u32,
-    pub token: Option<u32>,
+    pub token: Option<Vec<u8>>,
     pub privileged: u8,
     pub unknown: u8,
     pub obfuscated_port: u8,
@@ -73,7 +73,7 @@ impl Peer {
         connection_type: ConnectionType,
         host: String,
         port: u32,
-        token: u32,
+        token: Vec<u8>,
         privileged: u8,
         unknown: u8,
         obfuscated_port: u8,
@@ -92,7 +92,8 @@ impl Peer {
     #[allow(dead_code)]
     pub fn new_from_message(message: &mut Message) -> Self {
         let username = message.read_string();
-        let connection_type = message.read_string().parse().unwrap();
+        let raw_connection_type = message.read_string();
+        let connection_type = raw_connection_type.parse().unwrap();
 
         let mut ip: Vec<i32> = vec![];
         for _ in 0..4 {
@@ -108,11 +109,18 @@ impl Peer {
 
         let (port, token, privileged, unknown, obfuscated_port) = (
             message.read_int32(),
-            message.read_int32(),
+            message.read_raw_bytes(4),
             message.read_int8(),
             message.read_int8(),
             message.read_int8(),
         );
+
+        if raw_connection_type == "F" {
+            info!(
+                "ConnectToPeer: {} {} {} {} {:?}",
+                username, connection_type, host, port, token
+            );
+        }
 
         Self {
             username,
@@ -142,7 +150,7 @@ fn test_new_from_message() {
     assert!(matches!(peer.connection_type, ConnectionType::P));
     assert_eq!(peer.host, "45.37.231.27");
     assert_eq!(peer.port, 2234);
-    assert_eq!(peer.token, Some(1658546));
+    assert_eq!(peer.token, Some([178, 78, 25, 0].to_vec()));
     assert_eq!(peer.privileged, 0);
     assert_eq!(peer.unknown, 0);
     assert_eq!(peer.obfuscated_port, 0);
@@ -165,7 +173,7 @@ fn test_new_from_message2() {
     assert!(matches!(peer.connection_type, ConnectionType::P));
     assert_eq!(peer.host, "68.193.128.137");
     assert_eq!(peer.port, 2235);
-    assert_eq!(peer.token, Some(4154));
+    assert_eq!(peer.token, Some([58, 16, 0, 0].to_vec()));
     assert_eq!(peer.privileged, 0);
     assert_eq!(peer.unknown, 1);
     assert_eq!(peer.obfuscated_port, 0);
