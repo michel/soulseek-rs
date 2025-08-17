@@ -14,11 +14,13 @@ fn main() {
             .search("Super flu Believe", Duration::from_secs(20))
         {
             Ok(results) => {
+                print!("result {:?}", results);
                 if let Some(result) = results.iter().find(|r| {
                     !r.files.is_empty()
                         && r.username != "Mus4Mus022"
                         && r.username != "Slackman2505"
                         && r.username != "Hangfire"
+                        && r.slots > 0
                 }) {
                     let file = result.files[0].clone();
                     match client.download(file.name, file.username, file.size) {
