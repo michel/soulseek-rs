@@ -311,7 +311,11 @@ impl Server {
                 }
 
                 match buffered_reader.extract_message() {
-                    Ok(Some(mut message)) => dispatcher.dispatch(&mut message),
+                    Ok(Some(mut message)) => {
+                        let code = message.get_message_code();
+                        trace!("[server] Dispatching message with code: {}", code);
+                        dispatcher.dispatch(&mut message)
+                    }
                     Err(e) => {
                         warn!("Error extracting message: {}", e)
                     }
@@ -400,7 +404,9 @@ impl Server {
                             // );
                             match write_stream.write_all(&message.get_buffer())
                             {
-                                Ok(_) => {}
+                                Ok(_) => {
+                                    write_stream.flush().ok();
+                                }
                                 Err(e) => {
                                     error!(
                                         "Error writing message to stream : {}",
