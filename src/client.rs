@@ -37,6 +37,7 @@ pub enum ClientOperation {
     ChangeDownload(Transfer, String),
     RemoveDownload(Vec<u8>),
     DistributedSearch(SearchRequestInfo),
+    GetPeerAddress(String, Vec<u8>),
 }
 struct ClientContext {
     peers: HashMap<String, PeerConnection>,
@@ -404,7 +405,7 @@ impl Client {
                                 let user_matches = ctx
                                     .peer_search_matches
                                     .entry(search_info.username.clone())
-                                    .or_insert_with(HashMap::new);
+                                    .or_default();
                                 user_matches
                                     .insert(search_info.ticket, local_matches);
 
@@ -418,6 +419,18 @@ impl Client {
                                     )).unwrap();
                                 }
                             }
+                        }
+                    }
+                    ClientOperation::GetPeerAddress(username, token) => {
+                        debug!("Sending GetPeerAddress for {} with token {:?}", username, token);
+                        
+                        let ctx = client_context.lock().unwrap();
+                        if let Some(server_sender) = &ctx.server_sender {
+                            // Store the token for later use when we get ConnectToPeer type F
+                            // For now, just send GetPeerAddress to the server
+                            server_sender.send(ServerOperation::SendMessage(
+                                MessageFactory::build_get_peer_address_message(&username)
+                            )).unwrap();
                         }
                     }
                 }
