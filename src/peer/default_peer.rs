@@ -280,11 +280,12 @@ impl DefaultPeer {
                                     );
                             }
                         } else {
-                            debug!("[default_peer:{:}] Transfer allowed, ready to connect with token {:?}",peer_username, token);
+                            debug!("[default_peer:{:}] Transfer allowed, sending GetPeerAddress for token {:?}",peer_username, token);
+                            // Send GetPeerAddress to server to get ConnectToPeer type F
                             client_channel
-                                .send(ClientOperation::DownloadFromPeer(
+                                .send(ClientOperation::GetPeerAddress(
+                                    peer_username.clone(),
                                     token,
-                                    peer_clone.clone(),
                                 ))
                                 .unwrap();
                         }
