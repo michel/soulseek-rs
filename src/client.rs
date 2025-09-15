@@ -431,6 +431,9 @@ impl Client {
                             server_sender.send(ServerOperation::SendMessage(
                                 MessageFactory::build_get_peer_address_message(&username)
                             )).unwrap();
+                            debug!("Successfully sent GetPeerAddress message to server for {}", username);
+                        } else {
+                            error!("No server sender available when trying to send GetPeerAddress");
                         }
                     }
                 }
@@ -484,7 +487,7 @@ impl Client {
                         }
 
                         ConnectionType::F => {
-                            debug!("Received ConnectToPeer with ConnectionType::F for {}", peer.username);
+                            debug!("Received ConnectToPeer with ConnectionType::F for user {}, token {:?}", peer.username, peer.token);
                             let context = client_context.lock().unwrap();
                             if let Some(token) = &peer.token {
                                 if let Some(download) = context.downloads.get(token) {

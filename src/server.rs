@@ -352,18 +352,14 @@ impl Server {
                                 }
                                 ConnectionType::F => {
                                     info!("Received ConnectToPeer with type F for user {}, preparing for download.", peer.username);
-                                    let token =
-                                        peer.token.clone().unwrap_or_default();
                                     match client_channel.send(
-                                        ClientOperation::DownloadFromPeer(
-                                            token, peer,
-                                        ),
+                                        ClientOperation::ConnectToPeer(peer),
                                     ) {
                                         Ok(_) => {
-                                            debug!("Sent DownloadFromPeer operation for F-type connection");
+                                            debug!("Sent ConnectToPeer operation for F-type connection");
                                         }
                                         Err(_e) => {
-                                            error!("Failed to send DownloadFromPeer operation");
+                                            error!("Failed to send ConnectToPeer operation");
                                         }
                                     }
                                 }
