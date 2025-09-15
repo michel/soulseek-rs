@@ -2,10 +2,9 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread::{self, sleep, spawn};
 use std::time::Duration;
 
-// Helper to write a message
 fn write_message(stream: &mut TcpStream, code: u32, data: Vec<u8>) {
     let mut message = Vec::new();
     message.extend_from_slice(&code.to_le_bytes());
@@ -50,8 +49,8 @@ enum MockMessage {
 }
 
 fn mock_server(
-    peer_tx: Arc<Mutex<Sender<MockMessage>>>, // server → peer
-    server_rx: Arc<Mutex<Receiver<MockMessage>>>, // peer → server
+    tx: Arc<Mutex<Sender<MockMessage>>>,
+    rx: Arc<Mutex<Receiver<MockMessage>>>,
 ) -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind");
     let port = listener.local_addr().unwrap().port();
@@ -61,27 +60,65 @@ fn mock_server(
 
         for stream in listener.incoming() {
             let mut stream = stream.expect("Failed to accept");
+            let mut stream2 = stream.try_clone().unwrap();
+            println!("[Mock Server] Client connected");
             println!("[Mock Server] Client connected");
 
-            let server_rx = server_rx.clone();
-            let peer_tx = peer_tx.clone();
+            let tx = tx.clone();
+            let rx = rx.clone();
 
             thread::spawn(move || loop {
-                if let Ok(operation) = server_rx
-                    .lock()
-                    .unwrap()
-                    .recv_timeout(Duration::from_millis(10))
-                {
-                    eprintln!("xxxxxxxxxxxxxxxxxxxxxxx");
-                    match operation {
+                let message =
+                    rx.lock().unwrap().recv_timeout(Duration::from_millis(200));
+                if let Ok(message) = message {
+                    match message {
                         MockMessage::SendConnectToPeer {
                             username,
                             conn_type,
                             token,
                         } => {
-                            if conn_type == "F".to_string() {
-                                println!("******************* SendConnectToPeer operation matched with connection type: {:} ****************", conn_type)
-                            }
+                            // Build ConnectToPeer message
+                            let mut connect_msg = Vec::new();
+
+                            // Username
+                            let username = "MisterDanielson";
+                            connect_msg.extend_from_slice(
+                                &(username.len() as u32).to_le_bytes(),
+                            );
+                            connect_msg.extend_from_slice(username.as_bytes());
+
+                            // Connection type
+                            let conn_type = "P";
+                            connect_msg.extend_from_slice(
+                                &(conn_type.len() as u32).to_le_bytes(),
+                            );
+                            connect_msg.extend_from_slice(conn_type.as_bytes());
+
+                            // IP (127.0.0.1 reversed)
+                            connect_msg.extend_from_slice(&[1, 0, 0, 127]);
+
+                            // Port
+                            connect_msg
+                                .extend_from_slice(&9001u32.to_le_bytes());
+
+                            // Token
+                            connect_msg.extend_from_slice(&[1, 2, 3, 4]);
+
+                            // Additional fields
+                            connect_msg.push(0); // privileged
+                            connect_msg.push(0); // unknown
+                            connect_msg.push(0); // obfuscated_port
+
+                            sleep(Duration::from_secs(10));
+
+                            println!(
+                                "[Mock Server] 🔴 ⚠ Sending ConnectToPeer to {}, conn_type: {}, token: {:?}",
+                                username,
+                                conn_type,
+                                token
+                            );
+
+                            write_message(&mut stream2, 18, connect_msg);
                         }
                         MockMessage::SendFileSearchResponse => {}
                         MockMessage::SendTransferRequest { token } => {}
@@ -139,8 +176,7 @@ fn mock_server(
                                 println!("[Mock Server] FileSearch received");
 
                                 // Signal peer to send FileSearchResponse first
-                                peer_tx
-                                    .lock()
+                                tx.lock()
                                     .unwrap()
                                     .send(MockMessage::SendFileSearchResponse)
                                     .unwrap();
@@ -185,8 +221,7 @@ fn mock_server(
                                 write_message(&mut stream, 18, connect_msg);
 
                                 // Signal peer about the connection
-                                peer_tx
-                                    .lock()
+                                tx.lock()
                                     .unwrap()
                                     .send(MockMessage::SendConnectToPeer {
                                         username: username.to_string(),
@@ -218,8 +253,8 @@ fn mock_server(
 
 // Minimal mock peer that accepts connections and handles transfers
 fn mock_peer(
-    peer_rx: Arc<Mutex<Receiver<MockMessage>>>,
-    server_tx: Arc<Mutex<Sender<MockMessage>>>,
+    rx: Arc<Mutex<Receiver<MockMessage>>>,
+    tx: Arc<Mutex<Sender<MockMessage>>>,
 ) {
     let listener =
         TcpListener::bind("127.0.0.1:9001").expect("Failed to bind peer");
@@ -230,8 +265,8 @@ fn mock_peer(
         for stream in listener.incoming() {
             println!("[Mock Peer] Connection received!");
             let mut stream = stream.expect("Failed to accept peer connection");
-            let peer_rx = peer_rx.clone();
-            let server_tx = server_tx.clone();
+            let rx = rx.clone();
+            let tx = tx.clone();
 
             thread::spawn(move || {
                 // Set timeout for reads
@@ -253,7 +288,7 @@ fn mock_peer(
                 let mut should_send_response = false;
 
                 // Check if we should send FileSearchResponse based on channel message
-                if let Ok(rx_lock) = peer_rx.lock() {
+                if let Ok(rx_lock) = rx.lock() {
                     while let Ok(msg) = rx_lock.try_recv() {
                         if let MockMessage::SendFileSearchResponse = msg {
                             should_send_response = true;
@@ -321,17 +356,12 @@ fn mock_peer(
                             );
 
                             // Check if we should send our own TransferRequest
-                            let mut should_send_transfer = false;
-                            let mut transfer_token = vec![];
-
-                            if let Ok(rx_lock) = peer_rx.lock() {
+                            if let Ok(rx_lock) = rx.lock() {
                                 while let Ok(msg) = rx_lock.try_recv() {
                                     if let MockMessage::SendTransferRequest {
-                                        token: t,
+                                        ..
                                     } = msg
                                     {
-                                        should_send_transfer = true;
-                                        transfer_token = t;
                                         println!("[Mock Peer] Received signal to send TransferRequest");
                                     }
                                 }
@@ -376,8 +406,7 @@ fn mock_peer(
                                 println!(
                                     "sending ConnectionType F from mock_peer"
                                 );
-                                server_tx
-                                    .lock()
+                                tx.lock()
                                     .unwrap()
                                     .send(MockMessage::SendConnectToPeer {
                                         username: "MisterDanielson".to_string(),
@@ -411,24 +440,21 @@ fn test_simple_connect_to_peer() {
     let test_complete_clone = test_complete.clone();
 
     thread::spawn(move || {
-        thread::sleep(Duration::from_secs(8));
+        thread::sleep(Duration::from_secs(120));
         if !test_complete_clone.load(Ordering::Relaxed) {
             println!("\n\n[ERROR] Test timeout after 5 seconds!");
             std::process::exit(1);
         }
     });
-    let (server_tx, peer_rx) = channel::<MockMessage>(); // server → peer
-    let (peer_tx, server_rx) = channel::<MockMessage>(); // peer   → server
+    let (tx, rx) = channel::<MockMessage>(); // shared channel
 
-    let server_tx = Arc::new(Mutex::new(server_tx));
-    let server_rx = Arc::new(Mutex::new(server_rx));
-    let peer_tx = Arc::new(Mutex::new(peer_tx));
-    let peer_rx = Arc::new(Mutex::new(peer_rx));
+    let tx = Arc::new(Mutex::new(tx));
+    let rx = Arc::new(Mutex::new(rx));
 
-    let server_port = mock_server(peer_tx.clone(), server_rx.clone());
+    let server_port = mock_server(tx.clone(), rx.clone());
     thread::sleep(Duration::from_millis(50));
     // Start mock peer
-    mock_peer(peer_rx, server_tx.clone());
+    mock_peer(rx, tx.clone());
     thread::sleep(Duration::from_millis(50));
 
     // Create and connect client
@@ -467,7 +493,7 @@ fn test_simple_connect_to_peer() {
     println!("Download result: {:?}", result);
 
     // Wait a bit to see the full flow
-    thread::sleep(Duration::from_millis(500));
+    thread::sleep(Duration::from_secs(50));
 
     println!("Test completed");
 

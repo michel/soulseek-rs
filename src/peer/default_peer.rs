@@ -285,9 +285,10 @@ impl DefaultPeer {
                             client_channel
                                 .send(ClientOperation::GetPeerAddress(
                                     peer_username.clone(),
-                                    token,
+                                    token.clone(),
                                 ))
                                 .unwrap();
+                            debug!("[default_peer:{:}] Successfully sent GetPeerAddress operation for token {:?}", peer_username, token);
                         }
                     }
                     PeerOperation::PlaceInQueueResponse { filename, place } => {
