@@ -13,7 +13,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
 use crate::client::ClientOperation;
-use crate::peer::{default_peer, Peer};
+use crate::peer::Peer;
 use crate::{debug, error, trace, warn};
 use std::io::{self, Write};
 use std::net::TcpStream;
@@ -53,6 +53,29 @@ impl DefaultPeer {
             read_thread: None,
             write_thread: None,
         }
+    }
+    pub fn disconnect(mut self) {
+        if let Err(e) = self.client_channel.send(
+            ClientOperation::PeerDisconnected(self.peer.username.clone()),
+        ) {
+            error!("Failed to send disconnect notification: {}", e);
+        }
+
+        self.peer_channel.take();
+    }
+
+    pub fn connect_with_socket(
+        mut self,
+        mut stream: TcpStream,
+    ) -> Result<Self, io::Error> {
+        if let Some(token) = self.peer.token {
+            stream
+                .write_all(&MessageFactory::build_watch_user(token).get_data())
+                .unwrap();
+        }
+        self.start_read_write_loops(stream)?;
+
+        Ok(self)
     }
     pub fn connect(mut self) -> Result<Self, io::Error> {
         let socket_address = format!("{}:{}", self.peer.host, self.peer.port)
@@ -109,7 +132,11 @@ impl DefaultPeer {
             handlers.register_handler(UploadFailedHandler);
             handlers.register_handler(PlaceInQueueResponse);
 
-            let dispatcher = MessageDispatcher::new(peer_sender, handlers);
+            let dispatcher = MessageDispatcher::new(
+                "default_peer".to_string(),
+                peer_sender,
+                handlers,
+            );
 
             let mut buffered_reader = MessageReader::new();
             loop {
@@ -160,6 +187,7 @@ impl DefaultPeer {
                                 peer.username.clone(),
                             ),
                         );
+
                         break;
                     }
                     Ok(None) => continue,
@@ -233,12 +261,11 @@ impl DefaultPeer {
                             peer_username, transfer.token
                         );
 
-                        debug!("[default_peer:{}] Disconnecting after TransferResponse", peer_username);
-                        client_channel
-                            .send(ClientOperation::PeerDisconnected(
-                                peer_username.clone(),
-                            ))
-                            .unwrap();
+                        // client_channel
+                        //     .send(ClientOperation::PeerDisconnected(
+                        //         peer_username.clone(),
+                        //     ))
+                        //     .unwrap();
                         break;
                     }
                     PeerOperation::TransferResponse {

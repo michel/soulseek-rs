@@ -10,7 +10,6 @@ mod privileged_users;
 mod room_list;
 mod wish_list_interval;
 
-// Re-export handlers
 pub use connect_to_peer::ConnectToPeerHandler;
 pub use excluded_search_phrases::ExcludedSearchPhrasesHandler;
 pub use file_search::FileSearchHandler;

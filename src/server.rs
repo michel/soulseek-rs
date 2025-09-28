@@ -186,6 +186,7 @@ pub enum ServerOperation {
     #[allow(dead_code)]
     ConnectToPeer(Peer),
     PierceFirewall(u32),
+    GetPeerAddress(String),
 }
 
 #[derive(Debug)]
@@ -280,7 +281,8 @@ impl Server {
             handlers.register_handler(FileSearchHandler);
             handlers.register_handler(ConnectToPeerHandler);
 
-            let dispatcher = MessageDispatcher::new(sender, handlers);
+            let dispatcher =
+                MessageDispatcher::new("server".to_string(), sender, handlers);
 
             let mut buffered_reader = MessageReader::new();
             loop {
@@ -328,72 +330,59 @@ impl Server {
                                 peer.username, peer.connection_type
                             );
 
-                            match peer.connection_type {
+                            if let Some(op) = match peer.connection_type {
                                 ConnectionType::P => {
-                                    match client_channel.send(
-                                        ClientOperation::ConnectToPeer(peer),
-                                    ) {
-                                        Ok(_) => {}
-                                        Err(_e) => {}
-                                    }
+                                    Some(ClientOperation::ConnectToPeer(peer))
                                 }
                                 ConnectionType::F => {
-                                    match client_channel.send(
-                                        ClientOperation::PierceFireWall(peer),
-                                    ) {
-                                        Ok(_) => {
-                                            debug!("Sent PierceFireWall operation for F-type connection");
-                                        }
-                                        Err(_e) => {
-                                            error!("Failed to send PierceFireWall operation");
-                                        }
-                                    }
+                                    Some(ClientOperation::PierceFireWall(peer))
                                 }
-                                ConnectionType::D => {}
+                                ConnectionType::D => None,
+                            } {
+                                client_channel.send(op).unwrap();
                             }
                         }
                         ServerOperation::LoginStatus(message) => {
                             context.lock().unwrap().logged_in = Some(message);
                         }
                         ServerOperation::PierceFirewall(token) => {
-                            let pierce_message =
-                                MessageFactory::build_pierce_firewall_message(
+                            if let Err(e) = write_stream.write_all(
+                                &MessageFactory::build_pierce_firewall_message(
                                     token,
+                                )
+                                .get_buffer(),
+                            ) {
+                                error!(
+                                    "Error writing PierceFirewall message: {}",
+                                    e
                                 );
-                            match write_stream
-                                .write_all(&pierce_message.get_buffer())
-                            {
-                                Ok(_) => {
-                                    debug!("Sent PierceFirewall message with token: {}", token);
-                                }
-                                Err(e) => {
-                                    error!("Error writing PierceFirewall message: {}", e);
-                                    break;
-                                }
+                                break;
                             }
+                            debug!(
+                                "Sent PierceFirewall message with token: {}",
+                                token
+                            );
                         }
                         ServerOperation::SendMessage(message) => {
-                            // trace!(
-                            //     "[server] ➡ {:?}",
-                            //     message
-                            //         .get_message_name(
-                            //             MessageType::Server,
-                            //             u32::from_le_bytes(
-                            //                 message.get_slice(0, 4).try_into().unwrap()
-                            //             )
-                            //         )
-                            //         .map_err(|e| e.to_string()),
-                            // );
-                            match write_stream.write_all(&message.get_buffer())
+                            if let Err(e) =
+                                write_stream.write_all(&message.get_buffer())
                             {
-                                Ok(_) => {}
-                                Err(e) => {
-                                    error!(
-                                        "Error writing message to stream : {}",
-                                        e
-                                    );
-                                    break;
-                                }
+                                error!(
+                                    "Error writing message to stream : {}",
+                                    e
+                                );
+                                break;
+                            }
+                        }
+                        ServerOperation::GetPeerAddress(username) => {
+                            if let Err(e) = write_stream.write_all(
+                                &MessageFactory::build_get_peer_address(
+                                    &username,
+                                )
+                                .get_buffer(),
+                            ) {
+                                error!("Error writing get_peeer_address message: {}", e);
+                                break;
                             }
                         }
                     }
