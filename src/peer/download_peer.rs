@@ -1,10 +1,10 @@
 use crate::message::server::MessageFactory;
-use crate::trace;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
 use std::net::TcpStream;
 use std::net::ToSocketAddrs;
 use std::path::Path;
+use std::thread::sleep;
 use std::time::Duration;
 
 #[derive(Debug)]
@@ -161,9 +161,8 @@ impl DownloadPeer {
 
         let stream = TcpStream::connect_timeout(
             &socket_address,
-            Duration::from_secs(50),
-        )
-        .unwrap();
+            Duration::from_secs(20),
+        )?;
 
         stream.set_read_timeout(Some(Duration::from_secs(30)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
@@ -175,24 +174,22 @@ impl DownloadPeer {
         &self,
         stream: &mut TcpStream,
     ) -> Result<(), io::Error> {
-        // if self.no_pierce {
-        //     let message = MessageFactory::build_peer_init_message(
-        //         &self.own_username,
-        //         super::ConnectionType::F,
-        //         self.token,
-        //     );
-        //     trace!("sending no_pierce message. username: {:?}, connection_type: {:?}  token: {:?} ", self.own_username,super::ConnectionType::F, self.token);
-        //     stream.write_all(&message.get_buffer())?;
-        //     sleep(Duration::from_millis(1000));
-        //     stream
-        //         .write_all(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])?;
-        // } else {
-        trace!("sending build_pierce_firewall_message");
-        stream.write_all(
-            &MessageFactory::build_pierce_firewall_message(self.token)
-                .get_buffer(),
-        )?;
-        // }
+        if self.no_pierce {
+            let message = MessageFactory::build_peer_init_message(
+                &self.own_username,
+                super::ConnectionType::F,
+                self.token,
+            );
+            stream.write_all(&message.get_data())?;
+            sleep(Duration::from_millis(1000));
+            stream
+                .write_all(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])?;
+        } else {
+            stream.write_all(
+                &MessageFactory::build_pierce_firewall_message(self.token)
+                    .get_data(),
+            )?;
+        }
         Ok(())
     }
 
@@ -202,7 +199,6 @@ impl DownloadPeer {
         output_path: Option<String>,
     ) -> Result<usize, io::Error> {
         let mut stream = self.establish_connection()?;
-        trace!("[download_peer] {:?} download file", self.username);
 
         // Setup file management if output path is provided
         let (paths, mut writer) = if let Some(output_path) = output_path {
@@ -211,32 +207,35 @@ impl DownloadPeer {
                 &self.own_username,
                 self.token,
             );
-            trace!("paths: {:?}", paths);
-            let writer = Some(
-                FileManager::create_temp_file(&paths.incomplete_path).unwrap(),
-            );
+            let writer =
+                Some(FileManager::create_temp_file(&paths.incomplete_path)?);
             (Some(paths), writer)
         } else {
             (None, None)
         };
 
+        // Perform handshake
         self.perform_handshake(&mut stream)?;
 
+        // Stream data
         let mut processor = StreamProcessor::new(self.no_pierce, self.token);
         let mut read_buffer = [0u8; 8192];
 
         loop {
             match stream.read(&mut read_buffer) {
-                Ok(0) => continue,
+                Ok(0) => break, // Connection closed
                 Ok(bytes_read) => {
                     let data = &read_buffer[..bytes_read];
 
+                    // Handle pierce token extraction
                     if processor.handle_pierce_token(data, &mut stream)? {
-                        continue;
+                        continue; // Skip this data chunk
                     }
 
+                    // Process file data
                     processor.process_data_chunk(data, &mut writer)?;
 
+                    // Check completion
                     if !processor.should_continue(expected_size) {
                         break;
                     }
@@ -245,6 +244,7 @@ impl DownloadPeer {
                     continue;
                 }
                 Err(e) => {
+                    // Clean up incomplete file on error
                     drop(writer);
                     if let Some(ref paths) = paths {
                         FileManager::cleanup_on_error(Some(
@@ -256,10 +256,7 @@ impl DownloadPeer {
             }
         }
 
-        trace!(
-            "Finalzing download: bytes received {:?}",
-            processor.total_bytes
-        );
+        // Finalize download
         if let Some(mut w) = writer {
             w.flush()?;
             drop(w);
@@ -320,7 +317,6 @@ mod tests {
 
     #[test]
     pub fn test_connect_no_pierce() {
-        crate::utils::logger::init();
         let (port, messages) = build_test_server();
         let token = 33;
         let download_peer = DownloadPeer::new(
@@ -363,7 +359,7 @@ mod tests {
         assert_eq!(
             received_messages[0],
             vec![
-                12, 0, 0, 0, 111, 119, 110, 95, 117, 115, 101, 114, 110, 97,
+                1, 12, 0, 0, 0, 111, 119, 110, 95, 117, 115, 101, 114, 110, 97,
                 109, 101, 1, 0, 0, 0, 70, 33, 0, 0, 0
             ]
         );
@@ -373,7 +369,6 @@ mod tests {
 
     #[test]
     pub fn test_download_file() {
-        crate::utils::logger::init();
         let test_data = b"test file content";
         let messages = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
         let messages_clone = Arc::clone(&messages);
