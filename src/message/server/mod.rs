@@ -1,6 +1,7 @@
 mod connect_to_peer;
 mod excluded_search_phrases;
 mod file_search;
+mod get_peer_address;
 mod login;
 mod message_factory;
 mod message_user;
@@ -13,6 +14,7 @@ mod wish_list_interval;
 pub use connect_to_peer::ConnectToPeerHandler;
 pub use excluded_search_phrases::ExcludedSearchPhrasesHandler;
 pub use file_search::FileSearchHandler;
+pub use get_peer_address::GetPeerAddressHandler;
 pub use login::LoginHandler;
 pub use message_factory::MessageFactory;
 pub use message_user::MessageUser;

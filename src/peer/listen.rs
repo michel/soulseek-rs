@@ -77,7 +77,7 @@ impl Listen {
                 }
             }
 
-            info!("[listener] Connection established!");
+            // info!("[listener] Connection established!");
         }
     }
 }

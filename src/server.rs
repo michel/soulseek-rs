@@ -4,6 +4,7 @@ use crate::error::{Result, SoulseekRs};
 use crate::message::server::ConnectToPeerHandler;
 use crate::message::server::ExcludedSearchPhrasesHandler;
 use crate::message::server::FileSearchHandler;
+use crate::message::server::GetPeerAddressHandler;
 use crate::message::server::LoginHandler;
 use crate::message::server::MessageFactory;
 use crate::message::server::MessageUser;
@@ -187,6 +188,13 @@ pub enum ServerOperation {
     ConnectToPeer(Peer),
     PierceFirewall(u32),
     GetPeerAddress(String),
+    GetPeerAddressResponse {
+        username: String,
+        host: String,
+        port: u32,
+        obfuscation_type: u32,
+        obfuscated_port: u16,
+    },
 }
 
 #[derive(Debug)]
@@ -279,6 +287,7 @@ impl Server {
             handlers.register_handler(ParentSpeedRatioHandler);
             handlers.register_handler(PrivilegedUsersHandler);
             handlers.register_handler(FileSearchHandler);
+            handlers.register_handler(GetPeerAddressHandler);
             handlers.register_handler(ConnectToPeerHandler);
 
             let dispatcher =
@@ -383,6 +392,31 @@ impl Server {
                             ) {
                                 error!("Error writing get_peeer_address message: {}", e);
                                 break;
+                            }
+                        }
+                        ServerOperation::GetPeerAddressResponse {
+                            username,
+                            host,
+                            port,
+                            obfuscation_type,
+                            obfuscated_port,
+                        } => {
+                            debug!(
+                                "Received GetPeerAddress response for {}: {}:{} (obf_type: {}, obf_port: {})",
+                                username, host, port, obfuscation_type, obfuscated_port
+                            );
+
+                            // Forward the response to the client channel
+                            if let Err(e) = client_channel.send(
+                                ClientOperation::GetPeerAddressResponse {
+                                    username,
+                                    host,
+                                    port,
+                                    obfuscation_type,
+                                    obfuscated_port,
+                                },
+                            ) {
+                                error!("Error forwarding GetPeerAddress response to client: {}", e);
                             }
                         }
                     }

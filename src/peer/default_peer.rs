@@ -21,6 +21,7 @@ use std::net::ToSocketAddrs;
 use std::time::Duration;
 
 #[allow(dead_code)]
+#[derive(Debug)]
 pub struct DefaultPeer {
     peer: Peer,
     peer_channel: Option<Sender<PeerOperation>>,
@@ -107,6 +108,10 @@ impl DefaultPeer {
         &mut self,
         stream: TcpStream,
     ) -> Result<(), io::Error> {
+        debug!(
+            "[default_peer:{}] start_read_write_loops",
+            self.peer.username
+        );
         let (peer_sender, peer_reader): (
             Sender<PeerOperation>,
             Receiver<PeerOperation>,
