@@ -71,9 +71,9 @@ impl DefaultPeer {
         mut stream: TcpStream,
     ) -> Result<Self, io::Error> {
         if let Some(token) = self.peer.token {
-            stream
-                .write_all(&MessageFactory::build_watch_user(token).get_data())
-                .unwrap();
+            let mut message: Vec<u8> = [0, 5, 0, 0, 0, 0].to_vec();
+            message.extend_from_slice(&token.to_le_bytes());
+            stream.write_all(&message).unwrap();
         }
 
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
