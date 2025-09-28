@@ -108,9 +108,9 @@ impl Client {
                     server.get_address().get_port()
                 );
 
-                thread::spawn(move || {
-                    Listen::start(2234, client_sender.clone());
-                });
+                // thread::spawn(move || {
+                //     Listen::start(2234, client_sender.clone());
+                // });
                 let mut unlocked_context = self.context.lock().unwrap();
                 unlocked_context.server_sender =
                     Some(server.get_sender().clone());
@@ -334,8 +334,9 @@ impl Client {
                         };
                     }
                     ClientOperation::NewPeer(new_peer) => {
-                        let unlocked_context = client_context.lock().unwrap();
-                        if unlocked_context
+                        if client_context
+                            .lock()
+                            .unwrap()
                             .peers
                             .contains_key(&new_peer.username)
                         {
@@ -344,7 +345,7 @@ impl Client {
                                 new_peer.username
                             );
                         } else if let Some(server_sender) =
-                            &unlocked_context.server_sender
+                            &client_context.lock().unwrap().server_sender
                         {
                             server_sender
                                 .send(ServerOperation::GetPeerAddress(
@@ -352,6 +353,7 @@ impl Client {
                                 ))
                                 .unwrap();
                         }
+
                         let addr = new_peer.tcp_stream.peer_addr().unwrap();
                         let host = addr.ip().to_string();
                         let port: u32 = addr.port().into();
@@ -366,6 +368,7 @@ impl Client {
                             obfuscated_port: None,
                             unknown: None,
                         };
+
                         Self::connect_to_peer(
                             peer,
                             client_context.clone(),
@@ -391,22 +394,22 @@ impl Client {
                             .peers
                             .get(&username)
                         {
-                            Some(peer) => {
+                            Some(_peer) => {
                                 // don't know if i should update? and or reconnect the peer
-                                debug!(
-                                    "existing peer: {:?}, new peer details:
-                                    username: {},
-                                    host: {},
-                                    port: {}
-                                    obfuscation_type: {}
-                                    obfuscated_port: {}",
-                                    peer,
-                                    username,
-                                    host,
-                                    port,
-                                    obfuscation_type,
-                                    obfuscated_port,
-                                );
+                                // debug!(
+                                //     "existing peer: {:?}, new peer details:
+                                //     username: {},
+                                //     host: {},
+                                //     port: {}
+                                //     obfuscation_type: {}
+                                //     obfuscated_port: {}",
+                                //     peer,
+                                //     username,
+                                //     host,
+                                //     port,
+                                //     obfuscation_type,
+                                //     obfuscated_port,
+                                // );
                             }
                             None => {
                                 let peer = Peer::new(
@@ -439,10 +442,8 @@ impl Client {
         own_username: String,
         stream: Option<TcpStream>,
     ) {
-        trace!("[client] connect_to_peer");
         let client_context2 = client_context.clone();
         let unlocked_context = client_context.lock().unwrap();
-        trace!("[client] connect_to_peer POST");
 
         if let Some(sender) = unlocked_context.sender.clone() {
             if !unlocked_context.peers.contains_key(&peer.username) {
@@ -463,8 +464,7 @@ impl Client {
                             match connect_result {
                                 Ok(p) => {
                                     trace!("[client] connected to: {}", peer.username);
-                                    let mut context =client_context2.lock().unwrap();
-                                    context.peers.insert(peer.username, p);
+                                    client_context2.lock().unwrap().peers.insert(peer.username, p);
                                 }
                                 Err(e) => {
                                     trace!(
@@ -523,7 +523,7 @@ impl Client {
                     }
                 });
             } else {
-                debug!("[client] Peer already connected: {}", peer.username);
+                // debug!("[client] Peer already connected: {}", peer.username);
             }
         } else {
             error!("No sender found");

@@ -15,9 +15,10 @@ impl Listen {
         let listener = TcpListener::bind(format!("0.0.0.0:{port}")).unwrap();
         for stream in listener.incoming() {
             let mut read_stream = stream.unwrap();
+            let mut stop = false;
 
             let mut buffered_reader = MessageReader::new();
-            loop {
+            while !stop {
                 match buffered_reader.read_from_socket(&mut read_stream) {
                     Ok(_) => {}
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -63,11 +64,15 @@ impl Listen {
                                 client_sender
                                     .send(ClientOperation::NewPeer(new_peer))
                                     .unwrap();
+                                stop = true;
+                                debug!("[listener] stop");
                             }
-                            _ => {} // debug!(
-                                    //     "[listener] unknown message_code: {}",
-                                    //     message_code
-                                    // ),
+                            _ => {
+                                debug!(
+                                    "[listener] unknown message_code: {}",
+                                    message_code
+                                )
+                            }
                         }
                     }
                     Err(e) => {
