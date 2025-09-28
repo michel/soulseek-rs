@@ -108,9 +108,9 @@ impl Client {
                     server.get_address().get_port()
                 );
 
-                thread::spawn(move || {
-                    Listen::start(2234, client_sender.clone());
-                });
+                // thread::spawn(move || {
+                //     Listen::start(2234, client_sender.clone());
+                // });
                 let mut unlocked_context = self.context.lock().unwrap();
                 unlocked_context.server_sender =
                     Some(server.get_sender().clone());

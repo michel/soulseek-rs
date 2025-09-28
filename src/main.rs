@@ -10,30 +10,37 @@ fn main() {
 
     client.connect();
     match client.login() {
-        Ok(_) => match client
-            .search("michel test file", Duration::from_secs(30))
-        {
-            Ok(results) => {
-                if let Some(result) =
-                    results.iter().find(|r| !r.files.is_empty())
-                {
-                    let file = result.files[0].clone();
-                    match client.download(file.name, file.username, file.size) {
-                        Ok(download_result) => {
-                            println!("Download result: {:?}", download_result);
+        Ok(_) => {
+            match client.search("michel test file", Duration::from_secs(30)) {
+                Ok(results) => {
+                    if let Some(result) =
+                        results.iter().find(|r| !r.files.is_empty())
+                    {
+                        let file = result.files[0].clone();
+                        match client.download(
+                            file.name,
+                            file.username,
+                            file.size,
+                        ) {
+                            Ok(download_result) => {
+                                println!(
+                                    "Download result: {:?}",
+                                    download_result
+                                );
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to download: {}", e);
+                            }
                         }
-                        Err(e) => {
-                            eprintln!("Failed to download: {}", e);
-                        }
+                    } else {
+                        eprint!("No results")
                     }
-                } else {
-                    eprint!("No results")
+                }
+                Err(e) => {
+                    eprintln!("Failed to search: {}", e);
                 }
             }
-            Err(e) => {
-                eprintln!("Failed to search: {}", e);
-            }
-        },
+        }
         Err(e) => {
             eprintln!("Failed to login: {}", e);
         }
