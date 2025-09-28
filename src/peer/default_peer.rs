@@ -56,6 +56,7 @@ impl DefaultPeer {
         }
     }
     pub fn disconnect(mut self) {
+        debug!("[default_peer:{}] disconnect", self.peer.username.clone());
         if let Err(e) = self.client_channel.send(
             ClientOperation::PeerDisconnected(self.peer.username.clone()),
         ) {
@@ -74,6 +75,14 @@ impl DefaultPeer {
                 .write_all(&MessageFactory::build_watch_user(token).get_data())
                 .unwrap();
         }
+
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+
+        trace!(
+            "[default_peer:{}] connect_with_socket: direct",
+            self.peer.username
+        );
         self.start_read_write_loops(stream)?;
 
         Ok(self)
@@ -86,6 +95,7 @@ impl DefaultPeer {
                 io::Error::new(io::ErrorKind::InvalidInput, "Invalid address")
             })?;
 
+        trace!("[default_peer:{}] connect: indirect", self.peer.username);
         let mut stream = TcpStream::connect_timeout(
             &socket_address,
             Duration::from_secs(20),
@@ -127,7 +137,6 @@ impl DefaultPeer {
         let peer_clone = self.peer.clone();
         let client_channel_for_read = self.client_channel.clone();
 
-        // Spawn the reader thread
         self.read_thread = Some(thread::spawn(move || {
             let mut handlers = Handlers::new();
             handlers.register_handler(FileSearchResponse);
@@ -337,6 +346,7 @@ impl DefaultPeer {
 impl Drop for DefaultPeer {
     fn drop(&mut self) {
         self.peer_channel = None;
+        trace!("[default_peer:{}] drop", self.peer.username);
 
         if let Some(handle) = self.read_thread.take() {
             debug!("Joining read thread...");

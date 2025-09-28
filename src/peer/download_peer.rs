@@ -320,6 +320,7 @@ mod tests {
 
     #[test]
     pub fn test_connect_no_pierce() {
+        crate::utils::logger::init();
         let (port, messages) = build_test_server();
         let token = 33;
         let download_peer = DownloadPeer::new(
