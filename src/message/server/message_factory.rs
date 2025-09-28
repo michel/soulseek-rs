@@ -4,6 +4,13 @@ use crate::{
 
 pub struct MessageFactory;
 impl MessageFactory {
+    pub fn build_get_peer_address(username: &str) -> Message {
+        let mut message = Message::new();
+
+        message.write_int32(3);
+        message.write_string(username);
+        message
+    }
     pub fn build_login_message(username: &str, password: &str) -> Message {
         // Message::new_with_data(
         //     [
@@ -119,6 +126,7 @@ impl MessageFactory {
         token: u32,
     ) -> Message {
         Message::new()
+            .write_int8(1)
             .write_string(own_username)
             .write_string(&connection_type.to_string())
             .write_int32(token)

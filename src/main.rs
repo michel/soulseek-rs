@@ -1,5 +1,3 @@
-use soulseek_rs::FileSearchResult;
-
 fn main() {
     use soulseek_rs::{Client, PeerAddress};
     use std::time::Duration;
@@ -13,10 +11,12 @@ fn main() {
     client.connect();
     match client.login() {
         Ok(_) => match client
-            .search("Super flu Believe Believe", Duration::from_secs(10))
+            .search("michel test file", Duration::from_secs(10))
         {
             Ok(results) => {
-                if let Some(result) = results.iter().find(|r| !r.files.is_empty()) {
+                if let Some(result) =
+                    results.iter().find(|r| !r.files.is_empty())
+                {
                     let file = result.files[0].clone();
                     match client.download(file.name, file.username, file.size) {
                         Ok(download_result) => {

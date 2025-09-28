@@ -5,7 +5,6 @@ mod message_reader;
 pub mod peer;
 pub mod server;
 
-// Re-export commonly used items
 pub use handlers::{Handlers, MessageHandler};
 pub use message_reader::MessageReader;
 
@@ -262,6 +261,11 @@ impl Message {
         let length = val.len() as u32;
         self.data.extend_from_slice(&length.to_le_bytes());
         self.data.extend_from_slice(val.as_bytes());
+        self
+    }
+
+    pub fn write_int8(&mut self, value: u8) -> &mut Self {
+        self.data.extend_from_slice(&value.to_le_bytes());
         self
     }
 
