@@ -11,7 +11,9 @@ fn main() {
     client.connect();
     match client.login() {
         Ok(_) => {
-            match client.search("michel test file", Duration::from_secs(30)) {
+            match client
+                .search("The Weeknd - Blinding Lights", Duration::from_secs(20))
+            {
                 Ok(results) => {
                     if let Some(result) =
                         results.iter().find(|r| !r.files.is_empty())
