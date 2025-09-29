@@ -1,5 +1,4 @@
 use crate::{
-    client,
     error::{Result, SoulseekRs},
     peer::{
         listen::Listen, ConnectionType, DefaultPeer, DownloadPeer, NewPeer,
@@ -99,7 +98,6 @@ impl Client {
 
         let client_sender = sender.clone();
 
-        // self.read_form_channel(message_reader);
         self.server = match Server::new(self.address.clone(), sender) {
             Ok(server) => {
                 info!(
@@ -108,9 +106,9 @@ impl Client {
                     server.get_address().get_port()
                 );
 
-                // thread::spawn(move || {
-                //     Listen::start(2234, client_sender.clone());
-                // });
+                thread::spawn(move || {
+                    Listen::start(2234, client_sender.clone());
+                });
                 let mut unlocked_context = self.context.lock().unwrap();
                 unlocked_context.server_sender =
                     Some(server.get_sender().clone());
@@ -197,7 +195,6 @@ impl Client {
         };
 
         let mut context = self.context.lock().unwrap();
-        debug!("token {}", token);
         context.downloads.insert(token, download.clone());
         let download_initiated = context
             .peers
