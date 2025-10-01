@@ -15,7 +15,7 @@ use std::{
         mpsc::{Receiver, Sender},
         Mutex,
     },
-    thread,
+    thread::{self, sleep},
 };
 use std::{
     sync::{mpsc, Arc},
@@ -106,9 +106,9 @@ impl Client {
                     server.get_address().get_port()
                 );
 
-                thread::spawn(move || {
-                    Listen::start(2234, client_sender.clone());
-                });
+                // thread::spawn(move || {
+                //     Listen::start(2234, client_sender.clone());
+                // });
                 let mut unlocked_context = self.context.lock().unwrap();
                 unlocked_context.server_sender =
                     Some(server.get_sender().clone());
@@ -166,6 +166,7 @@ impl Client {
 
         let start = Instant::now();
         loop {
+            sleep(Duration::from_millis(500));
             if start.elapsed() >= timeout {
                 break;
             }

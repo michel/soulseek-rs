@@ -3,46 +3,38 @@ fn main() {
     use std::time::Duration;
 
     let mut client = Client::new(
-        PeerAddress::new(String::from("server.slsknet.org"), 2242),
+        // PeerAddress::new(String::from("server.slsknet.org"), 2242),
+        PeerAddress::new(String::from("127.0.0.1"), 2416),
         String::from("insane_in_the_brain3"),
         String::from("13375137"),
     );
 
     client.connect();
     match client.login() {
-        Ok(_) => {
-            match client
-                .search("The Weeknd - Blinding Lights", Duration::from_secs(20))
-            {
-                Ok(results) => {
-                    if let Some(result) =
-                        results.iter().find(|r| !r.files.is_empty())
-                    {
-                        let file = result.files[0].clone();
-                        match client.download(
-                            file.name,
-                            file.username,
-                            file.size,
-                        ) {
-                            Ok(download_result) => {
-                                println!(
-                                    "Download result: {:?}",
-                                    download_result
-                                );
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to download: {}", e);
-                            }
+        Ok(_) => match client
+            .search("michel test file", Duration::from_secs(30))
+        {
+            Ok(results) => {
+                if let Some(result) =
+                    results.iter().find(|r| !r.files.is_empty())
+                {
+                    let file = result.files[0].clone();
+                    match client.download(file.name, file.username, file.size) {
+                        Ok(download_result) => {
+                            println!("Download result: {:?}", download_result);
                         }
-                    } else {
-                        eprint!("No results")
+                        Err(e) => {
+                            eprintln!("Failed to download: {}", e);
+                        }
                     }
-                }
-                Err(e) => {
-                    eprintln!("Failed to search: {}", e);
+                } else {
+                    eprint!("No results")
                 }
             }
-        }
+            Err(e) => {
+                eprintln!("Failed to search: {}", e);
+            }
+        },
         Err(e) => {
             eprintln!("Failed to login: {}", e);
         }

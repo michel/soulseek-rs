@@ -275,11 +275,6 @@ impl DefaultPeer {
                             peer_username, transfer.token
                         );
 
-                        client_channel
-                            .send(ClientOperation::PeerDisconnected(
-                                peer_username.clone(),
-                            ))
-                            .unwrap();
                         break;
                     }
                     PeerOperation::TransferResponse {
