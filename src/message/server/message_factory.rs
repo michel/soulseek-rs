@@ -54,14 +54,6 @@ impl MessageFactory {
             .clone()
     }
     pub fn build_file_search_message(token: u32, query: &str) -> Message {
-        // Message::new_with_data(
-        //     [
-        //         26, 0, 0, 0, 219, 178, 47, 28, 11, 0, 0, 0, 116, 104, 101, 32, 119, 101, 101, 107, 101,
-        //         110, 100, 0, 0,
-        //     ]
-        //     .to_vec(),
-        // )
-        // .clone()
         Message::new()
             .write_int32(26)
             .write_int32(token)
@@ -75,10 +67,15 @@ impl MessageFactory {
             .clone()
     }
     pub fn build_no_parent_message() -> Message {
-        Message::new().write_int32(71).write_int32(1).clone()
+        Message::new().write_int32(71).write_bool(true).clone()
     }
-    pub fn build_set_wait_port_message() -> Message {
-        Message::new().write_int32(2).write_int32(2234).clone()
+    pub fn build_set_wait_port_message(port: u32) -> Message {
+        Message::new()
+            .write_int32(2)
+            .write_int32(port)
+            .write_int32(0)
+            .write_int32(port) // should be different port
+            .clone()
     }
     pub fn build_watch_user(token: u32) -> Message {
         Message::new()

@@ -13,9 +13,9 @@ use crate::message::server::ParentSpeedRatioHandler;
 use crate::message::server::PrivilegedUsersHandler;
 use crate::message::server::RoomListHandler;
 use crate::message::server::WishListIntervalHandler;
-use crate::message::Handlers;
 use crate::message::Message;
 use crate::message::MessageReader;
+use crate::message::{Handlers, MessageType};
 use crate::peer::ConnectionType;
 use crate::peer::Peer;
 
@@ -27,7 +27,7 @@ use std::sync::{Arc, Barrier, Mutex};
 use std::thread::{self};
 use std::time::{Duration, Instant};
 
-use crate::{debug, error, info, warn};
+use crate::{debug, error, info, trace, warn};
 
 #[derive(Debug, Clone)]
 pub struct PeerAddress {
@@ -70,14 +70,6 @@ impl Context {
             logged_in: Option::None,
         }
     }
-
-    // pub fn get_messages_for_user(&self, username: String) -> Option<&UserMessage> {
-    //     self.user_messages.get(&username)
-    // }
-    //
-    // pub fn get_rooms(&mut self) -> &mut Rooms {
-    //     &mut self.rooms
-    // }
 }
 #[derive(Debug, Clone)]
 pub struct UserMessage {
@@ -314,7 +306,18 @@ impl Server {
                 }
 
                 match buffered_reader.extract_message() {
-                    Ok(Some(mut message)) => dispatcher.dispatch(&mut message),
+                    Ok(Some(mut message)) => {
+                        trace!(
+                            "[server] ← {:?}",
+                            message
+                                .get_message_name(
+                                    MessageType::Server,
+                                    message.get_message_code() as u32
+                                )
+                                .map_err(|e| e.to_string())
+                        );
+                        dispatcher.dispatch(&mut message)
+                    }
                     Err(e) => {
                         warn!("Error extracting message: {}", e)
                     }
@@ -461,7 +464,9 @@ impl Server {
 
         if logged_in.unwrap() {
             info!("Logged in as {}", username);
-            self.queue_message(MessageFactory::build_set_wait_port_message());
+            self.queue_message(MessageFactory::build_set_wait_port_message(
+                2234,
+            ));
             self.queue_message(MessageFactory::build_shared_folders_message(
                 1, 499,
             ));

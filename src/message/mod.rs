@@ -330,9 +330,15 @@ impl Message {
                 41 => Ok("Relogged"),
                 42 => Ok("UserSearch"),
                 64 => Ok("RoomList"),
+                69 => Ok("PrivilegedUsers"),
+                83 => Ok("ParentMinSpeed"),
+                84 => Ok("ParentSpeedRatio"),
                 92 => Ok("CheckPrivileges"),
+                93 => Ok("EmbeddedMessage"),
                 100 => Ok("AcceptChildren"),
                 102 => Ok("PossibleParents"),
+                104 => Ok("WishlistInterval"),
+                160 => Ok("ExcludedSearchPhrases"),
                 1001 => Ok("CantConnectToPeer"),
                 _ => {
                     Err(Error(format!("Unknown server message code: {}", code)))
