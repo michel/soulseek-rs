@@ -1,4 +1,5 @@
 use crate::message::server::MessageFactory;
+use crate::trace;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
 use std::net::TcpStream;
@@ -166,6 +167,7 @@ impl DownloadPeer {
 
         stream.set_read_timeout(Some(Duration::from_secs(30)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+        stream.set_nodelay(true)?;
 
         Ok(stream)
     }
@@ -199,6 +201,7 @@ impl DownloadPeer {
         output_path: Option<String>,
     ) -> Result<usize, io::Error> {
         let mut stream = self.establish_connection()?;
+        trace!("[download_peer] connected to: {}", self.username);
 
         // Setup file management if output path is provided
         let (paths, mut writer) = if let Some(output_path) = output_path {
@@ -216,6 +219,7 @@ impl DownloadPeer {
 
         // Perform handshake
         self.perform_handshake(&mut stream)?;
+        trace!("[download_peer] handshake complete");
 
         // Stream data
         let mut processor = StreamProcessor::new(self.no_pierce, self.token);

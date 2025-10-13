@@ -238,16 +238,6 @@ impl Client {
             if let Ok(operation) = reader.recv() {
                 match operation {
                     ClientOperation::ConnectToPeer(peer) => {
-                        match peer.connection_type {
-                            ConnectionType::P => (),
-                            ConnectionType::F => {
-                                debug!("Peer with F {:?}", peer)
-                            }
-                            ConnectionType::D => {
-                                error!("ConnectionType::D not implemented for peer: {}", peer.username);
-                            }
-                        };
-
                         Self::connect_to_peer(
                             peer,
                             client_context.clone(),
@@ -445,11 +435,11 @@ impl Client {
         let client_context2 = client_context.clone();
         let unlocked_context = client_context.lock().unwrap();
 
+        trace!("[client] connect_to_peer: {}", peer.username);
         if let Some(sender) = unlocked_context.sender.clone() {
-            if !unlocked_context.peers.contains_key(&peer.username) {
-                let peer_clone = peer.clone();
-                let sender_clone = sender;
-                unlocked_context.thread_pool.execute(move || {
+            let peer_clone = peer.clone();
+            let sender_clone = sender;
+            unlocked_context.thread_pool.execute(move || {
                     trace!("[client] connecting to {}, with connection_type: {}", peer.username, peer.connection_type);
                     match peer.connection_type {
                         ConnectionType::P => {
@@ -480,12 +470,16 @@ impl Client {
                         }
 
                         ConnectionType::F => {
+                            trace!("[client] starting downloading from: {}", peer.username);
                             let context = client_context2.lock().unwrap();
+                            trace!("[client] downloads: {:?}", context.downloads);
+                            trace!("[client] peer.token: {:?}", peer.token);
                             let download =
                                 context.downloads.get(&peer.token.unwrap());
 
                             match download {
                                 Some(download) => {
+                                    trace!("[client] downloading from: {}", peer.username);
                                     let download_peer = DownloadPeer::new(
                                         peer.username,
                                         peer.host,
@@ -499,6 +493,7 @@ impl Client {
                                         download.filename.split('\\').last();
                                     match filename {
                                         Some(filename) => {
+                                            trace!("[client] startting downloading file: {}", filename);
                                             download_peer
                                                 .download_file(
                                                     Some(
@@ -522,11 +517,8 @@ impl Client {
                         }
                     }
                 });
-            } else {
-                // debug!("[client] Peer already connected: {}", peer.username);
-            }
         } else {
-            error!("No sender found");
+            debug!("[client] Peer already connected: {}", peer.username);
         }
     }
     fn pierce_firewall(
@@ -541,10 +533,7 @@ impl Client {
             if let Some(token) = peer.token {
                 match server_sender.send(ServerOperation::PierceFirewall(token))
                 {
-                    Ok(_) => debug!(
-                        "Sent PierceFirewall message with token: {}",
-                        token
-                    ),
+                    Ok(_) => (),
                     Err(e) => {
                         error!("Failed to send PierceFirewall message: {}", e)
                     }
