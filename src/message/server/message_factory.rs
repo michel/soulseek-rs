@@ -111,7 +111,7 @@ impl MessageFactory {
     }
     pub fn build_pierce_firewall_message(token: u32) -> Message {
         Message::new()
-            .write_int32(0) // PierceFirewall message code
+            .write_int8(0) // PierceFirewall message code
             .write_int32(token)
             .clone()
     }

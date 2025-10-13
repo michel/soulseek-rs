@@ -1,3 +1,4 @@
+use crate::client::ClientContext;
 use crate::message::server::MessageFactory;
 use crate::trace;
 use std::fs::{self, File};
@@ -5,7 +6,7 @@ use std::io::{self, BufWriter, Read, Write};
 use std::net::TcpStream;
 use std::net::ToSocketAddrs;
 use std::path::Path;
-use std::thread::sleep;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 #[derive(Debug)]
@@ -102,7 +103,6 @@ impl StreamProcessor {
         if let Some(ref mut w) = writer {
             w.write_all(data)?;
 
-            // Flush every 64KB to ensure data reaches disk
             if self.total_bytes % (64 * 1024) == 0 {
                 w.flush()?;
             }
@@ -176,32 +176,55 @@ impl DownloadPeer {
         &self,
         stream: &mut TcpStream,
     ) -> Result<(), io::Error> {
+        trace!(
+            "[download_peer:{}] performing handshake no_pierce: {}",
+            self.username,
+            self.no_pierce
+        );
         if self.no_pierce {
             let message = MessageFactory::build_peer_init_message(
                 &self.own_username,
                 super::ConnectionType::F,
                 self.token,
             );
-            stream.write_all(&message.get_data())?;
-            sleep(Duration::from_millis(1000));
-            stream
-                .write_all(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])?;
+            trace!(
+                "[default_peer:{}] sending peer init, token: {} message: {:?}
+                ",
+                self.token,
+                self.username,
+                message.get_buffer(),
+            );
+            stream.write_all(&message.get_buffer())?;
+            stream.flush()?;
+            // stream
+            //     .write_all(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])?;
+            // stream.flush()?;
+            //
         } else {
             stream.write_all(
                 &MessageFactory::build_pierce_firewall_message(self.token)
-                    .get_data(),
+                    .get_buffer(),
             )?;
+            trace!(
+                "[default_peer:{}] sending pierce firewall message token: {}: {:?}",
+                self.username,
+                self.token,
+                MessageFactory::build_pierce_firewall_message(self.token)
+                    .get_buffer()
+            );
+            stream.flush()?;
         }
         Ok(())
     }
 
     pub fn download_file(
         self,
-        expected_size: Option<usize>,
+        client_context: Arc<Mutex<ClientContext>>,
+        mut expected_size: Option<usize>,
         output_path: Option<String>,
-    ) -> Result<usize, io::Error> {
+    ) -> Result<(usize, String), io::Error> {
         let mut stream = self.establish_connection()?;
-        trace!("[download_peer] connected to: {}", self.username);
+        trace!("[download_peer:{}] connected", self.username);
 
         // Setup file management if output path is provided
         let (paths, mut writer) = if let Some(output_path) = output_path {
@@ -212,34 +235,92 @@ impl DownloadPeer {
             );
             let writer =
                 Some(FileManager::create_temp_file(&paths.incomplete_path)?);
-            (Some(paths), writer)
+            (paths, writer)
         } else {
-            (None, None)
+            let paths = FileManager::create_download_paths(
+                None,
+                &self.own_username,
+                self.token,
+            );
+            let writer =
+                Some(FileManager::create_temp_file(&paths.incomplete_path)?);
+            trace!(
+                "[download_peer:{}] No output path provided, downloading to temp file: {}",
+                self.username,
+                paths.incomplete_path
+            );
+            (paths, writer)
         };
 
-        // Perform handshake
         self.perform_handshake(&mut stream)?;
-        trace!("[download_peer] handshake complete");
+        trace!("[download_peer:{}] handshake completed", self.username);
 
-        // Stream data
         let mut processor = StreamProcessor::new(self.no_pierce, self.token);
-        let mut read_buffer = [0u8; 8192];
+        let mut read_buffer = [1u8; 8192];
+        trace!(
+            "[download_peer:{}] Starting to read data from peer",
+            self.username
+        );
 
         loop {
             match stream.read(&mut read_buffer) {
-                Ok(0) => break, // Connection closed
+                Ok(0) => {
+                    trace!(
+                        "[download_peer:{}] connection closed by peer",
+                        self.username
+                    );
+                    break; // Connection closed
+                }
                 Ok(bytes_read) => {
                     let data = &read_buffer[..bytes_read];
+                    // trace!(
+                    //     "[download_peer:{}] received {} bytes",
+                    //     self.username,
+                    //     bytes_read
+                    // );
 
-                    // Handle pierce token extraction
-                    if processor.handle_pierce_token(data, &mut stream)? {
+                    if !self.no_pierce
+                        && !processor.received
+                        && processor.handle_pierce_token(data, &mut stream)?
+                    {
+                        let token = data.get(0..4).unwrap();
+                        let token_u32 =
+                            u32::from_le_bytes(token.try_into().unwrap());
+                        trace!(
+                            "[download_peer:{}] received token: {:?} ",
+                            self.username,
+                            token
+                        );
+
+                        match client_context
+                            .lock()
+                            .unwrap()
+                            .download_tokens
+                            .get(&token_u32)
+                            .cloned()
+                        {
+                            Some(download) => {
+                                trace!(
+                                    "[download_peer:{}] got download info for token: {}",
+                                    self.username,
+                                    token_u32
+                                );
+                                expected_size = Some(download.size as usize);
+                            }
+                            None => {
+                                trace!(
+                                    "[download_peer:{}] no download info for token: {}",
+                                    self.username,
+                                    self.token
+                                );
+                            }
+                        }
+
                         continue; // Skip this data chunk
                     }
 
-                    // Process file data
                     processor.process_data_chunk(data, &mut writer)?;
 
-                    // Check completion
                     if !processor.should_continue(expected_size) {
                         break;
                     }
@@ -248,38 +329,41 @@ impl DownloadPeer {
                     continue;
                 }
                 Err(e) => {
-                    // Clean up incomplete file on error
                     drop(writer);
-                    if let Some(ref paths) = paths {
-                        FileManager::cleanup_on_error(Some(
-                            &paths.incomplete_path,
-                        ));
-                    }
+                    FileManager::cleanup_on_error(Some(&paths.incomplete_path));
                     return Err(e);
                 }
             }
         }
+        trace!(
+            "[download_peer:{}] finished reading data from peer",
+            self.username
+        );
 
-        // Finalize download
         if let Some(mut w) = writer {
             w.flush()?;
             drop(w);
 
-            if let Some(paths) = paths {
-                FileManager::finalize_download(
-                    &paths.incomplete_path,
-                    &paths.final_path,
-                )?;
-            }
+            trace!("[download_peer:{}] finalizing download", self.username);
+            FileManager::finalize_download(
+                &paths.incomplete_path,
+                &paths.final_path,
+            )?;
         }
+        trace!(
+            "[download_peer:{}] download completed successfully: {} bytes",
+            self.username,
+            processor.total_bytes
+        );
 
-        Ok(processor.total_bytes)
+        Ok((processor.total_bytes, paths.final_path.clone()))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{DownloadPeer, FileManager, StreamProcessor};
+    use crate::client::ClientContext;
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -331,7 +415,10 @@ mod tests {
             false,
             "own_username".to_string(),
         );
-        let _ = download_peer.download_file(None, None).unwrap();
+        let dummy_context = Arc::new(Mutex::new(ClientContext::new()));
+        let _ = download_peer
+            .download_file(dummy_context, None, None)
+            .unwrap();
 
         // Give the client time to send messages
         thread::sleep(Duration::from_millis(10));
@@ -353,7 +440,10 @@ mod tests {
             true, // no_pierce = true, should send init message
             "own_username".to_string(),
         );
-        let _ = download_peer.download_file(None, None).unwrap();
+        let dummy_context = Arc::new(Mutex::new(ClientContext::new()));
+        let _ = download_peer
+            .download_file(dummy_context, None, None)
+            .unwrap();
 
         // Give the client time to send messages
         thread::sleep(Duration::from_millis(10));
@@ -422,7 +512,9 @@ mod tests {
             "test_user".to_string(),
         );
 
+        let dummy_context = Arc::new(Mutex::new(ClientContext::new()));
         let result = download_peer.download_file(
+            dummy_context,
             Some(test_data.len()),
             Some("test_download.mp3".to_string()),
         );
