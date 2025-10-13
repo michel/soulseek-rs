@@ -12,7 +12,7 @@ use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
-use crate::client::ClientOperation;
+use crate::client::{self, ClientOperation};
 use crate::peer::Peer;
 use crate::{debug, error, trace, warn};
 use std::io::{self, Write};
@@ -189,7 +189,7 @@ impl DefaultPeer {
                     match buffered_reader.extract_message() {
                         Ok(Some(mut message)) => {
                             trace!(
-                                "[default_peer:{:?}] ← {:?}",
+                                "[default_peer:{}] ← {:?}",
                                 peer.username,
                                 message
                                     .get_message_name(
@@ -231,7 +231,7 @@ impl DefaultPeer {
                 Ok(operation) => match operation {
                     PeerOperation::SendMessage(message) => {
                         trace!(
-                            "[default_peer:{:?}] ➡ {:?} - {:?}",
+                            "[default_peer:{}] ➡ {:?} - {:?}",
                             peer_username,
                             message
                                 .get_message_name(
@@ -269,9 +269,15 @@ impl DefaultPeer {
                     }
                     PeerOperation::TransferRequest(transfer) => {
                         debug!(
-                            "[default_peer:{:}] TransferRequest for {}",
+                            "[default_peer:{}] TransferRequest for {}",
                             peer_username, transfer.token
                         );
+                        client_channel
+                            .send(ClientOperation::UpdateDownloadTokens(
+                                transfer.clone(),
+                                peer_clone.username.clone(),
+                            ))
+                            .unwrap();
 
                         let transfer_response =
                             MessageFactory::build_transfer_response_message(
@@ -279,7 +285,7 @@ impl DefaultPeer {
                             );
 
                         trace!(
-                            "[default_peer:{:}] TransferResponse for {:?}",
+                            "[default_peer:{}] TransferResponse for {:?}",
                             peer_username,
                             transfer_response.get_buffer()
                         );
@@ -290,8 +296,6 @@ impl DefaultPeer {
                                 ))
                                 .unwrap();
                         }
-
-                        // break;
                     }
                     PeerOperation::TransferResponse {
                         token,
@@ -313,7 +317,7 @@ impl DefaultPeer {
                                     );
                             }
                         } else {
-                            debug!("[default_peer:{:}] Transfer allowed, ready to connect with token {:}",peer_username, token);
+                            debug!("[default_peer:{}] Transfer allowed, ready to connect with token {:}",peer_username, token);
                             client_channel
                                 .send(ClientOperation::DownloadFromPeer(
                                     token,
