@@ -12,7 +12,7 @@ use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
-use crate::client::ClientOperation;
+use crate::client::{self, ClientOperation};
 use crate::peer::Peer;
 use crate::{debug, error, trace, warn};
 use std::io::{self, Write};
@@ -78,6 +78,7 @@ impl DefaultPeer {
 
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+        stream.set_nodelay(true)?;
 
         trace!(
             "[default_peer:{}] connect_with_socket: direct",
@@ -107,6 +108,7 @@ impl DefaultPeer {
 
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+        stream.set_nodelay(true)?;
 
         if let Some(token) = self.peer.token {
             stream
@@ -181,34 +183,41 @@ impl DefaultPeer {
                     }
                 }
 
-                match buffered_reader.extract_message() {
-                    Ok(Some(mut message)) => {
-                        trace!(
-                            "[default_peer:{:?}] ← {:?}",
-                            peer.username,
-                            message
-                                .get_message_name(
-                                    MessageType::Peer,
-                                    message.get_message_code() as u32
-                                )
-                                .map_err(|e| e.to_string())
-                        );
-                        dispatcher.dispatch(&mut message)
+                // Extract all available messages from buffer
+                let mut should_terminate = false;
+                loop {
+                    match buffered_reader.extract_message() {
+                        Ok(Some(mut message)) => {
+                            trace!(
+                                "[default_peer:{}] ← {:?}",
+                                peer.username,
+                                message
+                                    .get_message_name(
+                                        MessageType::Peer,
+                                        message.get_message_code() as u32
+                                    )
+                                    .map_err(|e| e.to_string())
+                            );
+                            dispatcher.dispatch(&mut message)
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Error extracting message in default peer: {}. Terminating read loop.",
+                                e
+                            );
+                            let _ = client_channel_for_read.send(
+                                ClientOperation::PeerDisconnected(
+                                    peer.username.clone(),
+                                ),
+                            );
+                            should_terminate = true;
+                            break;
+                        }
+                        Ok(None) => break,
                     }
-                    Err(e) => {
-                        warn!(
-                            "Error extracting message in default peer: {}. Terminating read loop.",
-                            e
-                        );
-                        let _ = client_channel_for_read.send(
-                            ClientOperation::PeerDisconnected(
-                                peer.username.clone(),
-                            ),
-                        );
-
-                        break;
-                    }
-                    Ok(None) => continue,
+                }
+                if should_terminate {
+                    break;
                 }
             }
         }));
@@ -222,7 +231,7 @@ impl DefaultPeer {
                 Ok(operation) => match operation {
                     PeerOperation::SendMessage(message) => {
                         trace!(
-                            "[default_peer:{:?}] ➡ {:?} - {:?}",
+                            "[default_peer:{}] ➡ {:?} - {:?}",
                             peer_username,
                             message
                                 .get_message_name(
@@ -235,7 +244,9 @@ impl DefaultPeer {
                                     )
                                 )
                                 .map_err(|e| e.to_string()),
-                            message
+                            u32::from_le_bytes(
+                                message.get_slice(0, 4).try_into().unwrap()
+                            )
                         );
 
                         if let Err(e) =
@@ -249,6 +260,7 @@ impl DefaultPeer {
                             );
                             break;
                         }
+                        write_stream.flush().unwrap();
                     }
                     PeerOperation::FileSearchResult(file_search) => {
                         client_channel
@@ -257,15 +269,26 @@ impl DefaultPeer {
                     }
                     PeerOperation::TransferRequest(transfer) => {
                         debug!(
-                            "[default_peer:{:}] TransferRequest for {}",
+                            "[default_peer:{}] TransferRequest for {}",
                             peer_username, transfer.token
                         );
+                        client_channel
+                            .send(ClientOperation::UpdateDownloadTokens(
+                                transfer.clone(),
+                                peer_clone.username.clone(),
+                            ))
+                            .unwrap();
 
                         let transfer_response =
                             MessageFactory::build_transfer_response_message(
                                 transfer.clone(),
                             );
 
+                        trace!(
+                            "[default_peer:{}] TransferResponse for {:?}",
+                            peer_username,
+                            transfer_response.get_buffer()
+                        );
                         if let Some(sender) = peer_channel.clone() {
                             sender
                                 .send(PeerOperation::SendMessage(
@@ -273,13 +296,6 @@ impl DefaultPeer {
                                 ))
                                 .unwrap();
                         }
-
-                        debug!(
-                            "[default_peer:{:}] TransferResponse for {}",
-                            peer_username, transfer.token
-                        );
-
-                        break;
                     }
                     PeerOperation::TransferResponse {
                         token,
@@ -301,7 +317,7 @@ impl DefaultPeer {
                                     );
                             }
                         } else {
-                            debug!("[default_peer:{:}] Transfer allowed, ready to connect with token {:}",peer_username, token);
+                            debug!("[default_peer:{}] Transfer allowed, ready to connect with token {:}",peer_username, token);
                             client_channel
                                 .send(ClientOperation::DownloadFromPeer(
                                     token,
