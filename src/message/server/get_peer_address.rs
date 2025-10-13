@@ -22,6 +22,7 @@ impl MessageHandler<ServerOperation> for GetPeerAddressHandler {
         let port = message.read_int32();
         let obfuscation_type = message.read_int32();
         let obfuscated_port = message.read_int32() as u16;
+        println!("GetPeerAddressHandler: {:?}", username); // Debug print
 
         sender
             .send(ServerOperation::GetPeerAddressResponse {

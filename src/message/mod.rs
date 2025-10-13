@@ -147,6 +147,10 @@ impl Message {
         self.data[4]
     }
 
+    pub fn get_message_code_send(&self) -> u8 {
+        self.data[0]
+    }
+
     pub fn new_with_data(data: Vec<u8>) -> Self {
         Self { data, pointer: 0 }
     }
@@ -331,6 +335,7 @@ impl Message {
                 42 => Ok("UserSearch"),
                 64 => Ok("RoomList"),
                 69 => Ok("PrivilegedUsers"),
+                71 => Ok("HaveNoParent"),
                 83 => Ok("ParentMinSpeed"),
                 84 => Ok("ParentSpeedRatio"),
                 92 => Ok("CheckPrivileges"),

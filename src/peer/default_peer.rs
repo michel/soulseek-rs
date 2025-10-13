@@ -88,6 +88,10 @@ impl DefaultPeer {
         Ok(self)
     }
     pub fn connect(mut self) -> Result<Self, io::Error> {
+        println!(
+            "[default_peer] Connecting to {} on port {}",
+            self.peer.host, self.peer.port
+        );
         let socket_address = format!("{}:{}", self.peer.host, self.peer.port)
             .to_socket_addrs()?
             .next()
