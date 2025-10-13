@@ -254,6 +254,7 @@ impl Server {
 
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+        stream.set_nodelay(true)?;
 
         let mut read_stream = stream.try_clone()?;
         let mut write_stream = stream.try_clone()?;
@@ -292,9 +293,6 @@ impl Server {
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                         continue
                     }
-                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        continue
-                    }
                     Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
                         debug!("Read operation timed out");
                         continue;
@@ -305,24 +303,27 @@ impl Server {
                     }
                 }
 
-                match buffered_reader.extract_message() {
-                    Ok(Some(mut message)) => {
-                        trace!(
-                            "[server] ← {:?} - {}",
-                            message
-                                .get_message_name(
-                                    MessageType::Server,
-                                    message.get_message_code_u32()
-                                )
-                                .map_err(|e| e.to_string()),
-                            message.get_message_code_u32()
-                        );
-                        dispatcher.dispatch(&mut message)
+                loop {
+                    match buffered_reader.extract_message() {
+                        Ok(Some(mut message)) => {
+                            trace!(
+                                "[server] ← {:?} - {}",
+                                message
+                                    .get_message_name(
+                                        MessageType::Server,
+                                        message.get_message_code_u32()
+                                    )
+                                    .map_err(|e| e.to_string()),
+                                message.get_message_code_u32()
+                            );
+                            dispatcher.dispatch(&mut message)
+                        }
+                        Err(e) => {
+                            warn!("Error extracting message: {}", e);
+                            break;
+                        }
+                        Ok(None) => break,
                     }
-                    Err(e) => {
-                        warn!("Error extracting message: {}", e)
-                    }
-                    Ok(None) => continue,
                 }
             }
         });
@@ -344,7 +345,7 @@ impl Server {
                                     Some(ClientOperation::ConnectToPeer(peer))
                                 }
                                 ConnectionType::F => {
-                                    Some(ClientOperation::PierceFireWall(peer))
+                                    Some(ClientOperation::ConnectToPeer(peer))
                                 }
                                 ConnectionType::D => None,
                             } {
@@ -367,10 +368,6 @@ impl Server {
                                 );
                                 break;
                             }
-                            debug!(
-                                "Sent PierceFirewall message with token: {}",
-                                token
-                            );
                         }
                         ServerOperation::SendMessage(message) => {
                             match write_stream.write_all(&message.get_buffer())
