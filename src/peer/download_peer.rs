@@ -60,6 +60,27 @@ impl FileManager {
             let _ = fs::remove_file(path);
         }
     }
+
+    fn extract_filename_from_path(full_path: &str) -> String {
+        // Split on both forward slashes and backslashes to handle Windows and Unix paths
+        full_path.split(['/', '\\']).last().unwrap_or(full_path).to_string()
+    }
+
+    fn create_download_path_from_filename(
+        output_directory: Option<&str>,
+        remote_username: &str,
+        token: u32,
+        filename: Option<&str>
+    ) -> String {
+        let base_dir = output_directory.unwrap_or("/tmp");
+
+        if let Some(filename) = filename {
+            let clean_filename = Self::extract_filename_from_path(filename);
+            format!("{}/{}", base_dir, clean_filename)
+        } else {
+            format!("{}/{}_{}.mp3", base_dir, remote_username, token)
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -68,6 +89,7 @@ struct StreamProcessor {
     token: u32,
     total_bytes: usize,
     received: bool,
+    buffer: Vec<u8>,
 }
 
 #[allow(dead_code)]
@@ -78,6 +100,7 @@ impl StreamProcessor {
             token,
             total_bytes: 0,
             received: false,
+            buffer: Vec::new(),
         }
     }
 
@@ -98,16 +121,8 @@ impl StreamProcessor {
     fn process_data_chunk(
         &mut self,
         data: &[u8],
-        writer: &mut Option<BufWriter<File>>,
     ) -> Result<(), io::Error> {
-        if let Some(ref mut w) = writer {
-            w.write_all(data)?;
-
-            if self.total_bytes % (64 * 1024) == 0 {
-                w.flush()?;
-            }
-        }
-
+        self.buffer.extend_from_slice(data);
         self.total_bytes += data.len();
         Ok(())
     }
@@ -226,37 +241,13 @@ impl DownloadPeer {
         let mut stream = self.establish_connection()?;
         trace!("[download_peer:{}] connected", self.username);
 
-        // Setup file management if output path is provided
-        let (paths, mut writer) = if let Some(output_path) = output_path {
-            let paths = FileManager::create_download_paths(
-                Some(output_path),
-                &self.own_username,
-                self.token,
-            );
-            let writer =
-                Some(FileManager::create_temp_file(&paths.incomplete_path)?);
-            (paths, writer)
-        } else {
-            let paths = FileManager::create_download_paths(
-                None,
-                &self.own_username,
-                self.token,
-            );
-            let writer =
-                Some(FileManager::create_temp_file(&paths.incomplete_path)?);
-            trace!(
-                "[download_peer:{}] No output path provided, downloading to temp file: {}",
-                self.username,
-                paths.incomplete_path
-            );
-            (paths, writer)
-        };
-
         self.perform_handshake(&mut stream)?;
         trace!("[download_peer:{}] handshake completed", self.username);
 
         let mut processor = StreamProcessor::new(self.no_pierce, self.token);
         let mut read_buffer = [1u8; 8192];
+        let mut download_info: Option<crate::types::Download> = None;
+
         trace!(
             "[download_peer:{}] Starting to read data from peer",
             self.username
@@ -273,11 +264,6 @@ impl DownloadPeer {
                 }
                 Ok(bytes_read) => {
                     let data = &read_buffer[..bytes_read];
-                    // trace!(
-                    //     "[download_peer:{}] received {} bytes",
-                    //     self.username,
-                    //     bytes_read
-                    // );
 
                     if !self.no_pierce
                         && !processor.received
@@ -292,18 +278,20 @@ impl DownloadPeer {
                             token
                         );
 
-                        match client_context
+                        download_info = client_context
                             .lock()
                             .unwrap()
                             .download_tokens
                             .get(&token_u32)
-                            .cloned()
-                        {
+                            .cloned();
+
+                        match &download_info {
                             Some(download) => {
                                 trace!(
-                                    "[download_peer:{}] got download info for token: {}",
+                                    "[download_peer:{}] got download info for token: {} - filename: {}",
                                     self.username,
-                                    token_u32
+                                    token_u32,
+                                    download.filename
                                 );
                                 expected_size = Some(download.size as usize);
                             }
@@ -319,7 +307,7 @@ impl DownloadPeer {
                         continue; // Skip this data chunk
                     }
 
-                    processor.process_data_chunk(data, &mut writer)?;
+                    processor.process_data_chunk(data)?;
 
                     if !processor.should_continue(expected_size) {
                         break;
@@ -329,8 +317,6 @@ impl DownloadPeer {
                     continue;
                 }
                 Err(e) => {
-                    drop(writer);
-                    FileManager::cleanup_on_error(Some(&paths.incomplete_path));
                     return Err(e);
                 }
             }
@@ -340,23 +326,58 @@ impl DownloadPeer {
             self.username
         );
 
-        if let Some(mut w) = writer {
-            w.flush()?;
-            drop(w);
+        // Now determine the final file path using download info
+        let output_directory = output_path.as_ref().map(|path| {
+            if Path::new(path).is_dir() {
+                path.as_str()
+            } else if let Some(parent) = Path::new(path).parent() {
+                parent.to_str().unwrap_or("/tmp")
+            } else {
+                "/tmp"
+            }
+        });
 
-            trace!("[download_peer:{}] finalizing download", self.username);
-            FileManager::finalize_download(
-                &paths.incomplete_path,
-                &paths.final_path,
-            )?;
+        let filename = download_info.as_ref().map(|d| d.filename.as_str());
+
+        let final_path = if let Some(output_path) = &output_path {
+            if Path::new(output_path).is_dir() || output_path.ends_with('/') {
+                // output_path is a directory, append filename
+                FileManager::create_download_path_from_filename(
+                    Some(output_path),
+                    &self.username,
+                    self.token,
+                    filename
+                )
+            } else {
+                // output_path is a full file path, use it directly
+                output_path.clone()
+            }
+        } else {
+            // No output path provided, use default logic
+            FileManager::create_download_path_from_filename(
+                output_directory,
+                &self.username,
+                self.token,
+                filename
+            )
+        };
+
+        // Create directory if needed
+        if let Some(parent) = Path::new(&final_path).parent() {
+            fs::create_dir_all(parent)?;
         }
+
+        // Write the buffer to the final file
+        fs::write(&final_path, &processor.buffer)?;
+
         trace!(
-            "[download_peer:{}] download completed successfully: {} bytes",
+            "[download_peer:{}] download completed successfully: {} bytes, saved to: {}",
             self.username,
-            processor.total_bytes
+            processor.total_bytes,
+            final_path
         );
 
-        Ok((processor.total_bytes, paths.final_path.clone()))
+        Ok((processor.total_bytes, final_path))
     }
 }
 
@@ -520,8 +541,9 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        let bytes_downloaded = result.unwrap();
+        let (bytes_downloaded, file_path) = result.unwrap();
         assert_eq!(bytes_downloaded, test_data.len());
+        assert_eq!(file_path, "test_download.mp3");
 
         // Verify the file was written correctly
         let downloaded_data = fs::read("test_download.mp3").unwrap();
@@ -627,11 +649,11 @@ mod tests {
     fn test_stream_processor_process_data_chunk() {
         let mut processor = StreamProcessor::new(false, 123);
         let data = b"test data";
-        let mut writer = None;
 
-        let result = processor.process_data_chunk(data, &mut writer);
+        let result = processor.process_data_chunk(data);
         assert!(result.is_ok());
         assert_eq!(processor.total_bytes, data.len());
+        assert_eq!(processor.buffer, data);
     }
 
     #[test]
@@ -647,5 +669,71 @@ mod tests {
 
         let result = download_peer.establish_connection();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_filename_from_path() {
+        // Test with Unix-style path
+        assert_eq!(
+            FileManager::extract_filename_from_path("/path/to/file.mp3"),
+            "file.mp3"
+        );
+
+        // Test with Windows-style path
+        assert_eq!(
+            FileManager::extract_filename_from_path("C:\\path\\to\\file.mp3"),
+            "file.mp3"
+        );
+
+        // Test with Soulseek Windows path (the actual failing case)
+        assert_eq!(
+            FileManager::extract_filename_from_path("@@bhfrv\\Soulseek Downloads\\complete\\Beatport Top Deep House (2021)\\michel test file.mp3"),
+            "michel test file.mp3"
+        );
+
+        // Test with just filename
+        assert_eq!(
+            FileManager::extract_filename_from_path("file.mp3"),
+            "file.mp3"
+        );
+    }
+
+    #[test]
+    fn test_create_download_path_from_filename() {
+        // Test with filename provided
+        let path = FileManager::create_download_path_from_filename(
+            Some("/downloads"),
+            "remote_user",
+            123,
+            Some("song.mp3")
+        );
+        assert_eq!(path, "/downloads/song.mp3");
+
+        // Test with full path filename
+        let path = FileManager::create_download_path_from_filename(
+            Some("/downloads"),
+            "remote_user",
+            123,
+            Some("/remote/path/to/song.mp3")
+        );
+        assert_eq!(path, "/downloads/song.mp3");
+
+        // Test without filename (fallback)
+        let path = FileManager::create_download_path_from_filename(
+            Some("/downloads"),
+            "remote_user",
+            123,
+            None
+        );
+        assert_eq!(path, "/downloads/remote_user_123.mp3");
+
+        // Test with default directory
+        let path = FileManager::create_download_path_from_filename(
+            None,
+            "remote_user",
+            123,
+            Some("song.mp3")
+        );
+        assert_eq!(path, "/tmp/song.mp3");
     }
 }
