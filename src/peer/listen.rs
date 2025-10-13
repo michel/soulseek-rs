@@ -34,48 +34,52 @@ impl Listen {
                     }
                 }
 
-                match buffered_reader.extract_message() {
-                    Ok(Some(mut message)) => {
-                        message.set_pointer(4);
-                        let message_code = message.read_int8();
+                // Extract all available messages from buffer
+                loop {
+                    match buffered_reader.extract_message() {
+                        Ok(Some(mut message)) => {
+                            message.set_pointer(4);
+                            let message_code = message.read_int8();
 
-                        trace!(
-                            "[listener] Received message with code: {}",
-                            message_code
-                        );
+                            trace!(
+                                "[listener] Received message with code: {}",
+                                message_code
+                            );
 
-                        match message_code {
-                            0 => {
-                                let token = message.read_string();
-                                debug!("[listener] received Pierce Firewall, token: {}", token);
-                            }
-                            1 => {
-                                let tcp_stream =
-                                    read_stream.try_clone().unwrap();
-                                let new_peer = NewPeer::new_from_message(
-                                    &mut message,
-                                    tcp_stream,
-                                );
+                            match message_code {
+                                0 => {
+                                    let token = message.read_string();
+                                    debug!("[listener] received Pierce Firewall, token: {}", token);
+                                }
+                                1 => {
+                                    let tcp_stream =
+                                        read_stream.try_clone().unwrap();
+                                    let new_peer = NewPeer::new_from_message(
+                                        &mut message,
+                                        tcp_stream,
+                                    );
 
-                                trace!("[listener] Handling peer init message: {:?}",new_peer);
-                                client_sender
-                                    .send(ClientOperation::NewPeer(new_peer))
-                                    .unwrap();
-                                stop = true;
-                                debug!("[listener] stop");
-                            }
-                            _ => {
-                                debug!(
-                                    "[listener] unknown message_code: {}",
-                                    message_code
-                                )
+                                    trace!("[listener] Handling peer init message: {:?}",new_peer);
+                                    client_sender
+                                        .send(ClientOperation::NewPeer(new_peer))
+                                        .unwrap();
+                                    stop = true;
+                                    debug!("[listener] stop");
+                                }
+                                _ => {
+                                    debug!(
+                                        "[listener] unknown message_code: {}",
+                                        message_code
+                                    )
+                                }
                             }
                         }
+                        Err(e) => {
+                            warn!("[listener] Error extracting message: {}", e);
+                            break;
+                        }
+                        Ok(None) => break,
                     }
-                    Err(e) => {
-                        warn!("[listener] Error extracting message: {}", e)
-                    }
-                    Ok(None) => continue,
                 }
             }
 

@@ -3,14 +3,13 @@ use crate::peer::Peer;
 use crate::server::ServerOperation;
 use std::sync::mpsc::Sender;
 pub struct ConnectToPeerHandler;
+
 impl MessageHandler<ServerOperation> for ConnectToPeerHandler {
     fn get_code(&self) -> u8 {
         18
     }
     fn handle(&self, message: &mut Message, sender: Sender<ServerOperation>) {
         let peer = Peer::new_from_message(message);
-        println!("ConnectToPeerHandler: {:?}", peer);
-        println!("ConnectToPeerHandler: {:?}", peer.username);
         sender.send(ServerOperation::ConnectToPeer(peer)).unwrap();
     }
 }
