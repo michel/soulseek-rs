@@ -78,6 +78,7 @@ impl DefaultPeer {
 
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+        stream.set_nodelay(true)?;
 
         trace!(
             "[default_peer:{}] connect_with_socket: direct",
@@ -107,6 +108,7 @@ impl DefaultPeer {
 
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+        stream.set_nodelay(true)?;
 
         if let Some(token) = self.peer.token {
             stream
@@ -181,34 +183,41 @@ impl DefaultPeer {
                     }
                 }
 
-                match buffered_reader.extract_message() {
-                    Ok(Some(mut message)) => {
-                        trace!(
-                            "[default_peer:{:?}] ← {:?}",
-                            peer.username,
-                            message
-                                .get_message_name(
-                                    MessageType::Peer,
-                                    message.get_message_code() as u32
-                                )
-                                .map_err(|e| e.to_string())
-                        );
-                        dispatcher.dispatch(&mut message)
+                // Extract all available messages from buffer
+                let mut should_terminate = false;
+                loop {
+                    match buffered_reader.extract_message() {
+                        Ok(Some(mut message)) => {
+                            trace!(
+                                "[default_peer:{:?}] ← {:?}",
+                                peer.username,
+                                message
+                                    .get_message_name(
+                                        MessageType::Peer,
+                                        message.get_message_code() as u32
+                                    )
+                                    .map_err(|e| e.to_string())
+                            );
+                            dispatcher.dispatch(&mut message)
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Error extracting message in default peer: {}. Terminating read loop.",
+                                e
+                            );
+                            let _ = client_channel_for_read.send(
+                                ClientOperation::PeerDisconnected(
+                                    peer.username.clone(),
+                                ),
+                            );
+                            should_terminate = true;
+                            break;
+                        }
+                        Ok(None) => break,
                     }
-                    Err(e) => {
-                        warn!(
-                            "Error extracting message in default peer: {}. Terminating read loop.",
-                            e
-                        );
-                        let _ = client_channel_for_read.send(
-                            ClientOperation::PeerDisconnected(
-                                peer.username.clone(),
-                            ),
-                        );
-
-                        break;
-                    }
-                    Ok(None) => continue,
+                }
+                if should_terminate {
+                    break;
                 }
             }
         }));
