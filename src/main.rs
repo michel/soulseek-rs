@@ -4,7 +4,7 @@ fn main() {
 
     let mut client = Client::new(
         // PeerAddress::new(String::from("server.slsknet.org"), 2242),
-        PeerAddress::new(String::from("127.0.0.1"), 2416),
+        PeerAddress::new(String::from("127.0.0.1"), 2242),
         String::from("insane_in_the_brain3"),
         String::from("13375137"),
     );
@@ -12,7 +12,7 @@ fn main() {
     client.connect();
     match client.login() {
         Ok(_) => match client
-            .search("michel test file", Duration::from_secs(30))
+            .search("michel test file", Duration::from_secs(20))
         {
             Ok(results) => {
                 if let Some(result) =

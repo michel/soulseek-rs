@@ -38,9 +38,8 @@ impl MessageFactory {
             .write_string(password)
             .write_int32(157) // version
             .write_string(&hash)
-            .write_int32(100); //minor version
-
-        message
+            .write_int32(100)
+            .clone()
     }
 
     pub fn build_shared_folders_message(
@@ -73,8 +72,8 @@ impl MessageFactory {
         Message::new()
             .write_int32(2)
             .write_int32(port)
-            .write_int32(0)
-            .write_int32(port) // should be different port
+            // .write_int32(0)
+            // .write_int32(port) // should be different port
             .clone()
     }
     pub fn build_watch_user(token: u32) -> Message {

@@ -308,13 +308,14 @@ impl Server {
                 match buffered_reader.extract_message() {
                     Ok(Some(mut message)) => {
                         trace!(
-                            "[server] ← {:?}",
+                            "[server] ← {:?} - {}",
                             message
                                 .get_message_name(
                                     MessageType::Server,
-                                    message.get_message_code() as u32
+                                    message.get_message_code_u32()
                                 )
-                                .map_err(|e| e.to_string())
+                                .map_err(|e| e.to_string()),
+                            message.get_message_code_u32()
                         );
                         dispatcher.dispatch(&mut message)
                     }
@@ -326,10 +327,6 @@ impl Server {
             }
         });
 
-        // let monitor_handle = thread::spawn(move || loop {
-        //     thread::sleep(Duration::from_secs(1));
-        //     println!("Stream state: connected={}", stream.peer_addr().is_ok());
-        // });
         let context = self.context.clone();
         thread::spawn(move || {
             write_barrier.wait();
@@ -376,14 +373,23 @@ impl Server {
                             );
                         }
                         ServerOperation::SendMessage(message) => {
-                            if let Err(e) =
-                                write_stream.write_all(&message.get_buffer())
+                            match write_stream.write_all(&message.get_buffer())
                             {
-                                error!(
-                                    "Error writing message to stream : {}",
+                                Ok(_) => trace!(
+                                    "[server] → {:?} - {:}",
+                                    message
+                                        .get_message_name(
+                                            MessageType::Server,
+                                            message.get_message_code_send()
+                                                as u32
+                                        )
+                                        .map_err(|e| e.to_string()),
+                                    message.get_message_code_send() as u32
+                                ),
+                                Err(e) => error!(
+                                    "Error writing message to server: {}",
                                     e
-                                );
-                                break;
+                                ),
                             }
                         }
                         ServerOperation::GetPeerAddress(username) => {
@@ -464,14 +470,14 @@ impl Server {
 
         if logged_in.unwrap() {
             info!("Logged in as {}", username);
-            self.queue_message(MessageFactory::build_set_wait_port_message(
-                2234,
-            ));
             self.queue_message(MessageFactory::build_shared_folders_message(
                 1, 499,
             ));
             self.queue_message(MessageFactory::build_no_parent_message());
             self.queue_message(MessageFactory::build_set_status_message(2));
+            self.queue_message(MessageFactory::build_set_wait_port_message(
+                2235,
+            ));
         }
 
         Ok(logged_in.unwrap())

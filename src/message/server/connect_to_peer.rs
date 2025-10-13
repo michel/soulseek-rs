@@ -9,6 +9,8 @@ impl MessageHandler<ServerOperation> for ConnectToPeerHandler {
     }
     fn handle(&self, message: &mut Message, sender: Sender<ServerOperation>) {
         let peer = Peer::new_from_message(message);
+        println!("ConnectToPeerHandler: {:?}", peer);
+        println!("ConnectToPeerHandler: {:?}", peer.username);
         sender.send(ServerOperation::ConnectToPeer(peer)).unwrap();
     }
 }

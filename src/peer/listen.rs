@@ -24,9 +24,6 @@ impl Listen {
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                         continue
                     }
-                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        continue
-                    }
                     Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
                         debug!("Read operation timed out");
                         continue;

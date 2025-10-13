@@ -243,7 +243,9 @@ impl Client {
                             ConnectionType::F => {
                                 debug!("Peer with F {:?}", peer)
                             }
-                            ConnectionType::D => (),
+                            ConnectionType::D => {
+                                error!("ConnectionType::D not implemented for peer: {}", peer.username);
+                            }
                         };
 
                         Self::connect_to_peer(
@@ -297,7 +299,7 @@ impl Client {
                                         peer.host.clone(),
                                         peer.port,
                                         download.token,
-                                        true,
+                                        false,
                                         own_username,
                                     );
                                     let filename: Option<&str> =
@@ -489,7 +491,7 @@ impl Client {
                                         peer.host,
                                         peer.port,
                                         peer.token.unwrap(),
-                                        false,
+                                        true,
                                         own_username.clone(),
                                     );
 
