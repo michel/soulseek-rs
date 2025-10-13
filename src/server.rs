@@ -303,7 +303,6 @@ impl Server {
                     }
                 }
 
-                // Extract all available messages from buffer
                 loop {
                     match buffered_reader.extract_message() {
                         Ok(Some(mut message)) => {
@@ -346,7 +345,7 @@ impl Server {
                                     Some(ClientOperation::ConnectToPeer(peer))
                                 }
                                 ConnectionType::F => {
-                                    Some(ClientOperation::PierceFireWall(peer))
+                                    Some(ClientOperation::ConnectToPeer(peer))
                                 }
                                 ConnectionType::D => None,
                             } {
@@ -369,10 +368,6 @@ impl Server {
                                 );
                                 break;
                             }
-                            debug!(
-                                "Sent PierceFirewall message with token: {}",
-                                token
-                            );
                         }
                         ServerOperation::SendMessage(message) => {
                             match write_stream.write_all(&message.get_buffer())

@@ -106,7 +106,7 @@ impl MessageFactory {
             .write_int32(41)
             .write_int32(transfer.token)
             .write_bool(true)
-            .write_int64(transfer.size)
+            // .write_int64(transfer.size)
             .clone()
     }
     pub fn build_pierce_firewall_message(token: u32) -> Message {

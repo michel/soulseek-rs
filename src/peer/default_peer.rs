@@ -244,7 +244,9 @@ impl DefaultPeer {
                                     )
                                 )
                                 .map_err(|e| e.to_string()),
-                            message
+                            u32::from_le_bytes(
+                                message.get_slice(0, 4).try_into().unwrap()
+                            )
                         );
 
                         if let Err(e) =
@@ -258,6 +260,7 @@ impl DefaultPeer {
                             );
                             break;
                         }
+                        write_stream.flush().unwrap();
                     }
                     PeerOperation::FileSearchResult(file_search) => {
                         client_channel
@@ -275,6 +278,11 @@ impl DefaultPeer {
                                 transfer.clone(),
                             );
 
+                        trace!(
+                            "[default_peer:{:}] TransferResponse for {:?}",
+                            peer_username,
+                            transfer_response.get_buffer()
+                        );
                         if let Some(sender) = peer_channel.clone() {
                             sender
                                 .send(PeerOperation::SendMessage(
@@ -283,12 +291,7 @@ impl DefaultPeer {
                                 .unwrap();
                         }
 
-                        debug!(
-                            "[default_peer:{:}] TransferResponse for {}",
-                            peer_username, transfer.token
-                        );
-
-                        break;
+                        // break;
                     }
                     PeerOperation::TransferResponse {
                         token,
