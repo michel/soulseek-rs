@@ -69,9 +69,8 @@ impl DefaultPeer {
     pub fn connect_with_socket(
         mut self,
         stream: TcpStream,
+        message_reader: Option<MessageReader>,
     ) -> Result<Self, io::Error> {
-        trace!("[default_peer:{}] connect_with_socket", self.peer.username);
-
         // if let Some(token) = self.peer.token {
         //     let mut message: Vec<u8> = [0, 5, 0, 0, 0, 0].to_vec();
         //     message.extend_from_slice(&token.to_le_bytes());
@@ -86,7 +85,7 @@ impl DefaultPeer {
             "[default_peer:{}] connect_with_socket: direct",
             self.peer.username
         );
-        self.start_read_write_loops(stream)?;
+        self.start_read_write_loops(stream, message_reader)?;
 
         Ok(self)
     }
@@ -127,7 +126,7 @@ impl DefaultPeer {
                 .write_all(&MessageFactory::build_watch_user(token).get_data())
                 .unwrap();
         }
-        self.start_read_write_loops(stream)?;
+        self.start_read_write_loops(stream, None)?;
 
         Ok(self)
     }
@@ -135,6 +134,7 @@ impl DefaultPeer {
     fn start_read_write_loops(
         &mut self,
         stream: TcpStream,
+        message_reader: Option<MessageReader>,
     ) -> Result<(), io::Error> {
         debug!(
             "[default_peer:{}] start_read_write_loops",
@@ -170,36 +170,14 @@ impl DefaultPeer {
                 handlers,
             );
 
-            let mut buffered_reader = MessageReader::new();
+            let mut buffered_reader = message_reader.unwrap_or_default();
             loop {
-                match buffered_reader.read_from_socket(&mut read_stream) {
-                    Ok(_) => {}
-                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        continue
-                    }
-                    Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
-                        debug!(
-                            "Read operation timed out in default peer {:}:{:}",
-                            peer.host, peer.port
-                        );
-                        continue;
-                    }
-                    Err(e) => {
-                        error!("[default_peer:{}] Error reading from peer:  {}. Terminating read loop.",peer.username, e);
-                        let _ = client_channel_for_read.send(
-                            ClientOperation::PeerDisconnected(
-                                peer.username.clone(),
-                            ),
-                        );
-                        break;
-                    }
-                }
-
-                // Extract all available messages from buffer
                 let mut should_terminate = false;
+                let mut extracted_any_message = false;
                 loop {
                     match buffered_reader.extract_message() {
                         Ok(Some(mut message)) => {
+                            extracted_any_message = true;
                             trace!(
                                 "[default_peer:{}] ← {:?}",
                                 peer.username,
@@ -230,6 +208,32 @@ impl DefaultPeer {
                 }
                 if should_terminate {
                     break;
+                }
+
+                // Only read from socket if we didn't extract any messages from buffer
+                if !extracted_any_message {
+                    match buffered_reader.read_from_socket(&mut read_stream) {
+                        Ok(_) => {}
+                        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                            continue
+                        }
+                        Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
+                            debug!(
+                                "Read operation timed out in default peer {:}:{:}",
+                                peer.host, peer.port
+                            );
+                            continue;
+                        }
+                        Err(e) => {
+                            error!("[default_peer:{}] Error reading from peer:  {}. Terminating read loop.",peer.username, e);
+                            let _ = client_channel_for_read.send(
+                                ClientOperation::PeerDisconnected(
+                                    peer.username.clone(),
+                                ),
+                            );
+                            break;
+                        }
+                    }
                 }
             }
         }));

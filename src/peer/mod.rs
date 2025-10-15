@@ -5,7 +5,7 @@ pub mod listen;
 pub use default_peer::{DefaultPeer, PeerOperation};
 pub use download_peer::DownloadPeer;
 
-use crate::message::Message;
+use crate::message::{Message, MessageReader};
 use core::fmt;
 use std::{net::TcpStream, str::FromStr};
 
@@ -16,11 +16,13 @@ pub struct NewPeer {
     pub connection_type: ConnectionType,
     pub token: u32,
     pub tcp_stream: TcpStream,
+    pub message_reader: MessageReader,
 }
 impl NewPeer {
     pub fn new_from_message(
         message: &mut Message,
         tcp_stream: TcpStream,
+        message_reader: MessageReader,
     ) -> Self {
         let username = message.read_string();
         let connection_type = message.read_string().parse().unwrap();
@@ -31,6 +33,7 @@ impl NewPeer {
             connection_type,
             token,
             tcp_stream,
+            message_reader,
         }
     }
 }

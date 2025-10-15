@@ -52,6 +52,7 @@ impl Listen {
                                 let new_peer = NewPeer::new_from_message(
                                     &mut message,
                                     tcp_stream,
+                                    buffered_reader.clone(),
                                 );
 
                                 trace!("[listener] Handling peer init message: {:?}",new_peer);

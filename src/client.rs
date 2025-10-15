@@ -2,6 +2,7 @@ use crate::{
     debug, error,
     error::{Result, SoulseekRs},
     info,
+    message::MessageReader,
     peer::{
         listen::Listen, ConnectionType, DefaultPeer, DownloadPeer, NewPeer,
         Peer,
@@ -272,6 +273,7 @@ impl Client {
                         client_context.clone(),
                         own_username.clone(),
                         None,
+                        None,
                     )
                 }
                 ClientOperation::SearchResult(file_search) => {
@@ -343,6 +345,7 @@ impl Client {
                             client_context.clone(),
                             own_username.clone(),
                             None,
+                            None,
                         );
                     }
                     // don't know if i should update? and or reconnect the peer
@@ -381,6 +384,7 @@ impl Client {
         client_context: Arc<Mutex<ClientContext>>,
         own_username: String,
         stream: Option<TcpStream>,
+        message_reader: Option<MessageReader>,
     ) {
         trace!("[client] connect_to_peer: {}", peer.username);
 
@@ -403,6 +407,7 @@ impl Client {
                     sender,
                     context_clone,
                     stream,
+                    message_reader,
                 ),
                 ConnectionType::F => Self::handle_file_download(
                     peer,
@@ -421,10 +426,11 @@ impl Client {
         sender: Sender<ClientOperation>,
         context: Arc<Mutex<ClientContext>>,
         stream: Option<TcpStream>,
+        message_reader: Option<MessageReader>,
     ) {
         let default_peer = DefaultPeer::new(peer.clone(), sender);
         let connect_result = match stream {
-            Some(s) => default_peer.connect_with_socket(s),
+            Some(s) => default_peer.connect_with_socket(s, message_reader),
             None => default_peer.connect(),
         };
 
@@ -512,7 +518,7 @@ impl Client {
         }
         drop(context);
 
-        Self::connect_to_peer(peer, client_context, own_username, None);
+        Self::connect_to_peer(peer, client_context, own_username, None, None);
     }
 
     fn get_download_token(
@@ -612,6 +618,7 @@ impl Client {
             let context = client_context.lock().unwrap();
             if context.peers.contains_key(&new_peer.username) {
                 debug!("Already connected to {}", new_peer.username);
+                return; // Exit early to avoid duplicate connection
             } else if let Some(server_sender) = &context.server_sender {
                 let _ = server_sender.send(ServerOperation::GetPeerAddress(
                     new_peer.username.clone(),
@@ -636,6 +643,7 @@ impl Client {
             client_context.clone(),
             own_username.to_string(),
             Some(new_peer.tcp_stream),
+            Some(new_peer.message_reader),
         );
     }
 

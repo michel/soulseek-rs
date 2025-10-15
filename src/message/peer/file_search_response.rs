@@ -1,5 +1,6 @@
 use crate::message::{Message, MessageHandler};
 use crate::peer::PeerOperation;
+use crate::trace;
 use crate::types::FileSearchResult;
 use std::sync::mpsc::Sender;
 
@@ -9,6 +10,7 @@ impl MessageHandler<PeerOperation> for FileSearchResponse {
         9
     }
     fn handle(&self, message: &mut Message, sender: Sender<PeerOperation>) {
+        trace!("[FileSearchResponse] handling message");
         let file_search = match FileSearchResult::new_from_message(message) {
             Ok(result) => result,
             Err(_) => return, // Skip malformed search results

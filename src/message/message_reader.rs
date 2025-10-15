@@ -23,6 +23,7 @@ use crate::message::Message;
 //
 //
 
+#[derive(Debug, Clone)]
 pub struct MessageReader {
     buffer: VecDeque<u8>,
 }
