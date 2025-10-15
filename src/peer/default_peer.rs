@@ -68,14 +68,16 @@ impl DefaultPeer {
 
     pub fn connect_with_socket(
         mut self,
-        mut stream: TcpStream,
+        stream: TcpStream,
     ) -> Result<Self, io::Error> {
-        if let Some(token) = self.peer.token {
-            let mut message: Vec<u8> = [0, 5, 0, 0, 0, 0].to_vec();
-            message.extend_from_slice(&token.to_le_bytes());
-            stream.write_all(&message).unwrap();
-        }
+        trace!("[default_peer:{}] connect_with_socket", self.peer.username);
 
+        // if let Some(token) = self.peer.token {
+        //     let mut message: Vec<u8> = [0, 5, 0, 0, 0, 0].to_vec();
+        //     message.extend_from_slice(&token.to_le_bytes());
+        //     stream.write_all(&message).unwrap();
+        // }
+        //
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
         stream.set_nodelay(true)?;
@@ -88,9 +90,19 @@ impl DefaultPeer {
 
         Ok(self)
     }
+    // pub fn transfer_socket(
+    //     &self,
+    //     mut stream: TcpStream,
+    // ) -> Result<(), io::Error> {
+    //     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    //     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+    //     stream.set_nodelay(true)?;
+    //     Ok(())
+    // }
+
     pub fn connect(mut self) -> Result<Self, io::Error> {
         info!(
-            "[default_peer] Connecting to {} on port {}",
+            "[default_peer] Ckonnecting to {} on port {}",
             self.peer.host, self.peer.port
         );
         let socket_address = format!("{}:{}", self.peer.host, self.peer.port)

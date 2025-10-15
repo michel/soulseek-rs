@@ -1,8 +1,2 @@
-# default peer
-
-- lifetime: disconnect after it sends a few messages
-
-# peer download
-
-- make queue download queue with thread pool
+- pass download path to download
 - download progress
