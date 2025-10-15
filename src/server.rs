@@ -349,7 +349,9 @@ impl Server {
                                 }
                                 ConnectionType::D => None,
                             } {
+                                trace!("[server] sending to client");
                                 client_channel.send(op).unwrap();
+                                trace!("[server] sent to client");
                             }
                         }
                         ServerOperation::LoginStatus(message) => {

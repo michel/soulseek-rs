@@ -6,15 +6,15 @@ use crate::message::peer::{
 };
 use crate::message::server::MessageFactory;
 use crate::message::{Handlers, Message, MessageReader, MessageType};
-use crate::types::{Download, FileSearchResult, Transfer};
+use crate::types::{DownloadToken, FileSearchResult, Transfer};
 
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
-use crate::client::{self, ClientOperation};
+use crate::client::ClientOperation;
 use crate::peer::Peer;
-use crate::{debug, error, trace, warn};
+use crate::{debug, error, info, trace, warn};
 use std::io::{self, Write};
 use std::net::TcpStream;
 use std::net::ToSocketAddrs;
@@ -89,7 +89,7 @@ impl DefaultPeer {
         Ok(self)
     }
     pub fn connect(mut self) -> Result<Self, io::Error> {
-        println!(
+        info!(
             "[default_peer] Connecting to {} on port {}",
             self.peer.host, self.peer.port
         );
@@ -345,7 +345,7 @@ impl DefaultPeer {
 
     pub fn transfer_request(
         &self,
-        download: Download,
+        download: DownloadToken,
     ) -> Result<(), io::Error> {
         let message = MessageFactory::build_transfer_request_message(
             &download.filename,

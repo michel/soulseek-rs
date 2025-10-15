@@ -1,6 +1,8 @@
 use crate::client::ClientContext;
 use crate::message::server::MessageFactory;
+use crate::peer::download_peer;
 use crate::trace;
+use crate::types::DownloadToken;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
 use std::net::TcpStream;
@@ -62,15 +64,18 @@ impl FileManager {
     }
 
     fn extract_filename_from_path(full_path: &str) -> String {
-        // Split on both forward slashes and backslashes to handle Windows and Unix paths
-        full_path.split(['/', '\\']).last().unwrap_or(full_path).to_string()
+        full_path
+            .split(['/', '\\'])
+            .last()
+            .unwrap_or(full_path)
+            .to_string()
     }
 
     fn create_download_path_from_filename(
         output_directory: Option<&str>,
         remote_username: &str,
         token: u32,
-        filename: Option<&str>
+        filename: Option<&str>,
     ) -> String {
         let base_dir = output_directory.unwrap_or("/tmp");
 
@@ -118,10 +123,7 @@ impl StreamProcessor {
         Ok(false)
     }
 
-    fn process_data_chunk(
-        &mut self,
-        data: &[u8],
-    ) -> Result<(), io::Error> {
+    fn process_data_chunk(&mut self, data: &[u8]) -> Result<(), io::Error> {
         self.buffer.extend_from_slice(data);
         self.total_bytes += data.len();
         Ok(())
@@ -211,10 +213,6 @@ impl DownloadPeer {
             );
             stream.write_all(&message.get_buffer())?;
             stream.flush()?;
-            // stream
-            //     .write_all(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])?;
-            // stream.flush()?;
-            //
         } else {
             stream.write_all(
                 &MessageFactory::build_pierce_firewall_message(self.token)
@@ -246,7 +244,7 @@ impl DownloadPeer {
 
         let mut processor = StreamProcessor::new(self.no_pierce, self.token);
         let mut read_buffer = [1u8; 8192];
-        let mut download_info: Option<crate::types::Download> = None;
+        let mut download_info: Option<DownloadToken> = None;
 
         trace!(
             "[download_peer:{}] Starting to read data from peer",
@@ -260,7 +258,7 @@ impl DownloadPeer {
                         "[download_peer:{}] connection closed by peer",
                         self.username
                     );
-                    break; // Connection closed
+                    break;
                 }
                 Ok(bytes_read) => {
                     let data = &read_buffer[..bytes_read];
@@ -304,7 +302,7 @@ impl DownloadPeer {
                             }
                         }
 
-                        continue; // Skip this data chunk
+                        continue;
                     }
 
                     processor.process_data_chunk(data)?;
@@ -326,7 +324,6 @@ impl DownloadPeer {
             self.username
         );
 
-        // Now determine the final file path using download info
         let output_directory = output_path.as_ref().map(|path| {
             if Path::new(path).is_dir() {
                 path.as_str()
@@ -346,28 +343,24 @@ impl DownloadPeer {
                     Some(output_path),
                     &self.username,
                     self.token,
-                    filename
+                    filename,
                 )
             } else {
-                // output_path is a full file path, use it directly
                 output_path.clone()
             }
         } else {
-            // No output path provided, use default logic
             FileManager::create_download_path_from_filename(
                 output_directory,
                 &self.username,
                 self.token,
-                filename
+                filename,
             )
         };
 
-        // Create directory if needed
         if let Some(parent) = Path::new(&final_path).parent() {
             fs::create_dir_all(parent)?;
         }
 
-        // Write the buffer to the final file
         fs::write(&final_path, &processor.buffer)?;
 
         trace!(
@@ -377,7 +370,10 @@ impl DownloadPeer {
             final_path
         );
 
-        Ok((processor.total_bytes, final_path))
+        Ok((
+            processor.total_bytes,
+            download_info.as_ref().unwrap().filename.clone(),
+        ))
     }
 }
 
@@ -436,7 +432,7 @@ mod tests {
             false,
             "own_username".to_string(),
         );
-        let dummy_context = Arc::new(Mutex::new(ClientContext::new()));
+        let dummy_context = Arc::new(Mutex::new(ClientContext::default()));
         let _ = download_peer
             .download_file(dummy_context, None, None)
             .unwrap();
@@ -461,7 +457,7 @@ mod tests {
             true, // no_pierce = true, should send init message
             "own_username".to_string(),
         );
-        let dummy_context = Arc::new(Mutex::new(ClientContext::new()));
+        let dummy_context = Arc::new(Mutex::new(ClientContext::default()));
         let _ = download_peer
             .download_file(dummy_context, None, None)
             .unwrap();
@@ -533,7 +529,7 @@ mod tests {
             "test_user".to_string(),
         );
 
-        let dummy_context = Arc::new(Mutex::new(ClientContext::new()));
+        let dummy_context = Arc::new(Mutex::new(ClientContext::default()));
         let result = download_peer.download_file(
             dummy_context,
             Some(test_data.len()),
@@ -705,7 +701,7 @@ mod tests {
             Some("/downloads"),
             "remote_user",
             123,
-            Some("song.mp3")
+            Some("song.mp3"),
         );
         assert_eq!(path, "/downloads/song.mp3");
 
@@ -714,7 +710,7 @@ mod tests {
             Some("/downloads"),
             "remote_user",
             123,
-            Some("/remote/path/to/song.mp3")
+            Some("/remote/path/to/song.mp3"),
         );
         assert_eq!(path, "/downloads/song.mp3");
 
@@ -723,7 +719,7 @@ mod tests {
             Some("/downloads"),
             "remote_user",
             123,
-            None
+            None,
         );
         assert_eq!(path, "/downloads/remote_user_123.mp3");
 
@@ -732,7 +728,7 @@ mod tests {
             None,
             "remote_user",
             123,
-            Some("song.mp3")
+            Some("song.mp3"),
         );
         assert_eq!(path, "/tmp/song.mp3");
     }

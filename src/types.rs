@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::mpsc::Sender};
 
 use crate::{error::Result, message::Message, utils::zlib::deflate};
 
@@ -81,8 +81,13 @@ pub struct Transfer {
     pub filename: String,
     pub size: u64,
 }
+
 #[derive(Debug, Clone)]
 pub struct Download {
+    pub channel: Sender<DownloadStatus>,
+}
+#[derive(Debug, Clone)]
+pub struct DownloadToken {
     pub username: String,
     pub filename: String,
     pub token: u32,

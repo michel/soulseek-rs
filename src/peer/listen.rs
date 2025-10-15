@@ -61,7 +61,9 @@ impl Listen {
 
                                     trace!("[listener] Handling peer init message: {:?}",new_peer);
                                     client_sender
-                                        .send(ClientOperation::NewPeer(new_peer))
+                                        .send(ClientOperation::NewPeer(
+                                            new_peer,
+                                        ))
                                         .unwrap();
                                     stop = true;
                                     debug!("[listener] stop");
