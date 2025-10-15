@@ -1,6 +1,5 @@
 use crate::client::ClientContext;
 use crate::message::server::MessageFactory;
-use crate::peer::download_peer;
 use crate::trace;
 use crate::types::DownloadToken;
 use std::fs::{self, File};
