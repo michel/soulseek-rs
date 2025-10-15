@@ -103,7 +103,7 @@ pub struct DownloadResult {
     pub elapsed_time: std::time::Duration,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 #[allow(dead_code)]
 pub enum DownloadStatus {
     Pending,
