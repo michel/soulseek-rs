@@ -2,9 +2,9 @@ use crate::{
     error::{Result, SoulseekRs},
     peer::{ConnectionType, DefaultPeer, DownloadPeer, NewPeer, Peer},
     server::{PeerAddress, Server, ServerOperation},
-    types::{Download, FileSearchResult},
+    types::{Download, DownloadToken, FileSearchResult},
     utils::{md5, thread_pool::ThreadPool},
-    Transfer,
+    DownloadResult, DownloadStatus, Transfer,
 };
 use std::{
     collections::HashMap,
@@ -43,19 +43,43 @@ pub struct ClientContext {
     sender: Option<Sender<ClientOperation>>,
     server_sender: Option<Sender<crate::server::ServerOperation>>,
     search_results: Vec<FileSearchResult>,
-    pub download_tokens: HashMap<u32, Download>,
+    pub download_tokens: HashMap<u32, DownloadToken>,
+    pub downloads: HashMap<String, Download>,
     thread_pool: ThreadPool,
 }
-impl ClientContext {
-    pub fn new() -> Self {
+impl Default for ClientContext {
+    fn default() -> Self {
         Self {
             peers: HashMap::new(),
             sender: None,
             server_sender: None,
             search_results: Vec::new(),
             download_tokens: HashMap::new(),
+            downloads: HashMap::new(),
             thread_pool: ThreadPool::new(MAX_THREADS),
         }
+    }
+}
+impl ClientContext {
+    fn insert_download(
+        &mut self,
+        username: String,
+        filename: String,
+        download: Download,
+    ) {
+        self.downloads
+            .entry(format!("{}_{}", username, filename))
+            .or_insert(download);
+    }
+
+    fn get_download(
+        &self,
+        username: String,
+        filename: String,
+    ) -> Option<Download> {
+        self.downloads
+            .get(&format!("{}_{}", username, filename))
+            .cloned()
     }
 }
 pub struct Client {
@@ -73,7 +97,7 @@ impl Client {
         password: String,
     ) -> Self {
         crate::utils::logger::init();
-        let context = Arc::new(Mutex::new(ClientContext::new()));
+        let context = Arc::new(Mutex::new(ClientContext::default()));
         debug!(
             "ThreadPool initialized with {} threads",
             context.lock().unwrap().thread_pool.thread_count()
@@ -95,7 +119,7 @@ impl Client {
 
         self.context.lock().unwrap().sender = Some(sender.clone());
 
-        let client_sender = sender.clone();
+        // let client_sender = sender.clone();
 
         self.server = match Server::new(self.address.clone(), sender) {
             Ok(server) => {
@@ -148,7 +172,6 @@ impl Client {
             drop(peer);
         }
     }
-
     pub fn search(
         &self,
         query: &str,
@@ -179,15 +202,12 @@ impl Client {
         username: String,
         size: u64,
     ) -> Result<crate::types::DownloadResult> {
-        use crate::types::{DownloadResult, DownloadStatus};
-        use std::time::{Duration, Instant};
-
         let start_time = Instant::now();
 
         let hash = md5::md5(&filename);
         let token = u32::from_str_radix(&hash[0..5], 16)?;
 
-        let download = Download {
+        let download_token = DownloadToken {
             username: username.clone(),
             filename: filename.clone(),
             token,
@@ -195,17 +215,27 @@ impl Client {
         };
 
         let mut context = self.context.lock().unwrap();
-        context.download_tokens.insert(token, download.clone());
+
+        let (tx, rx): (Sender<DownloadStatus>, Receiver<DownloadStatus>) =
+            mpsc::channel();
+
+        context.insert_download(
+            download_token.username.clone(),
+            download_token.filename.clone(),
+            Download { channel: tx },
+        );
+
+        context
+            .download_tokens
+            .insert(token, download_token.clone());
+
         let download_initiated = context
             .peers
             .get(&username)
-            .map(|p| p.transfer_request(download.clone()))
+            .map(|p| p.transfer_request(download_token.clone()))
             .is_some();
 
         drop(context);
-
-        let timeout = Duration::from_secs(150);
-        let check_interval = Duration::from_millis(100);
 
         if !download_initiated {
             return Ok(DownloadResult {
@@ -216,14 +246,12 @@ impl Client {
             });
         }
 
-        while start_time.elapsed() < timeout {
-            std::thread::sleep(check_interval);
-        }
+        let download_status = rx.recv().unwrap();
 
         Ok(DownloadResult {
             filename,
             username,
-            status: DownloadStatus::TimedOut,
+            status: download_status,
             elapsed_time: start_time.elapsed(),
         })
     }
@@ -237,6 +265,10 @@ impl Client {
             if let Ok(operation) = reader.recv() {
                 match operation {
                     ClientOperation::ConnectToPeer(peer) => {
+                        trace!(
+                            "[client] Connecting to peer: {:?}",
+                            peer.username
+                        );
                         Self::connect_to_peer(
                             peer,
                             client_context.clone(),
@@ -265,55 +297,34 @@ impl Client {
                         );
                     }
                     ClientOperation::DownloadFromPeer(token, peer) => {
-                        let maybe_download = {
-                            let client_context = client_context.lock().unwrap();
-                            client_context.download_tokens.get(&token).cloned()
+                        let Some(download) =
+                            Self::get_download_token(&client_context, token)
+                        else {
+                            error!(
+                                "Can't find download with token {:?}",
+                                token
+                            );
+                            continue;
                         };
-                        let own_username = own_username.clone();
-                        let client_context_clone = client_context.clone();
 
-                        match maybe_download {
-                            Some(download) => {
-                                thread::spawn(move || {
-                                    let download_peer = DownloadPeer::new(
-                                        download.username.clone(),
-                                        peer.host.clone(),
-                                        peer.port,
-                                        download.token,
-                                        false,
-                                        own_username,
-                                    );
-                                    let filename: Option<&str> =
-                                        download.filename.split('\\').last();
-                                    match filename {
-                                                        Some(filename) => {
-                                                            match download_peer.download_file(
-                                                                client_context_clone,
-                                                                Some(download.size as usize),
-                                                                Some(format!("/tmp/{}", filename)),
-                                                            ) {
-                                                                Ok((bytes, filename)) => {
-                                                                    info!("Successfully downloaded {} bytes to /tmp/{}", bytes, filename);
-                                                                }
-                                                                Err(e) => {
-                                                                    error!(
-                                                                        "Failed to download file '{}' from {}:{} (token: {}) - Error: {}", 
-                                                                        filename, peer.host, peer.port, download.token, e
-                                                                    );
-                                                                }
-                                                            }
-                                                        }
-                                                        None => error!("Cant find filename to save download: {:?}", download.filename),
-                                                    }
-                                });
-                            }
-                            None => {
-                                error!(
-                                    "Can't find download with token {:?}",
-                                    token
-                                );
-                            }
+                        let filename_path = download.filename.clone();
+                        let Some(filename) =
+                            Self::extract_filename(&filename_path)
+                        else {
+                            error!(
+                                "Cant find filename to save download: {:?}",
+                                filename_path
+                            );
+                            continue;
                         };
+
+                        Self::spawn_download_task(
+                            download,
+                            peer,
+                            filename.to_string(),
+                            client_context.clone(),
+                            own_username.clone(),
+                        );
                     }
                     ClientOperation::NewPeer(new_peer) => {
                         if client_context
@@ -366,9 +377,9 @@ impl Client {
                         obfuscated_port,
                     } => {
                         debug!(
-                                            "Received peer address for {}: {}:{} (obf_type: {}, obf_port: {})",
-                                            username, host, port, obfuscation_type, obfuscated_port
-                                        );
+                            "Received peer address for {}: {}:{} (obf_type: {}, obf_port: {})",
+                            username, host, port, obfuscation_type, obfuscated_port
+                        );
 
                         match client_context
                             .lock()
@@ -419,7 +430,7 @@ impl Client {
                     ) => {
                         client_context.lock().unwrap().download_tokens.insert(
                             transfer.token,
-                            Download {
+                            DownloadToken {
                                 username,
                                 filename: transfer.filename,
                                 token: transfer.token,
@@ -446,65 +457,82 @@ impl Client {
             let peer_clone = peer.clone();
             let sender_clone = sender;
             unlocked_context.thread_pool.execute(move || {
-                    trace!("[client] connecting to {}, with connection_type: {}", peer.username, peer.connection_type);
-                    match peer.connection_type {
-                        ConnectionType::P => {
-                            let default_peer =
-                                DefaultPeer::new(peer_clone, sender_clone);
+                trace!("[client] connecting to {}, with connection_type: {}", peer.username, peer.connection_type);
+                match peer.connection_type {
+                    ConnectionType::P => {
+                        let default_peer =
+                            DefaultPeer::new(peer_clone, sender_clone);
 
-                            let connect_result = match stream {
-                                    Some(s) => default_peer.connect_with_socket(s),
-                                    None => default_peer.connect()
-                                };
+                        let connect_result = match stream {
+                            Some(s) => default_peer.connect_with_socket(s),
+                            None => default_peer.connect()
+                        };
 
-                            match connect_result {
-                                Ok(p) => {
-                                    trace!("[client] connected to: {}", peer.username);
-                                    client_context2.lock().unwrap().peers.insert(peer.username, p);
-                                }
-                                Err(e) => {
-                                    trace!(
-                                        "Can't connect to {:?} {:?}:{:?} {:?} - {:?}",
-                                        peer.username,
-                                        peer.host,
-                                        peer.port,
-                                        peer.connection_type,
-                                        e
-                                    );
-                                }
+                        match connect_result {
+                            Ok(p) => {
+                                trace!("[client] connected to: {}", peer.username);
+                                client_context2.lock().unwrap().peers.insert(peer.username, p);
+                            }
+                            Err(e) => {
+                                trace!(
+                                    "[client] Can't connect to {:?} {:?}:{:?} {:?} - {:?}",
+                                    peer.username,
+                                    peer.host,
+                                    peer.port,
+                                    peer.connection_type,
+                                    e
+                                );
                             }
                         }
-
-                        ConnectionType::F => {
-                                    trace!("[client] downloading from: {}", peer.username);
-                                    let download_peer = DownloadPeer::new(
-                                        peer.username,
-                                        peer.host,
-                                        peer.port,
-                                        peer.token.unwrap(),
-                                        false,
-                                        own_username.clone(),
-                                    );
-
-                                    match download_peer
-                                    .download_file(
-                                        client_context2.clone(),
-                                        None,
-                                        None
-                                    ) {
-                                        Ok((bytes, filename)) => {
-                                            trace!("[client] downloaded {} bytes {:?} ", filename,bytes);
-                                        }
-                                        Err(e) => {
-                                            trace!("[client] failed to download: {}", e);
-                                        }
-                                    }
-                                }
-                        ConnectionType::D => {
-                            error!("ConnectionType::D not implemented")
-                        }
                     }
-                });
+
+                    ConnectionType::F => {
+                        trace!("[client] downloading from: {}", peer.username);
+                        let download_peer = DownloadPeer::new(
+                            peer.username.clone(),
+                            peer.host,
+                            peer.port,
+                            peer.token.unwrap(),
+                            false,
+                            own_username.clone(),
+                        );
+
+                        match download_peer
+                            .download_file(
+                                client_context2.clone(),
+                                None,
+                                None
+                            ) {
+                                Ok((bytes, filename)) => {
+                                    if let Some(download) =
+                                        client_context2.lock().unwrap().get_download(
+                                            peer.username.clone(),
+                                            filename.to_string())
+                                    {
+                                        download.channel.send(DownloadStatus::Completed).unwrap();
+
+                                        info!(
+                                            "[client] Successfully downloaded {} bytes to /tmp/{}",
+                                            bytes, filename.to_string(),
+                                        );
+                                    } else {
+                                        error!(
+                                            "[client] No download found for {} with filename {}",
+                                            peer.username, filename
+                                        );
+                                    }
+
+                                }
+                                Err(e) => {
+                                    trace!("[client] failed to download: {}", e);
+                                }
+                            }
+                    }
+                    ConnectionType::D => {
+                        error!("[client] ConnectionType::D not implemented")
+                    }
+                }
+            });
         } else {
             debug!("[client] Peer already connected: {}", peer.username);
         }
@@ -535,5 +563,102 @@ impl Client {
 
         drop(context);
         Self::connect_to_peer(peer, client_context, own_username, None);
+    }
+
+    fn get_download_token(
+        client_context: &Arc<Mutex<ClientContext>>,
+        token: u32,
+    ) -> Option<DownloadToken> {
+        let context = client_context.lock().unwrap();
+        context.download_tokens.get(&token).cloned()
+    }
+
+    fn extract_filename(filename: &str) -> Option<&str> {
+        filename.split('\\').last()
+    }
+
+    fn handle_download_result(
+        client_context: &Arc<Mutex<ClientContext>>,
+        peer_username: &str,
+        filename: &str,
+        result: std::result::Result<(usize, String), std::io::Error>,
+        peer: &Peer,
+        token: u32,
+    ) {
+        match result {
+            Ok((bytes, downloaded_filename)) => {
+                if let Some(download) =
+                    client_context.lock().unwrap().get_download(
+                        peer_username.to_string(),
+                        filename.to_string(),
+                    )
+                {
+                    download.channel.send(DownloadStatus::Completed).unwrap();
+
+                    info!(
+                        "Successfully downloaded {} bytes to /tmp/{}",
+                        bytes, downloaded_filename
+                    );
+                } else {
+                    error!(
+                        "No download found for {} with filename {}",
+                        peer_username, filename
+                    );
+                }
+            }
+            Err(e) => {
+                error!(
+                    "Failed to download file '{}' from {}:{} (token: {}) - Error: {}",
+                    filename, peer.host, peer.port, token, e
+                );
+                if let Some(download) =
+                    client_context.lock().unwrap().get_download(
+                        peer_username.to_string(),
+                        filename.to_string(),
+                    )
+                {
+                    download.channel.send(DownloadStatus::Failed).unwrap();
+                } else {
+                    error!(
+                        "No download found for {} with filename {}",
+                        peer_username, filename
+                    );
+                }
+            }
+        }
+    }
+
+    fn spawn_download_task(
+        download: DownloadToken,
+        peer: Peer,
+        filename: String,
+        client_context: Arc<Mutex<ClientContext>>,
+        own_username: String,
+    ) {
+        thread::spawn(move || {
+            let download_peer = DownloadPeer::new(
+                download.username.clone(),
+                peer.host.clone(),
+                peer.port,
+                download.token,
+                false,
+                own_username,
+            );
+
+            let result = download_peer.download_file(
+                client_context.clone(),
+                Some(download.size as usize),
+                Some(format!("/tmp/{}", filename)),
+            );
+
+            Self::handle_download_result(
+                &client_context,
+                &peer.username,
+                &filename,
+                result,
+                &peer,
+                download.token,
+            );
+        });
     }
 }
