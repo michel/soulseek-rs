@@ -187,6 +187,7 @@ impl Client {
         filename: String,
         username: String,
         size: u64,
+        download_directory: String,
     ) -> Result<crate::types::DownloadResult> {
         use crate::types::{DownloadResult, DownloadStatus};
         use std::time::{Duration, Instant};
@@ -201,6 +202,7 @@ impl Client {
             filename: filename.clone(),
             token,
             size,
+            download_directory,
         };
 
         let mut context = self.context.lock().unwrap();
@@ -436,6 +438,7 @@ impl Client {
                                 filename: transfer.filename,
                                 token: transfer.token,
                                 size: transfer.size,
+                                download_directory: "~/Downloads/".to_string(),
                             },
                         );
                     }

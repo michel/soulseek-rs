@@ -22,28 +22,28 @@ fn main() {
                             file.name,
                             file.username,
                             file.size,
+                            "~/Downloads".to_string(),
                         ) {
                             Ok(download_result) => {
                                 println!(
-                                    "Download result: {:?}",
-                                    download_result
+                                    "Download result: {download_result:?}"
                                 );
                             }
                             Err(e) => {
-                                eprintln!("Failed to download: {}", e);
+                                eprintln!("Failed to download: {e}");
                             }
                         }
                     } else {
-                        eprint!("No results")
+                        eprint!("No results");
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to search: {}", e);
+                    eprintln!("Failed to search: {e}");
                 }
             }
         }
         Err(e) => {
-            eprintln!("Failed to login: {}", e);
+            eprintln!("Failed to login: {e}");
         }
     }
 }

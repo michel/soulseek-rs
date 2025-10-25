@@ -1,11 +1,12 @@
 use crate::client::ClientContext;
 use crate::message::server::MessageFactory;
 use crate::trace;
+use std::env;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
 use std::net::TcpStream;
 use std::net::ToSocketAddrs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -21,6 +22,14 @@ struct FileManager;
 
 #[allow(dead_code)]
 impl FileManager {
+    fn expand_path(mut path: &str) -> String {
+        if path.starts_with('~') {
+            let home = env::var("HOME").expect("HOME not set");
+            format!("{}{}", home, &path[1..])
+        } else {
+            path.to_string()
+        }
+    }
     fn create_download_paths(
         output_path: Option<String>,
         username: &str,
@@ -28,9 +37,9 @@ impl FileManager {
     ) -> DownloadPaths {
         let final_path = match output_path {
             Some(path) if !path.is_empty() => path,
-            _ => format!("/tmp/{}_{}.mp3", username, token),
+            _ => format!("/tmp/{username}_{token}.mp3"),
         };
-        let incomplete_path = format!("{}.incomplete", final_path);
+        let incomplete_path = format!("{final_path}.incomplete");
 
         DownloadPaths {
             final_path,
@@ -63,22 +72,31 @@ impl FileManager {
 
     fn extract_filename_from_path(full_path: &str) -> String {
         // Split on both forward slashes and backslashes to handle Windows and Unix paths
-        full_path.split(['/', '\\']).next_back().unwrap_or(full_path).to_string()
+        full_path
+            .split(['/', '\\'])
+            .next_back()
+            .unwrap_or(full_path)
+            .to_string()
     }
 
     fn create_download_path_from_filename(
         output_directory: Option<&str>,
         remote_username: &str,
         token: u32,
-        filename: Option<&str>
+        filename: Option<&str>,
     ) -> String {
         let base_dir = output_directory.unwrap_or("/tmp");
 
+        let mut expanded_base_dir = FileManager::expand_path(base_dir);
+        if expanded_base_dir.ends_with('/') {
+            expanded_base_dir.pop();
+        }
+
         if let Some(filename) = filename {
             let clean_filename = Self::extract_filename_from_path(filename);
-            format!("{}/{}", base_dir, clean_filename)
+            format!("{expanded_base_dir}/{clean_filename}")
         } else {
-            format!("{}/{}_{}.mp3", base_dir, remote_username, token)
+            format!("{expanded_base_dir}/{remote_username}_{token}")
         }
     }
 }
@@ -118,13 +136,9 @@ impl StreamProcessor {
         Ok(false)
     }
 
-    fn process_data_chunk(
-        &mut self,
-        data: &[u8],
-    ) -> Result<(), io::Error> {
+    fn process_data_chunk(&mut self, data: &[u8]) {
         self.buffer.extend_from_slice(data);
         self.total_bytes += data.len();
-        Ok(())
     }
 
     fn should_continue(&self, expected_size: Option<usize>) -> bool {
@@ -148,7 +162,7 @@ pub struct DownloadPeer {
 
 #[allow(dead_code)]
 impl DownloadPeer {
-    #[allow(dead_code)]
+    #[must_use]
     pub fn new(
         username: String,
         host: String,
@@ -211,10 +225,6 @@ impl DownloadPeer {
             );
             stream.write_all(&message.get_buffer())?;
             stream.flush()?;
-            // stream
-            //     .write_all(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])?;
-            // stream.flush()?;
-            //
         } else {
             stream.write_all(
                 &MessageFactory::build_pierce_firewall_message(self.token)
@@ -236,7 +246,7 @@ impl DownloadPeer {
         self,
         client_context: Arc<Mutex<ClientContext>>,
         mut expected_size: Option<usize>,
-        output_path: Option<String>,
+        mut download_path: Option<String>,
     ) -> Result<(usize, String), io::Error> {
         let mut stream = self.establish_connection()?;
         trace!("[download_peer:{}] connected", self.username);
@@ -294,6 +304,8 @@ impl DownloadPeer {
                                     download.filename
                                 );
                                 expected_size = Some(download.size as usize);
+                                download_path =
+                                    Some(download.download_directory.clone());
                             }
                             None => {
                                 trace!(
@@ -304,17 +316,14 @@ impl DownloadPeer {
                             }
                         }
 
-                        continue; // Skip this data chunk
+                        continue;
                     }
 
-                    processor.process_data_chunk(data)?;
+                    processor.process_data_chunk(data);
 
                     if !processor.should_continue(expected_size) {
                         break;
                     }
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
-                    continue;
                 }
                 Err(e) => {
                     return Err(e);
@@ -326,8 +335,7 @@ impl DownloadPeer {
             self.username
         );
 
-        // Now determine the final file path using download info
-        let output_directory = output_path.as_ref().map(|path| {
+        let output_directory = download_path.as_ref().map(|path| {
             if Path::new(path).is_dir() {
                 path.as_str()
             } else if let Some(parent) = Path::new(path).parent() {
@@ -339,35 +347,31 @@ impl DownloadPeer {
 
         let filename = download_info.as_ref().map(|d| d.filename.as_str());
 
-        let final_path = if let Some(output_path) = &output_path {
+        let final_path = if let Some(output_path) = &download_path {
             if Path::new(output_path).is_dir() || output_path.ends_with('/') {
                 // output_path is a directory, append filename
                 FileManager::create_download_path_from_filename(
                     Some(output_path),
                     &self.username,
                     self.token,
-                    filename
+                    filename,
                 )
             } else {
-                // output_path is a full file path, use it directly
                 output_path.clone()
             }
         } else {
-            // No output path provided, use default logic
             FileManager::create_download_path_from_filename(
                 output_directory,
                 &self.username,
                 self.token,
-                filename
+                filename,
             )
         };
 
-        // Create directory if needed
         if let Some(parent) = Path::new(&final_path).parent() {
             fs::create_dir_all(parent)?;
         }
 
-        // Write the buffer to the final file
         fs::write(&final_path, &processor.buffer)?;
 
         trace!(
@@ -527,7 +531,7 @@ mod tests {
         let download_peer = DownloadPeer::new(
             "remote_user".to_string(),
             "127.0.0.1".to_string(),
-            port as u32,
+            u32::from(port),
             42,
             false,
             "test_user".to_string(),
@@ -574,7 +578,7 @@ mod tests {
     #[test]
     fn test_file_manager_create_paths_with_empty_string() {
         let paths = FileManager::create_download_paths(
-            Some("".to_string()),
+            Some(String::new()),
             "user",
             789,
         );
@@ -705,7 +709,7 @@ mod tests {
             Some("/downloads"),
             "remote_user",
             123,
-            Some("song.mp3")
+            Some("song.mp3"),
         );
         assert_eq!(path, "/downloads/song.mp3");
 
@@ -714,7 +718,7 @@ mod tests {
             Some("/downloads"),
             "remote_user",
             123,
-            Some("/remote/path/to/song.mp3")
+            Some("/remote/path/to/song.mp3"),
         );
         assert_eq!(path, "/downloads/song.mp3");
 
@@ -723,7 +727,7 @@ mod tests {
             Some("/downloads"),
             "remote_user",
             123,
-            None
+            None,
         );
         assert_eq!(path, "/downloads/remote_user_123.mp3");
 
@@ -732,7 +736,7 @@ mod tests {
             None,
             "remote_user",
             123,
-            Some("song.mp3")
+            Some("song.mp3"),
         );
         assert_eq!(path, "/tmp/song.mp3");
     }
