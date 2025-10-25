@@ -1,6 +1,9 @@
 use crate::{
     error::{Result, SoulseekRs},
-    peer::{ConnectionType, DefaultPeer, DownloadPeer, NewPeer, Peer},
+    peer::{
+        listen::Listen, ConnectionType, DefaultPeer, DownloadPeer, NewPeer,
+        Peer,
+    },
     server::{PeerAddress, Server, ServerOperation},
     types::{Download, FileSearchResult},
     utils::{md5, thread_pool::ThreadPool},
@@ -46,6 +49,12 @@ pub struct ClientContext {
     pub download_tokens: HashMap<u32, Download>,
     thread_pool: ThreadPool,
 }
+impl Default for ClientContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ClientContext {
     pub fn new() -> Self {
         Self {
@@ -105,9 +114,9 @@ impl Client {
                     server.get_address().get_port()
                 );
 
-                // thread::spawn(move || {
-                //     Listen::start(2234, client_sender.clone());
-                // });
+                thread::spawn(move || {
+                    Listen::start(2234, client_sender.clone());
+                });
                 let mut unlocked_context = self.context.lock().unwrap();
                 unlocked_context.server_sender =
                     Some(server.get_sender().clone());
@@ -242,14 +251,15 @@ impl Client {
                             client_context.clone(),
                             own_username.clone(),
                             None,
-                        )
+                        );
                     }
                     ClientOperation::SearchResult(file_search) => {
+                        trace!("[client] SearchResult {:?}", file_search);
                         client_context
                             .lock()
                             .unwrap()
                             .search_results
-                            .push(file_search);
+                            .push(file_search.clone());
                     }
                     ClientOperation::PeerDisconnected(username) => {
                         let mut context = client_context.lock().unwrap();
@@ -283,8 +293,10 @@ impl Client {
                                         false,
                                         own_username,
                                     );
-                                    let filename: Option<&str> =
-                                        download.filename.split('\\').last();
+                                    let filename: Option<&str> = download
+                                        .filename
+                                        .split('\\')
+                                        .next_back();
                                     match filename {
                                                         Some(filename) => {
                                                             match download_peer.download_file(
@@ -454,7 +466,7 @@ impl Client {
 
                             let connect_result = match stream {
                                     Some(s) => default_peer.connect_with_socket(s),
-                                    None => default_peer.connect()
+                                    _ => default_peer.connect()
                                 };
 
                             match connect_result {
