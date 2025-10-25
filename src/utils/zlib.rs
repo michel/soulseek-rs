@@ -72,7 +72,7 @@ pub fn deflate(input: &[u8]) -> Result<Vec<u8>> {
         return Err(SoulseekRs::CompressionError("invalid CINFO".to_string()));
     }
     let flg = r.read_byte()?;
-    if ((cmf as u32) * 256 + (flg as u32)) % 31 != 0 {
+    if !((cmf as u32) * 256 + (flg as u32)).is_multiple_of(31) {
         return Err(SoulseekRs::CompressionError(
             "CMF+FLG checksum failed".to_string(),
         ));

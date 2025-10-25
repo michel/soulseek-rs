@@ -8,11 +8,12 @@ use crate::message::server::MessageFactory;
 use crate::message::{Handlers, Message, MessageReader, MessageType};
 use crate::types::{Download, FileSearchResult, Transfer};
 
+use core::result::Result::Ok;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
-use crate::client::{self, ClientOperation};
+use crate::client::ClientOperation;
 use crate::peer::Peer;
 use crate::{debug, error, trace, warn};
 use std::io::{self, Write};
@@ -161,7 +162,7 @@ impl DefaultPeer {
             let mut buffered_reader = MessageReader::new();
             loop {
                 match buffered_reader.read_from_socket(&mut read_stream) {
-                    Ok(_) => {}
+                    Ok(()) => {}
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                         continue
                     }
@@ -213,7 +214,7 @@ impl DefaultPeer {
                             should_terminate = true;
                             break;
                         }
-                        Ok(None) => break,
+                        Ok(_) => break,
                     }
                 }
                 if should_terminate {
