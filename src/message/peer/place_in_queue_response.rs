@@ -13,7 +13,7 @@ impl MessageHandler<PeerOperation> for PlaceInQueueResponse {
 
     fn handle(&self, message: &mut Message, sender: Sender<PeerOperation>) {
         let filename = message.read_string();
-        let place = message.read_int32() as u32;
+        let place = message.read_int32();
 
         sender
             .send(PeerOperation::PlaceInQueueResponse { filename, place })

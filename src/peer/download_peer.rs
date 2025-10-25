@@ -63,7 +63,7 @@ impl FileManager {
 
     fn extract_filename_from_path(full_path: &str) -> String {
         // Split on both forward slashes and backslashes to handle Windows and Unix paths
-        full_path.split(['/', '\\']).last().unwrap_or(full_path).to_string()
+        full_path.split(['/', '\\']).next_back().unwrap_or(full_path).to_string()
     }
 
     fn create_download_path_from_filename(
