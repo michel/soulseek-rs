@@ -56,6 +56,7 @@ impl Default for ClientContext {
 }
 
 impl ClientContext {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             peers: HashMap::new(),
@@ -304,10 +305,10 @@ impl Client {
                                                             match download_peer.download_file(
                                                                 client_context_clone,
                                                                 Some(download.size as usize),
-                                                                Some(format!("/tmp/{}", filename)),
+                                                                Some(download.download_directory)
                                                             ) {
                                                                 Ok((bytes, filename)) => {
-                                                                    info!("Successfully downloaded {} bytes to /tmp/{}", bytes, filename);
+                                                                    info!("Successfully downloaded {} bytes to {}", bytes, filename);
                                                                 }
                                                                 Err(e) => {
                                                                     error!(
@@ -327,7 +328,7 @@ impl Client {
                                     token
                                 );
                             }
-                        };
+                        }
                     }
                     ClientOperation::NewPeer(new_peer) => {
                         if client_context
@@ -384,63 +385,81 @@ impl Client {
                                             username, host, port, obfuscation_type, obfuscated_port
                                         );
 
-                        match client_context
-                            .lock()
-                            .unwrap()
-                            .peers
-                            .get(&username)
+                        if let Some(_peer) =
+                            client_context.lock().unwrap().peers.get(&username)
                         {
-                            Some(_peer) => {
-                                // don't know if i should update? and or reconnect the peer
-                                // debug!(
-                                //     "existing peer: {:?}, new peer details:
-                                //     username: {},
-                                //     host: {},
-                                //     port: {}
-                                //     obfuscation_type: {}
-                                //     obfuscated_port: {}",
-                                //     peer,
-                                //     username,
-                                //     host,
-                                //     port,
-                                //     obfuscation_type,
-                                //     obfuscated_port,
-                                // );
-                            }
-                            None => {
-                                let peer = Peer::new(
-                                    username,
-                                    ConnectionType::P,
-                                    host,
-                                    port,
-                                    None,
-                                    0,
-                                    obfuscation_type.try_into().unwrap(),
-                                    obfuscated_port.try_into().unwrap(),
-                                );
-                                Self::connect_to_peer(
-                                    peer,
-                                    client_context.clone(),
-                                    own_username.clone(),
-                                    None,
-                                );
-                            }
+                            // don't know if i should update? and or reconnect the peer
+                            // debug!(
+                            //     "existing peer: {:?}, new peer details:
+                            //     username: {},
+                            //     host: {},
+                            //     port: {}
+                            //     obfuscation_type: {}
+                            //     obfuscated_port: {}",
+                            //     peer,
+                            //     username,
+                            //     host,
+                            //     port,
+                            //     obfuscation_type,
+                            //     obfuscated_port,
+                            // );
+                        } else {
+                            let peer = Peer::new(
+                                username,
+                                ConnectionType::P,
+                                host,
+                                port,
+                                None,
+                                0,
+                                obfuscation_type.try_into().unwrap(),
+                                obfuscated_port.try_into().unwrap(),
+                            );
+                            Self::connect_to_peer(
+                                peer,
+                                client_context.clone(),
+                                own_username.clone(),
+                                None,
+                            );
                         }
                     }
                     ClientOperation::UpdateDownloadTokens(
                         transfer,
                         username,
                     ) => {
-                        client_context.lock().unwrap().download_tokens.insert(
-                            transfer.token,
-                            Download {
-                                username,
-                                filename: transfer.filename,
-                                token: transfer.token,
-                                size: transfer.size,
-                                download_directory: "~/Downloads/".to_string(),
-                            },
-                        );
+                        let mut context = client_context.lock().unwrap();
+
+                        let key_to_remove = context
+                            .download_tokens
+                            .iter()
+                            .find_map(|(key, d)| {
+                                if d.username == username
+                                    && d.filename == transfer.filename
+                                {
+                                    Some((*key, d.clone()))
+                                } else {
+                                    None
+                                }
+                            });
+
+                        if let Some((key, download)) = key_to_remove {
+                            trace!(
+                                "[client] UpdateDownloadTokens found {key}, transfer: {:?}",
+                                transfer
+                            );
+
+                            context.download_tokens.insert(
+                                transfer.token,
+                                Download {
+                                    username: username.clone(),
+                                    filename: transfer.filename,
+                                    token: transfer.token,
+                                    size: transfer.size,
+                                    download_directory: download
+                                        .download_directory,
+                                },
+                            );
+                            context.download_tokens.remove(&key);
+                        }
                     }
                 }
             }
