@@ -87,6 +87,7 @@ pub struct Download {
     pub filename: String,
     pub token: u32,
     pub size: u64,
+    pub download_directory: String,
 }
 
 #[derive(Debug, Clone)]
