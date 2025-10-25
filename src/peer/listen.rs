@@ -4,8 +4,7 @@ use std::{io, net::TcpListener};
 use crate::client::ClientOperation;
 use crate::message::MessageReader;
 
-use crate::peer::NewPeer;
-use crate::{debug, error, info, trace, warn};
+use crate::{debug, error, info, trace, warn, FileSearchResult};
 
 pub struct Listen {}
 
@@ -15,12 +14,11 @@ impl Listen {
         let listener = TcpListener::bind(format!("0.0.0.0:{port}")).unwrap();
         for stream in listener.incoming() {
             let mut read_stream = stream.unwrap();
-            let mut stop = false;
 
             let mut buffered_reader = MessageReader::new();
-            while !stop {
+            loop {
                 match buffered_reader.read_from_socket(&mut read_stream) {
-                    Ok(_) => {}
+                    Ok(()) => {}
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                         continue
                     }
@@ -48,23 +46,38 @@ impl Listen {
 
                             match message_code {
                                 0 => {
-                                    let token = message.read_string();
-                                    debug!("[listener] received Pierce Firewall, token: {}", token);
+                                    // let token = message.read_string();
+                                    // debug!("[listener] received Pierce Firewall, token: {}", token);
                                 }
                                 1 => {
-                                    let tcp_stream =
-                                        read_stream.try_clone().unwrap();
-                                    let new_peer = NewPeer::new_from_message(
-                                        &mut message,
-                                        tcp_stream,
-                                    );
-
-                                    trace!("[listener] Handling peer init message: {:?}",new_peer);
+                                    // handle handover to default_peer with socket in the future
+                                    // let tcp_stream =
+                                    //     read_stream.try_clone().unwrap();
+                                    //
+                                    // let username = message.read_string();
+                                    // let connection_type =
+                                    //     message.read_string().parse().unwrap();
+                                    // let token = message.read_int32();
+                                }
+                                9 => {
+                                    trace!("[listener] Handling file search response: 9",);
+                                    message.set_pointer(8);
+                                    let file_search =
+                                        match FileSearchResult::new_from_message(
+                                            &mut message,
+                                        ) {
+                                            Ok(result) => result,
+                                            Err(e) => {
+                                                trace!("[listener] malformed filesearch_result: {:?}, message: {:?}", e, message);
+                                                return;
+                                            }
+                                        };
                                     client_sender
-                                        .send(ClientOperation::NewPeer(new_peer))
+                                        .send(ClientOperation::SearchResult(
+                                            file_search,
+                                        ))
                                         .unwrap();
-                                    stop = true;
-                                    debug!("[listener] stop");
+                                    break;
                                 }
                                 _ => {
                                     debug!(
