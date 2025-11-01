@@ -1,7 +1,9 @@
+use std::io::Write;
 use std::sync::mpsc::Sender;
 use std::{io, net::TcpListener};
 
 use crate::client::ClientOperation;
+use crate::message::server::MessageFactory;
 use crate::message::MessageReader;
 
 use crate::{debug, error, info, trace, warn, FileSearchResult};
@@ -13,11 +15,11 @@ impl Listen {
         info!("starting listener on port {port}");
         let listener = TcpListener::bind(format!("0.0.0.0:{port}")).unwrap();
         for stream in listener.incoming() {
-            let mut read_stream = stream.unwrap();
+            let mut stream = stream.unwrap();
 
             let mut buffered_reader = MessageReader::new();
             loop {
-                match buffered_reader.read_from_socket(&mut read_stream) {
+                match buffered_reader.read_from_socket(&mut stream) {
                     Ok(()) => {}
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                         continue
@@ -32,7 +34,6 @@ impl Listen {
                     }
                 }
 
-                // Extract all available messages from buffer
                 loop {
                     match buffered_reader.extract_message() {
                         Ok(Some(mut message)) => {
@@ -46,8 +47,17 @@ impl Listen {
 
                             match message_code {
                                 0 => {
-                                    // let token = message.read_string();
-                                    // debug!("[listener] received Pierce Firewall, token: {}", token);
+                                    let token = message.read_int32();
+                                    debug!("[listener] received Pierce Firewall, token: {}", token);
+                                    stream
+                                        .write_all(
+                                            &MessageFactory::build_pierce_firewall_message(
+                                                token,
+                                            )
+                                            .get_data(),
+                                        )
+                                        .unwrap();
+                                    stream.flush().unwrap();
                                 }
                                 1 => {
                                     // handle handover to default_peer with socket in the future
@@ -83,7 +93,7 @@ impl Listen {
                                     debug!(
                                         "[listener] unknown message_code: {}",
                                         message_code
-                                    )
+                                    );
                                 }
                             }
                         }

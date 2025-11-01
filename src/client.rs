@@ -305,10 +305,10 @@ impl Client {
                                                             match download_peer.download_file(
                                                                 client_context_clone,
                                                                 Some(download.size as usize),
-                                                                Some(format!("/tmp/{}", filename)),
+                                                                Some(download.download_directory)
                                                             ) {
                                                                 Ok((bytes, filename)) => {
-                                                                    info!("Successfully downloaded {} bytes to /tmp/{}", bytes, filename);
+                                                                    info!("Successfully downloaded {} bytes to {}", bytes, filename);
                                                                 }
                                                                 Err(e) => {
                                                                     error!(
