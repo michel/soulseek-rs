@@ -8,7 +8,7 @@ pub mod server;
 pub use handlers::{Handlers, MessageHandler};
 pub use message_reader::MessageReader;
 
-use std::{str, usize};
+use std::str;
 
 #[derive(Debug, PartialEq)]
 #[allow(dead_code)]
