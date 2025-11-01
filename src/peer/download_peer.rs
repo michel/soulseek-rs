@@ -6,8 +6,8 @@ use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
 use std::net::TcpStream;
 use std::net::ToSocketAddrs;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::path::Path;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 #[derive(Debug)]
@@ -22,10 +22,10 @@ struct FileManager;
 
 #[allow(dead_code)]
 impl FileManager {
-    fn expand_path(mut path: &str) -> String {
-        if path.starts_with('~') {
+    fn expand_path(path: &str) -> String {
+        if let Some(stripped) = path.strip_prefix('~') {
             let home = env::var("HOME").expect("HOME not set");
-            format!("{}{}", home, &path[1..])
+            format!("{}{}", home, stripped)
         } else {
             path.to_string()
         }
@@ -244,7 +244,7 @@ impl DownloadPeer {
 
     pub fn download_file(
         self,
-        client_context: Arc<Mutex<ClientContext>>,
+        client_context: Arc<RwLock<ClientContext>>,
         mut expected_size: Option<usize>,
         mut download_path: Option<String>,
     ) -> Result<(usize, String), io::Error> {
@@ -289,7 +289,7 @@ impl DownloadPeer {
                         );
 
                         download_info = client_context
-                            .lock()
+                            .read()
                             .unwrap()
                             .download_tokens
                             .get(&token_u32)
@@ -392,12 +392,12 @@ mod tests {
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, RwLock};
     use std::thread;
     use std::time::Duration;
 
-    pub fn build_test_server() -> (u16, Arc<Mutex<Vec<Vec<u8>>>>) {
-        let messages = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+    pub fn build_test_server() -> (u16, Arc<RwLock<Vec<Vec<u8>>>>) {
+        let messages = Arc::new(RwLock::new(Vec::<Vec<u8>>::new()));
         let messages_clone = Arc::clone(&messages);
 
         // Find an available port by binding to port 0
@@ -412,7 +412,7 @@ mod tests {
                         match stream.read(&mut buffer) {
                             Ok(bytes_read) if bytes_read > 0 => {
                                 let data = buffer[..bytes_read].to_vec();
-                                messages_clone.lock().unwrap().push(data);
+                                messages_clone.write().unwrap().push(data);
                             }
                             _ => {}
                         }
@@ -440,7 +440,7 @@ mod tests {
             false,
             "own_username".to_string(),
         );
-        let dummy_context = Arc::new(Mutex::new(ClientContext::new()));
+        let dummy_context = Arc::new(RwLock::new(ClientContext::new()));
         let _ = download_peer
             .download_file(dummy_context, None, None)
             .unwrap();
@@ -448,7 +448,7 @@ mod tests {
         // Give the client time to send messages
         thread::sleep(Duration::from_millis(10));
 
-        let received_messages = messages.lock().unwrap();
+        let received_messages = messages.read().unwrap();
         assert_eq!(received_messages.len(), 1);
         assert_eq!(received_messages[0], vec![0, 0, 0, 0, 33, 0, 0, 0]);
     }
@@ -465,7 +465,7 @@ mod tests {
             true, // no_pierce = true, should send init message
             "own_username".to_string(),
         );
-        let dummy_context = Arc::new(Mutex::new(ClientContext::new()));
+        let dummy_context = Arc::new(RwLock::new(ClientContext::new()));
         let _ = download_peer
             .download_file(dummy_context, None, None)
             .unwrap();
@@ -473,7 +473,7 @@ mod tests {
         // Give the client time to send messages
         thread::sleep(Duration::from_millis(10));
 
-        let received_messages = messages.lock().unwrap();
+        let received_messages = messages.read().unwrap();
         assert_eq!(received_messages.len(), 1); // Expect one init message
         assert_eq!(
             received_messages[0],
@@ -489,7 +489,7 @@ mod tests {
     #[test]
     pub fn test_download_file() {
         let test_data = b"test file content";
-        let messages = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+        let messages = Arc::new(RwLock::new(Vec::<Vec<u8>>::new()));
         let messages_clone = Arc::clone(&messages);
 
         // Create a test server that sends test data
@@ -509,7 +509,7 @@ mod tests {
                         if let Ok(bytes_read) = stream.read(&mut buffer) {
                             if bytes_read > 0 {
                                 messages_clone
-                                    .lock()
+                                    .write()
                                     .unwrap()
                                     .push(buffer[..bytes_read].to_vec());
                             }
@@ -537,7 +537,7 @@ mod tests {
             "test_user".to_string(),
         );
 
-        let dummy_context = Arc::new(Mutex::new(ClientContext::new()));
+        let dummy_context = Arc::new(RwLock::new(ClientContext::new()));
         let result = download_peer.download_file(
             dummy_context,
             Some(test_data.len()),
@@ -654,8 +654,7 @@ mod tests {
         let mut processor = StreamProcessor::new(false, 123);
         let data = b"test data";
 
-        let result = processor.process_data_chunk(data);
-        assert!(result.is_ok());
+        processor.process_data_chunk(data);
         assert_eq!(processor.total_bytes, data.len());
         assert_eq!(processor.buffer, data);
     }

@@ -23,7 +23,7 @@ use std::io::{self, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Arc, Barrier, Mutex};
+use std::sync::{Arc, Barrier, RwLock};
 use std::thread::{self};
 use std::time::{Duration, Instant};
 
@@ -193,7 +193,7 @@ pub enum ServerOperation {
 pub struct Server {
     address: PeerAddress,
     sender: Sender<ServerOperation>,
-    context: Arc<Mutex<Context>>,
+    context: Arc<RwLock<Context>>,
 }
 impl Server {
     pub fn new(
@@ -205,7 +205,7 @@ impl Server {
             Receiver<ServerOperation>,
         ) = mpsc::channel();
 
-        let context = Arc::new(Mutex::new(Context::new()));
+        let context = Arc::new(RwLock::new(Context::new()));
 
         let mut server = Self {
             address,
@@ -353,7 +353,7 @@ impl Server {
                             }
                         }
                         ServerOperation::LoginStatus(message) => {
-                            context.lock().unwrap().logged_in = Some(message);
+                            context.write().unwrap().logged_in = Some(message);
                         }
                         ServerOperation::PierceFirewall(token) => {
                             if let Err(e) = write_stream.write_all(
@@ -457,7 +457,7 @@ impl Server {
             }
 
             {
-                logged_in = context.lock().unwrap().logged_in
+                logged_in = context.read().unwrap().logged_in
             }
 
             if logged_in.is_some() {

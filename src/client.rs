@@ -14,7 +14,7 @@ use std::{
     net::TcpStream,
     sync::{
         mpsc::{Receiver, Sender},
-        Mutex,
+        RwLock,
     },
     thread::{self, sleep},
 };
@@ -73,7 +73,7 @@ pub struct Client {
     username: String,
     password: String,
     server: Option<Server>,
-    context: Arc<Mutex<ClientContext>>,
+    context: Arc<RwLock<ClientContext>>,
 }
 
 impl Client {
@@ -83,10 +83,10 @@ impl Client {
         password: String,
     ) -> Self {
         crate::utils::logger::init();
-        let context = Arc::new(Mutex::new(ClientContext::new()));
+        let context = Arc::new(RwLock::new(ClientContext::new()));
         debug!(
             "ThreadPool initialized with {} threads",
-            context.lock().unwrap().thread_pool.thread_count()
+            context.read().unwrap().thread_pool.thread_count()
         );
         Self {
             address,
@@ -103,7 +103,7 @@ impl Client {
             Receiver<ClientOperation>,
         ) = mpsc::channel();
 
-        self.context.lock().unwrap().sender = Some(sender.clone());
+        self.context.write().unwrap().sender = Some(sender.clone());
 
         let client_sender = sender.clone();
 
@@ -118,7 +118,7 @@ impl Client {
                 thread::spawn(move || {
                     Listen::start(2234, client_sender.clone());
                 });
-                let mut unlocked_context = self.context.lock().unwrap();
+                let mut unlocked_context = self.context.write().unwrap();
                 unlocked_context.server_sender =
                     Some(server.get_sender().clone());
 
@@ -153,7 +153,7 @@ impl Client {
 
     #[allow(dead_code)]
     pub fn remove_peer(&self, username: &str) {
-        let mut context = self.context.lock().unwrap();
+        let mut context = self.context.write().unwrap();
         if let Some(peer) = context.peers.remove(username) {
             drop(peer);
         }
@@ -180,7 +180,7 @@ impl Client {
                 break;
             }
         }
-        Ok(self.context.lock().unwrap().search_results.clone())
+        Ok(self.context.read().unwrap().search_results.clone())
     }
 
     pub fn download(
@@ -206,7 +206,7 @@ impl Client {
             download_directory,
         };
 
-        let mut context = self.context.lock().unwrap();
+        let mut context = self.context.write().unwrap();
         context.download_tokens.insert(token, download.clone());
         let download_initiated = context
             .peers
@@ -242,7 +242,7 @@ impl Client {
 
     fn listen_to_client_operations(
         reader: Receiver<ClientOperation>,
-        client_context: Arc<Mutex<ClientContext>>,
+        client_context: Arc<RwLock<ClientContext>>,
         own_username: String,
     ) {
         thread::spawn(move || loop {
@@ -259,13 +259,13 @@ impl Client {
                     ClientOperation::SearchResult(file_search) => {
                         trace!("[client] SearchResult {:?}", file_search);
                         client_context
-                            .lock()
+                            .write()
                             .unwrap()
                             .search_results
                             .push(file_search.clone());
                     }
                     ClientOperation::PeerDisconnected(username) => {
-                        let mut context = client_context.lock().unwrap();
+                        let mut context = client_context.write().unwrap();
                         if let Some(peer) = context.peers.remove(&username) {
                             drop(peer); // Explicitly drop to trigger cleanup
                         }
@@ -279,7 +279,7 @@ impl Client {
                     }
                     ClientOperation::DownloadFromPeer(token, peer) => {
                         let maybe_download = {
-                            let client_context = client_context.lock().unwrap();
+                            let client_context = client_context.read().unwrap();
                             client_context.download_tokens.get(&token).cloned()
                         };
                         let own_username = own_username.clone();
@@ -332,7 +332,7 @@ impl Client {
                     }
                     ClientOperation::NewPeer(new_peer) => {
                         if client_context
-                            .lock()
+                            .read()
                             .unwrap()
                             .peers
                             .contains_key(&new_peer.username)
@@ -342,7 +342,7 @@ impl Client {
                                 new_peer.username
                             );
                         } else if let Some(server_sender) =
-                            &client_context.lock().unwrap().server_sender
+                            &client_context.read().unwrap().server_sender
                         {
                             server_sender
                                 .send(ServerOperation::GetPeerAddress(
@@ -386,7 +386,7 @@ impl Client {
                                         );
 
                         if let Some(_peer) =
-                            client_context.lock().unwrap().peers.get(&username)
+                            client_context.read().unwrap().peers.get(&username)
                         {
                             // don't know if i should update? and or reconnect the peer
                             // debug!(
@@ -426,7 +426,7 @@ impl Client {
                         transfer,
                         username,
                     ) => {
-                        let mut context = client_context.lock().unwrap();
+                        let mut context = client_context.write().unwrap();
 
                         let key_to_remove = context
                             .download_tokens
@@ -468,12 +468,12 @@ impl Client {
 
     fn connect_to_peer(
         peer: Peer,
-        client_context: Arc<Mutex<ClientContext>>,
+        client_context: Arc<RwLock<ClientContext>>,
         own_username: String,
         stream: Option<TcpStream>,
     ) {
         let client_context2 = client_context.clone();
-        let unlocked_context = client_context.lock().unwrap();
+        let unlocked_context = client_context.read().unwrap();
 
         trace!("[client] connect_to_peer: {}", peer.username);
         if let Some(sender) = unlocked_context.sender.clone() {
@@ -494,7 +494,7 @@ impl Client {
                             match connect_result {
                                 Ok(p) => {
                                     trace!("[client] connected to: {}", peer.username);
-                                    client_context2.lock().unwrap().peers.insert(peer.username, p);
+                                    client_context2.write().unwrap().peers.insert(peer.username, p);
                                 }
                                 Err(e) => {
                                     trace!(
@@ -545,12 +545,12 @@ impl Client {
     }
     fn pierce_firewall(
         peer: Peer,
-        client_context: Arc<Mutex<ClientContext>>,
+        client_context: Arc<RwLock<ClientContext>>,
         own_username: String,
     ) {
         debug!("Piercing firewall for peer: {:?}", peer);
 
-        let context = client_context.lock().unwrap();
+        let context = client_context.read().unwrap();
         if let Some(server_sender) = &context.server_sender {
             if let Some(token) = peer.token {
                 match server_sender.send(ServerOperation::PierceFirewall(token))
