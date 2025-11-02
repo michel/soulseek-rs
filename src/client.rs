@@ -120,33 +120,34 @@ impl Client {
 
         let client_sender = sender.clone();
 
-        self.server = match Server::new(self.address.clone(), sender) {
-            Ok(server) => {
-                info!(
-                    "Connected to server at {}:{}",
-                    server.get_address().get_host(),
-                    server.get_address().get_port()
-                );
+        self.server =
+            match Server::new(self.address.clone(), sender, self.listen_port) {
+                Ok(server) => {
+                    info!(
+                        "Connected to server at {}:{}",
+                        server.get_address().get_host(),
+                        server.get_address().get_port()
+                    );
 
-                thread::spawn(move || {
-                    Listen::start(listen_port, client_sender.clone());
-                });
-                let mut unlocked_context = self.context.write().unwrap();
-                unlocked_context.server_sender =
-                    Some(server.get_sender().clone());
+                    thread::spawn(move || {
+                        Listen::start(listen_port, client_sender.clone());
+                    });
+                    let mut unlocked_context = self.context.write().unwrap();
+                    unlocked_context.server_sender =
+                        Some(server.get_sender().clone());
 
-                Self::listen_to_client_operations(
-                    message_reader,
-                    self.context.clone(),
-                    self.username.clone(),
-                );
-                Some(server)
-            }
-            Err(e) => {
-                error!("Error connecting to server: {}", e);
-                None
-            }
-        };
+                    Self::listen_to_client_operations(
+                        message_reader,
+                        self.context.clone(),
+                        self.username.clone(),
+                    );
+                    Some(server)
+                }
+                Err(e) => {
+                    error!("Error connecting to server: {}", e);
+                    None
+                }
+            };
     }
 
     pub fn login(&self) -> Result<bool> {
