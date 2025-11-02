@@ -25,6 +25,8 @@ use std::{
 
 use crate::{debug, error, info, trace};
 const MAX_THREADS: usize = 50;
+const DEFALT_LISTEN_PORT: u32 = 2234;
+
 pub enum ClientOperation {
     NewPeer(NewPeer),
     ConnectToPeer(Peer),
@@ -69,6 +71,7 @@ impl ClientContext {
     }
 }
 pub struct Client {
+    listen_port: u32,
     address: PeerAddress,
     username: String,
     password: String,
@@ -81,6 +84,7 @@ impl Client {
         address: PeerAddress,
         username: String,
         password: String,
+        listen_port: Option<u32>,
     ) -> Self {
         crate::utils::logger::init();
         let context = Arc::new(RwLock::new(ClientContext::new()));
@@ -89,12 +93,20 @@ impl Client {
             context.read().unwrap().thread_pool.thread_count()
         );
         Self {
+            listen_port: listen_port.unwrap_or(DEFALT_LISTEN_PORT),
             address,
             username,
             password,
             server: None,
             context,
         }
+    }
+    pub fn with_defaults(
+        address: PeerAddress,
+        username: String,
+        password: String,
+    ) -> Self {
+        Self::new(address, username, password, None)
     }
 
     pub fn connect(&mut self) {
@@ -103,6 +115,7 @@ impl Client {
             Receiver<ClientOperation>,
         ) = mpsc::channel();
 
+        let listen_port = self.listen_port;
         self.context.write().unwrap().sender = Some(sender.clone());
 
         let client_sender = sender.clone();
@@ -116,7 +129,7 @@ impl Client {
                 );
 
                 thread::spawn(move || {
-                    Listen::start(2234, client_sender.clone());
+                    Listen::start(listen_port, client_sender.clone());
                 });
                 let mut unlocked_context = self.context.write().unwrap();
                 unlocked_context.server_sender =
