@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::mpsc::Sender};
 
 use crate::{error::Result, message::Message, utils::zlib::deflate};
 
@@ -88,6 +88,7 @@ pub struct Download {
     pub token: u32,
     pub size: u64,
     pub download_directory: String,
+    pub sender: Sender<DownloadStatus>,
 }
 
 #[derive(Debug, Clone)]
