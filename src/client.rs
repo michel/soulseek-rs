@@ -1,3 +1,4 @@
+use crate::types::{DownloadResult, DownloadStatus};
 use crate::{
     error::{Result, SoulseekRs},
     peer::{
@@ -204,13 +205,15 @@ impl Client {
         size: u64,
         download_directory: String,
     ) -> Result<crate::types::DownloadResult> {
-        use crate::types::{DownloadResult, DownloadStatus};
-        use std::time::{Duration, Instant};
-
         let start_time = Instant::now();
 
         let hash = md5::md5(&filename);
         let token = u32::from_str_radix(&hash[0..5], 16)?;
+
+        let (download_sender, download_receivier): (
+            Sender<DownloadStatus>,
+            Receiver<DownloadStatus>,
+        ) = mpsc::channel();
 
         let download = Download {
             username: username.clone(),
@@ -218,6 +221,7 @@ impl Client {
             token,
             size,
             download_directory,
+            sender: download_sender,
         };
 
         let mut context = self.context.write().unwrap();
@@ -230,9 +234,6 @@ impl Client {
 
         drop(context);
 
-        let timeout = Duration::from_secs(150);
-        let check_interval = Duration::from_millis(100);
-
         if !download_initiated {
             return Ok(DownloadResult {
                 filename,
@@ -242,14 +243,12 @@ impl Client {
             });
         }
 
-        while start_time.elapsed() < timeout {
-            std::thread::sleep(check_interval);
-        }
+        let status = download_receivier.recv().unwrap();
 
         Ok(DownloadResult {
             filename,
             username,
-            status: DownloadStatus::TimedOut,
+            status,
             elapsed_time: start_time.elapsed(),
         })
     }
@@ -299,6 +298,11 @@ impl Client {
                         let own_username = own_username.clone();
                         let client_context_clone = client_context.clone();
 
+                        trace!(
+                            "[client] DownloadFromPeer token: {} peer: {:?}",
+                            token,
+                            peer
+                        );
                         match maybe_download {
                             Some(download) => {
                                 thread::spawn(move || {
@@ -318,13 +322,14 @@ impl Client {
                                                         Some(filename) => {
                                                             match download_peer.download_file(
                                                                 client_context_clone,
-                                                                Some(download.size as usize),
-                                                                Some(download.download_directory)
+                                                                Some(download.clone())
                                                             ) {
-                                                                Ok((bytes, filename)) => {
-                                                                    info!("Successfully downloaded {} bytes to {}", bytes, filename);
+                                                                Ok((download, filename)) => {
+                                                                    download.sender.send(DownloadStatus::Completed).unwrap();
+                                                                    info!("Successfully downloaded {} bytes to {}", download.size, filename);
                                                                 }
                                                                 Err(e) => {
+                                                                    download.sender.send(DownloadStatus::Failed).unwrap();
                                                                     error!(
                                                                         "Failed to download file '{}' from {}:{} (token: {}) - Error: {}", 
                                                                         filename, peer.host, peer.port, download.token, e
@@ -470,6 +475,7 @@ impl Client {
                                     size: transfer.size,
                                     download_directory: download
                                         .download_directory,
+                                    sender: download.sender.clone(),
                                 },
                             );
                             context.download_tokens.remove(&key);
@@ -537,11 +543,10 @@ impl Client {
                                     match download_peer
                                     .download_file(
                                         client_context2.clone(),
-                                        None,
                                         None
                                     ) {
-                                        Ok((bytes, filename)) => {
-                                            trace!("[client] downloaded {} bytes {:?} ", filename,bytes);
+                                        Ok((download, filename)) => {
+                                            trace!("[client] downloaded {} bytes {:?} ", filename, download.size);
                                         }
                                         Err(e) => {
                                             trace!("[client] failed to download: {}", e);

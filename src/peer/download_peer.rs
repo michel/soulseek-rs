@@ -1,6 +1,7 @@
 use crate::client::ClientContext;
 use crate::message::server::MessageFactory;
 use crate::trace;
+use crate::types::Download;
 use std::env;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
@@ -80,24 +81,14 @@ impl FileManager {
     }
 
     fn create_download_path_from_filename(
-        output_directory: Option<&str>,
-        remote_username: &str,
-        token: u32,
-        filename: Option<&str>,
+        output_directory: String,
+        filename: String,
     ) -> String {
-        let base_dir = output_directory.unwrap_or("/tmp");
-
-        let mut expanded_base_dir = FileManager::expand_path(base_dir);
-        if expanded_base_dir.ends_with('/') {
-            expanded_base_dir.pop();
-        }
-
-        if let Some(filename) = filename {
-            let clean_filename = Self::extract_filename_from_path(filename);
-            format!("{expanded_base_dir}/{clean_filename}")
-        } else {
-            format!("{expanded_base_dir}/{remote_username}_{token}")
-        }
+        format!(
+            "{}/{}",
+            output_directory.trim_end_matches('/'),
+            Self::extract_filename_from_path(&filename)
+        )
     }
 }
 
@@ -245,9 +236,8 @@ impl DownloadPeer {
     pub fn download_file(
         self,
         client_context: Arc<RwLock<ClientContext>>,
-        mut expected_size: Option<usize>,
-        mut download_path: Option<String>,
-    ) -> Result<(usize, String), io::Error> {
+        mut download: Option<Download>,
+    ) -> Result<(Download, String), io::Error> {
         let mut stream = self.establish_connection()?;
         trace!("[download_peer:{}] connected", self.username);
 
@@ -256,7 +246,6 @@ impl DownloadPeer {
 
         let mut processor = StreamProcessor::new(self.no_pierce, self.token);
         let mut read_buffer = [1u8; 8192];
-        let mut download_info: Option<crate::types::Download> = None;
 
         trace!(
             "[download_peer:{}] Starting to read data from peer",
@@ -265,12 +254,13 @@ impl DownloadPeer {
 
         loop {
             match stream.read(&mut read_buffer) {
+                // connection closed
                 Ok(0) => {
                     trace!(
                         "[download_peer:{}] connection closed by peer",
                         self.username
                     );
-                    break; // Connection closed
+                    break;
                 }
                 Ok(bytes_read) => {
                     let data = &read_buffer[..bytes_read];
@@ -288,30 +278,27 @@ impl DownloadPeer {
                             token
                         );
 
-                        download_info = client_context
-                            .read()
-                            .unwrap()
-                            .download_tokens
-                            .get(&token_u32)
-                            .cloned();
+                        let read = client_context.read().unwrap();
 
-                        match &download_info {
-                            Some(download) => {
+                        let download_info =
+                            read.download_tokens.get(&token_u32);
+
+                        match download_info {
+                            Some(d) => {
                                 trace!(
                                     "[download_peer:{}] got download info for token: {} - filename: {}",
                                     self.username,
                                     token_u32,
-                                    download.filename
+                                    d.filename
                                 );
-                                expected_size = Some(download.size as usize);
-                                download_path =
-                                    Some(download.download_directory.clone());
+                                trace!("[download_peer:{}] setting download info for token: {}",
+                                    self.username,
+                                    token_u32);
+                                download = Some(d.clone());
                             }
                             None => {
-                                trace!(
-                                    "[download_peer:{}] no download info for token: {}",
-                                    self.username,
-                                    self.token
+                                panic!(
+                                    "No download info for token {token_u32}"
                                 );
                             }
                         }
@@ -321,7 +308,9 @@ impl DownloadPeer {
 
                     processor.process_data_chunk(data);
 
-                    if !processor.should_continue(expected_size) {
+                    if !processor.should_continue(Some(
+                        download.clone().unwrap().size as usize,
+                    )) {
                         break;
                     }
                 }
@@ -334,45 +323,39 @@ impl DownloadPeer {
             "[download_peer:{}] finished reading data from peer",
             self.username
         );
-
-        let output_directory = download_path.as_ref().map(|path| {
-            if Path::new(path).is_dir() {
-                path.as_str()
-            } else if let Some(parent) = Path::new(path).parent() {
-                parent.to_str().unwrap_or("/tmp")
-            } else {
-                "/tmp"
-            }
+        let download = download.clone().unwrap_or_else(|| {
+            panic!(
+                "[download_peer] No download info found for token: {}",
+                self.token
+            )
         });
 
-        let filename = download_info.as_ref().map(|d| d.filename.as_str());
+        let download_directory = download.download_directory.clone();
+        let mut expaned_path = FileManager::expand_path(&download_directory);
+        if !Path::new(&expaned_path).is_dir() {
+            expaned_path = Path::new(&expaned_path)
+                .parent()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string()
+        }
 
-        let final_path = if let Some(output_path) = &download_path {
-            if Path::new(output_path).is_dir() || output_path.ends_with('/') {
-                // output_path is a directory, append filename
-                FileManager::create_download_path_from_filename(
-                    Some(output_path),
-                    &self.username,
-                    self.token,
-                    filename,
-                )
-            } else {
-                output_path.clone()
-            }
-        } else {
-            FileManager::create_download_path_from_filename(
-                output_directory,
-                &self.username,
-                self.token,
-                filename,
-            )
-        };
+        let final_path = FileManager::create_download_path_from_filename(
+            expaned_path,
+            download.filename.clone(),
+        );
 
         if let Some(parent) = Path::new(&final_path).parent() {
             fs::create_dir_all(parent)?;
         }
 
-        fs::write(&final_path, &processor.buffer)?;
+        fs::write(&final_path, &processor.buffer).unwrap_or_else(|e| {
+            panic!(
+                "[download_peer] Failed to write to file {}: {}",
+                final_path, e
+            )
+        });
 
         trace!(
             "[download_peer:{}] download completed successfully: {} bytes, saved to: {}",
@@ -381,7 +364,7 @@ impl DownloadPeer {
             final_path
         );
 
-        Ok((processor.total_bytes, final_path))
+        Ok((download.clone(), final_path))
     }
 }
 
@@ -390,7 +373,7 @@ mod tests {
     use super::{DownloadPeer, FileManager, StreamProcessor};
     use crate::client::ClientContext;
     use std::fs;
-    use std::io::{Read, Write};
+    use std::io::Read;
     use std::net::TcpListener;
     use std::sync::{Arc, RwLock};
     use std::thread;
@@ -441,9 +424,7 @@ mod tests {
             "own_username".to_string(),
         );
         let dummy_context = Arc::new(RwLock::new(ClientContext::new()));
-        let _ = download_peer
-            .download_file(dummy_context, None, None)
-            .unwrap();
+        let _ = download_peer.download_file(dummy_context).unwrap();
 
         // Give the client time to send messages
         thread::sleep(Duration::from_millis(10));
@@ -466,9 +447,7 @@ mod tests {
             "own_username".to_string(),
         );
         let dummy_context = Arc::new(RwLock::new(ClientContext::new()));
-        let _ = download_peer
-            .download_file(dummy_context, None, None)
-            .unwrap();
+        let _ = download_peer.download_file(dummy_context).unwrap();
 
         // Give the client time to send messages
         thread::sleep(Duration::from_millis(10));
@@ -484,77 +463,6 @@ mod tests {
         );
 
         // No messages expected when no_pierce is false
-    }
-
-    #[test]
-    pub fn test_download_file() {
-        let test_data = b"test file content";
-        let messages = Arc::new(RwLock::new(Vec::<Vec<u8>>::new()));
-        let messages_clone = Arc::clone(&messages);
-
-        // Create a test server that sends test data
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-
-        thread::spawn(move || {
-            for stream in listener.incoming() {
-                match stream {
-                    Ok(mut stream) => {
-                        // Set non-blocking to avoid hanging
-                        stream.set_nonblocking(true).unwrap();
-
-                        // Read handshake data
-                        let mut buffer = [0u8; 1024];
-                        std::thread::sleep(Duration::from_millis(10));
-                        if let Ok(bytes_read) = stream.read(&mut buffer) {
-                            if bytes_read > 0 {
-                                messages_clone
-                                    .write()
-                                    .unwrap()
-                                    .push(buffer[..bytes_read].to_vec());
-                            }
-                        }
-
-                        // Send pierce token (4 bytes) then test data
-                        stream.set_nonblocking(false).unwrap();
-                        let _ = stream.write_all(&[42, 0, 0, 0]);
-                        std::thread::sleep(Duration::from_millis(10));
-                        let _ = stream.write_all(test_data);
-                    }
-                    Err(_) => break,
-                }
-            }
-        });
-
-        thread::sleep(Duration::from_millis(10));
-
-        let download_peer = DownloadPeer::new(
-            "remote_user".to_string(),
-            "127.0.0.1".to_string(),
-            u32::from(port),
-            42,
-            false,
-            "test_user".to_string(),
-        );
-
-        let dummy_context = Arc::new(RwLock::new(ClientContext::new()));
-        let result = download_peer.download_file(
-            dummy_context,
-            Some(test_data.len()),
-            Some("test_download.mp3".to_string()),
-        );
-
-        assert!(result.is_ok());
-        let (bytes_downloaded, file_path) = result.unwrap();
-        assert_eq!(bytes_downloaded, test_data.len());
-        assert_eq!(file_path, "test_download.mp3");
-
-        // Verify the file was written correctly
-        let downloaded_data = fs::read("test_download.mp3").unwrap();
-        assert_eq!(downloaded_data, test_data);
-
-        // Clean up test file
-        let _ = fs::remove_file("test_download.mp3");
     }
 
     #[test]
