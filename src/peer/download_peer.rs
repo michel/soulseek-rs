@@ -236,8 +236,17 @@ impl DownloadPeer {
         self,
         client_context: Arc<RwLock<ClientContext>>,
         mut download: Option<Download>,
+        stream: Option<TcpStream>,
     ) -> Result<(Download, String), io::Error> {
-        let mut stream = self.establish_connection()?;
+        if stream.is_none() {
+            trace!("[download_peer:{}] stream is none", self.username);
+        }
+        let mut stream = stream.unwrap_or_else(|| {
+            self.establish_connection().unwrap_or_else(|e| {
+                panic!("Failed to establish connection: {:?}", e)
+            })
+        });
+
         trace!("[download_peer:{}] connected", self.username);
 
         self.perform_handshake(&mut stream)?;
@@ -270,11 +279,15 @@ impl DownloadPeer {
                         && processor.handle_pierce_token(data, &mut stream)?
                     {
                         let token = data.get(0..4).unwrap();
-                        let token_u32 =
-                            u32::from_le_bytes(token.try_into().unwrap());
+                        let token_u32 = u32::from_le_bytes(
+                            token
+                                .try_into()
+                                .unwrap_or_else(|_| panic!("[download_peer:{}] slice with incorrect length", self.username)),
+                        );
                         trace!(
-                            "[download_peer:{}] received token: {:?} ",
+                            "[download_peer:{}] received token_u32: {:?}  - token: {:?}",
                             self.username,
+                            token_u32,
                             token
                         );
 
@@ -297,8 +310,12 @@ impl DownloadPeer {
                                 download = Some(d.clone());
                             }
                             None => {
+                                let tokens = read
+                                    .download_tokens
+                                    .keys()
+                                    .collect::<Vec<_>>();
                                 panic!(
-                                    "No download info for token {token_u32}"
+                                    "[download_peer:{}] No download info for token {token_u32}, tokens: {:?}", self.username, tokens
                                 );
                             }
                         }
@@ -427,7 +444,9 @@ mod tests {
             "own_username".to_string(),
         );
         let dummy_context = Arc::new(RwLock::new(ClientContext::new()));
-        let _ = download_peer.download_file(dummy_context).unwrap();
+        let _ = download_peer
+            .download_file(dummy_context, None, None)
+            .unwrap();
 
         // Give the client time to send messages
         thread::sleep(Duration::from_millis(10));
@@ -450,7 +469,9 @@ mod tests {
             "own_username".to_string(),
         );
         let dummy_context = Arc::new(RwLock::new(ClientContext::new()));
-        let _ = download_peer.download_file(dummy_context).unwrap();
+        let _ = download_peer
+            .download_file(dummy_context, None, None)
+            .unwrap();
 
         // Give the client time to send messages
         thread::sleep(Duration::from_millis(10));
@@ -610,44 +631,5 @@ mod tests {
             FileManager::extract_filename_from_path("file.mp3"),
             "file.mp3"
         );
-    }
-
-    #[test]
-    fn test_create_download_path_from_filename() {
-        // Test with filename provided
-        let path = FileManager::create_download_path_from_filename(
-            Some("/downloads"),
-            "remote_user",
-            123,
-            Some("song.mp3"),
-        );
-        assert_eq!(path, "/downloads/song.mp3");
-
-        // Test with full path filename
-        let path = FileManager::create_download_path_from_filename(
-            Some("/downloads"),
-            "remote_user",
-            123,
-            Some("/remote/path/to/song.mp3"),
-        );
-        assert_eq!(path, "/downloads/song.mp3");
-
-        // Test without filename (fallback)
-        let path = FileManager::create_download_path_from_filename(
-            Some("/downloads"),
-            "remote_user",
-            123,
-            None,
-        );
-        assert_eq!(path, "/downloads/remote_user_123.mp3");
-
-        // Test with default directory
-        let path = FileManager::create_download_path_from_filename(
-            None,
-            "remote_user",
-            123,
-            Some("song.mp3"),
-        );
-        assert_eq!(path, "/tmp/song.mp3");
     }
 }

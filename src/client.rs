@@ -118,6 +118,8 @@ impl Client {
 
         let listen_port = self.listen_port;
         self.context.write().unwrap().sender = Some(sender.clone());
+        let context = self.context.clone();
+        let own_username = self.username.clone();
 
         let client_sender = sender.clone();
 
@@ -130,9 +132,14 @@ impl Client {
                         server.get_address().get_port()
                     );
 
-                    thread::spawn(move || {
-                        Listen::start(listen_port, client_sender.clone());
-                    });
+                    // thread::spawn(move || {
+                    //     Listen::start(
+                    //         listen_port,
+                    //         client_sender.clone(),
+                    //         context.clone(),
+                    //         own_username,
+                    //     );
+                    // });
                     let mut unlocked_context = self.context.write().unwrap();
                     unlocked_context.server_sender =
                         Some(server.get_sender().clone());
@@ -229,7 +236,7 @@ impl Client {
         let download_initiated = context
             .peers
             .get(&username)
-            .map(|p| p.transfer_request(download.clone()))
+            .map(|p| p.queue_upload(download.filename))
             .is_some();
 
         drop(context);
@@ -303,7 +310,7 @@ impl Client {
                             token,
                             peer
                         );
-                        match maybe_download {
+                        return match maybe_download {
                             Some(download) => {
                                 thread::spawn(move || {
                                     let download_peer = DownloadPeer::new(
@@ -322,7 +329,8 @@ impl Client {
                                                         Some(filename) => {
                                                             match download_peer.download_file(
                                                                 client_context_clone,
-                                                                Some(download.clone())
+                                                                Some(download.clone()),
+                                                                None
                                                             ) {
                                                                 Ok((download, filename)) => {
                                                                     download.sender.send(DownloadStatus::Completed).unwrap();
@@ -347,7 +355,7 @@ impl Client {
                                     token
                                 );
                             }
-                        }
+                        };
                     }
                     ClientOperation::NewPeer(new_peer) => {
                         if client_context
@@ -507,7 +515,7 @@ impl Client {
                                 DefaultPeer::new(peer_clone, sender_clone);
 
                             let connect_result = match stream {
-                                    Some(s) => default_peer.connect_with_socket(s),
+                                    Some(s) => default_peer.connect_with_socket(s, None),
                                     _ => default_peer.connect()
                                 };
 
@@ -543,6 +551,7 @@ impl Client {
                                     match download_peer
                                     .download_file(
                                         client_context2.clone(),
+                                        None,
                                         None
                                     ) {
                                         Ok((download, filename)) => {
