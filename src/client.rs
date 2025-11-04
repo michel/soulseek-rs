@@ -310,7 +310,7 @@ impl Client {
                                         download.username.clone(),
                                         peer.host.clone(),
                                         peer.port,
-                                        download.token,
+                                        token,
                                         false,
                                         own_username,
                                     );
@@ -500,7 +500,7 @@ impl Client {
             let peer_clone = peer.clone();
             let sender_clone = sender;
             unlocked_context.thread_pool.execute(move || {
-                    trace!("[client] connecting to {}, with connection_type: {}", peer.username, peer.connection_type);
+                    trace!("[client] connecting to {}, with connection_type: {}, and token {:?}", peer.username, peer.connection_type, peer.token);
                     match peer.connection_type {
                         ConnectionType::P => {
                             let default_peer =
@@ -530,7 +530,7 @@ impl Client {
                         }
 
                         ConnectionType::F => {
-                                    trace!("[client] downloading from: {}", peer.username);
+                                    trace!("[client] downloading from: {}, {:?}", peer.username, peer.token);
                                     let download_peer = DownloadPeer::new(
                                         peer.username,
                                         peer.host,
@@ -547,6 +547,7 @@ impl Client {
                                     ) {
                                         Ok((download, filename)) => {
                                             trace!("[client] downloaded {} bytes {:?} ", filename, download.size);
+                                            download.sender.send(DownloadStatus::Completed).unwrap(); 
                                         }
                                         Err(e) => {
                                             trace!("[client] failed to download: {}", e);
