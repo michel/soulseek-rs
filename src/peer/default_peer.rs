@@ -1,5 +1,5 @@
 use crate::dispatcher::MessageDispatcher;
-use crate::message::peer::FileSearchResponse;
+use crate::message::peer::{FileSearchResponse, PeerInit};
 use crate::message::peer::{
     GetShareFileList, PlaceInQueueResponse, TransferRequest, TransferResponse,
     UploadFailedHandler,
@@ -9,8 +9,8 @@ use crate::message::{Handlers, Message, MessageReader, MessageType};
 use crate::types::{Download, FileSearchResult, Transfer};
 
 use core::result::Result::Ok;
-use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{mpsc, Arc, RwLock};
 use std::thread::{self, JoinHandle};
 
 use crate::client::ClientOperation;
@@ -24,7 +24,7 @@ use std::time::Duration;
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct DefaultPeer {
-    peer: Peer,
+    peer: Arc<RwLock<Peer>>,
     peer_channel: Option<Sender<PeerOperation>>,
     client_channel: Sender<ClientOperation>,
     read_thread: Option<JoinHandle<()>>,
@@ -45,11 +45,13 @@ pub enum PeerOperation {
         filename: String,
         place: u32,
     },
+    SetUsername(String),
 }
+
 impl DefaultPeer {
     pub fn new(peer: Peer, client_channel: Sender<ClientOperation>) -> Self {
         Self {
-            peer,
+            peer: Arc::new(RwLock::new(peer)),
             peer_channel: None,
             client_channel,
             read_thread: None,
@@ -57,10 +59,12 @@ impl DefaultPeer {
         }
     }
     pub fn disconnect(mut self) {
-        debug!("[default_peer:{}] disconnect", self.peer.username.clone());
-        if let Err(e) = self.client_channel.send(
-            ClientOperation::PeerDisconnected(self.peer.username.clone()),
-        ) {
+        let username = self.peer.read().unwrap().username.clone();
+        debug!("[default_peer:{}] disconnect", username);
+        if let Err(e) = self
+            .client_channel
+            .send(ClientOperation::PeerDisconnected(username))
+        {
             error!("Failed to send disconnect notification: {}", e);
         }
 
@@ -71,7 +75,7 @@ impl DefaultPeer {
         mut self,
         mut stream: TcpStream,
     ) -> Result<Self, io::Error> {
-        if let Some(token) = self.peer.token {
+        if let Some(token) = self.peer.read().unwrap().token {
             let mut message: Vec<u8> = [0, 5, 0, 0, 0, 0].to_vec();
             message.extend_from_slice(&token.to_le_bytes());
             stream.write_all(&message).unwrap();
@@ -83,25 +87,35 @@ impl DefaultPeer {
 
         trace!(
             "[default_peer:{}] connect_with_socket: direct",
-            self.peer.username
+            self.peer.read().unwrap().username
         );
         self.start_read_write_loops(stream)?;
 
         Ok(self)
     }
-    pub fn connect(mut self) -> Result<Self, io::Error> {
-        println!(
-            "[default_peer] Connecting to {} on port {}",
-            self.peer.host, self.peer.port
-        );
-        let socket_address = format!("{}:{}", self.peer.host, self.peer.port)
-            .to_socket_addrs()?
-            .next()
-            .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "Invalid address")
-            })?;
 
-        trace!("[default_peer:{}] connect: indirect", self.peer.username);
+    pub fn connect(mut self) -> Result<Self, io::Error> {
+        {
+            let peer = self.peer.read().unwrap();
+            println!(
+                "[default_peer] Connecting to {} on port {}",
+                peer.host, peer.port
+            );
+        }
+        let socket_address = {
+            let peer = self.peer.read().unwrap();
+            format!("{}:{}", peer.host, peer.port)
+        }
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "Invalid address")
+        })?;
+
+        trace!(
+            "[default_peer:{}] connect: indirect",
+            self.peer.read().unwrap().username
+        );
         let mut stream = TcpStream::connect_timeout(
             &socket_address,
             Duration::from_secs(20),
@@ -111,7 +125,7 @@ impl DefaultPeer {
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
         stream.set_nodelay(true)?;
 
-        if let Some(token) = self.peer.token {
+        if let Some(token) = self.peer.read().unwrap().token {
             stream
                 .write_all(&MessageFactory::build_watch_user(token).get_data())
                 .unwrap();
@@ -127,7 +141,7 @@ impl DefaultPeer {
     ) -> Result<(), io::Error> {
         debug!(
             "[default_peer:{}] start_read_write_loops",
-            self.peer.username
+            self.peer.read().unwrap().username
         );
         let (peer_sender, peer_reader): (
             Sender<PeerOperation>,
@@ -152,6 +166,7 @@ impl DefaultPeer {
             handlers.register_handler(GetShareFileList);
             handlers.register_handler(UploadFailedHandler);
             handlers.register_handler(PlaceInQueueResponse);
+            handlers.register_handler(PeerInit);
 
             let dispatcher = MessageDispatcher::new(
                 "default_peer".to_string(),
@@ -167,19 +182,20 @@ impl DefaultPeer {
                         continue
                     }
                     Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
-                        debug!(
-                            "Read operation timed out in default peer {:}:{:}",
-                            peer.host, peer.port
-                        );
+                        {
+                            let peer_lock = peer.read().unwrap();
+                            debug!(
+                                "Read operation timed out in default peer {:}:{:}",
+                                peer_lock.host, peer_lock.port
+                            );
+                        }
                         continue;
                     }
                     Err(e) => {
-                        error!("[default_peer:{}] Error reading from peer:  {}. Terminating read loop.",peer.username, e);
-                        let _ = client_channel_for_read.send(
-                            ClientOperation::PeerDisconnected(
-                                peer.username.clone(),
-                            ),
-                        );
+                        let username = peer.read().unwrap().username.clone();
+                        error!("[default_peer:{}] Error reading from peer:  {}. Terminating read loop.",username, e);
+                        let _ = client_channel_for_read
+                            .send(ClientOperation::PeerDisconnected(username));
                         break;
                     }
                 }
@@ -191,7 +207,7 @@ impl DefaultPeer {
                         Ok(Some(mut message)) => {
                             trace!(
                                 "[default_peer:{}] ← {:?}",
-                                peer.username,
+                                peer.read().unwrap().username,
                                 message
                                     .get_message_name(
                                         MessageType::Peer,
@@ -206,10 +222,10 @@ impl DefaultPeer {
                                 "Error extracting message in default peer: {}. Terminating read loop.",
                                 e
                             );
+                            let username =
+                                peer.read().unwrap().username.clone();
                             let _ = client_channel_for_read.send(
-                                ClientOperation::PeerDisconnected(
-                                    peer.username.clone(),
-                                ),
+                                ClientOperation::PeerDisconnected(username),
                             );
                             should_terminate = true;
                             break;
@@ -225,7 +241,7 @@ impl DefaultPeer {
 
         let client_channel = self.client_channel.clone();
         let peer_channel = self.peer_channel.clone();
-        let peer_username = self.peer.username.clone();
+        let peer_clone_for_write = self.peer.clone();
 
         self.write_thread = Some(thread::spawn(move || loop {
             match peer_reader.recv() {
@@ -233,7 +249,7 @@ impl DefaultPeer {
                     PeerOperation::SendMessage(message) => {
                         trace!(
                             "[default_peer:{}] ➡ {:?} - {:?}",
-                            peer_username,
+                            peer_clone_for_write.read().unwrap().username,
                             message
                                 .get_message_name(
                                     MessageType::Peer,
@@ -253,10 +269,14 @@ impl DefaultPeer {
                         if let Err(e) =
                             write_stream.write_all(&message.get_buffer())
                         {
-                            error!("Error writing message to stream: {} - {}. Terminating write loop.", peer_username, e);
+                            error!("Error writing message to stream: {} - {}. Terminating write loop.", peer_clone_for_write.read().unwrap().username, e);
                             let _ = client_channel.send(
                                 ClientOperation::PeerDisconnected(
-                                    peer_username.clone(),
+                                    peer_clone_for_write
+                                        .read()
+                                        .unwrap()
+                                        .username
+                                        .clone(),
                                 ),
                             );
                             break;
@@ -271,12 +291,13 @@ impl DefaultPeer {
                     PeerOperation::TransferRequest(transfer) => {
                         debug!(
                             "[default_peer:{}] TransferRequest for {}",
-                            peer_username, transfer.token
+                            peer_clone_for_write.read().unwrap().username,
+                            transfer.token
                         );
                         client_channel
                             .send(ClientOperation::UpdateDownloadTokens(
                                 transfer.clone(),
-                                peer_clone.username.clone(),
+                                peer_clone.read().unwrap().username.clone(),
                             ))
                             .unwrap();
 
@@ -287,7 +308,7 @@ impl DefaultPeer {
 
                         trace!(
                             "[default_peer:{}] TransferResponse for {:?}",
-                            peer_username,
+                            peer_clone_for_write.read().unwrap().username,
                             transfer_response.get_buffer()
                         );
                         if let Some(sender) = peer_channel.clone() {
@@ -304,38 +325,47 @@ impl DefaultPeer {
                         reason,
                     } => {
                         debug!(
-                                    "[default_peer:{}] transfer response token: {} allowed: {}",
-                                    peer_username, token, allowed
-                                );
+                                                    "[default_peer:{}] transfer response token: {} allowed: {}",
+                                                    peer_clone_for_write.read().unwrap().username, token, allowed
+                                                );
 
                         if !allowed {
                             if let Some(reason_text) = reason {
                                 debug!(
-                                        "[default_peer:{}] Transfer rejected: {} - token {}, I will receive TransferRequest soon...",
-                                        peer_username.clone(),
-                                        reason_text,
-                                        token
-                                    );
+                                                        "[default_peer:{}] Transfer rejected: {} - token {}, I will receive TransferRequest soon...",
+                                                        peer_clone_for_write.read().unwrap().username.clone(),
+                                                        reason_text,
+                                                        token
+                                                    );
                             }
                         } else {
-                            debug!("[default_peer:{}] Transfer allowed, ready to connect with token {:}",peer_username, token);
+                            debug!("[default_peer:{}] Transfer allowed, ready to connect with token {:}",peer_clone_for_write.read().unwrap().username, token);
                             client_channel
                                 .send(ClientOperation::DownloadFromPeer(
                                     token,
-                                    peer_clone.clone(),
+                                    peer_clone.read().unwrap().clone(),
                                 ))
                                 .unwrap();
                         }
                     }
                     PeerOperation::PlaceInQueueResponse { filename, place } => {
                         debug!(
-                            "[default_peer:{}] Place in queue response - file: {}, place: {}",
-                            peer_username, filename, place
+                                            "[default_peer:{}] Place in queue response - file: {}, place: {}",
+                                            peer_clone_for_write.read().unwrap().username, filename, place
+                                        );
+                    }
+                    PeerOperation::SetUsername(username) => {
+                        trace!(
+                            "[default_peer:{}] SetUsername: {}",
+                            peer_clone_for_write.read().unwrap().username,
+                            username
                         );
+
+                        peer_clone.write().unwrap().username = username;
                     }
                 },
                 Err(_) => {
-                    debug!("[default_peer:{}] Peer channel closed. Terminating write loop.", peer_username);
+                    debug!("[default_peer:{}] Peer channel closed. Terminating write loop.", peer_clone_for_write.read().unwrap().username);
                     break;
                 }
             }
@@ -362,7 +392,7 @@ impl DefaultPeer {
 impl Drop for DefaultPeer {
     fn drop(&mut self) {
         self.peer_channel = None;
-        trace!("[default_peer:{}] drop", self.peer.username);
+        trace!("[default_peer:{}] drop", self.peer.read().unwrap().username);
 
         if let Some(handle) = self.read_thread.take() {
             debug!("Joining read thread...");

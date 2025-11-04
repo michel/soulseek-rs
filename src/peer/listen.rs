@@ -1,112 +1,43 @@
-use std::io::Write;
+use std::net::TcpListener;
 use std::sync::mpsc::Sender;
-use std::{io, net::TcpListener};
+use std::thread;
 
 use crate::client::ClientOperation;
-use crate::message::server::MessageFactory;
-use crate::message::MessageReader;
 
-use crate::{debug, error, info, trace, warn, FileSearchResult};
+use crate::peer::{DefaultPeer, Peer};
+use crate::{info, trace};
 
 pub struct Listen {}
 
 impl Listen {
     pub fn start(port: u32, client_sender: Sender<ClientOperation>) {
+        let mut index = 0;
+
         info!("starting listener on port {port}");
         let listener = TcpListener::bind(format!("0.0.0.0:{port}")).unwrap();
         for stream in listener.incoming() {
-            let mut stream = stream.unwrap();
+            index += 1;
+            let client_sender_clone = client_sender.clone();
+            thread::spawn(move || {
+                let stream = stream.unwrap();
 
-            let mut buffered_reader = MessageReader::new();
-            loop {
-                match buffered_reader.read_from_socket(&mut stream) {
-                    Ok(()) => {}
-                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        continue
-                    }
-                    Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
-                        debug!("Read operation timed out");
-                        continue;
-                    }
-                    Err(e) => {
-                        error!("Error reading from server: {}", e);
-                        break;
-                    }
-                }
+                let peer_ip = stream.peer_addr().unwrap().ip().to_string();
 
-                loop {
-                    match buffered_reader.extract_message() {
-                        Ok(Some(mut message)) => {
-                            message.set_pointer(4);
-                            let message_code = message.read_int8();
+                let peer = Peer::new(
+                    format!("unknown-{index}"),
+                    crate::peer::ConnectionType::P,
+                    peer_ip.clone(),
+                    port,
+                    None,
+                    0,
+                    0,
+                    0,
+                );
+                let default_peer = DefaultPeer::new(peer, client_sender_clone);
 
-                            trace!(
-                                "[listener] Received message with code: {}",
-                                message_code
-                            );
-
-                            match message_code {
-                                0 => {
-                                    let token = message.read_int32();
-                                    debug!("[listener] received Pierce Firewall, token: {}", token);
-                                    stream
-                                        .write_all(
-                                            &MessageFactory::build_pierce_firewall_message(
-                                                token,
-                                            )
-                                            .get_data(),
-                                        )
-                                        .unwrap();
-                                    stream.flush().unwrap();
-                                }
-                                1 => {
-                                    // handle handover to default_peer with socket in the future
-                                    // let tcp_stream =
-                                    //     read_stream.try_clone().unwrap();
-                                    //
-                                    // let username = message.read_string();
-                                    // let connection_type =
-                                    //     message.read_string().parse().unwrap();
-                                    // let token = message.read_int32();
-                                }
-                                9 => {
-                                    trace!("[listener] Handling file search response: 9",);
-                                    message.set_pointer(8);
-                                    let file_search =
-                                        match FileSearchResult::new_from_message(
-                                            &mut message,
-                                        ) {
-                                            Ok(result) => result,
-                                            Err(e) => {
-                                                trace!("[listener] malformed filesearch_result: {:?}, message: {:?}", e, message);
-                                                return;
-                                            }
-                                        };
-                                    client_sender
-                                        .send(ClientOperation::SearchResult(
-                                            file_search,
-                                        ))
-                                        .unwrap();
-                                    break;
-                                }
-                                _ => {
-                                    debug!(
-                                        "[listener] unknown message_code: {}",
-                                        message_code
-                                    );
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            warn!("[listener] Error extracting message: {}", e);
-                            break;
-                        }
-                        Ok(None) => break,
-                    }
-                }
-            }
-
-            // info!("[listener] Connection established!");
+                trace!("[listener{index}] new connection from {peer_ip}");
+                default_peer.connect_with_socket(stream).unwrap();
+            });
         }
     }
 }

@@ -358,6 +358,7 @@ impl Message {
                 ))),
             },
             MessageType::Peer => match code {
+                1 => Ok("PeerInit"),
                 4 => Ok("GetShareFileList"),
                 5 => Ok("SharedFileListResponse"),
                 9 => Ok("FileSearchResponse"),
