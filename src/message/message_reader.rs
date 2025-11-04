@@ -63,6 +63,10 @@ impl MessageReader {
         Ok(())
     }
 
+    pub fn buffer_len(&self) -> usize {
+        self.buffer.len()
+    }
+
     pub fn extract_message(&mut self) -> io::Result<Option<Message>> {
         let bytes_read = self.buffer.len();
         if bytes_read < 4 {
