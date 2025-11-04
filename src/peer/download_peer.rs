@@ -217,16 +217,15 @@ impl DownloadPeer {
             stream.write_all(&message.get_buffer())?;
             stream.flush()?;
         } else {
-            stream.write_all(
-                &MessageFactory::build_pierce_firewall_message(self.token)
-                    .get_buffer(),
-            )?;
+            let message =
+                MessageFactory::build_pierce_firewall_message(self.token);
+
+            stream.write_all(&message.get_buffer())?;
             trace!(
                 "[default_peer:{}] sending pierce firewall message token: {}: {:?}",
                 self.username,
                 self.token,
-                MessageFactory::build_pierce_firewall_message(self.token)
-                    .get_buffer()
+                &message.get_buffer()
             );
             stream.flush()?;
         }
@@ -257,8 +256,9 @@ impl DownloadPeer {
                 // connection closed
                 Ok(0) => {
                     trace!(
-                        "[download_peer:{}] connection closed by peer",
-                        self.username
+                        "[download_peer:{}] connection closed by peer. bytes read: {}",
+                        self.username,
+                        processor.total_bytes
                     );
                     break;
                 }
@@ -323,10 +323,13 @@ impl DownloadPeer {
             "[download_peer:{}] finished reading data from peer",
             self.username
         );
+        let read = client_context.read().unwrap();
+        let tokens = read.download_tokens.keys().collect::<Vec<_>>();
+
         let download = download.clone().unwrap_or_else(|| {
             panic!(
-                "[download_peer] No download info found for token: {}",
-                self.token
+                "[download_peer] No download info found for token: {}, tokens: {:?} ",
+                self.token, tokens
             )
         });
 
