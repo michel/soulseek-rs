@@ -72,6 +72,7 @@ impl ClientContext {
     }
 }
 pub struct Client {
+    enable_listen: bool,
     listen_port: u32,
     address: PeerAddress,
     username: String,
@@ -85,6 +86,7 @@ impl Client {
         address: PeerAddress,
         username: String,
         password: String,
+        enable_listen: bool,
         listen_port: Option<u32>,
     ) -> Self {
         crate::utils::logger::init();
@@ -94,6 +96,7 @@ impl Client {
             context.read().unwrap().thread_pool.thread_count()
         );
         Self {
+            enable_listen,
             listen_port: listen_port.unwrap_or(DEFALT_LISTEN_PORT),
             address,
             username,
@@ -107,7 +110,7 @@ impl Client {
         username: String,
         password: String,
     ) -> Self {
-        Self::new(address, username, password, None)
+        Self::new(address, username, password, false, None)
     }
 
     pub fn connect(&mut self) {
@@ -123,39 +126,45 @@ impl Client {
 
         let client_sender = sender.clone();
 
-        self.server =
-            match Server::new(self.address.clone(), sender, self.listen_port) {
-                Ok(server) => {
-                    info!(
-                        "Connected to server at {}:{}",
-                        server.get_address().get_host(),
-                        server.get_address().get_port()
-                    );
+        self.server = match Server::new(
+            self.address.clone(),
+            sender,
+            self.listen_port,
+            self.enable_listen,
+        ) {
+            Ok(server) => {
+                info!(
+                    "Connected to server at {}:{}",
+                    server.get_address().get_host(),
+                    server.get_address().get_port()
+                );
 
-                    // thread::spawn(move || {
-                    //     Listen::start(
-                    //         listen_port,
-                    //         client_sender.clone(),
-                    //         context.clone(),
-                    //         own_username,
-                    //     );
-                    // });
-                    let mut unlocked_context = self.context.write().unwrap();
-                    unlocked_context.server_sender =
-                        Some(server.get_sender().clone());
+                if self.enable_listen {
+                    thread::spawn(move || {
+                        Listen::start(
+                            listen_port,
+                            client_sender.clone(),
+                            context.clone(),
+                            own_username,
+                        );
+                    });
+                }
+                let mut unlocked_context = self.context.write().unwrap();
+                unlocked_context.server_sender =
+                    Some(server.get_sender().clone());
 
-                    Self::listen_to_client_operations(
-                        message_reader,
-                        self.context.clone(),
-                        self.username.clone(),
-                    );
-                    Some(server)
-                }
-                Err(e) => {
-                    error!("Error connecting to server: {}", e);
-                    None
-                }
-            };
+                Self::listen_to_client_operations(
+                    message_reader,
+                    self.context.clone(),
+                    self.username.clone(),
+                );
+                Some(server)
+            }
+            Err(e) => {
+                error!("Error connecting to server: {}", e);
+                None
+            }
+        };
     }
 
     pub fn login(&self) -> Result<bool> {
@@ -556,7 +565,7 @@ impl Client {
                                     ) {
                                         Ok((download, filename)) => {
                                             trace!("[client] downloaded {} bytes {:?} ", filename, download.size);
-                                            download.sender.send(DownloadStatus::Completed).unwrap(); 
+                                            download.sender.send(DownloadStatus::Completed).unwrap();
                                         }
                                         Err(e) => {
                                             trace!("[client] failed to download: {}", e);
