@@ -2,11 +2,13 @@ fn main() {
     use soulseek_rs::{Client, PeerAddress};
     use std::time::Duration;
 
-    let mut client = Client::with_defaults(
+    let mut client = Client::new(
         // PeerAddress::new(String::from("server.slsknet.org"), 2242),
         PeerAddress::new(String::from("127.0.0.1"), 2242),
         String::from("insane_in_the_brain3"),
         String::from("13375137"),
+        true,
+        None,
     );
 
     client.connect();

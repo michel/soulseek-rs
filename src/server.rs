@@ -195,12 +195,14 @@ pub struct Server {
     sender: Sender<ServerOperation>,
     context: Arc<RwLock<Context>>,
     listen_port: u32,
+    enable_listen: bool,
 }
 impl Server {
     pub fn new(
         address: PeerAddress,
         client_channel: Sender<ClientOperation>,
         listen_port: u32,
+        enable_listen: bool,
     ) -> std::result::Result<Self, io::Error> {
         let (sender, server_channel): (
             Sender<ServerOperation>,
@@ -214,6 +216,7 @@ impl Server {
             context,
             sender,
             listen_port,
+            enable_listen,
         };
 
         server.start_read_write_loops(server_channel, client_channel)?;
@@ -475,9 +478,13 @@ impl Server {
             ));
             self.queue_message(MessageFactory::build_no_parent_message());
             self.queue_message(MessageFactory::build_set_status_message(2));
-            self.queue_message(MessageFactory::build_set_wait_port_message(
-                self.listen_port,
-            ));
+            if self.enable_listen {
+                self.queue_message(
+                    MessageFactory::build_set_wait_port_message(
+                        self.listen_port,
+                    ),
+                );
+            }
         }
 
         Ok(logged_in.unwrap())
