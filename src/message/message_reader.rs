@@ -67,6 +67,10 @@ impl MessageReader {
         self.buffer.len()
     }
 
+    pub fn get_buffer(&mut self) -> Vec<u8> {
+        self.buffer.drain(..).collect()
+    }
+
     pub fn extract_message(&mut self) -> io::Result<Option<Message>> {
         let bytes_read = self.buffer.len();
         if bytes_read < 4 {

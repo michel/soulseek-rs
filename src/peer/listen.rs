@@ -7,6 +7,7 @@ use crate::client::{ClientContext, ClientOperation};
 
 use crate::message::MessageReader;
 use crate::peer::{ConnectionType, DefaultPeer, DownloadPeer, Peer};
+use crate::types::Download;
 use crate::{debug, error, info, trace, DownloadStatus};
 
 pub struct Listen {}
@@ -58,7 +59,7 @@ impl Listen {
                     debug!("[listener:{peer_ip}:{peer_port}] peerInit (0)  username: {username} connection_type: {connection_type} token: {token}");
 
                     let peer = Peer::new(
-                        format!("{}-direct", username.clone()),
+                        username.clone(),
                         ConnectionType::P,
                         peer_ip.clone(),
                         peer_port.into(),
@@ -78,49 +79,78 @@ impl Listen {
 
                         drop(default_peer);
                     } else if connection_type == "F" {
-                        let maybe_download = {
-                            let client_context = client_context.read().unwrap();
-                            client_context.download_tokens.get(&token).cloned()
-                        };
-
-                        let client_context_clone = client_context.clone();
-
                         trace!(
                             "[client] DownloadFromPeer token: {} peer: {:?}",
                             token,
                             peer
                         );
 
-                        thread::spawn(move || {
-                            let download_peer = DownloadPeer::new(
-                                format!("{}-direct", username.clone()),
-                                peer.host.clone(),
-                                peer.port,
-                                token,
-                                false,
-                                own_username,
-                            );
+                        let mut download: Option<Download> = None;
+                        if reader.buffer_len() > 0 {
+                            let buffer = reader.get_buffer();
+                            trace!("[listener:{peer_ip}:{peer_port}] reader buffer has {} bytes. {:?}", buffer.len(), buffer);
 
-                            match download_peer.download_file(
-                                client_context_clone,
-                                maybe_download,
-                                Some(stream),
-                            ) {
-                                Ok((download, filename)) => {
-                                    download
-                                        .sender
-                                        .send(DownloadStatus::Completed)
-                                        .unwrap();
-                                    info!("Successfully downloaded {} bytes to {}", download.size, filename);
-                                }
-                                Err(e) => {
-                                    error!(
+                            let token = buffer.get(0..4).unwrap();
+                            let token_u32 = u32::from_le_bytes(
+                            token
+                                .try_into()
+                                .unwrap_or_else(|_| panic!("[listener:{}] slice with incorrect length, can't extract transfer_token", username)),
+                        );
+                            trace!(
+                            "[listener:{}] got transfer_token: {} from data chunk",
+                            username,
+                            token_u32);
+
+                            download = client_context
+                                .read()
+                                .unwrap()
+                                .download_tokens
+                                .get(&token_u32)
+                                .cloned();
+
+                            if download.is_none() {
+                                let download_tokens = client_context
+                                    .read()
+                                    .unwrap()
+                                    .download_tokens
+                                    .keys()
+                                    .cloned()
+                                    .collect::<Vec<u32>>();
+                                trace!("[listener:{peer_ip}:{peer_port}] download token not found: {:?}, download tokens: {:?}", token_u32, download_tokens );
+                            }
+                        }
+
+                        let download_peer = DownloadPeer::new(
+                            format!("{}:direct", username.clone()),
+                            peer.host.clone(),
+                            peer.port,
+                            token,
+                            true,
+                            own_username,
+                        );
+
+                        match download_peer.download_file(
+                            client_context,
+                            download,
+                            Some(stream),
+                        ) {
+                            Ok((download, filename)) => {
+                                download
+                                    .sender
+                                    .send(DownloadStatus::Completed)
+                                    .unwrap();
+                                info!(
+                                    "Successfully downloaded {} bytes to {}",
+                                    download.size, filename
+                                );
+                            }
+                            Err(e) => {
+                                error!(
                                         "Failed to download file from {}:{} (token: {}) - Error: {}", 
                                         peer.host, peer.port, token, e
                                     );
-                                }
                             }
-                        });
+                        }
                     } else {
                         debug!(
                             "[listener:{peer_ip}:{peer_port}] connection type is not P or F"
