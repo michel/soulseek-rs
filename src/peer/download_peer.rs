@@ -49,7 +49,6 @@ impl FileManager {
     }
 
     fn create_temp_file(path: &str) -> Result<BufWriter<File>, io::Error> {
-        // Create directory if needed
         if let Some(parent) = Path::new(path).parent() {
             fs::create_dir_all(parent)?;
         }
@@ -72,7 +71,6 @@ impl FileManager {
     }
 
     fn extract_filename_from_path(full_path: &str) -> String {
-        // Split on both forward slashes and backslashes to handle Windows and Unix paths
         full_path
             .split(['/', '\\'])
             .next_back()
@@ -124,6 +122,7 @@ impl StreamProcessor {
             self.received = true;
             return Ok(true); // Skip this data chunk
         }
+        self.received = true;
         Ok(false)
     }
 
@@ -202,27 +201,27 @@ impl DownloadPeer {
             self.no_pierce
         );
         if self.no_pierce {
-            let message = MessageFactory::build_peer_init_message(
-                &self.own_username,
-                super::ConnectionType::F,
-                self.token,
-            );
-            trace!(
-                "[default_peer:{}] sending peer init, token: {} message: {:?}
-                ",
-                self.token,
-                self.username,
-                message.get_buffer(),
-            );
-            stream.write_all(&message.get_buffer())?;
-            stream.flush()?;
+            // let message = MessageFactory::build_peer_init_message(
+            //     &self.own_username,
+            //     super::ConnectionType::F,
+            //     self.token,
+            // );
+            // trace!(
+            //     "[download_peer:{}] sending peer init, token: {} message: {:?}
+            //     ",
+            //     self.username,
+            //     self.token,
+            //     message.get_buffer(),
+            // );
+            // stream.write_all(&message.get_buffer())?;
+            // stream.flush()?;
         } else {
             let message =
                 MessageFactory::build_pierce_firewall_message(self.token);
 
             stream.write_all(&message.get_buffer())?;
             trace!(
-                "[default_peer:{}] sending pierce firewall message token: {}: {:?}",
+                "[download_peer:{}] sending pierce firewall message token: {}: {:?}",
                 self.username,
                 self.token,
                 &message.get_buffer()
@@ -238,9 +237,13 @@ impl DownloadPeer {
         mut download: Option<Download>,
         stream: Option<TcpStream>,
     ) -> Result<(Download, String), io::Error> {
-        if stream.is_none() {
-            trace!("[download_peer:{}] stream is none", self.username);
-        }
+        trace!(
+            "[download_peer:{}] download_file: download is present?: {:?}, stream is present?: {:?}, no_pierce: {}",
+            self.username,
+            download.is_some(),
+            stream.is_some(),
+            self.no_pierce
+        );
         let mut stream = stream.unwrap_or_else(|| {
             self.establish_connection().unwrap_or_else(|e| {
                 panic!("Failed to establish connection: {:?}", e)
@@ -260,9 +263,13 @@ impl DownloadPeer {
             self.username
         );
 
+        if download.is_some() {
+            stream
+                .write_all(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])?;
+        }
+
         loop {
             match stream.read(&mut read_buffer) {
-                // connection closed
                 Ok(0) => {
                     trace!(
                         "[download_peer:{}] connection closed by peer. bytes read: {}",
@@ -274,10 +281,7 @@ impl DownloadPeer {
                 Ok(bytes_read) => {
                     let data = &read_buffer[..bytes_read];
 
-                    if !self.no_pierce
-                        && !processor.received
-                        && processor.handle_pierce_token(data, &mut stream)?
-                    {
+                    if !self.no_pierce && !processor.received {
                         let token = data.get(0..4).unwrap();
                         let token_u32 = u32::from_le_bytes(
                             token
@@ -285,11 +289,15 @@ impl DownloadPeer {
                                 .unwrap_or_else(|_| panic!("[download_peer:{}] slice with incorrect length", self.username)),
                         );
                         trace!(
-                            "[download_peer:{}] received token_u32: {:?}  - token: {:?}",
+                            "[download_peer:{}] got token: {} from data chunk",
                             self.username,
-                            token_u32,
-                            token
+                            token_u32
                         );
+                        processor.received = true;
+
+                        stream.write_all(&[
+                            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                        ])?;
 
                         let read = client_context.read().unwrap();
 
@@ -326,7 +334,7 @@ impl DownloadPeer {
                     processor.process_data_chunk(data);
 
                     if !processor.should_continue(Some(
-                        download.clone().unwrap().size as usize,
+                        download.as_ref().unwrap().size as usize,
                     )) {
                         break;
                     }
@@ -340,6 +348,23 @@ impl DownloadPeer {
             "[download_peer:{}] finished reading data from peer",
             self.username
         );
+
+        // let final_path = FileManager::create_download_path_from_filename(
+        //     "/tmp/".to_string(),
+        //     "test.mp3".to_string(),
+        // );
+        //
+        // if let Some(parent) = Path::new(&final_path).parent() {
+        //     fs::create_dir_all(parent)?;
+        // }
+        //
+        // fs::write(&final_path, &processor.buffer).unwrap_or_else(|e| {
+        //     panic!(
+        //         "[download_peer] Failed to write to file {}: {}",
+        //         final_path, e
+        //     )
+        // });
+
         let read = client_context.read().unwrap();
         let tokens = read.download_tokens.keys().collect::<Vec<_>>();
 

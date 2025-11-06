@@ -34,7 +34,7 @@ pub enum ClientOperation {
     SearchResult(FileSearchResult),
     PeerDisconnected(String),
     PierceFireWall(Peer),
-    DownloadFromPeer(u32, Peer),
+    DownloadFromPeer(u32, Peer, bool),
     UpdateDownloadTokens(Transfer, String),
     GetPeerAddressResponse {
         username: String,
@@ -168,18 +168,15 @@ impl Client {
     }
 
     pub fn login(&self) -> Result<bool> {
-        // Attempt to login
         info!("Logging in as {}", self.username);
         if let Some(server) = &self.server {
-            let result = server.login(&self.username, &self.password)?;
-            if result {
+            return if (server.login(&self.username, &self.password))? {
                 Ok(true)
             } else {
                 Err(SoulseekRs::AuthenticationFailed)
-            }
-        } else {
-            Err(SoulseekRs::NotConnected)
+            };
         }
+        Err(SoulseekRs::NotConnected)
     }
 
     #[allow(dead_code)]
@@ -306,7 +303,7 @@ impl Client {
                             own_username.clone(),
                         );
                     }
-                    ClientOperation::DownloadFromPeer(token, peer) => {
+                    ClientOperation::DownloadFromPeer(token, peer, allowed) => {
                         let maybe_download = {
                             let client_context = client_context.read().unwrap();
                             client_context.download_tokens.get(&token).cloned()
@@ -327,7 +324,7 @@ impl Client {
                                         peer.host.clone(),
                                         peer.port,
                                         token,
-                                        false,
+                                        allowed,
                                         own_username,
                                     );
                                     let filename: Option<&str> = download
