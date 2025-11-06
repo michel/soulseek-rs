@@ -98,9 +98,10 @@ impl DefaultPeer {
     pub fn connect(mut self) -> Result<Self, io::Error> {
         {
             let peer = self.peer.read().unwrap();
-            println!(
+            trace!(
                 "[default_peer] Connecting to {} on port {}",
-                peer.host, peer.port
+                peer.host,
+                peer.port
             );
         }
         let socket_address = {
@@ -141,10 +142,6 @@ impl DefaultPeer {
         stream: TcpStream,
         reader: Option<MessageReader>,
     ) -> Result<(), io::Error> {
-        debug!(
-            "[default_peer:{}] start_read_write_loops",
-            self.peer.read().unwrap().username
-        );
         let (peer_sender, peer_reader): (
             Sender<PeerOperation>,
             Receiver<PeerOperation>,
@@ -165,11 +162,6 @@ impl DefaultPeer {
         };
         let mut read_stream = stream;
 
-        debug!(
-            "[default_peer:{}] Streams created, spawning threads",
-            self.peer.read().unwrap().username
-        );
-
         let peer = self.peer.clone();
         let peer_clone = self.peer.clone();
         let client_channel_for_read = self.client_channel.clone();
@@ -178,10 +170,6 @@ impl DefaultPeer {
         let buffer_size = buffered_reader.buffer_len();
 
         self.read_thread = Some(thread::spawn(move || {
-            debug!(
-                "Read thread received reader with {} bytes in buffer",
-                buffer_size
-            );
             let mut handlers = Handlers::new();
             handlers.register_handler(FileSearchResponse);
             handlers.register_handler(TransferRequest);

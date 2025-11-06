@@ -71,32 +71,32 @@ impl Worker {
     fn new(
         id: usize,
         receiver: Arc<Mutex<mpsc::Receiver<Job>>>,
-        active_threads: Arc<AtomicUsize>,
-        total_threads: usize,
+        _active_threads: Arc<AtomicUsize>,
+        _total_threads: usize,
     ) -> Worker {
         let thread = thread::spawn(move || loop {
             let job = receiver.lock().unwrap().recv();
             match job {
                 Ok(job) => {
-                    let active =
-                        active_threads.fetch_add(1, Ordering::SeqCst) + 1;
-                    trace!(
-                        "Thread {} started job (active: {}/{})",
-                        id,
-                        active,
-                        total_threads
-                    );
+                    // let active =
+                    //     active_threads.fetch_add(1, Ordering::SeqCst) + 1;
+                    // trace!(
+                    //     "Thread {} started job (active: {}/{})",
+                    //     id,
+                    //     active,
+                    //     total_threads
+                    // );
 
                     job();
 
-                    let active =
-                        active_threads.fetch_sub(1, Ordering::SeqCst) - 1;
-                    trace!(
-                        "Thread {} finished job (active: {}/{})",
-                        id,
-                        active,
-                        total_threads
-                    );
+                    // let active =
+                    // active_threads.fetch_sub(1, Ordering::SeqCst) - 1;
+                    // trace!(
+                    //     "Thread {} finished job (active: {}/{})",
+                    //     id,
+                    //     active,
+                    //     total_threads
+                    // );
                 }
                 Err(_) => {
                     break;
