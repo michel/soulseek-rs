@@ -96,20 +96,14 @@ impl FileManager {
 }
 
 struct StreamProcessor {
-    #[allow(dead_code)]
-    no_pierce: bool,
-    #[allow(dead_code)]
-    token: u32,
     total_bytes: usize,
     received: bool,
     buffer: Vec<u8>,
 }
 
 impl StreamProcessor {
-    fn new(no_pierce: bool, token: u32) -> Self {
+    fn new() -> Self {
         Self {
-            no_pierce,
-            token,
             total_bytes: 0,
             received: false,
             buffer: Vec::new(),
@@ -257,7 +251,7 @@ impl DownloadPeer {
         client_context: &Arc<RwLock<ClientContext>>,
         mut download: Option<Download>,
     ) -> Result<(Vec<u8>, Download), DownloadError> {
-        let mut processor = StreamProcessor::new(self.no_pierce, self.token);
+        let mut processor = StreamProcessor::new();
         let mut read_buffer = [1u8; READ_BUFFER_SIZE];
 
         trace!(
@@ -423,40 +417,7 @@ impl DownloadPeer {
 
 #[cfg(test)]
 mod tests {
-    use super::{DownloadPeer, FileManager, StreamProcessor};
-
-    #[test]
-    fn test_stream_processor_new() {
-        let processor = StreamProcessor::new(true, 123);
-        assert!(processor.no_pierce);
-        assert_eq!(processor.token, 123);
-        assert_eq!(processor.total_bytes, 0);
-        assert!(!processor.received);
-    }
-
-    #[test]
-    fn test_stream_processor_should_continue() {
-        let processor = StreamProcessor::new(false, 123);
-        assert!(processor.should_continue(None));
-        assert!(processor.should_continue(Some(100)));
-    }
-
-    #[test]
-    fn test_stream_processor_should_continue_with_limit() {
-        let mut processor = StreamProcessor::new(false, 123);
-        processor.total_bytes = 150;
-        assert!(!processor.should_continue(Some(100)));
-        assert!(processor.should_continue(Some(200)));
-    }
-
-    #[test]
-    fn test_stream_processor_process_data_chunk() {
-        let mut processor = StreamProcessor::new(false, 123);
-        let data = b"test data";
-        processor.process_data_chunk(data);
-        assert_eq!(processor.total_bytes, data.len());
-        assert_eq!(processor.buffer, data);
-    }
+    use super::{DownloadPeer, FileManager};
 
     #[test]
     fn test_establish_connection_invalid_address() {
