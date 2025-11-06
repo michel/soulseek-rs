@@ -200,7 +200,10 @@ impl Message {
         let data = &self.data[self.pointer..self.pointer + size];
         self.pointer += size;
 
-        String::from_utf8(data.to_vec()).expect("Failed to read string")
+        match String::from_utf8(data.to_vec()) {
+            Ok(s) => s,
+            Err(_) => data.iter().map(|&b| b as char).collect::<String>(),
+        }
     }
 
     pub fn read_int8(&mut self) -> u8 {
@@ -465,4 +468,27 @@ fn test_read_string_invalid_utf8() {
     ];
     let mut test_data = Message::new_with_data(data);
     test_data.read_string();
+}
+
+#[test]
+fn test_read_string_invalid_utf82() {
+    let data = [
+        128, 0, 0, 0, 103, 58, 92, 100, 105, 115, 107, 52, 92, 115, 101, 109,
+        105, 114, 97, 109, 105, 115, 92, 99, 104, 105, 108, 108, 44, 32, 100,
+        117, 98, 44, 32, 100, 111, 119, 110, 98, 101, 97, 116, 44, 32, 97, 109,
+        98, 105, 101, 110, 116, 92, 118, 97, 114, 105, 111, 117, 115, 32, 97,
+        114, 116, 105, 115, 116, 115, 92, 112, 111, 116, 116, 32, 104, 101, 97,
+        100, 122, 32, 45, 32, 100, 111, 112, 101, 32, 115, 109, 111, 107, 105,
+        110, 180, 98, 101, 97, 116, 115, 32, 107, 98, 115, 32, 49, 50, 56, 32,
+        49, 57, 57, 54, 92, 48, 53, 32, 45, 32, 98, 108, 117, 101, 32, 116,
+        114, 97, 105, 110, 46, 109, 112, 51,
+    ]
+    .to_vec();
+
+    let mut test_data = Message::new_with_data(data);
+    let str = test_data.read_string();
+    assert_eq!(
+        str,
+        r"g:\disk4\semiramis\chill, dub, downbeat, ambient\various artists\pott headz - dope smokin´beats kbs 128 1996\05 - blue train.mp3"
+    );
 }

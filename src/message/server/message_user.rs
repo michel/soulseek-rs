@@ -27,7 +27,7 @@ impl MessageHandler<ServerOperation> for MessageUser {
             new_message,
         );
 
-        info!("User message received:");
+        info!("[MessageUser] User message received:{:?}", user_message);
         user_message.print()
     }
 }

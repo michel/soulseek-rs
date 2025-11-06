@@ -11,13 +11,13 @@ pub enum LogLevel {
 }
 
 static INIT: Once = Once::new();
-static mut LOG_LEVEL: LogLevel = LogLevel::Debug; // Default to VERBOSE (mapped to DEBUG)
+static mut LOG_LEVEL: LogLevel = LogLevel::Warn;
 
 pub fn init() {
     INIT.call_once(|| {
         let level = env::var("LOG_LEVEL")
             .or_else(|_| env::var("RUST_LOG"))
-            .unwrap_or_else(|_| "VERBOSE".to_string())
+            .unwrap_or_else(|_| "WARN".to_string())
             .to_uppercase();
 
         unsafe {
@@ -28,7 +28,7 @@ pub fn init() {
                 "DEBUG" => LogLevel::Debug,
                 "TRACE" => LogLevel::Trace,
                 "VERBOSE" => LogLevel::Debug, // Map VERBOSE to DEBUG
-                _ => LogLevel::Debug,         // Default to VERBOSE
+                _ => LogLevel::Warn,          // Default to WARN
             };
         }
     });
