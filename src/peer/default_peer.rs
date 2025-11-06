@@ -58,7 +58,7 @@ impl DefaultPeer {
             write_thread: None,
         }
     }
-    pub fn disconnect(mut self) {
+    pub fn disconnect(&mut self) {
         let username = self.peer.read().unwrap().username.clone();
         debug!("[default_peer:{}] disconnect", username);
         if let Err(e) = self
@@ -385,6 +385,7 @@ impl DefaultPeer {
                                 .send(ClientOperation::DownloadFromPeer(
                                     token,
                                     peer_clone.read().unwrap().clone(),
+                                    allowed,
                                 ))
                                 .unwrap();
                         }
