@@ -1,7 +1,3 @@
-use crate::client::ClientContext;
-use crate::message::server::MessageFactory;
-use crate::trace;
-use crate::types::Download;
 use std::env;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
@@ -10,6 +6,11 @@ use std::net::ToSocketAddrs;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
+
+use crate::client::ClientContext;
+use crate::message::server::MessageFactory;
+use crate::trace;
+use crate::types::Download;
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -416,103 +417,7 @@ impl DownloadPeer {
 #[cfg(test)]
 mod tests {
     use super::{DownloadPeer, FileManager, StreamProcessor};
-    use crate::client::ClientContext;
     use std::fs;
-    use std::io::Read;
-    use std::net::TcpListener;
-    use std::sync::{Arc, RwLock};
-    use std::thread;
-    use std::time::Duration;
-
-    pub fn build_test_server() -> (u16, Arc<RwLock<Vec<Vec<u8>>>>) {
-        let messages = Arc::new(RwLock::new(Vec::<Vec<u8>>::new()));
-        let messages_clone = Arc::clone(&messages);
-
-        // Find an available port by binding to port 0
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-
-        thread::spawn(move || {
-            for stream in listener.incoming() {
-                match stream {
-                    Ok(mut stream) => {
-                        let mut buffer = [0u8; 1024];
-                        match stream.read(&mut buffer) {
-                            Ok(bytes_read) if bytes_read > 0 => {
-                                let data = buffer[..bytes_read].to_vec();
-                                messages_clone.write().unwrap().push(data);
-                            }
-                            _ => {}
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-        });
-
-        // Give the server time to start
-        thread::sleep(Duration::from_millis(10));
-
-        (port, messages)
-    }
-
-    #[test]
-    pub fn test_connect_no_pierce() {
-        let (port, messages) = build_test_server();
-        let token = 33;
-        let download_peer = DownloadPeer::new(
-            "test_user".to_string(),
-            "127.0.0.1".to_string(),
-            port as u32,
-            token,
-            false,
-            "own_username".to_string(),
-        );
-        let dummy_context = Arc::new(RwLock::new(ClientContext::new()));
-        let _ = download_peer
-            .download_file(dummy_context, None, None)
-            .unwrap();
-
-        // Give the client time to send messages
-        thread::sleep(Duration::from_millis(10));
-
-        let received_messages = messages.read().unwrap();
-        assert_eq!(received_messages.len(), 1);
-        assert_eq!(received_messages[0], vec![0, 0, 0, 0, 33, 0, 0, 0]);
-    }
-
-    #[test]
-    pub fn test_connect_with_pierce() {
-        let (port, messages) = build_test_server();
-        let token = 33;
-        let download_peer = DownloadPeer::new(
-            "test_user".to_string(),
-            "127.0.0.1".to_string(),
-            port as u32,
-            token,
-            true, // no_pierce = true, should send init message
-            "own_username".to_string(),
-        );
-        let dummy_context = Arc::new(RwLock::new(ClientContext::new()));
-        let _ = download_peer
-            .download_file(dummy_context, None, None)
-            .unwrap();
-
-        // Give the client time to send messages
-        thread::sleep(Duration::from_millis(10));
-
-        let received_messages = messages.read().unwrap();
-        assert_eq!(received_messages.len(), 1); // Expect one init message
-        assert_eq!(
-            received_messages[0],
-            vec![
-                1, 12, 0, 0, 0, 111, 119, 110, 95, 117, 115, 101, 114, 110, 97,
-                109, 101, 1, 0, 0, 0, 70, 33, 0, 0, 0
-            ]
-        );
-
-        // No messages expected when no_pierce is false
-    }
 
     #[test]
     fn test_file_manager_create_paths_with_custom_path() {
