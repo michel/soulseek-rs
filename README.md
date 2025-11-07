@@ -1,5 +1,7 @@
 # Soulseek-rs 🦀
 
+# ⚠️WARNING THIS IS UNDER DEVELOPMENT AND NOT READY FOR USE ⚠️
+
 Souleek-rs is an experimental Soulseek client built in Rust. It's under
 development and not yet ready for use. Soulseek is a closed-source P2P
 file-sharing network from the 2000s. It's still used by music enthusiasts
