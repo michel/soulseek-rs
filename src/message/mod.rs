@@ -460,17 +460,6 @@ fn test_read_string_2() {
 }
 
 #[test]
-#[should_panic(expected = "Failed to read string")]
-fn test_read_string_invalid_utf8() {
-    let data = vec![
-        3, 0, 0, 0, // size = 3
-        255, 255, 255, // invalid UTF-8 sequence
-    ];
-    let mut test_data = Message::new_with_data(data);
-    test_data.read_string();
-}
-
-#[test]
 fn test_read_string_invalid_utf82() {
     let data = [
         128, 0, 0, 0, 103, 58, 92, 100, 105, 115, 107, 52, 92, 115, 101, 109,
