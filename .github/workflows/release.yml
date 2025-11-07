@@ -14,17 +14,17 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  semantic-release:
-    name: Semantic Release
+  check-release:
+    name: Check for Release
     runs-on: ubuntu-latest
     outputs:
-      new_release_published: ${{ steps.semantic.outputs.new_release_published }}
-      new_release_version: ${{ steps.semantic.outputs.new_release_version }}
+      should_release: ${{ steps.check.outputs.should_release }}
+      version: ${{ steps.check.outputs.version }}
+      notes: ${{ steps.check.outputs.notes }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -34,52 +34,45 @@ jobs:
       - name: Install semantic-release
         run: |
           npm install -g semantic-release@23 \
-            @semantic-release/git@10 \
-            @semantic-release/changelog@6 \
-            @semantic-release/exec@6
+            @semantic-release/commit-analyzer@13 \
+            @semantic-release/release-notes-generator@14
 
-      - name: Create semantic-release config
+      - name: Check if release needed
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cat > .releaserc.json << 'EOF'
           {
             "branches": ["master"],
             "plugins": [
               "@semantic-release/commit-analyzer",
-              "@semantic-release/release-notes-generator",
-              "@semantic-release/changelog",
-              [
-                "@semantic-release/exec",
-                {
-                  "prepareCmd": "sed -i 's/^version = \".*\"/version = \"${nextRelease.version}\"/' Cargo.toml"
-                }
-              ],
-              [
-                "@semantic-release/git",
-                {
-                  "assets": ["CHANGELOG.md", "Cargo.toml"],
-                  "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
-                }
-              ],
-              [
-                "@semantic-release/github",
-                {
-                  "assets": []
-                }
-              ]
-            ]
+              "@semantic-release/release-notes-generator"
+            ],
+            "dryRun": true
           }
           EOF
 
-      - name: Run semantic-release
-        id: semantic
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx semantic-release
+          OUTPUT=$(npx semantic-release --dry-run 2>&1 || true)
+          echo "$OUTPUT"
+
+          if echo "$OUTPUT" | grep -q "There is no relevant changes"; then
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          else
+            VERSION=$(echo "$OUTPUT" | grep -oP "next release version is \K[0-9]+\.[0-9]+\.[0-9]+" | head -1)
+            if [ -n "$VERSION" ]; then
+              echo "should_release=true" >> $GITHUB_OUTPUT
+              echo "version=$VERSION" >> $GITHUB_OUTPUT
+              echo "Version to release: $VERSION"
+            else
+              echo "should_release=false" >> $GITHUB_OUTPUT
+            fi
+          fi
 
   build-binaries:
     name: Build ${{ matrix.target }}
-    needs: semantic-release
-    if: needs.semantic-release.outputs.new_release_published == 'true'
+    needs: check-release
+    if: needs.check-release.outputs.should_release == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -102,8 +95,6 @@ jobs:
             tarball_name: soulseek-rs-windows-x86_64.zip
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: master
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -159,27 +150,81 @@ jobs:
           name: ${{ matrix.tarball_name }}
           path: ${{ matrix.tarball_name }}
 
-  upload-release-assets:
-    name: Upload Release Assets
-    needs: [semantic-release, build-binaries]
+  create-release:
+    name: Create Release
+    needs: [check-release, build-binaries]
+    if: needs.check-release.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+
+      - name: Install semantic-release
+        run: |
+          npm install -g semantic-release@23 \
+            @semantic-release/git@10 \
+            @semantic-release/changelog@6 \
+            @semantic-release/exec@6 \
+            @semantic-release/github@11
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Display structure of downloaded files
+      - name: Display artifact structure
         run: ls -R artifacts
 
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: v${{ needs.semantic-release.outputs.new_release_version }}
-          files: |
-            artifacts/soulseek-rs-linux-x86_64.tar.gz/soulseek-rs-linux-x86_64.tar.gz
-            artifacts/soulseek-rs-macos-x86_64.tar.gz/soulseek-rs-macos-x86_64.tar.gz
-            artifacts/soulseek-rs-macos-aarch64.tar.gz/soulseek-rs-macos-aarch64.tar.gz
-            artifacts/soulseek-rs-windows-x86_64.zip/soulseek-rs-windows-x86_64.zip
+      - name: Prepare artifacts for release
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f -name "*.tar.gz" -exec cp {} release-assets/ \;
+          find artifacts -type f -name "*.zip" -exec cp {} release-assets/ \;
+          ls -lh release-assets/
+
+      - name: Create semantic-release config
+        run: |
+          cat > .releaserc.json << 'EOF'
+          {
+            "branches": ["master"],
+            "plugins": [
+              "@semantic-release/commit-analyzer",
+              "@semantic-release/release-notes-generator",
+              "@semantic-release/changelog",
+              [
+                "@semantic-release/exec",
+                {
+                  "prepareCmd": "sed -i 's/^version = \".*\"/version = \"${nextRelease.version}\"/' Cargo.toml"
+                }
+              ],
+              [
+                "@semantic-release/git",
+                {
+                  "assets": ["CHANGELOG.md", "Cargo.toml"],
+                  "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+                }
+              ],
+              [
+                "@semantic-release/github",
+                {
+                  "assets": [
+                    {"path": "release-assets/*.tar.gz"},
+                    {"path": "release-assets/*.zip"}
+                  ]
+                }
+              ]
+            ]
+          }
+          EOF
+
+      - name: Run semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx semantic-release
