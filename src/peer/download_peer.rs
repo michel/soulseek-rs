@@ -83,7 +83,10 @@ impl FileManager {
     }
 
     fn extract_filename_from_path(full_path: &str) -> &str {
-        full_path.split(['/', '\\']).last().unwrap_or(full_path)
+        full_path
+            .split(['/', '\\'])
+            .next_back()
+            .unwrap_or(full_path)
     }
 
     fn create_download_path_from_filename(
