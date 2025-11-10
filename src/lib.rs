@@ -1,4 +1,5 @@
 // Core modules
+pub mod actor;
 pub mod client;
 pub mod dispatcher;
 pub mod error;

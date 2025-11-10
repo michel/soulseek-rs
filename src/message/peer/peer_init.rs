@@ -2,17 +2,17 @@ use std::sync::mpsc::Sender;
 
 use crate::{
     message::{Message, MessageHandler},
-    peer::PeerOperation,
+    peer::PeerMessage,
     trace,
 };
 
 pub struct PeerInit;
-impl MessageHandler<PeerOperation> for PeerInit {
+impl MessageHandler<PeerMessage> for PeerInit {
     fn get_code(&self) -> u8 {
         1
     }
 
-    fn handle(&self, message: &mut Message, sender: Sender<PeerOperation>) {
+    fn handle(&self, message: &mut Message, sender: Sender<PeerMessage>) {
         message.set_pointer(4);
         let _message_code = message.read_int8();
         let username = message.read_string();
@@ -25,6 +25,6 @@ impl MessageHandler<PeerOperation> for PeerInit {
             token
         );
 
-        sender.send(PeerOperation::SetUsername(username)).unwrap();
+        sender.send(PeerMessage::SetUsername(username)).unwrap();
     }
 }

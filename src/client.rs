@@ -1,8 +1,9 @@
 use crate::types::{DownloadResult, DownloadStatus};
 use crate::{
+    actor::{ActorSystem, peer_registry::PeerRegistry},
     error::{Result, SoulseekRs},
     peer::{
-        listen::Listen, ConnectionType, DefaultPeer, DownloadPeer, NewPeer,
+        listen::Listen, ConnectionType, DownloadPeer, NewPeer,
         Peer,
     },
     server::{PeerAddress, Server, ServerOperation},
@@ -25,7 +26,6 @@ use std::{
 };
 
 use crate::{debug, error, info, trace};
-const MAX_THREADS: usize = 50;
 const DEFALT_LISTEN_PORT: u32 = 2234;
 
 pub enum ClientOperation {
@@ -45,12 +45,13 @@ pub enum ClientOperation {
     },
 }
 pub struct ClientContext {
-    peers: HashMap<String, DefaultPeer>,
+    pub peer_registry: Option<PeerRegistry>,
     sender: Option<Sender<ClientOperation>>,
     server_sender: Option<Sender<crate::server::ServerOperation>>,
     search_results: Vec<FileSearchResult>,
     pub download_tokens: HashMap<u32, Download>,
-    thread_pool: ThreadPool,
+    thread_pool: Arc<ThreadPool>,
+    actor_system: Arc<ActorSystem>,
 }
 impl Default for ClientContext {
     fn default() -> Self {
@@ -61,13 +62,21 @@ impl Default for ClientContext {
 impl ClientContext {
     #[must_use]
     pub fn new() -> Self {
+        let max_threads = thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(8);
+
+        let thread_pool = Arc::new(ThreadPool::new(max_threads));
+        let actor_system = Arc::new(ActorSystem::new(thread_pool.clone()));
+
         Self {
-            peers: HashMap::new(),
+            peer_registry: None,
             sender: None,
             server_sender: None,
             search_results: Vec::new(),
             download_tokens: HashMap::new(),
-            thread_pool: ThreadPool::new(MAX_THREADS),
+            thread_pool,
+            actor_system,
         }
     }
 }
@@ -120,9 +129,19 @@ impl Client {
         ) = mpsc::channel();
 
         let listen_port = self.listen_port;
-        self.context.write().unwrap().sender = Some(sender.clone());
         let context = self.context.clone();
         let own_username = self.username.clone();
+
+        // Initialize PeerRegistry with the actor system
+        {
+            let mut ctx = self.context.write().unwrap();
+            ctx.sender = Some(sender.clone());
+            let peer_registry = PeerRegistry::new(
+                ctx.actor_system.clone(),
+                sender.clone(),
+            );
+            ctx.peer_registry = Some(peer_registry);
+        }
 
         let client_sender = sender.clone();
 
@@ -181,9 +200,11 @@ impl Client {
 
     #[allow(dead_code)]
     pub fn remove_peer(&self, username: &str) {
-        let mut context = self.context.write().unwrap();
-        if let Some(peer) = context.peers.remove(username) {
-            drop(peer);
+        let context = self.context.read().unwrap();
+        if let Some(ref registry) = context.peer_registry {
+            if let Some(handle) = registry.remove_peer(username) {
+                let _ = handle.stop();
+            }
         }
     }
 
@@ -239,11 +260,12 @@ impl Client {
 
         let mut context = self.context.write().unwrap();
         context.download_tokens.insert(token, download.clone());
-        let download_initiated = context
-            .peers
-            .get(&username)
-            .map(|p| p.queue_upload(download.filename))
-            .is_some();
+
+        let download_initiated = if let Some(ref registry) = context.peer_registry {
+            registry.queue_upload(&username, download.filename.clone()).is_ok()
+        } else {
+            false
+        };
 
         drop(context);
 
@@ -291,9 +313,11 @@ impl Client {
                             .push(file_search.clone());
                     }
                     ClientOperation::PeerDisconnected(username) => {
-                        let mut context = client_context.write().unwrap();
-                        if let Some(peer) = context.peers.remove(&username) {
-                            drop(peer); // Explicitly drop to trigger cleanup
+                        let context = client_context.read().unwrap();
+                        if let Some(ref registry) = context.peer_registry {
+                            if let Some(handle) = registry.remove_peer(&username) {
+                                let _ = handle.stop();
+                            }
                         }
                     }
                     ClientOperation::PierceFireWall(peer) => {
@@ -364,12 +388,15 @@ impl Client {
                         };
                     }
                     ClientOperation::NewPeer(new_peer) => {
-                        if client_context
+                        let peer_exists = client_context
                             .read()
                             .unwrap()
-                            .peers
-                            .contains_key(&new_peer.username)
-                        {
+                            .peer_registry
+                            .as_ref()
+                            .map(|r| r.contains(&new_peer.username))
+                            .unwrap_or(false);
+
+                        if peer_exists {
                             debug!(
                                 "Already connected to {}",
                                 new_peer.username
@@ -418,9 +445,13 @@ impl Client {
                                             username, host, port, obfuscation_type, obfuscated_port
                                         );
 
-                        if let Some(_peer) =
-                            client_context.read().unwrap().peers.get(&username)
-                        {
+                        let peer_exists = client_context.read().unwrap()
+                            .peer_registry
+                            .as_ref()
+                            .map(|r| r.contains(&username))
+                            .unwrap_or(false);
+
+                        if peer_exists {
                             // don't know if i should update? and or reconnect the peer
                             // debug!(
                             //     "existing peer: {:?}, new peer details:
@@ -517,29 +548,75 @@ impl Client {
                     trace!("[client] connecting to {}, with connection_type: {}, and token {:?}", peer.username, peer.connection_type, peer.token);
                     match peer.connection_type {
                         ConnectionType::P => {
-                            let default_peer =
-                                DefaultPeer::new(peer_clone, sender_clone);
+                            let username = peer.username.clone();
 
-                            let connect_result = match stream {
-                                    Some(s) => default_peer.connect_with_socket(s, None),
-                                    _ => default_peer.connect()
-                                };
+                            // Establish TCP connection or use provided stream
+                            let mut tcp_stream = match stream {
+                                Some(s) => s,
+                                None => {
+                                    let socket_addr = format!("{}:{}", peer_clone.host, peer_clone.port)
+                                        .parse::<std::net::SocketAddr>();
 
-                            match connect_result {
-                                Ok(p) => {
-                                    trace!("[client] connected to: {}", peer.username);
-                                    client_context2.write().unwrap().peers.insert(peer.username, p);
+                                    match socket_addr {
+                                        Ok(addr) => {
+                                            match TcpStream::connect_timeout(&addr, Duration::from_secs(20)) {
+                                                Ok(s) => s,
+                                                Err(e) => {
+                                                    trace!(
+                                                        "Can't connect to {:?} {:?}:{:?} - {:?}",
+                                                        username, peer_clone.host, peer_clone.port, e
+                                                    );
+                                                    return;
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            trace!("Invalid socket address for {:?}: {:?}", username, e);
+                                            return;
+                                        }
+                                    }
                                 }
-                                Err(e) => {
-                                    trace!(
-                                        "Can't connect to {:?} {:?}:{:?} {:?} - {:?}",
-                                        peer.username,
-                                        peer.host,
-                                        peer.port,
-                                        peer.connection_type,
-                                        e
-                                    );
+                            };
+
+                            // Send connection handshake message
+                            use std::io::Write;
+                            if let Some(token) = peer_clone.token {
+                                // For indirect connections, send watch user message
+                                let handshake_msg = crate::message::server::MessageFactory::build_watch_user(token);
+                                if let Err(e) = tcp_stream.write_all(&handshake_msg.get_data()) {
+                                    trace!("Failed to send watch user handshake to {:?}: {:?}", username, e);
+                                    return;
                                 }
+                                trace!("[client] Sent watch user handshake for token: {}", token);
+                            }
+
+                            // Configure socket
+                            if let Err(e) = tcp_stream.set_read_timeout(Some(Duration::from_secs(5))) {
+                                trace!("Failed to set read timeout for {:?}: {:?}", username, e);
+                                return;
+                            }
+                            if let Err(e) = tcp_stream.set_write_timeout(Some(Duration::from_secs(5))) {
+                                trace!("Failed to set write timeout for {:?}: {:?}", username, e);
+                                return;
+                            }
+                            if let Err(e) = tcp_stream.set_nodelay(true) {
+                                trace!("Failed to set nodelay for {:?}: {:?}", username, e);
+                                return;
+                            }
+
+                            // Spawn peer actor
+                            let context = client_context2.read().unwrap();
+                            if let Some(ref registry) = context.peer_registry {
+                                match registry.register_peer(peer_clone, tcp_stream, None) {
+                                    Ok(_) => {
+                                        trace!("[client] peer actor spawned for: {}", username);
+                                    }
+                                    Err(e) => {
+                                        trace!("Failed to spawn peer actor for {:?}: {:?}", username, e);
+                                    }
+                                }
+                            } else {
+                                trace!("PeerRegistry not initialized");
                             }
                         }
 
