@@ -101,44 +101,29 @@ impl ActorSystem {
         };
         let handle_for_init = handle.clone();
 
-        // Start the actor event loop on the thread pool
         self.thread_pool.execute(move || {
-            trace!("[actor_system] Actor task starting on thread pool");
             init(&mut actor, handle_for_init);
-            trace!("[actor_system] Actor init callback completed");
             actor.on_start();
-            trace!(
-                "[actor_system] Actor on_start completed, starting event loop"
-            );
             Self::run_actor_loop(&mut actor, receiver);
-            trace!("[actor_system] Actor event loop ended");
             actor.on_stop();
-            trace!("[actor_system] Actor on_stop completed");
         });
 
         handle
     }
 
-    /// Run the actor's message processing loop
     fn run_actor_loop<A: Actor>(
         actor: &mut A,
         receiver: Receiver<ActorMessage<A::Message>>,
     ) {
-        trace!("[actor_system] run_actor_loop STARTED");
         let tick_interval = Duration::from_millis(100);
         let mut last_tick = Instant::now();
         let mut message_count = 0;
         let mut tick_count = 0;
 
         loop {
-            // Try to receive messages with timeout for periodic ticks
             match receiver.recv_timeout(tick_interval) {
                 Ok(ActorMessage::UserMessage(msg)) => {
                     message_count += 1;
-                    trace!(
-                        "[actor_system] Processing message #{}",
-                        message_count
-                    );
                     actor.handle(msg);
                 }
                 Ok(ActorMessage::Stop) => {
@@ -153,15 +138,15 @@ impl ActorSystem {
                         "[actor_system] Received explicit Tick message #{}",
                         tick_count
                     );
+
                     actor.tick();
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                    // Periodic tick
                     if last_tick.elapsed() >= tick_interval {
                         tick_count += 1;
-                        if tick_count % 10 == 0 {
-                            trace!("[actor_system] Periodic tick #{} (every 1s log)", tick_count);
-                        }
+                        // if tick_count % 10 == 0 {
+                        //     trace!("[actor_system] Periodic tick #{} (every 1s log)", tick_count);
+                        // }
                         actor.tick();
                         last_tick = Instant::now();
                     }
@@ -170,7 +155,6 @@ impl ActorSystem {
                     trace!(
                         "[actor_system] Channel disconnected, breaking loop"
                     );
-                    // Channel closed, actor should stop
                     break;
                 }
             }
