@@ -2,8 +2,8 @@ use crate::actor::{Actor, ActorHandle};
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
 use crate::message::peer::{
-    FileSearchResponse, GetShareFileList, PeerInit, PlaceInQueueResponse, TransferRequest,
-    TransferResponse, UploadFailedHandler,
+    FileSearchResponse, GetShareFileList, PeerInit, PlaceInQueueResponse,
+    TransferRequest, TransferResponse, UploadFailedHandler,
 };
 use crate::message::server::MessageFactory;
 use crate::message::{Handlers, Message, MessageReader, MessageType};
@@ -81,7 +81,8 @@ impl PeerActor {
     /// Initialize the message dispatcher with handlers
     fn initialize_dispatcher(&mut self) {
         // Create a channel for the dispatcher to send messages to
-        let (dispatcher_sender, dispatcher_receiver) = std::sync::mpsc::channel::<PeerMessage>();
+        let (dispatcher_sender, dispatcher_receiver) =
+            std::sync::mpsc::channel::<PeerMessage>();
 
         self.dispatcher_receiver = Some(dispatcher_receiver);
 
@@ -104,15 +105,16 @@ impl PeerActor {
     /// Process any messages from the dispatcher
     fn process_dispatcher_messages(&mut self) {
         // Collect all messages first to avoid borrow issues
-        let messages: Vec<PeerMessage> = if let Some(ref receiver) = self.dispatcher_receiver {
-            let mut msgs = Vec::new();
-            while let Ok(msg) = receiver.try_recv() {
-                msgs.push(msg);
-            }
-            msgs
-        } else {
-            Vec::new()
-        };
+        let messages: Vec<PeerMessage> =
+            if let Some(ref receiver) = self.dispatcher_receiver {
+                let mut msgs = Vec::new();
+                while let Ok(msg) = receiver.try_recv() {
+                    msgs.push(msg);
+                }
+                msgs
+            } else {
+                Vec::new()
+            };
 
         // Process all collected messages
         for msg in messages {
@@ -149,7 +151,9 @@ impl PeerActor {
                     MessageFactory::build_transfer_response_message(transfer);
 
                 if let Some(ref handle) = self.self_handle {
-                    if let Err(e) = handle.send(PeerMessage::SendMessage(transfer_response)) {
+                    if let Err(e) =
+                        handle.send(PeerMessage::SendMessage(transfer_response))
+                    {
                         error!("[peer_actor:{}] Failed to send TransferResponse message: {}", username, e);
                     }
                 }
@@ -202,7 +206,8 @@ impl PeerActor {
                 self.peer.write().unwrap().username = username;
             }
             PeerMessage::QueueUpload(filename) => {
-                let message = MessageFactory::build_queue_upload_message(&filename);
+                let message =
+                    MessageFactory::build_queue_upload_message(&filename);
                 self.send_message(message);
             }
             PeerMessage::RequestTransfer(download) => {
@@ -214,7 +219,10 @@ impl PeerActor {
             }
             PeerMessage::ProcessRead => {
                 let username = self.peer.read().unwrap().username.clone();
-                trace!("[peer_actor:{}] Handling ProcessRead message", username);
+                trace!(
+                    "[peer_actor:{}] Handling ProcessRead message",
+                    username
+                );
                 self.process_read();
             }
         }
@@ -269,13 +277,19 @@ impl PeerActor {
                         username,
                         extracted_count,
                         message
-                            .get_message_name(MessageType::Peer, message.get_message_code() as u32)
+                            .get_message_name(
+                                MessageType::Peer,
+                                message.get_message_code() as u32
+                            )
                             .map_err(|e| e.to_string())
                     );
                     if let Some(ref dispatcher) = self.dispatcher {
                         dispatcher.dispatch(&mut message);
                     } else {
-                        warn!("[peer_actor:{}] No dispatcher available!", username);
+                        warn!(
+                            "[peer_actor:{}] No dispatcher available!",
+                            username
+                        );
                     }
                 }
                 Err(e) => {
@@ -316,7 +330,9 @@ impl PeerActor {
             message
                 .get_message_name(
                     MessageType::Peer,
-                    u32::from_le_bytes(message.get_slice(0, 4).try_into().unwrap())
+                    u32::from_le_bytes(
+                        message.get_slice(0, 4).try_into().unwrap()
+                    )
                 )
                 .map_err(|e| e.to_string())
         );
@@ -372,17 +388,32 @@ impl Actor for PeerActor {
 
         // Trigger initial read
         if let Some(ref handle) = self.self_handle {
-            trace!("[peer_actor:{}] Sending initial ProcessRead message", username);
+            trace!(
+                "[peer_actor:{}] Sending initial ProcessRead message",
+                username
+            );
             match handle.send(PeerMessage::ProcessRead) {
-                Ok(_) => trace!("[peer_actor:{}] ProcessRead message sent successfully", username),
-                Err(e) => error!("[peer_actor:{}] FAILED to send ProcessRead: {}", username, e),
+                Ok(_) => trace!(
+                    "[peer_actor:{}] ProcessRead message sent successfully",
+                    username
+                ),
+                Err(e) => error!(
+                    "[peer_actor:{}] FAILED to send ProcessRead: {}",
+                    username, e
+                ),
             }
         } else {
-            error!("[peer_actor:{}] self_handle is None! Cannot send ProcessRead", username);
+            error!(
+                "[peer_actor:{}] self_handle is None! Cannot send ProcessRead",
+                username
+            );
         }
 
         // Also do an immediate read as fallback
-        trace!("[peer_actor:{}] Performing immediate process_read as fallback", username);
+        trace!(
+            "[peer_actor:{}] Performing immediate process_read as fallback",
+            username
+        );
         self.process_read();
     }
 
@@ -398,8 +429,10 @@ impl Actor for PeerActor {
             self.process_read();
         } else {
             let username = self.peer.read().unwrap().username.clone();
-            trace!("[peer_actor:{}] tick() called but stream is None", username);
+            trace!(
+                "[peer_actor:{}] tick() called but stream is None",
+                username
+            );
         }
     }
 }
-
