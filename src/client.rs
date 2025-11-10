@@ -47,7 +47,6 @@ pub struct ClientContext {
     server_sender: Option<Sender<crate::server::ServerOperation>>,
     search_results: Vec<FileSearchResult>,
     pub download_tokens: HashMap<u32, Download>,
-    thread_pool: Arc<ThreadPool>,
     actor_system: Arc<ActorSystem>,
 }
 impl Default for ClientContext {
@@ -72,7 +71,6 @@ impl ClientContext {
             server_sender: None,
             search_results: Vec::new(),
             download_tokens: HashMap::new(),
-            thread_pool,
             actor_system,
         }
     }
@@ -97,10 +95,6 @@ impl Client {
     ) -> Self {
         crate::utils::logger::init();
         let context = Arc::new(RwLock::new(ClientContext::new()));
-        debug!(
-            "ThreadPool initialized with {} threads",
-            context.read().unwrap().thread_pool.thread_count()
-        );
         Self {
             enable_listen,
             listen_port: listen_port.unwrap_or(DEFALT_LISTEN_PORT),
@@ -545,113 +539,161 @@ impl Client {
         trace!("[client] connect_to_peer: {}", peer.username);
         if let Some(_sender) = unlocked_context.sender.clone() {
             let peer_clone = peer.clone();
-            unlocked_context.thread_pool.execute(move || {
-                    trace!("[client] connecting to {}, with connection_type: {}, and token {:?}", peer.username, peer.connection_type, peer.token);
-                    match peer.connection_type {
-                        ConnectionType::P => {
-                            let username = peer.username.clone();
+            trace!("[client] connecting to {}, with connection_type: {}, and token {:?}", peer.username, peer.connection_type, peer.token);
+            match peer.connection_type {
+                ConnectionType::P => {
+                    let username = peer.username.clone();
 
-                            // Establish TCP connection or use provided stream
-                            let mut tcp_stream = match stream {
-                                Some(s) => s,
-                                None => {
-                                    let socket_addr = format!("{}:{}", peer_clone.host, peer_clone.port)
-                                        .parse::<std::net::SocketAddr>();
+                    // Establish TCP connection or use provided stream
+                    let mut tcp_stream = match stream {
+                        Some(s) => s,
+                        None => {
+                            let socket_addr = format!(
+                                "{}:{}",
+                                peer_clone.host, peer_clone.port
+                            )
+                            .parse::<std::net::SocketAddr>();
 
-                                    match socket_addr {
-                                        Ok(addr) => {
-                                            match TcpStream::connect_timeout(&addr, Duration::from_secs(20)) {
-                                                Ok(s) => s,
-                                                Err(e) => {
-                                                    trace!(
+                            match socket_addr {
+                                Ok(addr) => {
+                                    match TcpStream::connect_timeout(
+                                        &addr,
+                                        Duration::from_secs(20),
+                                    ) {
+                                        Ok(s) => s,
+                                        Err(e) => {
+                                            trace!(
                                                         "Can't connect to {:?} {:?}:{:?} - {:?}",
                                                         username, peer_clone.host, peer_clone.port, e
                                                     );
-                                                    return;
-                                                }
-                                            }
-                                        }
-                                        Err(e) => {
-                                            trace!("Invalid socket address for {:?}: {:?}", username, e);
                                             return;
                                         }
                                     }
                                 }
-                            };
-
-                            // Send connection handshake message
-                            use std::io::Write;
-                            if let Some(token) = peer_clone.token {
-                                // For indirect connections, send watch user message
-                                let handshake_msg = crate::message::server::MessageFactory::build_watch_user(token);
-                                if let Err(e) = tcp_stream.write_all(&handshake_msg.get_data()) {
-                                    trace!("Failed to send watch user handshake to {:?}: {:?}", username, e);
+                                Err(e) => {
+                                    trace!(
+                                        "Invalid socket address for {:?}: {:?}",
+                                        username,
+                                        e
+                                    );
                                     return;
                                 }
-                                trace!("[client] Sent watch user handshake for token: {}", token);
-                            }
-
-                            // Configure socket
-                            if let Err(e) = tcp_stream.set_read_timeout(Some(Duration::from_secs(5))) {
-                                trace!("Failed to set read timeout for {:?}: {:?}", username, e);
-                                return;
-                            }
-                            if let Err(e) = tcp_stream.set_write_timeout(Some(Duration::from_secs(5))) {
-                                trace!("Failed to set write timeout for {:?}: {:?}", username, e);
-                                return;
-                            }
-                            if let Err(e) = tcp_stream.set_nodelay(true) {
-                                trace!("Failed to set nodelay for {:?}: {:?}", username, e);
-                                return;
-                            }
-
-                            // Spawn peer actor
-                            let context = client_context2.read().unwrap();
-                            if let Some(ref registry) = context.peer_registry {
-                                match registry.register_peer(peer_clone, tcp_stream, None) {
-                                    Ok(_) => {
-                                        trace!("[client] peer actor spawned for: {}", username);
-                                    }
-                                    Err(e) => {
-                                        trace!("Failed to spawn peer actor for {:?}: {:?}", username, e);
-                                    }
-                                }
-                            } else {
-                                trace!("PeerRegistry not initialized");
                             }
                         }
+                    };
 
-                        ConnectionType::F => {
-                                    trace!("[client] downloading from: {}, {:?}", peer.username, peer.token);
-                                    let download_peer = DownloadPeer::new(
-                                        peer.username,
-                                        peer.host,
-                                        peer.port,
-                                        peer.token.unwrap(),
-                                        false,
-                                        own_username.clone(),
-                                    );
+                    // Send connection handshake message
+                    use std::io::Write;
+                    if let Some(token) = peer_clone.token {
+                        // For indirect connections, send watch user message
+                        let handshake_msg = crate::message::server::MessageFactory::build_watch_user(token);
+                        if let Err(e) =
+                            tcp_stream.write_all(&handshake_msg.get_data())
+                        {
+                            trace!("Failed to send watch user handshake to {:?}: {:?}", username, e);
+                            return;
+                        }
+                        trace!(
+                            "[client] Sent watch user handshake for token: {}",
+                            token
+                        );
+                    }
 
-                                    match download_peer
-                                    .download_file(
-                                        client_context2.clone(),
-                                        None,
-                                        None
-                                    ) {
-                                        Ok((download, filename)) => {
-                                            trace!("[client] downloaded {} bytes {:?} ", filename, download.size);
-                                            download.sender.send(DownloadStatus::Completed).unwrap();
-                                        }
-                                        Err(e) => {
-                                            trace!("[client] failed to download: {}", e);
-                                        }
-                                    }
-                                }
-                        ConnectionType::D => {
-                            error!("ConnectionType::D not implemented")
+                    // Configure socket
+                    if let Err(e) = tcp_stream
+                        .set_read_timeout(Some(Duration::from_secs(5)))
+                    {
+                        trace!(
+                            "Failed to set read timeout for {:?}: {:?}",
+                            username,
+                            e
+                        );
+                        return;
+                    }
+                    if let Err(e) = tcp_stream
+                        .set_write_timeout(Some(Duration::from_secs(5)))
+                    {
+                        trace!(
+                            "Failed to set write timeout for {:?}: {:?}",
+                            username,
+                            e
+                        );
+                        return;
+                    }
+                    if let Err(e) = tcp_stream.set_nodelay(true) {
+                        trace!(
+                            "Failed to set nodelay for {:?}: {:?}",
+                            username,
+                            e
+                        );
+                        return;
+                    }
+
+                    // Spawn peer actor
+                    let context = client_context2.read().unwrap();
+                    if let Some(ref registry) = context.peer_registry {
+                        match registry
+                            .register_peer(peer_clone, tcp_stream, None)
+                        {
+                            Ok(_) => {
+                                trace!(
+                                    "[client] peer actor spawned for: {}",
+                                    username
+                                );
+                            }
+                            Err(e) => {
+                                trace!(
+                                    "Failed to spawn peer actor for {:?}: {:?}",
+                                    username,
+                                    e
+                                );
+                            }
+                        }
+                    } else {
+                        trace!("PeerRegistry not initialized");
+                    }
+                }
+
+                ConnectionType::F => {
+                    trace!(
+                        "[client] downloading from: {}, {:?}",
+                        peer.username,
+                        peer.token
+                    );
+                    let download_peer = DownloadPeer::new(
+                        peer.username,
+                        peer.host,
+                        peer.port,
+                        peer.token.unwrap(),
+                        false,
+                        own_username.clone(),
+                    );
+
+                    match download_peer.download_file(
+                        client_context2.clone(),
+                        None,
+                        None,
+                    ) {
+                        Ok((download, filename)) => {
+                            trace!(
+                                "[client] downloaded {} bytes {:?} ",
+                                filename,
+                                download.size
+                            );
+                            download
+                                .sender
+                                .send(DownloadStatus::Completed)
+                                .unwrap();
+                        }
+                        Err(e) => {
+                            trace!("[client] failed to download: {}", e);
                         }
                     }
-                });
+                }
+                ConnectionType::D => {
+                    error!("ConnectionType::D not implemented")
+                }
+            }
         } else {
             debug!("[client] Peer already connected: {}", peer.username);
         }
