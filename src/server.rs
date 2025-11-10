@@ -341,10 +341,6 @@ impl Server {
                 if let Ok(operation) = server_channel.recv() {
                     match operation {
                         ServerOperation::ConnectToPeer(peer) => {
-                            trace!(
-                                "[server] → ConnectToPeer {}",
-                                peer.username
-                            );
                             if let Some(op) = match peer.connection_type {
                                 ConnectionType::P | ConnectionType::F => {
                                     Some(ClientOperation::ConnectToPeer(
@@ -353,18 +349,7 @@ impl Server {
                                 }
                                 ConnectionType::D => None,
                             } {
-                                trace!(
-                                    "[server] → ConnectToPeer {} - op {:?}",
-                                    peer.username,
-                                    op
-                                );
-
-                                match client_channel.send(op) {
-                                    Ok(_) => {}
-                                    Err(e) => {
-                                        error!("[server] Failed to send: {}", e)
-                                    }
-                                }
+                                client_channel.send(op).unwrap();
                             }
                         }
                         ServerOperation::LoginStatus(message) => {
