@@ -213,8 +213,9 @@ fn handle_incoming_connection(stream: TcpStream, context: ConnectionContext) {
     );
 
     let peer = Peer::new(
-        init_data.username.clone(),
-        ConnectionType::P,
+        format!("{}:direct", init_data.username), // Add direct suffix to distinguish from regular peers
+        // init_data.username.clone(),
+        init_data.connection_type.clone(),
         peer_ip.clone(),
         peer_port.into(),
         None,
