@@ -7,7 +7,7 @@ use std::thread;
 use crate::client::{ClientContext, ClientOperation};
 
 use crate::message::{Message, MessageReader};
-use crate::peer::{ConnectionType, DefaultPeer, DownloadPeer, Peer};
+use crate::peer::{ConnectionType, DownloadPeer, Peer};
 use crate::types::Download;
 use crate::{debug, error, info, trace, DownloadStatus};
 
@@ -105,17 +105,25 @@ fn handle_peer_connection(
     peer: Peer,
     stream: TcpStream,
     reader: MessageReader,
-    client_sender: Sender<ClientOperation>,
+    context: &ConnectionContext,
     peer_ip: &str,
     peer_port: u16,
 ) {
     debug!("[listener:{peer_ip}:{peer_port}] connection type is P, reader buffer has {} bytes", reader.buffer_len());
 
-    let default_peer = DefaultPeer::new(peer, client_sender);
-    if let Ok(default_peer) =
-        default_peer.connect_with_socket(stream, Some(reader))
-    {
-        drop(default_peer);
+    // Spawn peer actor directly using the peer registry
+    let client_context = context.client_context.read().unwrap();
+    if let Some(ref registry) = client_context.peer_registry {
+        match registry.register_peer(peer.clone(), stream, Some(reader)) {
+            Ok(_) => {
+                trace!("[listener] peer actor spawned for: {}", peer.username);
+            }
+            Err(e) => {
+                error!("Failed to spawn peer actor for {:?}: {:?}", peer.username, e);
+            }
+        }
+    } else {
+        error!("PeerRegistry not initialized");
     }
 }
 
@@ -216,7 +224,7 @@ fn handle_incoming_connection(stream: TcpStream, context: ConnectionContext) {
             peer,
             stream,
             reader,
-            context.client_sender,
+            &context,
             &peer_ip,
             peer_port,
         ),

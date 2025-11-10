@@ -6,7 +6,7 @@ fn main() {
         PeerAddress::new(String::from("server.slsknet.org"), 2242),
         String::from("xxxxxx"),
         String::from("xxxxxx"),
-        true,
+        false,
         None,
     );
 

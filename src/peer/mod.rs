@@ -1,8 +1,10 @@
-mod default_peer;
 mod download_peer;
 pub mod listen;
 
-pub use default_peer::{DefaultPeer, PeerOperation};
+// Export actor types
+pub use crate::actor::peer_actor::{PeerActor, PeerMessage};
+pub use crate::actor::peer_registry::PeerRegistry;
+
 pub use download_peer::DownloadPeer;
 
 use crate::message::Message;
