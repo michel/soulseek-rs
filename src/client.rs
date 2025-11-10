@@ -1,11 +1,8 @@
 use crate::types::{DownloadResult, DownloadStatus};
 use crate::{
-    actor::{ActorSystem, peer_registry::PeerRegistry},
+    actor::{peer_registry::PeerRegistry, ActorSystem},
     error::{Result, SoulseekRs},
-    peer::{
-        listen::Listen, ConnectionType, DownloadPeer, NewPeer,
-        Peer,
-    },
+    peer::{listen::Listen, ConnectionType, DownloadPeer, NewPeer, Peer},
     server::{PeerAddress, Server, ServerOperation},
     types::{Download, FileSearchResult},
     utils::{md5, thread_pool::ThreadPool},
@@ -136,10 +133,8 @@ impl Client {
         {
             let mut ctx = self.context.write().unwrap();
             ctx.sender = Some(sender.clone());
-            let peer_registry = PeerRegistry::new(
-                ctx.actor_system.clone(),
-                sender.clone(),
-            );
+            let peer_registry =
+                PeerRegistry::new(ctx.actor_system.clone(), sender.clone());
             ctx.peer_registry = Some(peer_registry);
         }
 
@@ -261,11 +256,14 @@ impl Client {
         let mut context = self.context.write().unwrap();
         context.download_tokens.insert(token, download.clone());
 
-        let download_initiated = if let Some(ref registry) = context.peer_registry {
-            registry.queue_upload(&username, download.filename.clone()).is_ok()
-        } else {
-            false
-        };
+        let download_initiated =
+            if let Some(ref registry) = context.peer_registry {
+                registry
+                    .queue_upload(&username, download.filename.clone())
+                    .is_ok()
+            } else {
+                false
+            };
 
         drop(context);
 
@@ -315,7 +313,9 @@ impl Client {
                     ClientOperation::PeerDisconnected(username) => {
                         let context = client_context.read().unwrap();
                         if let Some(ref registry) = context.peer_registry {
-                            if let Some(handle) = registry.remove_peer(&username) {
+                            if let Some(handle) =
+                                registry.remove_peer(&username)
+                            {
                                 let _ = handle.stop();
                             }
                         }
@@ -445,7 +445,9 @@ impl Client {
                                             username, host, port, obfuscation_type, obfuscated_port
                                         );
 
-                        let peer_exists = client_context.read().unwrap()
+                        let peer_exists = client_context
+                            .read()
+                            .unwrap()
                             .peer_registry
                             .as_ref()
                             .map(|r| r.contains(&username))
@@ -541,9 +543,8 @@ impl Client {
         let unlocked_context = client_context.read().unwrap();
 
         trace!("[client] connect_to_peer: {}", peer.username);
-        if let Some(sender) = unlocked_context.sender.clone() {
+        if let Some(_sender) = unlocked_context.sender.clone() {
             let peer_clone = peer.clone();
-            let sender_clone = sender;
             unlocked_context.thread_pool.execute(move || {
                     trace!("[client] connecting to {}, with connection_type: {}, and token {:?}", peer.username, peer.connection_type, peer.token);
                     match peer.connection_type {

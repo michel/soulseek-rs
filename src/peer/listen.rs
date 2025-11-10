@@ -15,6 +15,7 @@ const PEER_INIT_MESSAGE_CODE: u8 = 1;
 
 #[derive(Clone)]
 struct ConnectionContext {
+    #[allow(dead_code)]
     client_sender: Sender<ClientOperation>,
     client_context: Arc<RwLock<ClientContext>>,
     own_username: String,
@@ -119,7 +120,10 @@ fn handle_peer_connection(
                 trace!("[listener] peer actor spawned for: {}", peer.username);
             }
             Err(e) => {
-                error!("Failed to spawn peer actor for {:?}: {:?}", peer.username, e);
+                error!(
+                    "Failed to spawn peer actor for {:?}: {:?}",
+                    peer.username, e
+                );
             }
         }
     } else {
@@ -221,12 +225,7 @@ fn handle_incoming_connection(stream: TcpStream, context: ConnectionContext) {
 
     match init_data.connection_type {
         ConnectionType::P => handle_peer_connection(
-            peer,
-            stream,
-            reader,
-            &context,
-            &peer_ip,
-            peer_port,
+            peer, stream, reader, &context, &peer_ip, peer_port,
         ),
         ConnectionType::F => handle_file_connection(
             peer,
