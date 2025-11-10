@@ -5,8 +5,8 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::utils::thread_pool::ThreadPool;
 use crate::trace;
+use crate::utils::thread_pool::ThreadPool;
 
 pub mod peer_actor;
 pub mod peer_registry;
@@ -54,6 +54,7 @@ impl<M: Send> ActorHandle<M> {
 pub(crate) enum ActorMessage<M> {
     UserMessage(M),
     Stop,
+    #[allow(dead_code)]
     Tick,
 }
 
@@ -70,9 +71,9 @@ impl ActorSystem {
     /// Spawn a new actor and return its handle
     pub fn spawn<A: Actor>(&self, mut actor: A) -> ActorHandle<A::Message> {
         let (sender, receiver) = channel::<ActorMessage<A::Message>>();
-        let handle = ActorHandle { sender: sender.clone() };
-
-        let thread_pool = self.thread_pool.clone();
+        let handle = ActorHandle {
+            sender: sender.clone(),
+        };
 
         // Start the actor event loop on the thread pool
         self.thread_pool.execute(move || {
@@ -86,15 +87,19 @@ impl ActorSystem {
 
     /// Spawn a new actor with initialization callback and return its handle
     /// The callback receives the actor handle before on_start is called
-    pub fn spawn_with_handle<A: Actor, F>(&self, mut actor: A, init: F) -> ActorHandle<A::Message>
+    pub fn spawn_with_handle<A: Actor, F>(
+        &self,
+        mut actor: A,
+        init: F,
+    ) -> ActorHandle<A::Message>
     where
         F: FnOnce(&mut A, ActorHandle<A::Message>) + Send + 'static,
     {
         let (sender, receiver) = channel::<ActorMessage<A::Message>>();
-        let handle = ActorHandle { sender: sender.clone() };
+        let handle = ActorHandle {
+            sender: sender.clone(),
+        };
         let handle_for_init = handle.clone();
-
-        let thread_pool = self.thread_pool.clone();
 
         // Start the actor event loop on the thread pool
         self.thread_pool.execute(move || {
@@ -102,7 +107,9 @@ impl ActorSystem {
             init(&mut actor, handle_for_init);
             trace!("[actor_system] Actor init callback completed");
             actor.on_start();
-            trace!("[actor_system] Actor on_start completed, starting event loop");
+            trace!(
+                "[actor_system] Actor on_start completed, starting event loop"
+            );
             Self::run_actor_loop(&mut actor, receiver);
             trace!("[actor_system] Actor event loop ended");
             actor.on_stop();
@@ -113,7 +120,10 @@ impl ActorSystem {
     }
 
     /// Run the actor's message processing loop
-    fn run_actor_loop<A: Actor>(actor: &mut A, receiver: Receiver<ActorMessage<A::Message>>) {
+    fn run_actor_loop<A: Actor>(
+        actor: &mut A,
+        receiver: Receiver<ActorMessage<A::Message>>,
+    ) {
         trace!("[actor_system] run_actor_loop STARTED");
         let tick_interval = Duration::from_millis(100);
         let mut last_tick = Instant::now();
@@ -125,16 +135,24 @@ impl ActorSystem {
             match receiver.recv_timeout(tick_interval) {
                 Ok(ActorMessage::UserMessage(msg)) => {
                     message_count += 1;
-                    trace!("[actor_system] Processing message #{}", message_count);
+                    trace!(
+                        "[actor_system] Processing message #{}",
+                        message_count
+                    );
                     actor.handle(msg);
                 }
                 Ok(ActorMessage::Stop) => {
-                    trace!("[actor_system] Received Stop message, breaking loop");
+                    trace!(
+                        "[actor_system] Received Stop message, breaking loop"
+                    );
                     break;
                 }
                 Ok(ActorMessage::Tick) => {
                     tick_count += 1;
-                    trace!("[actor_system] Received explicit Tick message #{}", tick_count);
+                    trace!(
+                        "[actor_system] Received explicit Tick message #{}",
+                        tick_count
+                    );
                     actor.tick();
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
@@ -149,7 +167,9 @@ impl ActorSystem {
                     }
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    trace!("[actor_system] Channel disconnected, breaking loop");
+                    trace!(
+                        "[actor_system] Channel disconnected, breaking loop"
+                    );
                     // Channel closed, actor should stop
                     break;
                 }

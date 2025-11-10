@@ -1,8 +1,8 @@
-use crate::actor::{ActorHandle, ActorSystem};
 use crate::actor::peer_actor::{PeerActor, PeerMessage};
+use crate::actor::{ActorHandle, ActorSystem};
 use crate::client::ClientOperation;
-use crate::peer::Peer;
 use crate::message::MessageReader;
+use crate::peer::Peer;
 use crate::{debug, trace};
 
 use std::collections::HashMap;
@@ -18,7 +18,10 @@ pub struct PeerRegistry {
 }
 
 impl PeerRegistry {
-    pub fn new(actor_system: Arc<ActorSystem>, client_channel: Sender<ClientOperation>) -> Self {
+    pub fn new(
+        actor_system: Arc<ActorSystem>,
+        client_channel: Sender<ClientOperation>,
+    ) -> Self {
         Self {
             peers: Arc::new(Mutex::new(HashMap::new())),
             actor_system,
@@ -37,23 +40,23 @@ impl PeerRegistry {
 
         debug!("[peer_registry] Registering peer actor for {}", username);
 
-        let actor = PeerActor::new(
-            peer,
-            stream,
-            reader,
-            self.client_channel.clone(),
-        );
+        let actor =
+            PeerActor::new(peer, stream, reader, self.client_channel.clone());
 
         // Spawn the actor with initialization callback to set self_handle
-        let handle = self.actor_system.spawn_with_handle(actor, |actor, handle| {
-            actor.set_self_handle(handle);
-        });
+        let handle =
+            self.actor_system.spawn_with_handle(actor, |actor, handle| {
+                actor.set_self_handle(handle);
+            });
 
         // Store in registry
         let mut peers = self.peers.lock().unwrap();
         peers.insert(username.clone(), handle.clone());
 
-        trace!("[peer_registry] Peer actor {} registered successfully", username);
+        trace!(
+            "[peer_registry] Peer actor {} registered successfully",
+            username
+        );
 
         Ok(handle)
     }
@@ -65,7 +68,10 @@ impl PeerRegistry {
     }
 
     /// Remove a peer actor from the registry
-    pub fn remove_peer(&self, username: &str) -> Option<ActorHandle<PeerMessage>> {
+    pub fn remove_peer(
+        &self,
+        username: &str,
+    ) -> Option<ActorHandle<PeerMessage>> {
         let mut peers = self.peers.lock().unwrap();
         let handle = peers.remove(username);
 
@@ -95,15 +101,24 @@ impl PeerRegistry {
     }
 
     /// Send a message to a peer by username
-    pub fn send_to_peer(&self, username: &str, message: PeerMessage) -> Result<(), String> {
-        let handle = self.get_peer(username)
-            .ok_or_else(|| format!("Peer {} not found in registry", username))?;
+    pub fn send_to_peer(
+        &self,
+        username: &str,
+        message: PeerMessage,
+    ) -> Result<(), String> {
+        let handle = self.get_peer(username).ok_or_else(|| {
+            format!("Peer {} not found in registry", username)
+        })?;
 
         handle.send(message)
     }
 
     /// Queue an upload for a peer
-    pub fn queue_upload(&self, username: &str, filename: String) -> Result<(), String> {
+    pub fn queue_upload(
+        &self,
+        username: &str,
+        filename: String,
+    ) -> Result<(), String> {
         self.send_to_peer(username, PeerMessage::QueueUpload(filename))
     }
 }
