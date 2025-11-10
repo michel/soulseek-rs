@@ -232,7 +232,26 @@ impl PeerActor {
     fn process_read(&mut self) {
         let username = self.peer.read().unwrap().username.clone();
         trace!("[peer_actor:{}] process_read() called", username);
+        if self.reader.buffer_len() > 0 {
+            trace!(
+                "[peer_actor:{}] reader buffer has {} bytes",
+                username,
+                self.reader.buffer_len()
+            );
+            self.extract_and_process_messages(); // This will process all messages in the buffer
+        }
 
+        trace!("[peer_actor:{}] Trying to read from socket", username);
+        trace!(
+            "[peer_actor:{}] reader buffer has {} bytes",
+            username,
+            self.reader.buffer_len()
+        );
+        trace!(
+            "[peer_actor:{}] reader buffer has {:?}",
+            username,
+            self.reader.get_buffer()
+        );
         // Try to read more data from the socket first
         {
             let stream = match self.stream.as_mut() {
@@ -264,6 +283,17 @@ impl PeerActor {
                 }
             }
         }
+        trace!("[peer_actor:{}] After reading from socket", username);
+        self.extract_and_process_messages(); // This will process all messages in the buffer
+        trace!("[peer_actor:{}] process_read() completed", username);
+    }
+
+    fn extract_and_process_messages(&mut self) {
+        let username = self.peer.read().unwrap().username.clone();
+        trace!(
+            "[peer_actor:{}] Extracting and processing messages",
+            username
+        );
 
         // Extract all available messages from the buffer
         let username = self.peer.read().unwrap().username.clone();
@@ -310,7 +340,6 @@ impl PeerActor {
         // Process any messages that were dispatched
         trace!("[peer_actor:{}] Processing dispatcher messages", username);
         self.process_dispatcher_messages();
-        trace!("[peer_actor:{}] process_read() completed", username);
     }
 
     /// Handle writing a message to the socket

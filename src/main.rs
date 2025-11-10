@@ -13,7 +13,7 @@ fn main() {
     client.connect();
     match client.login() {
         Ok(_) => {
-            match client.search("michel test file", Duration::from_secs(4)) {
+            match client.search("michel test file", Duration::from_secs(10)) {
                 Ok(results) => {
                     if let Some(result) =
                         results.iter().find(|r| !r.files.is_empty())
