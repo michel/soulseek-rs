@@ -113,7 +113,6 @@ impl PeerRegistry {
         handle.send(message)
     }
 
-    /// Queue an upload for a peer
     pub fn queue_upload(
         &self,
         username: &str,

@@ -11,35 +11,29 @@ use crate::peer::Peer;
 use crate::types::{Download, FileSearchResult, Transfer};
 use crate::{debug, error, trace, warn};
 
-use std::io::{self, Write};
+use std::io::{self, Error, Write};
 use std::net::TcpStream;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, RwLock};
 
-/// Messages that can be sent to a PeerActor
 #[derive(Debug, Clone)]
 pub enum PeerMessage {
-    /// Send a raw message to the peer
     SendMessage(Message),
-    /// Handle a file search result
     FileSearchResult(FileSearchResult),
-    /// Handle a transfer request
     TransferRequest(Transfer),
-    /// Handle a transfer response
+    UploadFailed(String, String),
     TransferResponse {
         token: u32,
         allowed: bool,
         reason: Option<String>,
     },
-    /// Handle a place in queue response
-    PlaceInQueueResponse { filename: String, place: u32 },
-    /// Set the peer's username
+    PlaceInQueueResponse {
+        filename: String,
+        place: u32,
+    },
     SetUsername(String),
-    /// Queue an upload for a file
     QueueUpload(String),
-    /// Request a transfer for a download
     RequestTransfer(Download),
-    /// Internal: process read operations
     ProcessRead,
 }
 
@@ -52,6 +46,7 @@ pub struct PeerActor {
     self_handle: Option<ActorHandle<PeerMessage>>,
     dispatcher: Option<MessageDispatcher<PeerMessage>>,
     dispatcher_receiver: Option<Receiver<PeerMessage>>,
+    queued_filenames: Vec<String>,
 }
 
 impl PeerActor {
@@ -70,6 +65,7 @@ impl PeerActor {
             self_handle: None,
             dispatcher: None,
             dispatcher_receiver: None,
+            queued_filenames: Vec::new(),
         }
     }
 
@@ -172,15 +168,15 @@ impl PeerActor {
                 if !allowed {
                     if let Some(reason_text) = reason {
                         debug!(
-                            "[peer_actor:{}] Transfer rejected: {} - token {}, waiting for TransferRequest...",
-                            username, reason_text, token
-                        );
+                                    "[peer_actor:{}] Transfer rejected: {} - token {}, waiting for TransferRequest...",
+                                    username, reason_text, token
+                                );
                     }
                 } else {
                     debug!(
-                        "[peer_actor:{}] Transfer allowed, ready to connect with token {:}",
-                        username, token
-                    );
+                                "[peer_actor:{}] Transfer allowed, ready to connect with token {:}",
+                                username, token
+                            );
                     self.client_channel
                         .send(ClientOperation::DownloadFromPeer(
                             token,
@@ -193,9 +189,9 @@ impl PeerActor {
             PeerMessage::PlaceInQueueResponse { filename, place } => {
                 let username = self.peer.read().unwrap().username.clone();
                 debug!(
-                    "[peer_actor:{}] Place in queue response - file: {}, place: {}",
-                    username, filename, place
-                );
+                            "[peer_actor:{}] Place in queue response - file: {}, place: {}",
+                            username, filename, place
+                        );
             }
             PeerMessage::SetUsername(username) => {
                 trace!(
@@ -206,6 +202,7 @@ impl PeerActor {
                 self.peer.write().unwrap().username = username;
             }
             PeerMessage::QueueUpload(filename) => {
+                self.queued_filenames.push(filename.clone());
                 let message =
                     MessageFactory::build_queue_upload_message(&filename);
                 self.send_message(message);
@@ -219,6 +216,11 @@ impl PeerActor {
             }
             PeerMessage::ProcessRead => {
                 self.process_read();
+            }
+            PeerMessage::UploadFailed(username, filename) => {
+                self.client_channel
+                    .send(ClientOperation::UploadFailed(username, filename))
+                    .unwrap();
             }
         }
     }
@@ -256,7 +258,7 @@ impl PeerActor {
                         "[peer_actor:{}] Error reading from peer: {} (kind: {:?}). Disconnecting.",
                         username, e, e.kind()
                     );
-                    self.disconnect();
+                    self.disconnect_with_error(e);
                     return;
                 }
             }
@@ -296,7 +298,7 @@ impl PeerActor {
                         "[peer_actor:{}] Error extracting message: {}. Disconnecting peer.",
                         username, e
                     );
-                    self.disconnect();
+                    self.disconnect_with_error(e);
                     return;
                 }
                 Ok(None) => {
@@ -338,7 +340,7 @@ impl PeerActor {
                 "[peer_actor:{}] Error writing message: {}. Disconnecting.",
                 username, e
             );
-            self.disconnect();
+            self.disconnect_with_error(e);
             return;
         }
 
@@ -347,10 +349,22 @@ impl PeerActor {
                 "[peer_actor:{}] Error flushing stream: {}. Disconnecting.",
                 username, e
             );
-            self.disconnect();
+            self.disconnect_with_error(e);
         }
     }
 
+    fn disconnect_with_error(&mut self, error: Error) {
+        let username = self.peer.read().unwrap().username.clone();
+        debug!("[peer_actor:{}] disconnect", username);
+
+        self.stream.take();
+
+        if let Err(e) = self.client_channel.send(
+            ClientOperation::PeerDisconnected(username, Some(error.into())),
+        ) {
+            error!("Failed to send disconnect notification: {}", e);
+        }
+    }
     /// Disconnect the peer and notify the client
     fn disconnect(&mut self) {
         let username = self.peer.read().unwrap().username.clone();
@@ -360,7 +374,7 @@ impl PeerActor {
 
         if let Err(e) = self
             .client_channel
-            .send(ClientOperation::PeerDisconnected(username))
+            .send(ClientOperation::PeerDisconnected(username, None))
         {
             error!("Failed to send disconnect notification: {}", e);
         }
@@ -383,7 +397,7 @@ impl Actor for PeerActor {
         // Trigger initial read
         if let Some(ref handle) = self.self_handle {
             match handle.send(PeerMessage::ProcessRead) {
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(e) => error!(
                     "[peer_actor:{}] FAILED to send ProcessRead: {}",
                     username, e
