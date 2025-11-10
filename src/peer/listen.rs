@@ -75,14 +75,7 @@ fn extract_download_from_buffer(
     if reader.buffer_len() == 0 {
         return None;
     }
-
     let buffer = reader.get_buffer();
-    trace!(
-        "[listener:{peer_ip}:{peer_port}] reader buffer has {} bytes. {:?}",
-        buffer.len(),
-        buffer
-    );
-
     let token = parse_token_from_buffer(&buffer, username)?;
     trace!(
         "[listener:{}] got transfer_token: {} from data chunk",
@@ -107,18 +100,13 @@ fn handle_peer_connection(
     stream: TcpStream,
     reader: MessageReader,
     context: &ConnectionContext,
-    peer_ip: &str,
-    peer_port: u16,
+    _peer_ip: &str,
+    _peer_port: u16,
 ) {
-    debug!("[listener:{peer_ip}:{peer_port}] connection type is P, reader buffer has {} bytes", reader.buffer_len());
-
-    // Spawn peer actor directly using the peer registry
     let client_context = context.client_context.read().unwrap();
     if let Some(ref registry) = client_context.peer_registry {
-        match registry.register_peer(peer.clone(), stream, Some(reader)) {
-            Ok(_) => {
-                trace!("[listener] peer actor spawned for: {}", peer.username);
-            }
+        match registry.register_peer(peer.clone(), Some(stream), Some(reader)) {
+            Ok(_) => (),
             Err(e) => {
                 error!(
                     "Failed to spawn peer actor for {:?}: {:?}",
@@ -213,7 +201,7 @@ fn handle_incoming_connection(stream: TcpStream, context: ConnectionContext) {
     );
 
     let peer = Peer::new(
-        format!("{}:direct", init_data.username), // Add direct suffix to distinguish from regular peers
+        format!("{}:direct", init_data.username),
         // init_data.username.clone(),
         init_data.connection_type.clone(),
         peer_ip.clone(),

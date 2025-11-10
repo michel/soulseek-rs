@@ -14,7 +14,7 @@ fn main() {
     match client.login() {
         Ok(_) => {
             match client
-                .search("Eternity Alex Kassian", Duration::from_secs(10))
+                .search("Eternity Alex Kassian", Duration::from_secs(30))
             {
                 Ok(results) => {
                     if let Some(result) =
