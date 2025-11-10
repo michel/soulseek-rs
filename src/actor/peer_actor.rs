@@ -218,11 +218,6 @@ impl PeerActor {
                 self.send_message(message);
             }
             PeerMessage::ProcessRead => {
-                let username = self.peer.read().unwrap().username.clone();
-                trace!(
-                    "[peer_actor:{}] Handling ProcessRead message",
-                    username
-                );
                 self.process_read();
             }
         }
@@ -230,28 +225,11 @@ impl PeerActor {
 
     /// Handle reading from the socket and dispatching messages
     fn process_read(&mut self) {
-        let username = self.peer.read().unwrap().username.clone();
-        trace!("[peer_actor:{}] process_read() called", username);
         if self.reader.buffer_len() > 0 {
-            trace!(
-                "[peer_actor:{}] reader buffer has {} bytes",
-                username,
-                self.reader.buffer_len()
-            );
             self.extract_and_process_messages(); // This will process all messages in the buffer
         }
+        let username = self.peer.read().unwrap().username.clone();
 
-        trace!("[peer_actor:{}] Trying to read from socket", username);
-        trace!(
-            "[peer_actor:{}] reader buffer has {} bytes",
-            username,
-            self.reader.buffer_len()
-        );
-        trace!(
-            "[peer_actor:{}] reader buffer has {:?}",
-            username,
-            self.reader.get_buffer()
-        );
         // Try to read more data from the socket first
         {
             let stream = match self.stream.as_mut() {
@@ -283,19 +261,10 @@ impl PeerActor {
                 }
             }
         }
-        trace!("[peer_actor:{}] After reading from socket", username);
         self.extract_and_process_messages(); // This will process all messages in the buffer
-        trace!("[peer_actor:{}] process_read() completed", username);
     }
 
     fn extract_and_process_messages(&mut self) {
-        let username = self.peer.read().unwrap().username.clone();
-        trace!(
-            "[peer_actor:{}] Extracting and processing messages",
-            username
-        );
-
-        // Extract all available messages from the buffer
         let username = self.peer.read().unwrap().username.clone();
         let mut extracted_count = 0;
         loop {
@@ -331,14 +300,12 @@ impl PeerActor {
                     return;
                 }
                 Ok(None) => {
-                    trace!("[peer_actor:{}] No more messages in buffer (extracted {} total)", username, extracted_count);
                     break;
                 }
             }
         }
 
         // Process any messages that were dispatched
-        trace!("[peer_actor:{}] Processing dispatcher messages", username);
         self.process_dispatcher_messages();
     }
 
@@ -409,23 +376,14 @@ impl Actor for PeerActor {
 
     fn on_start(&mut self) {
         let username = self.peer.read().unwrap().username.clone();
-        trace!("[peer_actor:{}] actor starting", username);
 
         // Initialize the dispatcher
         self.initialize_dispatcher();
-        trace!("[peer_actor:{}] dispatcher initialized", username);
 
         // Trigger initial read
         if let Some(ref handle) = self.self_handle {
-            trace!(
-                "[peer_actor:{}] Sending initial ProcessRead message",
-                username
-            );
             match handle.send(PeerMessage::ProcessRead) {
-                Ok(_) => trace!(
-                    "[peer_actor:{}] ProcessRead message sent successfully",
-                    username
-                ),
+                Ok(_) => {},
                 Err(e) => error!(
                     "[peer_actor:{}] FAILED to send ProcessRead: {}",
                     username, e
@@ -439,10 +397,6 @@ impl Actor for PeerActor {
         }
 
         // Also do an immediate read as fallback
-        trace!(
-            "[peer_actor:{}] Performing immediate process_read as fallback",
-            username
-        );
         self.process_read();
     }
 
