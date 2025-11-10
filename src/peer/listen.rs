@@ -228,15 +228,23 @@ fn handle_incoming_connection(stream: TcpStream, context: ConnectionContext) {
         ConnectionType::P => handle_peer_connection(
             peer, stream, reader, &context, &peer_ip, peer_port,
         ),
-        ConnectionType::F => handle_file_connection(
-            peer,
-            stream,
-            reader,
-            init_data.token,
-            &context,
-            &peer_ip,
-            peer_port,
-        ),
+
+        ConnectionType::F => {
+            thread::spawn(move || {
+                trace!(
+                    "[listener:{peer_ip}:{peer_port}] handling file connection in thread"
+                );
+                handle_file_connection(
+                    peer,
+                    stream,
+                    reader,
+                    init_data.token,
+                    &context,
+                    &peer_ip,
+                    peer_port,
+                )
+            });
+        }
         ConnectionType::D => {
             debug!("[listener:{peer_ip}:{peer_port}] connection type is D, not supported yet, closing connection. ");
         }
@@ -273,7 +281,7 @@ impl Listen {
             };
 
             let context = context.clone();
-            thread::spawn(move || handle_incoming_connection(stream, context));
+            handle_incoming_connection(stream, context);
         }
     }
 }
