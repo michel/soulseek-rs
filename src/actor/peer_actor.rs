@@ -15,6 +15,14 @@ use std::io::{self, Error, Write};
 use std::net::TcpStream;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
+
+#[derive(Debug, Clone)]
+enum ConnectionState {
+    Disconnected,
+    Connecting { since: Instant },
+    Connected,
+}
 
 #[derive(Debug, Clone)]
 pub enum PeerMessage {
@@ -37,46 +45,49 @@ pub enum PeerMessage {
     ProcessRead,
 }
 
-/// Actor that manages a single peer connection
 pub struct PeerActor {
     peer: Arc<RwLock<Peer>>,
     stream: Option<TcpStream>,
+    connection_state: ConnectionState,
     reader: MessageReader,
     client_channel: Sender<ClientOperation>,
     self_handle: Option<ActorHandle<PeerMessage>>,
     dispatcher: Option<MessageDispatcher<PeerMessage>>,
     dispatcher_receiver: Option<Receiver<PeerMessage>>,
-    queued_filenames: Vec<String>,
+    queued_messages: Vec<PeerMessage>,
 }
 
 impl PeerActor {
-    /// Create a new PeerActor with an existing socket connection
     pub fn new(
         peer: Peer,
-        stream: TcpStream,
+        stream: Option<TcpStream>,
         reader: Option<MessageReader>,
         client_channel: Sender<ClientOperation>,
     ) -> Self {
+        let connection_state = if stream.is_some() {
+            ConnectionState::Connected
+        } else {
+            ConnectionState::Disconnected
+        };
+
         Self {
             peer: Arc::new(RwLock::new(peer)),
-            stream: Some(stream),
+            stream,
+            connection_state,
             reader: reader.unwrap_or_default(),
             client_channel,
             self_handle: None,
             dispatcher: None,
             dispatcher_receiver: None,
-            queued_filenames: Vec::new(),
+            queued_messages: Vec::new(),
         }
     }
 
-    /// Set the actor's own handle for self-messaging
     pub fn set_self_handle(&mut self, handle: ActorHandle<PeerMessage>) {
         self.self_handle = Some(handle);
     }
 
-    /// Initialize the message dispatcher with handlers
     fn initialize_dispatcher(&mut self) {
-        // Create a channel for the dispatcher to send messages to
         let (dispatcher_sender, dispatcher_receiver) =
             std::sync::mpsc::channel::<PeerMessage>();
 
@@ -98,28 +109,34 @@ impl PeerActor {
         ));
     }
 
-    /// Process any messages from the dispatcher
     fn process_dispatcher_messages(&mut self) {
-        // Collect all messages first to avoid borrow issues
-        let messages: Vec<PeerMessage> =
-            if let Some(ref receiver) = self.dispatcher_receiver {
+        let messages: Vec<PeerMessage> = self
+            .dispatcher_receiver
+            .as_ref()
+            .map_or_else(Vec::new, |receiver| {
                 let mut msgs = Vec::new();
                 while let Ok(msg) = receiver.try_recv() {
                     msgs.push(msg);
                 }
                 msgs
-            } else {
-                Vec::new()
-            };
+            });
 
-        // Process all collected messages
-        for msg in messages {
-            self.handle_message(msg);
-        }
+        messages
+            .iter()
+            .for_each(|msg| self.handle_message(msg.clone()));
     }
 
-    /// Internal handler that doesn't call Actor::handle
     fn handle_message(&mut self, msg: PeerMessage) {
+        if matches!(self.connection_state, ConnectionState::Connecting { .. }) {
+            match &msg {
+                PeerMessage::SetUsername(_) | PeerMessage::ProcessRead => {}
+                _ => {
+                    self.queued_messages.push(msg);
+                    return;
+                }
+            }
+        }
+
         match msg {
             PeerMessage::SendMessage(message) => {
                 self.send_message(message);
@@ -202,7 +219,6 @@ impl PeerActor {
                 self.peer.write().unwrap().username = username;
             }
             PeerMessage::QueueUpload(filename) => {
-                self.queued_filenames.push(filename.clone());
                 let message =
                     MessageFactory::build_queue_upload_message(&filename);
                 self.send_message(message);
@@ -225,21 +241,15 @@ impl PeerActor {
         }
     }
 
-    /// Handle reading from the socket and dispatching messages
     fn process_read(&mut self) {
         if self.reader.buffer_len() > 0 {
-            self.extract_and_process_messages(); // This will process all messages in the buffer
+            self.extract_and_process_messages();
         }
-        let username = self.peer.read().unwrap().username.clone();
 
-        // Try to read more data from the socket first
         {
             let stream = match self.stream.as_mut() {
                 Some(s) => s,
-                None => {
-                    trace!("[peer_actor:{}] process_read: stream is None, returning", username);
-                    return;
-                }
+                None => return,
             };
 
             match self.reader.read_from_socket(stream) {
@@ -263,7 +273,7 @@ impl PeerActor {
                 }
             }
         }
-        self.extract_and_process_messages(); // This will process all messages in the buffer
+        self.extract_and_process_messages();
     }
 
     fn extract_and_process_messages(&mut self) {
@@ -307,11 +317,9 @@ impl PeerActor {
             }
         }
 
-        // Process any messages that were dispatched
         self.process_dispatcher_messages();
     }
 
-    /// Handle writing a message to the socket
     fn send_message(&mut self, message: Message) {
         let stream = match self.stream.as_mut() {
             Some(s) => s,
@@ -365,7 +373,6 @@ impl PeerActor {
             error!("Failed to send disconnect notification: {}", e);
         }
     }
-    /// Disconnect the peer and notify the client
     fn disconnect(&mut self) {
         let username = self.peer.read().unwrap().username.clone();
         debug!("[peer_actor:{}] disconnect", username);
@@ -379,6 +386,145 @@ impl PeerActor {
             error!("Failed to send disconnect notification: {}", e);
         }
     }
+
+    fn initiate_connection(&mut self) -> bool {
+        let peer = self.peer.read().unwrap();
+        let username = peer.username.clone();
+        let host = peer.host.clone();
+        let port = peer.port;
+        drop(peer);
+
+        let socket_addr =
+            format!("{}:{}", host, port).parse::<std::net::SocketAddr>();
+
+        match socket_addr {
+            Ok(addr) => {
+                if let Ok(stream) = TcpStream::connect(addr) {
+                    if let Err(e) = stream.set_nonblocking(true) {
+                        error!(
+                            "[peer_actor:{}] Failed to set non-blocking: {}",
+                            username, e
+                        );
+                        self.disconnect_with_error(e);
+                        return false;
+                    }
+
+                    stream.set_nodelay(true).ok();
+
+                    self.stream = Some(stream);
+                    self.connection_state = ConnectionState::Connecting {
+                        since: Instant::now(),
+                    };
+                    true
+                } else {
+                    match TcpStream::connect(addr) {
+                        Ok(stream) => {
+                            if let Err(e) = stream.set_nonblocking(true) {
+                                error!("[peer_actor:{}] Failed to set non-blocking: {}", username, e);
+                                self.disconnect_with_error(e);
+                                return false;
+                            }
+                            stream.set_nodelay(true).ok();
+                            self.stream = Some(stream);
+                            self.connection_state =
+                                ConnectionState::Connecting {
+                                    since: Instant::now(),
+                                };
+                            true
+                        }
+                        Err(e) => {
+                            self.disconnect_with_error(e);
+                            false
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                error!(
+                    "[peer_actor:{}] Invalid socket address {}:{} - {}",
+                    username, host, port, e
+                );
+                self.disconnect_with_error(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    e,
+                ));
+                false
+            }
+        }
+    }
+
+    fn check_connection_status(&mut self) {
+        let ConnectionState::Connecting { since } = self.connection_state
+        else {
+            return;
+        };
+
+        let username = self.peer.read().unwrap().username.clone();
+
+        if since.elapsed() > Duration::from_secs(20) {
+            error!(
+                "[peer_actor:{}] Connection timeout after 20 seconds",
+                username
+            );
+            self.disconnect_with_error(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Connection timeout",
+            ));
+            return;
+        }
+
+        let Some(ref stream) = self.stream else {
+            return;
+        };
+
+        match stream.peer_addr() {
+            Ok(_) => {
+                self.connection_state = ConnectionState::Connected;
+                self.on_connection_established();
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::NotConnected => {}
+            Err(e) => {
+                error!("[peer_actor:{}] Connection failed: {}", username, e);
+                self.disconnect_with_error(e);
+            }
+        }
+    }
+
+    fn on_connection_established(&mut self) {
+        let peer = self.peer.read().unwrap();
+        let username = peer.username.clone();
+        let token = peer.token;
+        drop(peer);
+
+        let Some(ref mut stream) = self.stream else {
+            return;
+        };
+
+        if let Some(token) = token {
+            let handshake_msg = MessageFactory::build_watch_user(token);
+            if let Err(e) = stream.write_all(&handshake_msg.get_data()) {
+                error!(
+                    "[peer_actor:{}] Failed to send watch user handshake: {}",
+                    username, e
+                );
+                self.disconnect_with_error(e);
+                return;
+            }
+        }
+
+        self.initialize_dispatcher();
+
+        let queued = std::mem::take(&mut self.queued_messages);
+        for msg in queued {
+            self.handle_message(msg);
+        }
+
+        if let Some(ref handle) = self.self_handle {
+            handle.send(PeerMessage::ProcessRead).ok();
+        }
+
+        self.process_read();
+    }
 }
 
 impl Actor for PeerActor {
@@ -389,29 +535,12 @@ impl Actor for PeerActor {
     }
 
     fn on_start(&mut self) {
-        let username = self.peer.read().unwrap().username.clone();
-
-        // Initialize the dispatcher
-        self.initialize_dispatcher();
-
-        // Trigger initial read
-        if let Some(ref handle) = self.self_handle {
-            match handle.send(PeerMessage::ProcessRead) {
-                Ok(_) => {}
-                Err(e) => error!(
-                    "[peer_actor:{}] FAILED to send ProcessRead: {}",
-                    username, e
-                ),
-            }
+        if self.stream.is_none() {
+            self.initiate_connection();
         } else {
-            error!(
-                "[peer_actor:{}] self_handle is None! Cannot send ProcessRead",
-                username
-            );
+            self.connection_state = ConnectionState::Connected;
+            self.on_connection_established();
         }
-
-        // Also do an immediate read as fallback
-        self.process_read();
     }
 
     fn on_stop(&mut self) {
@@ -421,15 +550,20 @@ impl Actor for PeerActor {
     }
 
     fn tick(&mut self) {
-        // Periodically check for new data on the socket
-        if self.stream.is_some() {
-            self.process_read();
-        } else {
-            let username = self.peer.read().unwrap().username.clone();
-            trace!(
-                "[peer_actor:{}] tick() called but stream is None",
-                username
-            );
+        match self.connection_state {
+            ConnectionState::Connecting { .. } => {
+                // Check if connection has been established
+                self.check_connection_status();
+            }
+            ConnectionState::Connected => {
+                // Normal operation - process reads
+                if self.stream.is_some() {
+                    self.process_read();
+                }
+            }
+            ConnectionState::Disconnected => {
+                // Do nothing
+            }
         }
     }
 }
