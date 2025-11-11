@@ -1,9 +1,18 @@
 name: Release
 
 on:
-  push:
-    branches:
-      - master
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Release type (patch, minor, major)'
+        required: false
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
@@ -42,30 +51,59 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cat > .releaserc.json << 'EOF'
-          {
-            "branches": ["master"],
-            "plugins": [
-              "@semantic-release/commit-analyzer",
-              "@semantic-release/release-notes-generator"
-            ],
-            "dryRun": true
-          }
+          # If a specific release type is requested (not 'auto'), always proceed
+          if [ "${{ github.event.inputs.release_type }}" != "auto" ] && [ -n "${{ github.event.inputs.release_type }}" ]; then
+            echo "Manual release type specified: ${{ github.event.inputs.release_type }}"
+            echo "should_release=true" >> $GITHUB_OUTPUT
+
+            # Get current version from Cargo.toml
+            CURRENT_VERSION=$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)
+            echo "Current version: $CURRENT_VERSION"
+
+            # Calculate next version based on release type
+            IFS='.' read -r major minor patch <<< "$CURRENT_VERSION"
+            case "${{ github.event.inputs.release_type }}" in
+              major)
+                VERSION="$((major + 1)).0.0"
+                ;;
+              minor)
+                VERSION="${major}.$((minor + 1)).0"
+                ;;
+              patch)
+                VERSION="${major}.${minor}.$((patch + 1))"
+                ;;
+            esac
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "Manual version to release: $VERSION"
+          else
+            # Auto mode - use semantic-release to determine if release is needed
+            cat > .releaserc.json << 'EOF'
+            {
+              "branches": ["master"],
+              "plugins": [
+                "@semantic-release/commit-analyzer",
+                "@semantic-release/release-notes-generator"
+              ],
+              "dryRun": true
+            }
           EOF
 
-          OUTPUT=$(npx semantic-release --dry-run 2>&1 || true)
-          echo "$OUTPUT"
+            OUTPUT=$(npx semantic-release --dry-run 2>&1 || true)
+            echo "$OUTPUT"
 
-          if echo "$OUTPUT" | grep -q "There is no relevant changes"; then
-            echo "should_release=false" >> $GITHUB_OUTPUT
-          else
-            VERSION=$(echo "$OUTPUT" | grep -oP "next release version is \K[0-9]+\.[0-9]+\.[0-9]+" | head -1)
-            if [ -n "$VERSION" ]; then
-              echo "should_release=true" >> $GITHUB_OUTPUT
-              echo "version=$VERSION" >> $GITHUB_OUTPUT
-              echo "Version to release: $VERSION"
-            else
+            if echo "$OUTPUT" | grep -q "There is no relevant changes"; then
               echo "should_release=false" >> $GITHUB_OUTPUT
+              echo "No relevant changes found for automatic release"
+            else
+              VERSION=$(echo "$OUTPUT" | grep -oP "next release version is \K[0-9]+\.[0-9]+\.[0-9]+" | head -1)
+              if [ -n "$VERSION" ]; then
+                echo "should_release=true" >> $GITHUB_OUTPUT
+                echo "version=$VERSION" >> $GITHUB_OUTPUT
+                echo "Auto version to release: $VERSION"
+              else
+                echo "should_release=false" >> $GITHUB_OUTPUT
+                echo "Could not determine version for automatic release"
+              fi
             fi
           fi
 
@@ -191,40 +229,97 @@ jobs:
 
       - name: Create semantic-release config
         run: |
-          cat > .releaserc.json << 'EOF'
-          {
-            "branches": ["master"],
-            "plugins": [
-              "@semantic-release/commit-analyzer",
-              "@semantic-release/release-notes-generator",
-              "@semantic-release/changelog",
-              [
-                "@semantic-release/exec",
-                {
-                  "prepareCmd": "sed -i 's/^version = \".*\"/version = \"${nextRelease.version}\"/' Cargo.toml"
-                }
-              ],
-              [
-                "@semantic-release/git",
-                {
-                  "assets": ["CHANGELOG.md", "Cargo.toml"],
-                  "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
-                }
-              ],
-              [
-                "@semantic-release/github",
-                {
-                  "assets": [
-                    {"path": "release-assets/*.tar.gz"},
-                    {"path": "release-assets/*.zip"}
-                  ]
-                }
+          # Check if we need to force a specific version for manual releases
+          if [ "${{ github.event.inputs.release_type }}" != "auto" ] && [ -n "${{ github.event.inputs.release_type }}" ]; then
+            # For manual releases, we'll bypass semantic-release version detection
+            cat > .releaserc.json << 'EOF'
+            {
+              "branches": ["master"],
+              "plugins": [
+                [
+                  "@semantic-release/commit-analyzer",
+                  {
+                    "releaseRules": [
+                      {"breaking": true, "release": "${{ github.event.inputs.release_type }}"},
+                      {"revert": true, "release": "patch"},
+                      {"type": "feat", "release": "${{ github.event.inputs.release_type }}"},
+                      {"type": "fix", "release": "${{ github.event.inputs.release_type }}"},
+                      {"type": "perf", "release": "${{ github.event.inputs.release_type }}"},
+                      {"scope": "no-release", "release": false}
+                    ]
+                  }
+                ],
+                "@semantic-release/release-notes-generator",
+                "@semantic-release/changelog",
+                [
+                  "@semantic-release/exec",
+                  {
+                    "prepareCmd": "sed -i 's/^version = \".*\"/version = \"${{ needs.check-release.outputs.version }}\"/' Cargo.toml"
+                  }
+                ],
+                [
+                  "@semantic-release/git",
+                  {
+                    "assets": ["CHANGELOG.md", "Cargo.toml"],
+                    "message": "chore(release): ${{ needs.check-release.outputs.version }} [skip ci]\n\n${nextRelease.notes}"
+                  }
+                ],
+                [
+                  "@semantic-release/github",
+                  {
+                    "assets": [
+                      {"path": "release-assets/*.tar.gz"},
+                      {"path": "release-assets/*.zip"}
+                    ]
+                  }
+                ]
               ]
-            ]
-          }
+            }
           EOF
+          else
+            # For automatic releases, use standard semantic-release
+            cat > .releaserc.json << 'EOF'
+            {
+              "branches": ["master"],
+              "plugins": [
+                "@semantic-release/commit-analyzer",
+                "@semantic-release/release-notes-generator",
+                "@semantic-release/changelog",
+                [
+                  "@semantic-release/exec",
+                  {
+                    "prepareCmd": "sed -i 's/^version = \".*\"/version = \"${nextRelease.version}\"/' Cargo.toml"
+                  }
+                ],
+                [
+                  "@semantic-release/git",
+                  {
+                    "assets": ["CHANGELOG.md", "Cargo.toml"],
+                    "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+                  }
+                ],
+                [
+                  "@semantic-release/github",
+                  {
+                    "assets": [
+                      {"path": "release-assets/*.tar.gz"},
+                      {"path": "release-assets/*.zip"}
+                    ]
+                  }
+                ]
+              ]
+            }
+          EOF
+          fi
 
       - name: Run semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx semantic-release
+        run: |
+          if [ "${{ github.event.inputs.release_type }}" != "auto" ] && [ -n "${{ github.event.inputs.release_type }}" ]; then
+            # For manual releases, we need to create the release directly
+            echo "Creating manual release version ${{ needs.check-release.outputs.version }}"
+            npx semantic-release --no-ci
+          else
+            npx semantic-release
+          fi
