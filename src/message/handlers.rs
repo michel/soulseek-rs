@@ -3,12 +3,12 @@ use std::collections::HashMap;
 use crate::message::Message;
 use std::sync::mpsc::Sender;
 
-pub trait MessageHandler<Op> {
+pub trait MessageHandler<Op>: Send {
     fn get_code(&self) -> u8;
     fn handle(&self, message: &mut Message, sender: Sender<Op>);
 }
 pub struct Handlers<Op> {
-    handlers: HashMap<u8, Box<dyn MessageHandler<Op>>>,
+    handlers: HashMap<u8, Box<dyn MessageHandler<Op> + Send>>,
 }
 
 impl<Op> Default for Handlers<Op> {
@@ -31,7 +31,10 @@ impl<Op> Handlers<Op> {
         self.handlers.insert(handler.get_code(), Box::new(handler));
         self
     }
-    pub fn get_handler(&self, code: u8) -> Option<&dyn MessageHandler<Op>> {
+    pub fn get_handler(
+        &self,
+        code: u8,
+    ) -> Option<&(dyn MessageHandler<Op> + Send)> {
         self.handlers.get(&code).map(|v| &**v)
     }
 }

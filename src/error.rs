@@ -3,7 +3,6 @@ use std::{error::Error, fmt};
 /// Custom error type for the Soulseek download library
 #[derive(Debug)]
 pub enum SoulseekRs {
-    /// Network-related errors (I/O, connection failures)
     NetworkError(std::io::Error),
     /// Authentication failed during login
     AuthenticationFailed,
