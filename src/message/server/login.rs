@@ -1,7 +1,7 @@
-use crate::{debug, info};
+use crate::{
+    actor::server_actor::ServerOperation, debug, info, message::Message,
+};
 use std::sync::mpsc::Sender;
-
-use crate::{message::Message, server::ServerOperation};
 
 use crate::message::MessageHandler;
 
