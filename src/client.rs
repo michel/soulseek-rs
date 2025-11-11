@@ -1,9 +1,10 @@
+use crate::actor::server_actor::{PeerAddress, ServerActor, ServerOperation};
+use crate::actor::ActorHandle;
 use crate::types::{DownloadResult, DownloadStatus};
 use crate::{
     actor::{peer_registry::PeerRegistry, ActorSystem},
     error::{Result, SoulseekRs},
-    peer::{listen::Listen, ConnectionType, DownloadPeer, NewPeer, Peer},
-    server::{PeerAddress, Server, ServerOperation},
+    peer::{ConnectionType, DownloadPeer, NewPeer, Peer},
     types::{Download, FileSearchResult},
     utils::{md5, thread_pool::ThreadPool},
     Transfer,
@@ -43,11 +44,12 @@ pub enum ClientOperation {
         obfuscated_port: u16,
     },
     UploadFailed(String, String),
+    SetServerSender(Sender<ServerOperation>),
 }
 pub struct ClientContext {
     pub peer_registry: Option<PeerRegistry>,
     sender: Option<Sender<ClientOperation>>,
-    server_sender: Option<Sender<crate::server::ServerOperation>>,
+    server_sender: Option<Sender<ServerOperation>>,
     search_results: Vec<FileSearchResult>,
     pub download_tokens: HashMap<u32, Download>,
     actor_system: Arc<ActorSystem>,
@@ -84,7 +86,7 @@ pub struct Client {
     address: PeerAddress,
     username: String,
     password: String,
-    server: Option<Server>,
+    server_handle: Option<ActorHandle<ServerOperation>>,
     context: Arc<RwLock<ClientContext>>,
 }
 
@@ -97,15 +99,14 @@ impl Client {
         listen_port: Option<u32>,
     ) -> Self {
         crate::utils::logger::init();
-        let context = Arc::new(RwLock::new(ClientContext::new()));
         Self {
             enable_listen,
             listen_port: listen_port.unwrap_or(DEFALT_LISTEN_PORT),
             address,
             username,
             password,
-            server: None,
-            context,
+            context: Arc::new(RwLock::new(ClientContext::new())),
+            server_handle: None,
         }
     }
     pub fn with_defaults(
@@ -122,72 +123,50 @@ impl Client {
             Receiver<ClientOperation>,
         ) = mpsc::channel();
 
-        let listen_port = self.listen_port;
-        let context = self.context.clone();
-        let own_username = self.username.clone();
+        let mut ctx = self.context.write().unwrap();
+        ctx.sender = Some(sender.clone());
+        let peer_registry =
+            PeerRegistry::new(ctx.actor_system.clone(), sender.clone());
+        ctx.peer_registry = Some(peer_registry);
 
-        // Initialize PeerRegistry with the actor system
-        {
-            let mut ctx = self.context.write().unwrap();
-            ctx.sender = Some(sender.clone());
-            let peer_registry =
-                PeerRegistry::new(ctx.actor_system.clone(), sender.clone());
-            ctx.peer_registry = Some(peer_registry);
-        }
-
-        let client_sender = sender.clone();
-
-        self.server = match Server::new(
+        let server_actor = ServerActor::new(
             self.address.clone(),
             sender,
             self.listen_port,
             self.enable_listen,
-        ) {
-            Ok(server) => {
-                info!(
-                    "Connected to server at {}:{}",
-                    server.get_address().get_host(),
-                    server.get_address().get_port()
-                );
+        );
 
-                if self.enable_listen {
-                    thread::spawn(move || {
-                        Listen::start(
-                            listen_port,
-                            client_sender.clone(),
-                            context.clone(),
-                            own_username,
-                        );
-                    });
-                }
-                let mut unlocked_context = self.context.write().unwrap();
-                unlocked_context.server_sender =
-                    Some(server.get_sender().clone());
+        self.server_handle = Some(ctx.actor_system.spawn_with_handle(
+            server_actor,
+            |actor, handle| {
+                actor.set_self_handle(handle);
+            },
+        ));
 
-                Self::listen_to_client_operations(
-                    message_reader,
-                    self.context.clone(),
-                    self.username.clone(),
-                );
-                Some(server)
-            }
-            Err(e) => {
-                error!("Error connecting to server: {}", e);
-                None
-            }
-        };
+        Self::listen_to_client_operations(
+            message_reader,
+            self.context.clone(),
+            self.username.clone(),
+        );
     }
 
     pub fn login(&self) -> Result<bool> {
         info!("Logging in as {}", self.username);
-        if let Some(server) = &self.server {
-            return if (server.login(&self.username, &self.password))? {
-                Ok(true)
-            } else {
-                Err(SoulseekRs::AuthenticationFailed)
-            };
+        if let Some(handle) = &self.server_handle {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let _ = handle.send(ServerOperation::Login {
+                username: self.username.clone(),
+                password: self.password.clone(),
+                response: tx,
+            });
+
+            match rx.recv() {
+                Ok(result) => result,
+                Err(_) => Err(SoulseekRs::Timeout),
+            }
+        } else {
+            Err(SoulseekRs::NotConnected)
         }
-        Err(SoulseekRs::NotConnected)
     }
 
     #[allow(dead_code)]
@@ -206,10 +185,13 @@ impl Client {
         timeout: Duration,
     ) -> Result<Vec<FileSearchResult>> {
         info!("Searching for {}", query);
-        if let Some(server) = &self.server {
+        if let Some(handle) = &self.server_handle {
             let hash = md5::md5(query);
             let token = u32::from_str_radix(&hash[0..5], 16)?;
-            server.file_search(token, query);
+            let _ = handle.send(ServerOperation::FileSearch {
+                token,
+                query: query.to_string(),
+            });
         } else {
             return Err(SoulseekRs::NotConnected);
         }
@@ -325,7 +307,6 @@ impl Client {
                             let client_context_clone = client_context.clone();
                             let own_username_clone = own_username.clone();
 
-                            // Spawn in background to avoid blocking the receiver thread
                             thread::spawn(move || {
                                 Self::connect_to_peer(
                                     peer,
@@ -536,7 +517,6 @@ impl Client {
                                     client_context.clone();
                                 let own_username_clone = own_username.clone();
 
-                                // Spawn in background to avoid blocking the receiver thread
                                 thread::spawn(move || {
                                     Self::connect_to_peer(
                                         peer,
@@ -593,6 +573,11 @@ impl Client {
                                 &username,
                                 Some(&filename),
                             );
+                        }
+                        ClientOperation::SetServerSender(sender) => {
+                            client_context.write().unwrap().server_sender =
+                                Some(sender);
+                            debug!("[client] Server sender initialized");
                         }
                     }
                 }

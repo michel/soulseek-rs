@@ -3,7 +3,7 @@ use std::sync::mpsc::Sender;
 
 use crate::{
     message::{Message, MessageHandler},
-    server::ServerOperation,
+    actor::server_actor::ServerOperation,
 };
 
 pub struct WishListIntervalHandler;
