@@ -2,17 +2,17 @@ use crate::{debug, info};
 use std::sync::mpsc::Sender;
 
 use crate::{
-    actor::server_actor::ServerOperation, message::handlers::MessageHandler,
+    actor::server_actor::ServerMessage, message::handlers::MessageHandler,
     message::Message,
 };
 
 pub struct FileSearchHandler;
 
-impl MessageHandler<ServerOperation> for FileSearchHandler {
+impl MessageHandler<ServerMessage> for FileSearchHandler {
     fn get_code(&self) -> u8 {
         26
     }
-    fn handle(&self, message: &mut Message, _sender: Sender<ServerOperation>) {
+    fn handle(&self, message: &mut Message, _sender: Sender<ServerMessage>) {
         debug!("Handling file search message");
         let username = message.read_string();
         let token = message.read_int32();

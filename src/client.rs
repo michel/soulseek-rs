@@ -1,4 +1,4 @@
-use crate::actor::server_actor::{PeerAddress, ServerActor, ServerOperation};
+use crate::actor::server_actor::{PeerAddress, ServerActor, ServerMessage};
 use crate::actor::ActorHandle;
 use crate::types::{DownloadResult, DownloadStatus};
 use crate::{
@@ -44,12 +44,12 @@ pub enum ClientOperation {
         obfuscated_port: u16,
     },
     UploadFailed(String, String),
-    SetServerSender(Sender<ServerOperation>),
+    SetServerSender(Sender<ServerMessage>),
 }
 pub struct ClientContext {
     pub peer_registry: Option<PeerRegistry>,
     sender: Option<Sender<ClientOperation>>,
-    server_sender: Option<Sender<ServerOperation>>,
+    server_sender: Option<Sender<ServerMessage>>,
     search_results: Vec<FileSearchResult>,
     pub download_tokens: HashMap<u32, Download>,
     actor_system: Arc<ActorSystem>,
@@ -86,7 +86,7 @@ pub struct Client {
     address: PeerAddress,
     username: String,
     password: String,
-    server_handle: Option<ActorHandle<ServerOperation>>,
+    server_handle: Option<ActorHandle<ServerMessage>>,
     context: Arc<RwLock<ClientContext>>,
 }
 
@@ -154,7 +154,7 @@ impl Client {
         info!("Logging in as {}", self.username);
         if let Some(handle) = &self.server_handle {
             let (tx, rx) = std::sync::mpsc::channel();
-            let _ = handle.send(ServerOperation::Login {
+            let _ = handle.send(ServerMessage::Login {
                 username: self.username.clone(),
                 password: self.password.clone(),
                 response: tx,
@@ -188,7 +188,7 @@ impl Client {
         if let Some(handle) = &self.server_handle {
             let hash = md5::md5(query);
             let token = u32::from_str_radix(&hash[0..5], 16)?;
-            let _ = handle.send(ServerOperation::FileSearch {
+            let _ = handle.send(ServerMessage::FileSearch {
                 token,
                 query: query.to_string(),
             });
@@ -438,7 +438,7 @@ impl Client {
                                 &client_context.read().unwrap().server_sender
                             {
                                 server_sender
-                                    .send(ServerOperation::GetPeerAddress(
+                                    .send(ServerMessage::GetPeerAddress(
                                         new_peer.username.clone(),
                                     ))
                                     .unwrap();
@@ -671,8 +671,7 @@ impl Client {
         let context = client_context.read().unwrap();
         if let Some(server_sender) = &context.server_sender {
             if let Some(token) = peer.token {
-                match server_sender.send(ServerOperation::PierceFirewall(token))
-                {
+                match server_sender.send(ServerMessage::PierceFirewall(token)) {
                     Ok(_) => (),
                     Err(e) => {
                         error!("Failed to send PierceFirewall message: {}", e)
