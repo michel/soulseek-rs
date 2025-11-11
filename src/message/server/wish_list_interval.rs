@@ -2,8 +2,8 @@ use crate::debug;
 use std::sync::mpsc::Sender;
 
 use crate::{
-    message::{Message, MessageHandler},
     actor::server_actor::ServerOperation,
+    message::{Message, MessageHandler},
 };
 
 pub struct WishListIntervalHandler;
