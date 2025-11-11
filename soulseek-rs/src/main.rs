@@ -1,15 +1,9 @@
-use soulseek_rs::{Client, PeerAddress};
+use soulseek_rs::Client;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create and connect to Soulseek server
-    let mut client = Client::new(
-        PeerAddress::new("server.slsknet.org".to_string(), 2242),
-        "username".to_string(),
-        "password".to_string(),
-        false,
-        None,
-    );
+    let mut client = Client::new("username", "password");
 
     client.connect();
     client.login()?;
