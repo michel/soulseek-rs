@@ -1,4 +1,4 @@
-use crate::actor::{Actor, ActorHandle};
+use crate::actor::{Actor, ActorHandle, ConnectionState};
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
 use crate::message::peer::{
@@ -16,13 +16,6 @@ use std::net::TcpStream;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-
-#[derive(Debug, Clone)]
-enum ConnectionState {
-    Disconnected,
-    Connecting { since: Instant },
-    Connected,
-}
 
 #[derive(Debug, Clone)]
 pub enum PeerMessage {
@@ -552,18 +545,14 @@ impl Actor for PeerActor {
     fn tick(&mut self) {
         match self.connection_state {
             ConnectionState::Connecting { .. } => {
-                // Check if connection has been established
                 self.check_connection_status();
             }
             ConnectionState::Connected => {
-                // Normal operation - process reads
                 if self.stream.is_some() {
                     self.process_read();
                 }
             }
-            ConnectionState::Disconnected => {
-                // Do nothing
-            }
+            ConnectionState::Disconnected => {}
         }
     }
 }
