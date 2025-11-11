@@ -1,6 +1,6 @@
 use crate::actor::server_actor::{PeerAddress, ServerActor, ServerMessage};
 use crate::actor::ActorHandle;
-use crate::types::{DownloadResult, DownloadStatus};
+use crate::types::DownloadStatus;
 use crate::utils::logger;
 use crate::{
     actor::{peer_registry::PeerRegistry, ActorSystem},
@@ -262,14 +262,13 @@ impl Client {
         username: String,
         size: u64,
         download_directory: String,
-    ) -> Result<crate::types::DownloadResult> {
+    ) -> Result<Receiver<DownloadStatus>> {
         info!("[client] Downloading {} from {}", filename, username);
-        let start_time = Instant::now();
 
         let hash = md5::md5(&filename);
         let token = u32::from_str_radix(&hash[0..5], 16)?;
 
-        let (download_sender, download_receivier): (
+        let (download_sender, download_receiver): (
             Sender<DownloadStatus>,
             Receiver<DownloadStatus>,
         ) = mpsc::channel();
@@ -298,22 +297,10 @@ impl Client {
         drop(context);
 
         if !download_initiated {
-            return Ok(DownloadResult {
-                filename,
-                username,
-                status: DownloadStatus::Failed,
-                elapsed_time: start_time.elapsed(),
-            });
+            let _ = download.sender.send(DownloadStatus::Failed);
         }
 
-        let status = download_receivier.recv().unwrap();
-
-        Ok(DownloadResult {
-            filename,
-            username,
-            status,
-            elapsed_time: start_time.elapsed(),
-        })
+        Ok(download_receiver)
     }
 
     fn process_failed_uploads(
