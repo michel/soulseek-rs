@@ -1,5 +1,5 @@
-use crate::message::{Message, MessageHandler};
 use crate::actor::server_actor::ServerOperation;
+use crate::message::{Message, MessageHandler};
 use std::sync::mpsc::Sender;
 
 pub struct GetPeerAddressHandler;
