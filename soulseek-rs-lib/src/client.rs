@@ -5,7 +5,7 @@ use crate::utils::logger;
 use crate::{
     actor::{peer_registry::PeerRegistry, ActorSystem},
     error::{Result, SoulseekRs},
-    peer::{ConnectionType, DownloadPeer, NewPeer, Peer},
+    peer::{listen::Listen, ConnectionType, DownloadPeer, NewPeer, Peer},
     types::{Download, FileSearchResult},
     utils::{md5, thread_pool::ThreadPool},
     Transfer,
@@ -24,7 +24,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{debug, error, info, trace};
+use crate::{debug, error, info, trace, warn};
 const DEFALT_LISTEN_PORT: u32 = 2234;
 
 #[derive(Debug, Clone)]
@@ -58,7 +58,7 @@ impl Default for ClientSettings {
                 "server.slsknet.org".to_string(),
                 2416,
             ),
-            enable_listen: false,
+            enable_listen: true,
             listen_port: DEFALT_LISTEN_PORT,
         }
     }
@@ -161,6 +161,8 @@ impl Client {
             PeerRegistry::new(ctx.actor_system.clone(), sender.clone());
         ctx.peer_registry = Some(peer_registry);
 
+        let listen_sender = sender.clone();
+
         let server_actor = ServerActor::new(
             self.address.clone(),
             sender,
@@ -174,6 +176,22 @@ impl Client {
                 actor.set_self_handle(handle);
             },
         ));
+
+        if self.enable_listen {
+            let listen_port = self.listen_port;
+            let client_sender = listen_sender;
+            let context = self.context.clone();
+            let own_username = self.username.clone();
+
+            thread::spawn(move || {
+                Listen::start(
+                    listen_port,
+                    client_sender,
+                    context,
+                    own_username,
+                );
+            });
+        }
 
         Self::listen_to_client_operations(
             message_reader,
@@ -366,7 +384,7 @@ impl Client {
                                 }
                             }
                             if let Some(error) = error {
-                                error!(
+                                warn!(
                                                 "[client] Peer {} disconnected with error: {:?}",
                                                 username, error
                                             );

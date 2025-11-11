@@ -14,7 +14,3 @@ name = "soulseek_rs"
 path = "src/lib.rs"
 
 [dependencies]
-# Add your dependencies here as needed
-# For example:
-# tokio = { version = "1", features = ["full"] }
-# serde = { version = "1", features = ["derive"] }
