@@ -260,7 +260,7 @@ impl ServerActor {
         let mut socket_addrs = match addr_str.to_socket_addrs() {
             Ok(addrs) => addrs,
             Err(e) => {
-                error!("[server_actor] Failed to resolve address: {}", e);
+                error!("[server] Failed to resolve address: {}", e);
 
                 self.disconnect_with_error(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -276,10 +276,7 @@ impl ServerActor {
             Some(addr) => {
                 if let Ok(stream) = TcpStream::connect(addr) {
                     if let Err(e) = stream.set_nonblocking(true) {
-                        error!(
-                            "[server_actor] Failed to set non-blocking: {}",
-                            e
-                        );
+                        error!("[server] Failed to set non-blocking: {}", e);
                         self.disconnect_with_error(e);
                         return false;
                     }
@@ -295,7 +292,10 @@ impl ServerActor {
                     match TcpStream::connect(addr) {
                         Ok(stream) => {
                             if let Err(e) = stream.set_nonblocking(true) {
-                                error!("[server_actor] Failed to set non-blocking: {}", e);
+                                error!(
+                                    "[server] Failed to set non-blocking: {}",
+                                    e
+                                );
                                 self.disconnect_with_error(e);
                                 return false;
                             }
@@ -317,7 +317,7 @@ impl ServerActor {
             None => {
                 let error_msg =
                     format!("No socket addresses found for {}:{}", host, port);
-                error!("[server_actor] {}", error_msg);
+                error!("[server] {}", error_msg);
                 self.disconnect_with_error(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     error_msg,
@@ -358,7 +358,7 @@ impl ServerActor {
         handlers.register_handler(ConnectToPeerHandler);
 
         self.dispatcher = Some(MessageDispatcher::new(
-            "server_actor".into(),
+            "server".into(),
             dispatcher_sender,
             handlers,
         ));
@@ -483,7 +483,7 @@ impl ServerActor {
                 obfuscated_port,
             } => {
                 debug!(
-                    "[server_actor] Received GetPeerAddress response for {}: {}:{} (obf_type: {}, obf_port: {})"
+                    "[server] Received GetPeerAddress response for {}: {}:{} (obf_type: {}, obf_port: {})"
                     , username, host, port, obfuscation_type, obfuscated_port
                 );
 
@@ -496,7 +496,7 @@ impl ServerActor {
                         obfuscated_port,
                     },
                 ) {
-                    error!("[server_actor] Error forwarding GetPeerAddress response to client: {}", e);
+                    error!("[server] Error forwarding GetPeerAddress response to client: {}", e);
                 }
             }
             ServerOperation::ProcessRead => {
@@ -555,11 +555,11 @@ impl ServerActor {
                 Ok(()) => {}
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
                 Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
-                    debug!("[server_actor] Read operation timed out",);
+                    debug!("[server] Read operation timed out",);
                 }
                 Err(e) => {
                     error!(
-                        "[server_actor] Error reading from server: {} (kind: {:?}). Disconnecting.",
+                        "[server] Error reading from server: {} (kind: {:?}). Disconnecting.",
                          e, e.kind()
                     );
                     self.disconnect_with_error(e);
@@ -577,7 +577,7 @@ impl ServerActor {
                 Ok(Some(mut message)) => {
                     extracted_count += 1;
                     trace!(
-                        "[server_actor] ← Message #{}: {:?}",
+                        "[server] ← Message #{}: {:?}",
                         extracted_count,
                         message
                             .get_message_name(
@@ -589,11 +589,14 @@ impl ServerActor {
                     if let Some(ref dispatcher) = self.dispatcher {
                         dispatcher.dispatch(&mut message);
                     } else {
-                        warn!("[server_actor] No dispatcher available!",);
+                        warn!("[server] No dispatcher available!",);
                     }
                 }
                 Err(e) => {
-                    warn!( "[server_actor] Error extracting message: {}. Disconnecting.", e);
+                    warn!(
+                        "[server] Error extracting message: {}. Disconnecting.",
+                        e
+                    );
                     self.disconnect_with_error(e);
                     return;
                 }
@@ -622,13 +625,13 @@ impl ServerActor {
         let stream = match self.stream.as_mut() {
             Some(s) => s,
             None => {
-                error!("[server_actor] Cannot send message: stream is None");
+                error!("[server] Cannot send message: stream is None");
                 return;
             }
         };
 
         trace!(
-            "[server_actor] ➡ {:?}",
+            "[server] ➡ {:?}",
             message
                 .get_message_name(
                     MessageType::Server,
@@ -640,31 +643,25 @@ impl ServerActor {
         );
 
         if let Err(e) = stream.write_all(&message.get_buffer()) {
-            error!(
-                "[server_actor] Error writing message: {}. Disconnecting.",
-                e
-            );
+            error!("[server] Error writing message: {}. Disconnecting.", e);
             self.disconnect_with_error(e);
             return;
         }
 
         if let Err(e) = stream.flush() {
-            error!(
-                "[server_actor] Error flushing stream: {}. Disconnecting.",
-                e
-            );
+            error!("[server] Error flushing stream: {}. Disconnecting.", e);
             self.disconnect_with_error(e);
         }
     }
 
     fn disconnect_with_error(&mut self, _error: Error) {
-        debug!("[server_actor] disconnect");
+        debug!("[server] disconnect");
 
         self.stream.take();
     }
 
     fn disconnect(&mut self) {
-        debug!("[server_actor] disconnected");
+        debug!("[server] disconnected");
 
         self.stream.take();
     }
@@ -676,7 +673,7 @@ impl ServerActor {
         };
 
         if since.elapsed() > Duration::from_secs(20) {
-            error!("[server_actor] Connection timeout after 20 seconds");
+            error!("[server] Connection timeout after 20 seconds");
             self.disconnect_with_error(io::Error::new(
                 io::ErrorKind::TimedOut,
                 "Connection timeout",
@@ -695,7 +692,7 @@ impl ServerActor {
             }
             Err(ref e) if e.kind() == io::ErrorKind::NotConnected => {}
             Err(e) => {
-                error!("[server_actor] Connection failed: {}", e);
+                error!("[server] Connection failed: {}", e);
                 self.disconnect_with_error(e);
             }
         }
@@ -738,7 +735,7 @@ impl Actor for ServerActor {
     }
 
     fn on_stop(&mut self) {
-        trace!("[server_actor] actor stopping");
+        trace!("[server] actor stopping");
         self.disconnect();
     }
 
