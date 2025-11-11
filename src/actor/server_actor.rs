@@ -177,7 +177,7 @@ impl Room {
 }
 
 #[derive(Debug, Clone)]
-pub enum ServerOperation {
+pub enum ServerMessage {
     ProcessRead,
     LoginStatus(bool),
     SendMessage(Message),
@@ -212,11 +212,11 @@ pub struct ServerActor {
     connection_state: ConnectionState,
     reader: MessageReader,
     client_channel: Sender<ClientOperation>,
-    self_handle: Option<ActorHandle<ServerOperation>>,
-    dispatcher: Option<MessageDispatcher<ServerOperation>>,
-    dispatcher_receiver: Option<Receiver<ServerOperation>>,
-    dispatcher_sender: Option<Sender<ServerOperation>>,
-    queued_messages: Vec<ServerOperation>,
+    self_handle: Option<ActorHandle<ServerMessage>>,
+    dispatcher: Option<MessageDispatcher<ServerMessage>>,
+    dispatcher_receiver: Option<Receiver<ServerMessage>>,
+    dispatcher_sender: Option<Sender<ServerMessage>>,
+    queued_messages: Vec<ServerMessage>,
 }
 
 impl ServerActor {
@@ -247,7 +247,7 @@ impl ServerActor {
         &self.address
     }
 
-    pub fn get_sender(&self) -> Option<&Sender<ServerOperation>> {
+    pub fn get_sender(&self) -> Option<&Sender<ServerMessage>> {
         self.dispatcher_sender.as_ref()
     }
 
@@ -327,13 +327,13 @@ impl ServerActor {
         }
     }
 
-    pub fn set_self_handle(&mut self, handle: ActorHandle<ServerOperation>) {
+    pub fn set_self_handle(&mut self, handle: ActorHandle<ServerMessage>) {
         self.self_handle = Some(handle);
     }
 
     fn initialize_dispatcher(&mut self) {
         let (dispatcher_sender, dispatcher_receiver) =
-            std::sync::mpsc::channel::<ServerOperation>();
+            std::sync::mpsc::channel::<ServerMessage>();
 
         self.dispatcher_receiver = Some(dispatcher_receiver);
         self.dispatcher_sender = Some(dispatcher_sender.clone());
@@ -365,7 +365,7 @@ impl ServerActor {
     }
 
     fn process_dispatcher_messages(&mut self) {
-        let messages: Vec<ServerOperation> = self
+        let messages: Vec<ServerMessage> = self
             .dispatcher_receiver
             .as_ref()
             .map_or_else(Vec::new, |receiver| {
@@ -434,10 +434,10 @@ impl ServerActor {
         ));
     }
 
-    fn handle_message(&mut self, msg: ServerOperation) {
+    fn handle_message(&mut self, msg: ServerMessage) {
         if !matches!(self.connection_state, ConnectionState::Connected) {
             match &msg {
-                ServerOperation::ProcessRead => {
+                ServerMessage::ProcessRead => {
                     // Always process read operations
                 }
                 _ => {
@@ -449,7 +449,7 @@ impl ServerActor {
         }
 
         match msg {
-            ServerOperation::ConnectToPeer(peer) => {
+            ServerMessage::ConnectToPeer(peer) => {
                 if let Some(op) = match peer.connection_type {
                     ConnectionType::P | ConnectionType::F => {
                         Some(ClientOperation::ConnectToPeer(peer.clone()))
@@ -459,23 +459,23 @@ impl ServerActor {
                     self.client_channel.send(op).unwrap();
                 }
             }
-            ServerOperation::LoginStatus(message) => {
+            ServerMessage::LoginStatus(message) => {
                 self.context.write().unwrap().logged_in = Some(message);
             }
-            ServerOperation::PierceFirewall(token) => {
+            ServerMessage::PierceFirewall(token) => {
                 self.send_message(
                     MessageFactory::build_pierce_firewall_message(token),
                 );
             }
-            ServerOperation::SendMessage(message) => {
+            ServerMessage::SendMessage(message) => {
                 self.send_message(message);
             }
-            ServerOperation::GetPeerAddress(username) => {
+            ServerMessage::GetPeerAddress(username) => {
                 self.send_message(MessageFactory::build_get_peer_address(
                     &username,
                 ));
             }
-            ServerOperation::GetPeerAddressResponse {
+            ServerMessage::GetPeerAddressResponse {
                 username,
                 host,
                 port,
@@ -499,10 +499,10 @@ impl ServerActor {
                     error!("[server] Error forwarding GetPeerAddress response to client: {}", e);
                 }
             }
-            ServerOperation::ProcessRead => {
+            ServerMessage::ProcessRead => {
                 self.process_read();
             }
-            ServerOperation::Login {
+            ServerMessage::Login {
                 username,
                 password,
                 response,
@@ -534,7 +534,7 @@ impl ServerActor {
                     std::thread::sleep(Duration::from_millis(100));
                 });
             }
-            ServerOperation::FileSearch { token, query } => {
+            ServerMessage::FileSearch { token, query } => {
                 self.file_search(token, &query);
             }
         }
@@ -611,13 +611,13 @@ impl ServerActor {
 
     fn queue_message(&mut self, message: Message) {
         if let Some(sender) = &self.dispatcher_sender {
-            match sender.send(ServerOperation::SendMessage(message)) {
+            match sender.send(ServerMessage::SendMessage(message)) {
                 Ok(_) => {}
                 Err(e) => error!("Failed to send: {}", e),
             }
         } else {
             self.queued_messages
-                .push(ServerOperation::SendMessage(message));
+                .push(ServerMessage::SendMessage(message));
         }
     }
 
@@ -711,7 +711,7 @@ impl ServerActor {
         }
 
         if let Some(ref handle) = self.self_handle {
-            handle.send(ServerOperation::ProcessRead).ok();
+            handle.send(ServerMessage::ProcessRead).ok();
         }
 
         self.process_read();
@@ -719,7 +719,7 @@ impl ServerActor {
 }
 
 impl Actor for ServerActor {
-    type Message = ServerOperation;
+    type Message = ServerMessage;
 
     fn handle(&mut self, msg: Self::Message) {
         self.handle_message(msg);

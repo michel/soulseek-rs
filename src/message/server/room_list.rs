@@ -1,17 +1,17 @@
 use crate::{
-    actor::server_actor::ServerOperation,
+    actor::server_actor::ServerMessage,
     message::{Message, MessageHandler},
 };
 use std::sync::mpsc::Sender;
 
 pub struct RoomListHandler;
 
-impl MessageHandler<ServerOperation> for RoomListHandler {
+impl MessageHandler<ServerMessage> for RoomListHandler {
     fn get_code(&self) -> u8 {
         64
     }
 
-    fn handle(&self, _message: &mut Message, _sender: Sender<ServerOperation>) {
+    fn handle(&self, _message: &mut Message, _sender: Sender<ServerMessage>) {
         // let num_public_rooms = message.read_int32();
         // for _ in 0..num_public_rooms {
         //     rooms.public_rooms.push(Room::new(message.read_string(), 0));
