@@ -5,3 +5,10 @@ version = 4
 [[package]]
 name = "soulseek-rs"
 version = "0.1.0"
+dependencies = [
+ "soulseek-rs-lib",
+]
+
+[[package]]
+name = "soulseek-rs-lib"
+version = "0.1.0"

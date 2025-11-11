@@ -1,0 +1,20 @@
+[package]
+name = "soulseek-rs-lib"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Library for Soulseek protocol implementation in Rust"
+keywords = ["soulseek", "p2p", "protocol", "file-sharing"]
+categories = ["network-programming"]
+
+[lib]
+name = "soulseek_rs"
+path = "src/lib.rs"
+
+[dependencies]
+# Add your dependencies here as needed
+# For example:
+# tokio = { version = "1", features = ["full"] }
+# serde = { version = "1", features = ["derive"] }
