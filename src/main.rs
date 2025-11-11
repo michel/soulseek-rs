@@ -6,14 +6,16 @@ fn main() {
         PeerAddress::new(String::from("server.slsknet.org"), 2242),
         String::from("xxxxxx"),
         String::from("xxxxxx"),
-        true,
+        false,
         None,
     );
 
     client.connect();
     match client.login() {
         Ok(_) => {
-            match client.search("michel test file", Duration::from_secs(4)) {
+            match client
+                .search("Eternity Alex Kassian", Duration::from_secs(30))
+            {
                 Ok(results) => {
                     if let Some(result) =
                         results.iter().find(|r| !r.files.is_empty())

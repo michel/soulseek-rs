@@ -7,7 +7,7 @@ use std::thread;
 use crate::client::{ClientContext, ClientOperation};
 
 use crate::message::{Message, MessageReader};
-use crate::peer::{ConnectionType, DefaultPeer, DownloadPeer, Peer};
+use crate::peer::{ConnectionType, DownloadPeer, Peer};
 use crate::types::Download;
 use crate::{debug, error, info, trace, DownloadStatus};
 
@@ -15,6 +15,7 @@ const PEER_INIT_MESSAGE_CODE: u8 = 1;
 
 #[derive(Clone)]
 struct ConnectionContext {
+    #[allow(dead_code)]
     client_sender: Sender<ClientOperation>,
     client_context: Arc<RwLock<ClientContext>>,
     own_username: String,
@@ -74,14 +75,7 @@ fn extract_download_from_buffer(
     if reader.buffer_len() == 0 {
         return None;
     }
-
     let buffer = reader.get_buffer();
-    trace!(
-        "[listener:{peer_ip}:{peer_port}] reader buffer has {} bytes. {:?}",
-        buffer.len(),
-        buffer
-    );
-
     let token = parse_token_from_buffer(&buffer, username)?;
     trace!(
         "[listener:{}] got transfer_token: {} from data chunk",
@@ -105,17 +99,23 @@ fn handle_peer_connection(
     peer: Peer,
     stream: TcpStream,
     reader: MessageReader,
-    client_sender: Sender<ClientOperation>,
-    peer_ip: &str,
-    peer_port: u16,
+    context: &ConnectionContext,
+    _peer_ip: &str,
+    _peer_port: u16,
 ) {
-    debug!("[listener:{peer_ip}:{peer_port}] connection type is P, reader buffer has {} bytes", reader.buffer_len());
-
-    let default_peer = DefaultPeer::new(peer, client_sender);
-    if let Ok(default_peer) =
-        default_peer.connect_with_socket(stream, Some(reader))
-    {
-        drop(default_peer);
+    let client_context = context.client_context.read().unwrap();
+    if let Some(ref registry) = client_context.peer_registry {
+        match registry.register_peer(peer.clone(), Some(stream), Some(reader)) {
+            Ok(_) => (),
+            Err(e) => {
+                error!(
+                    "Failed to spawn peer actor for {:?}: {:?}",
+                    peer.username, e
+                );
+            }
+        }
+    } else {
+        error!("PeerRegistry not initialized");
     }
 }
 
@@ -201,8 +201,9 @@ fn handle_incoming_connection(stream: TcpStream, context: ConnectionContext) {
     );
 
     let peer = Peer::new(
-        init_data.username.clone(),
-        ConnectionType::P,
+        format!("{}:direct", init_data.username),
+        // init_data.username.clone(),
+        init_data.connection_type.clone(),
         peer_ip.clone(),
         peer_port.into(),
         None,
@@ -213,22 +214,25 @@ fn handle_incoming_connection(stream: TcpStream, context: ConnectionContext) {
 
     match init_data.connection_type {
         ConnectionType::P => handle_peer_connection(
-            peer,
-            stream,
-            reader,
-            context.client_sender,
-            &peer_ip,
-            peer_port,
+            peer, stream, reader, &context, &peer_ip, peer_port,
         ),
-        ConnectionType::F => handle_file_connection(
-            peer,
-            stream,
-            reader,
-            init_data.token,
-            &context,
-            &peer_ip,
-            peer_port,
-        ),
+
+        ConnectionType::F => {
+            thread::spawn(move || {
+                trace!(
+                    "[listener:{peer_ip}:{peer_port}] handling file connection in thread"
+                );
+                handle_file_connection(
+                    peer,
+                    stream,
+                    reader,
+                    init_data.token,
+                    &context,
+                    &peer_ip,
+                    peer_port,
+                )
+            });
+        }
         ConnectionType::D => {
             debug!("[listener:{peer_ip}:{peer_port}] connection type is D, not supported yet, closing connection. ");
         }
@@ -265,7 +269,7 @@ impl Listen {
             };
 
             let context = context.clone();
-            thread::spawn(move || handle_incoming_connection(stream, context));
+            handle_incoming_connection(stream, context);
         }
     }
 }

@@ -341,17 +341,11 @@ impl Server {
                 if let Ok(operation) = server_channel.recv() {
                     match operation {
                         ServerOperation::ConnectToPeer(peer) => {
-                            debug!(
-                                "[server] ConnectToPeer {} - ConnectionType {}",
-                                peer.username, peer.connection_type
-                            );
-
                             if let Some(op) = match peer.connection_type {
-                                ConnectionType::P => {
-                                    Some(ClientOperation::ConnectToPeer(peer))
-                                }
-                                ConnectionType::F => {
-                                    Some(ClientOperation::ConnectToPeer(peer))
+                                ConnectionType::P | ConnectionType::F => {
+                                    Some(ClientOperation::ConnectToPeer(
+                                        peer.clone(),
+                                    ))
                                 }
                                 ConnectionType::D => None,
                             } {
