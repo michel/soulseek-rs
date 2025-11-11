@@ -1,15 +1,15 @@
-use crate::actor::server_actor::ServerOperation;
+use crate::actor::server_actor::ServerMessage;
 use crate::message::{Message, MessageHandler};
 use std::sync::mpsc::Sender;
 
 pub struct GetPeerAddressHandler;
 
-impl MessageHandler<ServerOperation> for GetPeerAddressHandler {
+impl MessageHandler<ServerMessage> for GetPeerAddressHandler {
     fn get_code(&self) -> u8 {
         3
     }
 
-    fn handle(&self, message: &mut Message, sender: Sender<ServerOperation>) {
+    fn handle(&self, message: &mut Message, sender: Sender<ServerMessage>) {
         let username = message.read_string();
 
         // Read IP address as 4 bytes
@@ -25,7 +25,7 @@ impl MessageHandler<ServerOperation> for GetPeerAddressHandler {
         println!("GetPeerAddressHandler: {:?}", username); // Debug print
 
         sender
-            .send(ServerOperation::GetPeerAddressResponse {
+            .send(ServerMessage::GetPeerAddressResponse {
                 username,
                 host,
                 port,
