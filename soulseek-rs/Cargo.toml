@@ -1,0 +1,23 @@
+[package]
+name = "soulseek-rs"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Command-line client for Soulseek protocol"
+keywords = ["soulseek", "p2p", "client", "file-sharing"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "soulseek"
+path = "src/main.rs"
+
+[dependencies]
+# Depend on your library
+soulseek-rs-lib = { version = "0.1.0", path = "../soulseek-rs-lib" }
+
+# Add client-specific dependencies here
+# For example:
+# clap = { version = "4", features = ["derive"] }
+# anyhow = "1"
