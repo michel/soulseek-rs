@@ -2,8 +2,8 @@
 
 ## ⚠️WARNING THIS IS UNDER DEVELOPMENT AND NOT READY FOR USE ⚠️
 
-Souleek-rs is an experimental Soulseek client built in Rust. It's under
-development and not yet ready for use. Soulseek is a closed-source P2P
+Souleek-rs is an experimental Soulseek library and client built in Rust. It's
+under development and not yet ready for use. Soulseek is a closed-source P2P
 file-sharing network from the 2000s. It's still used by music enthusiasts
 around the world to share niche music.
 
@@ -17,9 +17,12 @@ about asynchronous and concurrent network programming and reverse engineering
 It's not intended to be a production-ready client (yet).
 
 Since it's a learning project, I have a self-imposed restriction not to use
-external dependencies. This means I can't use any external crates that are not
-part of the Rust standard library. This is a good challenge to learn how to
-build complex systems with only the standard library.
+external dependencies in the library. This means I can't use any external
+crates that are not part of the Rust standard library. This is a good challenge
+to learn how to build complex systems with only the standard library.
+
+In the client crate, external dependencies are allowed for building a rich
+experience. For me, this is a good balance between learning and practicality.
 
 ## Planned Features
 
@@ -33,18 +36,30 @@ build complex systems with only the standard library.
 - [ ] Private messaging
 - [ ] Headless mode daemon mode with remote control
 
-## Project structure
+## Project Structure
 
-Soulseek-rs is planned to be structured as a generic reusable library
-(soulseek-rs-lib) with a CLI client (soulseek-rs).
+This project is organized as a Cargo workspace with two crates:
 
-The CLI client will have a simple command-line interface to interact with the
-library. A rich TUI mode will be added in the future.
+- **soulseek-rs-lib** - The core library implementing the Soulseek protocol
+- **soulseek-rs** - A CLI client built on top of the library
+
+This structure allows:
+
+- Other developers to build custom Soulseek clients using `soulseek-rs-lib`
+- Users to install the ready-made client via `cargo install soulseek-rs`
+- Clean separation of concerns between protocol implementation and user interface
 
 ## Installation
 
-To install Soulseek-rs, you'll need to have Rust installed on your system. Then,
-you can clone the repository and build it with cargo:
+### For Users
+
+```bash
+cargo install soulseek-rs
+```
+
+### For Developers
+
+Clone and build from source:
 
 ```bash
 git clone git@github.com:michel/soulseek-rs.git
@@ -52,12 +67,21 @@ cd soulseek-rs
 cargo build --release
 ```
 
-The binary will be available at `target/release/soulseek-rs`.
+The binary will be available at `target/release/soulseek`.
+
+### For Library Users
+
+To build your own Soulseek client, add to your `Cargo.toml`:
+
+```toml
+[dependencies]
+soulseek-rs-lib = "0.1.0"
+```
 
 ## Usage
 
 ```bash
-./target/release/soulseek-rs "the weeknd Blinding Lights"
+./target/release/soulseek "the weeknd Blinding Lights"
 ```
 
 ## Development
