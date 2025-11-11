@@ -2,8 +2,8 @@ use crate::{debug, info};
 use std::sync::mpsc::Sender;
 
 use crate::{
-    message::handlers::MessageHandler, message::Message,
-    actor::server_actor::ServerOperation,
+    actor::server_actor::ServerOperation, message::handlers::MessageHandler,
+    message::Message,
 };
 
 pub struct FileSearchHandler;
