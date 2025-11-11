@@ -18,19 +18,15 @@ soulseek-rs-lib = "0.1.0"
 
 ## Example
 
+### Simple Usage
+
 ```rust
-use soulseek_rs::{Client, PeerAddress};
+use soulseek_rs::Client;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create and connect to Soulseek server
-    let mut client = Client::new(
-        PeerAddress::new("server.slsknet.org".to_string(), 2242),
-        "username".to_string(),
-        "password".to_string(),
-        false,
-        None,
-    );
+    let mut client = Client::new("username", "password");
 
     client.connect();
     client.login()?;
@@ -49,6 +45,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
         println!("Downloaded: {}", file.name);
     }
+
+    Ok(())
+}
+```
+
+### Advanced Configuration
+
+```rust
+use soulseek_rs::{Client, ClientSettings, PeerAddress};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create client with custom settings
+    let settings = ClientSettings {
+        server_address: PeerAddress::new("server.slsknet.org".to_string(), 2242),
+        enable_listen: true,
+        listen_port: 3000,
+        ..ClientSettings::new("username", "password")
+    };
+
+    let mut client = Client::with_settings(settings);
+    client.connect();
+    client.login()?;
 
     Ok(())
 }

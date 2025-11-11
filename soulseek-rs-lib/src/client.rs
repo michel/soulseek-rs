@@ -1,6 +1,7 @@
 use crate::actor::server_actor::{PeerAddress, ServerActor, ServerMessage};
 use crate::actor::ActorHandle;
 use crate::types::{DownloadResult, DownloadStatus};
+use crate::utils::logger;
 use crate::{
     actor::{peer_registry::PeerRegistry, ActorSystem},
     error::{Result, SoulseekRs},
@@ -25,6 +26,43 @@ use std::{
 
 use crate::{debug, error, info, trace};
 const DEFALT_LISTEN_PORT: u32 = 2234;
+
+#[derive(Debug, Clone)]
+pub struct ClientSettings {
+    pub username: String,
+    pub password: String,
+    pub server_address: PeerAddress,
+    pub enable_listen: bool,
+    pub listen_port: u32,
+}
+
+impl ClientSettings {
+    pub fn new(
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Self {
+        Self {
+            username: username.into(),
+            password: password.into(),
+            ..Default::default()
+        }
+    }
+}
+
+impl Default for ClientSettings {
+    fn default() -> Self {
+        Self {
+            username: String::new(),
+            password: String::new(),
+            server_address: PeerAddress::new(
+                "server.slsknet.org".to_string(),
+                2416,
+            ),
+            enable_listen: false,
+            listen_port: DEFALT_LISTEN_PORT,
+        }
+    }
+}
 
 #[derive(Debug)]
 
@@ -92,29 +130,23 @@ pub struct Client {
 
 impl Client {
     pub fn new(
-        address: PeerAddress,
-        username: String,
-        password: String,
-        enable_listen: bool,
-        listen_port: Option<u32>,
+        username: impl Into<String>,
+        password: impl Into<String>,
     ) -> Self {
-        crate::utils::logger::init();
+        Self::with_settings(ClientSettings::new(username, password))
+    }
+
+    pub fn with_settings(settings: ClientSettings) -> Self {
+        logger::init();
         Self {
-            enable_listen,
-            listen_port: listen_port.unwrap_or(DEFALT_LISTEN_PORT),
-            address,
-            username,
-            password,
+            enable_listen: settings.enable_listen,
+            listen_port: settings.listen_port,
+            address: settings.server_address,
+            username: settings.username,
+            password: settings.password,
             context: Arc::new(RwLock::new(ClientContext::new())),
             server_handle: None,
         }
-    }
-    pub fn with_defaults(
-        address: PeerAddress,
-        username: String,
-        password: String,
-    ) -> Self {
-        Self::new(address, username, password, false, None)
     }
 
     pub fn connect(&mut self) {
