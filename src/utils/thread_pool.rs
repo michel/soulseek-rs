@@ -4,9 +4,14 @@ use std::thread;
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
+enum Message {
+    NewJob(Job),
+    Terminate,
+}
+
 pub struct ThreadPool {
     workers: Vec<Worker>,
-    sender: mpsc::Sender<Job>,
+    sender: Option<mpsc::Sender<Message>>,
     active_threads: Arc<AtomicUsize>,
 }
 
@@ -30,7 +35,7 @@ impl ThreadPool {
 
         ThreadPool {
             workers,
-            sender,
+            sender: Some(sender),
             active_threads,
         }
     }
@@ -40,7 +45,9 @@ impl ThreadPool {
         F: FnOnce() + Send + 'static,
     {
         let job = Box::new(f);
-        self.sender.send(job).unwrap();
+        if let Some(ref sender) = self.sender {
+            sender.send(Message::NewJob(job)).unwrap();
+        }
     }
 
     pub fn thread_count(&self) -> usize {
@@ -54,6 +61,14 @@ impl ThreadPool {
 
 impl Drop for ThreadPool {
     fn drop(&mut self) {
+        // Send termination message to all workers
+        if let Some(sender) = self.sender.take() {
+            for _ in &self.workers {
+                sender.send(Message::Terminate).unwrap();
+            }
+        }
+
+        // Wait for all workers to finish
         for worker in &mut self.workers {
             if let Some(thread) = worker.thread.take() {
                 thread.join().unwrap();
@@ -70,14 +85,14 @@ struct Worker {
 impl Worker {
     fn new(
         id: usize,
-        receiver: Arc<Mutex<mpsc::Receiver<Job>>>,
+        receiver: Arc<Mutex<mpsc::Receiver<Message>>>,
         _active_threads: Arc<AtomicUsize>,
         _total_threads: usize,
     ) -> Worker {
         let thread = thread::spawn(move || loop {
-            let job = receiver.lock().unwrap().recv();
-            match job {
-                Ok(job) => {
+            let message = receiver.lock().unwrap().recv();
+            match message {
+                Ok(Message::NewJob(job)) => {
                     // let active =
                     //     active_threads.fetch_add(1, Ordering::SeqCst) + 1;
                     // trace!(
@@ -98,7 +113,12 @@ impl Worker {
                     //     total_threads
                     // );
                 }
+                Ok(Message::Terminate) => {
+                    // Received termination signal
+                    break;
+                }
                 Err(_) => {
+                    // Channel disconnected
                     break;
                 }
             }

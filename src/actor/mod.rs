@@ -193,7 +193,7 @@ mod tests {
     #[test]
     fn test_actor_system() {
         let thread_pool = Arc::new(ThreadPool::new(4));
-        let system = ActorSystem::new(thread_pool);
+        let system = ActorSystem::new(thread_pool.clone());
 
         let count = Arc::new(AtomicUsize::new(0));
         let actor = CounterActor {
@@ -212,6 +212,13 @@ mod tests {
 
         assert_eq!(count.load(Ordering::SeqCst), 6);
 
+        // Stop the actor
         handle.stop().unwrap();
+
+        // Give actor time to process the stop message
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Drop the thread pool explicitly to wait for all threads
+        drop(thread_pool);
     }
 }
