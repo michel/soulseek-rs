@@ -1,8 +1,6 @@
+use crate::actor::server_actor::{ServerOperation, UserMessage};
 use crate::info;
-use crate::{
-    message::{Message, MessageHandler},
-    server::{ServerOperation, UserMessage},
-};
+use crate::message::{Message, MessageHandler};
 
 use std::sync::mpsc::Sender;
 
