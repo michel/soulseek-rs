@@ -389,46 +389,28 @@ impl PeerActor {
 
         match socket_addr {
             Ok(addr) => {
-                if let Ok(stream) = TcpStream::connect(addr) {
-                    if let Err(e) = stream.set_nonblocking(true) {
-                        error!(
-                            "[peer:{}] Failed to set non-blocking: {}",
-                            username, e
-                        );
-                        self.disconnect_with_error(e);
-                        return false;
-                    }
-
-                    stream.set_nodelay(true).ok();
-
-                    self.stream = Some(stream);
-                    self.connection_state = ConnectionState::Connecting {
-                        since: Instant::now(),
-                    };
-                    true
-                } else {
-                    match TcpStream::connect(addr) {
-                        Ok(stream) => {
-                            if let Err(e) = stream.set_nonblocking(true) {
-                                error!(
-                                    "[peer:{}] Failed to set non-blocking: {}",
-                                    username, e
-                                );
-                                self.disconnect_with_error(e);
-                                return false;
-                            }
-                            stream.set_nodelay(true).ok();
-                            self.stream = Some(stream);
-                            self.connection_state =
-                                ConnectionState::Connecting {
-                                    since: Instant::now(),
-                                };
-                            true
-                        }
-                        Err(e) => {
+                // Use connect_timeout to prevent blocking the thread for too long
+                let timeout = Duration::from_secs(5);
+                match TcpStream::connect_timeout(&addr, timeout) {
+                    Ok(stream) => {
+                        if let Err(e) = stream.set_nonblocking(true) {
+                            error!(
+                                "[peer:{}] Failed to set non-blocking: {}",
+                                username, e
+                            );
                             self.disconnect_with_error(e);
-                            false
+                            return false;
                         }
+                        stream.set_nodelay(true).ok();
+                        self.stream = Some(stream);
+                        self.connection_state = ConnectionState::Connecting {
+                            since: Instant::now(),
+                        };
+                        true
+                    }
+                    Err(e) => {
+                        self.disconnect_with_error(e);
+                        false
                     }
                 }
             }
