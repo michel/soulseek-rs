@@ -3,7 +3,7 @@ use std::sync::mpsc::Sender;
 
 use crate::{
     message::handlers::MessageHandler, message::Message,
-    server::ServerOperation,
+    actor::server_actor::ServerOperation,
 };
 
 pub struct FileSearchHandler;

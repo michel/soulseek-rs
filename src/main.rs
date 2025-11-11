@@ -46,7 +46,7 @@ fn main() {
             }
         }
         Err(e) => {
-            eprintln!("Failed to login: {e}");
+            eprintln!("Failed to login: {}", e);
         }
     }
 }
