@@ -1,5 +1,8 @@
 use std::env;
-use std::sync::Once;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex, Once,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LogLevel {
@@ -12,6 +15,9 @@ pub enum LogLevel {
 
 static INIT: Once = Once::new();
 static mut LOG_LEVEL: LogLevel = LogLevel::Warn;
+
+static BUFFER: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static BUFFERING: AtomicBool = AtomicBool::new(false);
 
 pub fn init() {
     INIT.call_once(|| {
@@ -97,7 +103,7 @@ pub fn log(level: LogLevel, message: &str) {
             let minutes = (seconds_in_day % 3600) / 60;
             let seconds = seconds_in_day % 60;
 
-            eprintln!(
+            let formatted_message = format!(
                 "[{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}] [{}] {}",
                 year,
                 month,
@@ -109,7 +115,34 @@ pub fn log(level: LogLevel, message: &str) {
                 level_str,
                 message
             );
+
+            if BUFFERING.load(Ordering::Relaxed) {
+                if let Ok(mut buffer) = BUFFER.lock() {
+                    buffer.push(formatted_message);
+                }
+            } else {
+                eprintln!("{}", formatted_message);
+            }
         }
+    }
+}
+
+pub fn enable_buffering() {
+    BUFFERING.store(true, Ordering::Relaxed);
+}
+
+pub fn disable_buffering() {
+    BUFFERING.store(false, Ordering::Relaxed);
+}
+
+pub fn flush_buffered_logs() {
+    disable_buffering();
+
+    if let Ok(mut buffer) = BUFFER.lock() {
+        for message in buffer.iter() {
+            eprintln!("{}", message);
+        }
+        buffer.clear();
     }
 }
 
