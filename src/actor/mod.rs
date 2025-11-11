@@ -1,6 +1,3 @@
-// src/actor/mod.rs
-// Lightweight actor system using the existing thread pool
-
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -10,7 +7,14 @@ use crate::utils::thread_pool::ThreadPool;
 
 pub mod peer_actor;
 pub mod peer_registry;
+pub mod server_actor;
 
+#[derive(Debug, Clone)]
+pub enum ConnectionState {
+    Disconnected,
+    Connecting { since: Instant },
+    Connected,
+}
 /// Core actor trait - each actor processes messages
 pub trait Actor: Send + 'static {
     type Message: Send + Clone + 'static;
@@ -28,14 +32,12 @@ pub trait Actor: Send + 'static {
     fn tick(&mut self) {}
 }
 
-/// Handle to send messages to an actor
 #[derive(Clone)]
 pub struct ActorHandle<M: Send> {
     pub(crate) sender: Sender<ActorMessage<M>>,
 }
 
 impl<M: Send> ActorHandle<M> {
-    /// Send a message to the actor (non-blocking)
     pub fn send(&self, msg: M) -> Result<(), String> {
         self.sender
             .send(ActorMessage::UserMessage(msg))

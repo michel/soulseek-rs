@@ -1,6 +1,6 @@
 use crate::{
+    actor::server_actor::ServerOperation,
     message::{Message, MessageHandler},
-    server::ServerOperation,
 };
 use std::sync::mpsc::Sender;
 
