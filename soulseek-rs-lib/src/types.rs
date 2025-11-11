@@ -103,8 +103,12 @@ pub struct DownloadResult {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum DownloadStatus {
-    Pending,
-    InProgress,
+    Queued,
+    InProgress {
+        bytes_downloaded: u64,
+        total_bytes: u64,
+        speed_bytes_per_sec: f64,
+    },
     Completed,
     Failed,
     TimedOut,

@@ -5,16 +5,17 @@ use std::net::TcpStream;
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::client::ClientContext;
 use crate::message::server::MessageFactory;
 use crate::trace;
-use crate::types::Download;
+use crate::types::{Download, DownloadStatus};
 
 const START_DOWNLOAD: [u8; 8] =
     [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 const READ_BUFFER_SIZE: usize = 8192;
+const PROGRESS_UPDATE_CHUNKS: usize = 15; // ~120KB (15 * 8192 bytes)
 
 #[derive(Debug)]
 pub enum DownloadError {
@@ -256,6 +257,9 @@ impl DownloadPeer {
     ) -> Result<(Vec<u8>, Download), DownloadError> {
         let mut processor = StreamProcessor::new();
         let mut read_buffer = [1u8; READ_BUFFER_SIZE];
+        let mut chunk_counter = 0;
+        let start_time = Instant::now();
+        let mut last_update_time = start_time;
 
         trace!(
             "[download_peer:{}] Starting to read data from peer",
@@ -300,6 +304,31 @@ impl DownloadPeer {
                     }
 
                     processor.process_data_chunk(data);
+                    chunk_counter += 1;
+
+                    if let Some(ref dl) = download {
+                        if chunk_counter % PROGRESS_UPDATE_CHUNKS == 0 {
+                            let elapsed =
+                                last_update_time.elapsed().as_secs_f64();
+                            let bytes_since_last_update =
+                                PROGRESS_UPDATE_CHUNKS * READ_BUFFER_SIZE;
+                            let speed = if elapsed > 0.0 {
+                                bytes_since_last_update as f64 / elapsed
+                            } else {
+                                0.0
+                            };
+
+                            let _ =
+                                dl.sender.send(DownloadStatus::InProgress {
+                                    bytes_downloaded: processor.total_bytes
+                                        as u64,
+                                    total_bytes: dl.size,
+                                    speed_bytes_per_sec: speed,
+                                });
+
+                            last_update_time = Instant::now();
+                        }
+                    }
 
                     let expected_size = download
                         .as_ref()
@@ -390,6 +419,10 @@ impl DownloadPeer {
             stream.is_some(),
             self.no_pierce
         );
+
+        if let Some(ref dl) = download {
+            let _ = dl.sender.send(DownloadStatus::Queued);
+        }
 
         let mut stream = match stream {
             Some(s) => s,
