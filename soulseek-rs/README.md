@@ -6,7 +6,7 @@ A command-line client for the Soulseek peer-to-peer network.
 
 `bash cargo install soulseek-rs `
 
-This will install the `soulseek` binary to your system.
+This will install the `soulseek-rs` binary to your system.
 
 ## Usage
 
