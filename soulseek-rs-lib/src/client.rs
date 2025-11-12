@@ -14,6 +14,7 @@ use std::{
     collections::HashMap,
     net::TcpStream,
     sync::{
+        atomic::{AtomicBool, Ordering},
         mpsc::{Receiver, Sender},
         RwLock,
     },
@@ -234,7 +235,20 @@ impl Client {
         query: &str,
         timeout: Duration,
     ) -> Result<Vec<FileSearchResult>> {
+        self.search_with_cancel(query, timeout, None)
+    }
+
+    pub fn search_with_cancel(
+        &self,
+        query: &str,
+        timeout: Duration,
+        cancel_flag: Option<Arc<AtomicBool>>,
+    ) -> Result<Vec<FileSearchResult>> {
         info!("Searching for {}", query);
+
+        // Clear previous search results
+        self.context.write().unwrap().search_results.clear();
+
         if let Some(handle) = &self.server_handle {
             let hash = md5::md5(query);
             let token = u32::from_str_radix(&hash[0..5], 16)?;
@@ -248,12 +262,30 @@ impl Client {
 
         let start = Instant::now();
         loop {
-            sleep(Duration::from_millis(500));
+            sleep(Duration::from_millis(100));
+
+            // Check if cancelled
+            if let Some(ref flag) = cancel_flag {
+                if flag.load(Ordering::Relaxed) {
+                    info!("Search cancelled by user");
+                    break;
+                }
+            }
+
+            // Check if timeout reached
             if start.elapsed() >= timeout {
                 break;
             }
         }
         Ok(self.context.read().unwrap().search_results.clone())
+    }
+
+    pub fn get_search_results_count(&self) -> usize {
+        self.context.read().unwrap().search_results.len()
+    }
+
+    pub fn get_search_results(&self) -> Vec<FileSearchResult> {
+        self.context.read().unwrap().search_results.clone()
     }
 
     pub fn download(
