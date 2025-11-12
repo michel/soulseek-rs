@@ -67,7 +67,7 @@ cd soulseek-rs
 cargo build --release
 ```
 
-The binary will be available at `target/release/soulseek`.
+The binary will be available at `target/release/soulseek-rs`.
 
 ### For Library Users
 
@@ -81,7 +81,7 @@ soulseek-rs-lib = "0.1.0"
 ## Usage
 
 ```bash
-./target/release/soulseek "the weeknd Blinding Lights"
+./target/release/soulseek-rs "the weeknd Blinding Lights"
 ```
 
 ## Development

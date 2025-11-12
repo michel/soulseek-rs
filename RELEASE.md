@@ -107,7 +107,7 @@ After publishing, test the installation:
 
 ```bash
 cargo install soulseek-rs
-soulseek --help  # Should work
+soulseek-rs --help  # Should work
 ```
 
 ## For Developers Building Custom Clients
