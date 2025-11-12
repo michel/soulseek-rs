@@ -7,6 +7,10 @@ under development and not yet ready for use. Soulseek is a closed-source P2P
 file-sharing network from the 2000s. It's still used by music enthusiasts
 around the world to share niche music.
 
+## 🎥 Demo
+
+![CLI Demo](fixtures/demo.gif)
+
 ## Project Goals
 
 This project is a learning exercise to explore Rust. I've been using Soulseek
