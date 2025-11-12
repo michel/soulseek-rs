@@ -10,7 +10,7 @@ keywords = ["soulseek", "p2p", "client", "file-sharing"]
 categories = ["command-line-utilities"]
 
 [[bin]]
-name = "soulseek"
+name = "soulseek-rs"
 path = "src/main.rs"
 
 [dependencies]
