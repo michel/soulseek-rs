@@ -2,16 +2,24 @@ use clap::{Parser, Subcommand};
 use color_eyre::Result;
 use ratatui::{
     crossterm::event::{self, poll, Event, KeyCode, KeyEvent, KeyEventKind},
-    layout::{Constraint, Layout},
+    layout::{Alignment, Constraint, Layout},
     style::{Color, Modifier, Style},
     widgets::{
-        Block, Borders, HighlightSpacing, List, ListItem, ListState, Paragraph,
-        StatefulWidget,
+        Block, Borders, Cell, Paragraph, Row, StatefulWidget, Table, TableState, Wrap,
     },
     DefaultTerminal, Frame,
 };
 use soulseek_rs::{Client, ClientSettings, DownloadStatus, PeerAddress};
-use std::{collections::HashSet, env, sync::mpsc::Receiver, time::Duration};
+use std::{
+    collections::HashSet,
+    env,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::Receiver,
+        Arc,
+    },
+    time::{Duration, Instant},
+};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -176,20 +184,58 @@ fn search_and_download(config: SearchConfig) -> Result<()> {
         println!("🔍 Searching for: {}", config.query);
     }
 
-    let results = client
-        .search(&config.query, Duration::from_secs(config.timeout))
-        .map_err(|e| color_eyre::eyre::eyre!("Search failed: {}", e))?;
+    // Wrap client in Arc for sharing with FileSelector
+    let client = Arc::new(client);
 
-    if results.is_empty() {
-        println!("❌ No results found for '{}'", config.query);
+    // Create cancel flag for search
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+
+    // Start search in background thread
+    let search_client = client.clone();
+    let search_query = config.query.clone();
+    let search_timeout = Duration::from_secs(config.timeout);
+    let search_cancel = cancel_flag.clone();
+
+    let search_handle = std::thread::spawn(move || {
+        search_client.search_with_cancel(
+            &search_query,
+            search_timeout,
+            Some(search_cancel),
+        )
+    });
+
+    // Launch FileSelector immediately with live search enabled
+    let terminal = ratatui::init();
+    let mut file_selector = FileSelector::new_with_live_search(
+        client.clone(),
+        config.query.clone(),
+        Duration::from_secs(config.timeout),
+        cancel_flag.clone(),
+    );
+    let selected_indices = file_selector.run(terminal)?;
+    ratatui::restore();
+
+    // Wait for search thread to complete
+    let _ = search_handle.join();
+
+    // Get final results
+    let results = client.get_search_results();
+
+    if selected_indices.is_empty() {
+        println!("❌ No files selected for download");
         return Ok(());
     }
 
-    let mut all_files: Vec<(String, &soulseek_rs::File)> = Vec::new();
-
+    // Convert results to all_files format
+    let mut all_files: Vec<(String, soulseek_rs::File, u8, u32)> = Vec::new();
     for result in &results {
         for file in &result.files {
-            all_files.push((result.username.clone(), file));
+            all_files.push((
+                result.username.clone(),
+                file.clone(),
+                result.slots,
+                result.speed,
+            ));
         }
     }
 
@@ -200,53 +246,17 @@ fn search_and_download(config: SearchConfig) -> Result<()> {
 
     println!("\n📋 Found {} file(s)\n", all_files.len());
 
-    let mut options: Vec<String> = all_files
-        .iter()
-        .enumerate()
-        .map(|(i, (username, file))| {
-            let size_mb = file.size as f64 / 1_048_576.0;
-            format!(
-                "{}. {} ({:.2} MB) - from {}",
-                i + 1,
-                file.name,
-                size_mb,
-                username
-            )
-        })
-        .collect();
-
-    options.push("❌ Cancel".to_string());
-
-    // Show TUI file selector
-    let selections = show_file_selector(options)?;
-
-    if selections.is_empty() {
-        println!("❌ Cancelled or no files selected");
-        return Ok(());
-    }
-
-    // Filter out the "Cancel" option (last index)
-    let valid_selections: Vec<usize> = selections
-        .into_iter()
-        .filter(|&idx| idx < all_files.len())
-        .collect();
-
-    if valid_selections.is_empty() {
-        println!("❌ No valid files selected");
-        return Ok(());
-    }
-
     println!(
         "\n📥 Starting download of {} file(s)...\n",
-        valid_selections.len()
+        selected_indices.len()
     );
 
     // Prepare all downloads
     let mut download_states = Vec::new();
     let mut receivers = Vec::new();
 
-    for idx in valid_selections.iter() {
-        let (username, file) = &all_files[*idx];
+    for idx in selected_indices.iter() {
+        let (username, file, _, _) = &all_files[*idx];
 
         // Initiate download
         let receiver = client
@@ -290,7 +300,6 @@ fn search_and_download(config: SearchConfig) -> Result<()> {
 #[derive(Debug, Clone)]
 struct FileDownloadState {
     filename: String,
-    #[allow(dead_code)]
     username: String,
     total_bytes: u64,
     bytes_downloaded: u64,
@@ -342,7 +351,7 @@ impl FileDownloadState {
 struct MultiDownloadProgress {
     downloads: Vec<FileDownloadState>,
     receivers: Vec<Option<Receiver<DownloadStatus>>>,
-    list_state: ListState,
+    list_state: TableState,
     max_concurrent: usize,
     active_count: usize,
     should_exit: bool,
@@ -354,7 +363,7 @@ impl MultiDownloadProgress {
         receivers: Vec<Receiver<DownloadStatus>>,
         max_concurrent: usize,
     ) -> Self {
-        let mut list_state = ListState::default();
+        let mut list_state = TableState::default();
         list_state.select(Some(0));
 
         let receivers = receivers.into_iter().map(Some).collect();
@@ -547,7 +556,24 @@ impl MultiDownloadProgress {
         frame: &mut Frame,
         area: ratatui::layout::Rect,
     ) {
-        let list_items: Vec<ListItem> = self
+        let header = Row::new(vec![
+            Cell::from("St"),
+            Cell::from("Filename"),
+            Cell::from("Username"),
+            Cell::from("Size"),
+            Cell::from("Progress"),
+            Cell::from("%"),
+            Cell::from("Speed"),
+        ])
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )
+        .height(1);
+
+        let rows: Vec<Row> = self
             .downloads
             .iter()
             .map(|download| {
@@ -559,13 +585,43 @@ impl MultiDownloadProgress {
                     DownloadStatus::TimedOut => "⏱",
                 };
 
-                let progress_bar = render_inline_progress_bar(download);
-                let filename = truncate_filename(&download.filename, 40);
+                let progress = if download.total_bytes > 0 {
+                    download.bytes_downloaded as f64
+                        / download.total_bytes as f64
+                } else {
+                    0.0
+                };
 
-                let line = format!(
-                    "[{}] {:<40} {}",
-                    status_icon, filename, progress_bar
+                let bar_width = 20;
+                let filled = (progress * bar_width as f64) as usize;
+                let empty = bar_width - filled;
+                let progress_bar =
+                    format!("[{}{}]", "█".repeat(filled), "░".repeat(empty));
+
+                let percent = (progress * 100.0) as u8;
+                let percent_str = format!("{}%", percent);
+
+                let size_str = format_bytes_progress(
+                    download.bytes_downloaded,
+                    download.total_bytes,
                 );
+
+                let speed_str = match download.status {
+                    DownloadStatus::InProgress { .. } => {
+                        format_speed(download.speed_bytes_per_sec)
+                    }
+                    _ => "-".to_string(),
+                };
+
+                let cells = vec![
+                    Cell::from(status_icon),
+                    Cell::from(download.filename.clone()),
+                    Cell::from(download.username.clone()),
+                    Cell::from(size_str),
+                    Cell::from(progress_bar),
+                    Cell::from(percent_str),
+                    Cell::from(speed_str),
+                ];
 
                 let style = match download.status {
                     DownloadStatus::Queued => Style::default().fg(Color::Gray),
@@ -580,22 +636,34 @@ impl MultiDownloadProgress {
                     }
                 };
 
-                ListItem::new(line).style(style)
+                Row::new(cells).style(style).height(1)
             })
             .collect();
 
-        let list = List::new(list_items)
+        let widths = [
+            Constraint::Length(3),
+            Constraint::Min(30),
+            Constraint::Length(15),
+            Constraint::Length(20),
+            Constraint::Length(22),
+            Constraint::Length(5),
+            Constraint::Length(12),
+        ];
+
+        let table = Table::new(rows, widths)
+            .header(header)
             .block(Block::default().borders(Borders::ALL).title("Files"))
-            .highlight_style(
+            .column_spacing(1)
+            .row_highlight_style(
                 Style::default()
-                    .bg(Color::DarkGray)
+                    .bg(Color::Magenta)
+                    .fg(Color::Black)
                     .add_modifier(Modifier::BOLD),
             )
-            .highlight_symbol("> ")
-            .highlight_spacing(HighlightSpacing::Always);
+            .highlight_symbol("> ");
 
         StatefulWidget::render(
-            list,
+            table,
             area,
             frame.buffer_mut(),
             &mut self.list_state,
@@ -614,54 +682,24 @@ impl MultiDownloadProgress {
     }
 }
 
-fn render_inline_progress_bar(download: &FileDownloadState) -> String {
-    let progress = if download.total_bytes > 0 {
-        download.bytes_downloaded as f64 / download.total_bytes as f64
-    } else {
-        0.0
-    };
-
-    let bar_width = 20;
-    let filled = (progress * bar_width as f64) as usize;
-    let empty = bar_width - filled;
-
-    let bar = format!("[{}{}]", "█".repeat(filled), "░".repeat(empty));
-
-    let percent = (progress * 100.0) as u8;
-
-    match download.status {
-        DownloadStatus::InProgress { .. } => {
-            let speed_mb = download.speed_bytes_per_sec / 1_048_576.0;
-            format!("{} {:3}% {:.1}MB/s", bar, percent, speed_mb)
-        }
-        DownloadStatus::Completed => {
-            format!("{} 100% ✓ Complete", bar)
-        }
-        DownloadStatus::Failed => {
-            format!("{} {:3}% ✗ Failed", bar, percent)
-        }
-        DownloadStatus::TimedOut => {
-            format!("{} {:3}% ⏱ Timed Out", bar, percent)
-        }
-        DownloadStatus::Queued => {
-            format!("{} {:3}% ⋯ Queued", bar, percent)
-        }
-    }
+fn format_bytes(bytes: u64) -> String {
+    let mb = bytes as f64 / 1_048_576.0;
+    format!("{:.1} MB", mb)
 }
 
-fn truncate_filename(filename: &str, max_len: usize) -> String {
-    if filename.len() <= max_len {
-        return filename.to_string();
-    }
+fn format_bytes_progress(downloaded: u64, total: u64) -> String {
+    let downloaded_mb = downloaded as f64 / 1_048_576.0;
+    let total_mb = total as f64 / 1_048_576.0;
+    format!("{:.1}/{:.1} MB", downloaded_mb, total_mb)
+}
 
-    let parts: Vec<&str> = filename.split(['/', '\\']).collect();
-    let name = parts.last().unwrap_or(&filename);
+fn format_speed(speed_bytes_per_sec: f64) -> String {
+    let mb = speed_bytes_per_sec / 1_048_576.0;
+    format!("{:.1} MB/s", mb)
+}
 
-    if name.len() <= max_len {
-        return name.to_string();
-    }
-
-    format!("...{}", &name[name.len() - (max_len - 3)..])
+fn get_bitrate(attribs: &std::collections::HashMap<u32, u32>) -> Option<u32> {
+    attribs.get(&0).copied()
 }
 
 fn show_multi_download_progress(
@@ -682,34 +720,64 @@ fn show_multi_download_progress(
     result
 }
 
+#[derive(Clone)]
+struct FileDisplayData {
+    filename: String,
+    size: u64,
+    username: String,
+    speed: u32,
+    slots: u8,
+    bitrate: Option<u32>,
+}
+
 struct FileSelector {
-    all_items: Vec<String>,
-    items: Vec<String>,
+    all_items: Vec<FileDisplayData>,
+    items: Vec<FileDisplayData>,
     filtered_indices: Vec<usize>,
-    state: ListState,
+    state: TableState,
     should_exit: bool,
     selected_indices: HashSet<usize>,
     search_query: String,
     is_searching: bool,
+    client: Option<Arc<Client>>,
+    soulseek_query: String,
+    search_timeout: Duration,
+    search_start_time: Instant,
+    search_cancel_flag: Arc<AtomicBool>,
+    search_active: bool,
+    spinner_state: usize,
+    last_spinner_update: Instant,
+    last_result_count: usize,
 }
 
 impl FileSelector {
-    fn new(items: Vec<String>) -> Self {
-        let mut state = ListState::default();
+    fn new_with_live_search(
+        client: Arc<Client>,
+        query: String,
+        timeout: Duration,
+        cancel_flag: Arc<AtomicBool>,
+    ) -> Self {
+        let mut state = TableState::default();
         state.select(Some(0));
 
-        let len = items.len();
-        let filtered_indices: Vec<usize> = (0..len).collect();
-
         Self {
-            all_items: items.clone(),
-            items,
-            filtered_indices,
+            all_items: Vec::new(),
+            items: Vec::new(),
+            filtered_indices: Vec::new(),
             state,
             should_exit: false,
             selected_indices: HashSet::new(),
             search_query: String::new(),
             is_searching: false,
+            client: Some(client),
+            soulseek_query: query,
+            search_timeout: timeout,
+            search_start_time: Instant::now(),
+            search_cancel_flag: cancel_flag,
+            search_active: true,
+            spinner_state: 0,
+            last_spinner_update: Instant::now(),
+            last_result_count: 0,
         }
     }
 
@@ -717,25 +785,90 @@ impl FileSelector {
         while !self.should_exit {
             terminal.draw(|frame| self.render(frame))?;
 
-            if let Event::Key(key) = event::read()? {
-                self.handle_key(key);
+            // Update spinner animation every 80ms
+            if self.search_active
+                && self.last_spinner_update.elapsed()
+                    >= Duration::from_millis(80)
+            {
+                self.spinner_state = (self.spinner_state + 1) % 10;
+                self.last_spinner_update = Instant::now();
+            }
+
+            // Poll for new search results if active
+            if self.search_active {
+                if let Some(ref client) = self.client {
+                    let current_count = client.get_search_results_count();
+                    if current_count != self.last_result_count {
+                        // New results available - update the list
+                        self.update_results_from_client();
+                        self.last_result_count = current_count;
+                    }
+                }
+
+                // Check if search timeout reached
+                if self.search_start_time.elapsed() >= self.search_timeout {
+                    self.search_active = false;
+                    self.search_cancel_flag.store(true, Ordering::Relaxed);
+                }
+            }
+
+            // Check for keyboard input with timeout for polling
+            let timeout = if self.search_active {
+                Duration::from_millis(50)
+            } else {
+                Duration::from_millis(100)
+            };
+
+            if poll(timeout)? {
+                if let Event::Key(key) = event::read()? {
+                    self.handle_key(key);
+                }
             }
         }
 
         Ok(self.selected_indices.iter().copied().collect())
     }
 
+    fn update_results_from_client(&mut self) {
+        if let Some(ref client) = self.client {
+            let search_results = client.get_search_results();
+
+            // Convert search results to FileDisplayData
+            let mut new_items = Vec::new();
+            for result in &search_results {
+                for file in &result.files {
+                    new_items.push(FileDisplayData {
+                        filename: file.name.clone(),
+                        size: file.size,
+                        username: result.username.clone(),
+                        speed: result.speed,
+                        slots: result.slots,
+                        bitrate: get_bitrate(&file.attribs),
+                    });
+                }
+            }
+
+            // Update items and reset state
+            let len = new_items.len();
+            self.all_items = new_items.clone();
+            self.items = new_items;
+            self.filtered_indices = (0..len).collect();
+
+            // Keep selection valid or set to 0
+            if self.state.selected().is_none() && !self.items.is_empty() {
+                self.state.select(Some(0));
+            }
+        }
+    }
+
     fn toggle_selection(&mut self) {
         if let Some(filtered_idx) = self.state.selected() {
             if let Some(&original_idx) = self.filtered_indices.get(filtered_idx)
             {
-                // Ignore the last item (Cancel option)
-                if original_idx < self.all_items.len() - 1 {
-                    if self.selected_indices.contains(&original_idx) {
-                        self.selected_indices.remove(&original_idx);
-                    } else {
-                        self.selected_indices.insert(original_idx);
-                    }
+                if self.selected_indices.contains(&original_idx) {
+                    self.selected_indices.remove(&original_idx);
+                } else {
+                    self.selected_indices.insert(original_idx);
                 }
             }
         }
@@ -761,8 +894,6 @@ impl FileSelector {
                 }
                 KeyCode::Esc => {
                     self.is_searching = false;
-                    self.search_query.clear();
-                    self.apply_filter();
                 }
                 KeyCode::Enter => {
                     // If nothing selected, select the current item under cursor
@@ -771,9 +902,7 @@ impl FileSelector {
                             if let Some(&original_idx) =
                                 self.filtered_indices.get(filtered_idx)
                             {
-                                if original_idx < self.all_items.len() - 1 {
-                                    self.selected_indices.insert(original_idx);
-                                }
+                                self.selected_indices.insert(original_idx);
                             }
                         }
                     }
@@ -800,6 +929,16 @@ impl FileSelector {
                 KeyCode::Down | KeyCode::Char('j') => self.select_next(),
                 KeyCode::Home | KeyCode::Char('g') => self.select_first(),
                 KeyCode::End | KeyCode::Char('G') => self.select_last(),
+                KeyCode::Char('a') => {
+                    // Select all visible/filtered items
+                    for &original_idx in &self.filtered_indices {
+                        self.selected_indices.insert(original_idx);
+                    }
+                }
+                KeyCode::Char('A') => {
+                    // Deselect all items
+                    self.selected_indices.clear();
+                }
                 KeyCode::Enter => {
                     // If nothing selected, select the current item under cursor
                     if self.selected_indices.is_empty() {
@@ -807,9 +946,7 @@ impl FileSelector {
                             if let Some(&original_idx) =
                                 self.filtered_indices.get(filtered_idx)
                             {
-                                if original_idx < self.all_items.len() - 1 {
-                                    self.selected_indices.insert(original_idx);
-                                }
+                                self.selected_indices.insert(original_idx);
                             }
                         }
                     }
@@ -859,7 +996,9 @@ impl FileSelector {
             self.filtered_indices.clear();
 
             for (i, item) in self.all_items.iter().enumerate() {
-                if item.to_lowercase().contains(&query_lower) {
+                if item.filename.to_lowercase().contains(&query_lower)
+                    || item.username.to_lowercase().contains(&query_lower)
+                {
                     self.items.push(item.clone());
                     self.filtered_indices.push(i);
                 }
@@ -876,7 +1015,7 @@ impl FileSelector {
     fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
 
-        let (list_area, info_area) = if self.is_searching
+        let (table_area, info_area) = if self.is_searching
             || !self.selected_indices.is_empty()
         {
             let chunks =
@@ -887,54 +1026,159 @@ impl FileSelector {
             (area, None)
         };
 
-        let list_items: Vec<ListItem> = self
+        let title = if self.search_active {
+            // Live Soulseek search is active
+            let spinner_chars =
+                ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let spinner = spinner_chars[self.spinner_state];
+            let elapsed = self.search_start_time.elapsed().as_secs();
+            let total = self.search_timeout.as_secs();
+            format!(
+                "{} Searching: '{}' - {} results ({}/{}s) - Space: toggle, a: select-all, A: deselect-all, Enter: download, Esc/q: cancel",
+                spinner,
+                self.soulseek_query,
+                self.all_items.len(),
+                elapsed,
+                total
+            )
+        } else if self.is_searching {
+            format!(
+                "Multi-select files to download ({}/{} matches, Space: toggle, a: select-all, A: deselect-all, Enter: download, Esc: exit search)",
+                self.items.len(),
+                self.all_items.len()
+            )
+        } else {
+            format!(
+                "Multi-select files to download ({} selected, Space: toggle, a: select-all, A: deselect-all, Enter: download, Esc/q: cancel, /: search)",
+                self.selected_indices.len()
+            )
+        };
+
+        let header = Row::new(vec![
+            Cell::from(""),
+            Cell::from("Filename"),
+            Cell::from("Size"),
+            Cell::from("Username"),
+            Cell::from("Speed"),
+            Cell::from("Slots"),
+            Cell::from("Bitrate"),
+        ])
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )
+        .height(1);
+
+        let rows: Vec<Row> = self
             .items
             .iter()
             .enumerate()
             .map(|(filtered_idx, item)| {
                 let original_idx = self.filtered_indices[filtered_idx];
                 let is_selected = self.selected_indices.contains(&original_idx);
-                let prefix = if is_selected { "[✓] " } else { "[ ] " };
-                let display_text = format!("{}{}", prefix, item);
+                let checkbox = if is_selected { "[✓]" } else { "[ ]" };
 
-                if is_selected {
-                    ListItem::new(display_text)
-                        .style(Style::default().fg(Color::Green))
+                let speed_mb = item.speed as f64 / 1_048_576.0;
+                let speed_str = if speed_mb > 0.0 {
+                    format!("{:.1} MB/s", speed_mb)
                 } else {
-                    ListItem::new(display_text)
-                }
+                    "-".to_string()
+                };
+
+                let slots_str = format!("{}", item.slots);
+
+                let bitrate_str = match item.bitrate {
+                    Some(br) => format!("{} kbps", br),
+                    None => "-".to_string(),
+                };
+
+                let cells = vec![
+                    Cell::from(checkbox),
+                    Cell::from(item.filename.clone()),
+                    Cell::from(format_bytes(item.size)),
+                    Cell::from(item.username.clone()),
+                    Cell::from(speed_str),
+                    Cell::from(slots_str),
+                    Cell::from(bitrate_str),
+                ];
+
+                let style = if is_selected {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default()
+                };
+
+                Row::new(cells).style(style).height(1)
             })
             .collect();
 
-        let title = if self.is_searching {
-            format!(
-                "Multi-select files ({}/{} matches, Space: toggle, Enter: download, Esc: clear search)",
-                self.items.len(),
-                self.all_items.len()
-            )
-        } else {
-            format!(
-                "Multi-select files ({} selected, Space: toggle, Enter: download, Esc/q: cancel)",
-                self.selected_indices.len()
-            )
-        };
+        let widths = [
+            Constraint::Length(5),
+            Constraint::Min(30),
+            Constraint::Length(12),
+            Constraint::Length(15),
+            Constraint::Length(12),
+            Constraint::Length(8),
+            Constraint::Length(10),
+        ];
 
-        let list = List::new(list_items)
+        let table = Table::new(rows, widths)
+            .header(header)
             .block(Block::default().borders(Borders::ALL).title(title))
-            .highlight_style(
+            .column_spacing(1)
+            .row_highlight_style(
                 Style::default()
-                    .bg(Color::DarkGray)
+                    .bg(Color::Magenta)
+                    .fg(Color::Black)
                     .add_modifier(Modifier::BOLD),
             )
-            .highlight_symbol("> ")
-            .highlight_spacing(HighlightSpacing::Always);
+            .highlight_symbol("> ");
 
         StatefulWidget::render(
-            list,
-            list_area,
+            table,
+            table_area,
             frame.buffer_mut(),
             &mut self.state,
         );
+
+        // Show loading placeholder when search is active but no results yet
+        if self.search_active && self.items.is_empty() {
+            let spinner_chars =
+                ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let spinner = spinner_chars[self.spinner_state];
+
+            let loading_text =
+                format!("{} Searching for '{}'", spinner, self.soulseek_query);
+
+            // Center the loading message
+            let vertical = Layout::vertical([
+                Constraint::Fill(1),
+                Constraint::Length(3),
+                Constraint::Fill(1),
+            ])
+            .split(table_area);
+
+            let horizontal = Layout::horizontal([
+                Constraint::Fill(1),
+                Constraint::Max(80),
+                Constraint::Fill(1),
+            ])
+            .split(vertical[1]);
+
+            let loading_widget = Paragraph::new(loading_text)
+                .style(Style::default().fg(Color::Cyan))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Cyan)),
+                )
+                .alignment(Alignment::Center)
+                .wrap(Wrap { trim: true });
+
+            frame.render_widget(loading_widget, horizontal[1]);
+        }
 
         if let Some(info_area) = info_area {
             let info_text = if self.is_searching {
@@ -963,19 +1207,4 @@ impl FileSelector {
             frame.render_widget(info_widget, info_area);
         }
     }
-}
-
-fn show_file_selector(options: Vec<String>) -> Result<Vec<usize>> {
-    // Enable log buffering before TUI starts
-    soulseek_rs::utils::logger::enable_buffering();
-
-    let terminal = ratatui::init();
-    let mut selector = FileSelector::new(options);
-    let result = selector.run(terminal);
-    ratatui::restore();
-
-    // Flush all buffered logs after TUI exits
-    soulseek_rs::utils::logger::flush_buffered_logs();
-
-    result
 }
