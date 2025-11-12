@@ -5,7 +5,8 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout},
     style::{Color, Modifier, Style},
     widgets::{
-        Block, Borders, Cell, Paragraph, Row, StatefulWidget, Table, TableState, Wrap,
+        Block, Borders, Cell, Paragraph, Row, StatefulWidget, Table,
+        TableState, Wrap,
     },
     DefaultTerminal, Frame,
 };
@@ -23,7 +24,7 @@ use std::{
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "soulseek",
+    name = "soulseek-rs",
     author,
     version,
     about = "Soulseek client in Rust 🦀",
