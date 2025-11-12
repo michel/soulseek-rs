@@ -926,6 +926,11 @@ impl FileSelector {
                 KeyCode::Char('/') => {
                     self.is_searching = true;
                 }
+                KeyCode::Char('c') => {
+                    // Clear filter
+                    self.search_query.clear();
+                    self.apply_filter();
+                }
                 KeyCode::Up | KeyCode::Char('k') => self.select_previous(),
                 KeyCode::Down | KeyCode::Char('j') => self.select_next(),
                 KeyCode::Home | KeyCode::Char('g') => self.select_first(),
@@ -1018,6 +1023,7 @@ impl FileSelector {
 
         let (table_area, info_area) = if self.is_searching
             || !self.selected_indices.is_empty()
+            || !self.search_query.is_empty()
         {
             let chunks =
                 Layout::vertical([Constraint::Min(0), Constraint::Length(3)])
@@ -1047,6 +1053,12 @@ impl FileSelector {
                 "Multi-select files to download ({}/{} matches, Space: toggle, a: select-all, A: deselect-all, Enter: download, Esc: exit search)",
                 self.items.len(),
                 self.all_items.len()
+            )
+        } else if !self.search_query.is_empty() {
+            format!(
+                "Multi-select files to download ({} selected, {} filtered, Space: toggle, a: select-all, A: deselect-all, Enter: download, Esc/q: cancel, /: modify filter, c: clear filter)",
+                self.selected_indices.len(),
+                self.items.len()
             )
         } else {
             format!(
@@ -1182,28 +1194,35 @@ impl FileSelector {
         }
 
         if let Some(info_area) = info_area {
-            let info_text = if self.is_searching {
-                format!("Search: {}", self.search_query)
+            let (info_text, title, color) = if self.is_searching {
+                (
+                    format!("Search: {}", self.search_query),
+                    "Filter",
+                    Color::Yellow,
+                )
+            } else if !self.search_query.is_empty() {
+                (
+                    format!(
+                        "Current filter: {} (press / to modify, c to clear)",
+                        self.search_query
+                    ),
+                    "Filter",
+                    Color::Cyan,
+                )
             } else {
-                format!(
-                    "{} file(s) selected for download",
-                    self.selected_indices.len()
+                (
+                    format!(
+                        "{} file(s) selected for download",
+                        self.selected_indices.len()
+                    ),
+                    "Selection",
+                    Color::Green,
                 )
             };
 
             let info_widget = Paragraph::new(info_text)
-                .block(Block::default().borders(Borders::ALL).title(
-                    if self.is_searching {
-                        "Filter"
-                    } else {
-                        "Selection"
-                    },
-                ))
-                .style(Style::default().fg(if self.is_searching {
-                    Color::Yellow
-                } else {
-                    Color::Green
-                }));
+                .block(Block::default().borders(Borders::ALL).title(title))
+                .style(Style::default().fg(color));
 
             frame.render_widget(info_widget, info_area);
         }
