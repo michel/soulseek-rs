@@ -314,7 +314,7 @@ impl MultiDownloadProgress {
 
         let table = Table::new(rows, widths)
             .header(header)
-            .block(Block::default().borders(Borders::ALL).title("Files"))
+            .block(Block::default().borders(Borders::ALL).title("Downloads"))
             .column_spacing(1)
             .row_highlight_style(highlight_style())
             .highlight_symbol("> ");
