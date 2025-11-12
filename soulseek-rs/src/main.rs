@@ -7,7 +7,6 @@ use clap::Parser;
 use cli::{parse_server_address, Cli, Commands};
 use color_eyre::Result;
 use config::SearchConfig;
-use models::FileDownloadState;
 use soulseek_rs::{Client, ClientSettings, PeerAddress};
 use std::{
     env,
@@ -104,7 +103,7 @@ fn search_and_download(config: SearchConfig) -> Result<()> {
     let search_timeout = Duration::from_secs(config.timeout);
     let search_cancel = cancel_flag.clone();
 
-    let search_handle = std::thread::spawn(move || {
+    let _search_handle = std::thread::spawn(move || {
         search_client.search_with_cancel(
             &search_query,
             search_timeout,
@@ -120,83 +119,54 @@ fn search_and_download(config: SearchConfig) -> Result<()> {
         Duration::from_secs(config.timeout),
         cancel_flag.clone(),
     );
-    let selected_indices = file_selector.run(terminal)?;
-    ratatui::restore();
+    let (terminal, selected_indices) = file_selector.run(terminal)?;
 
-    // Wait for search thread to complete
-    let _ = search_handle.join();
+    // Cancel search thread - no need to wait for it
+    cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
 
     // Get final results
     let results = client.get_search_results();
 
     if selected_indices.is_empty() {
+        ratatui::restore();
         println!("❌ No files selected for download");
         return Ok(());
     }
 
-    // Convert results to all_files format
-    let mut all_files: Vec<(String, soulseek_rs::File, u8, u32)> = Vec::new();
-    for result in &results {
-        for file in &result.files {
-            all_files.push((
-                result.username.clone(),
-                file.clone(),
-                result.slots,
-                result.speed,
-            ));
-        }
-    }
+    // Directly map selected indices to file data (skip expensive all_files conversion)
+    let selected_files: Vec<_> = selected_indices
+        .iter()
+        .filter_map(|&idx| {
+            let mut current = 0;
+            for result in &results {
+                let next = current + result.files.len();
+                if idx < next {
+                    let file_idx = idx - current;
+                    let file = &result.files[file_idx];
+                    return Some((
+                        file.name.clone(),
+                        result.username.clone(),
+                        file.size,
+                    ));
+                }
+                current = next;
+            }
+            None
+        })
+        .collect();
 
-    if all_files.is_empty() {
+    if selected_files.is_empty() {
+        ratatui::restore();
         println!("❌ No files found in search results");
         return Ok(());
     }
 
-    println!("\n📋 Found {} file(s)\n", all_files.len());
-
-    println!(
-        "\n📥 Starting download of {} file(s)...\n",
-        selected_indices.len()
-    );
-
-    // Prepare all downloads
-    let mut download_states = Vec::new();
-    let mut receivers = Vec::new();
-
-    for idx in selected_indices.iter() {
-        let (username, file, _, _) = &all_files[*idx];
-
-        // Initiate download
-        let receiver = client
-            .download(
-                file.name.clone(),
-                username.to_string(),
-                file.size,
-                config.download_dir.clone(),
-            )
-            .map_err(|e| {
-                color_eyre::eyre::eyre!(
-                    "Failed to start download {}: {}",
-                    file.name,
-                    e
-                )
-            })?;
-
-        // Create download state
-        let download_state = FileDownloadState::new(
-            file.name.clone(),
-            username.to_string(),
-            file.size,
-        );
-
-        download_states.push(download_state);
-        receivers.push(receiver);
-    }
-
-    // Show multi-download progress view (handles parallel execution and concurrency)
+    // Show multi-download progress view immediately (initializes downloads asynchronously)
     show_multi_download_progress(
-        download_states,
-        receivers,
+        terminal,
+        client,
+        selected_files,
+        config.download_dir,
         config.max_concurrent_downloads,
     )?;
 

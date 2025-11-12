@@ -1,13 +1,17 @@
 use crate::models::FileDisplayData;
-use crate::ui::{format_bytes, get_bitrate, header_style, highlight_style};
+use crate::ui::{
+    border_style, border_type, format_bytes, format_shortcuts_styled,
+    get_bitrate, get_spinner_char, header_style, highlight_style,
+    primary_style, success_style, warning_style, HIGHLIGHT_SYMBOL,
+};
 use color_eyre::Result;
 use ratatui::{
     crossterm::event::{self, poll, Event, KeyCode, KeyEvent, KeyEventKind},
     layout::{Alignment, Constraint, Layout},
-    style::{Color, Style},
+    style::Style,
     widgets::{
-        Block, Borders, Cell, Paragraph, Row, StatefulWidget, Table,
-        TableState, Wrap,
+        Block, Borders, Cell, HighlightSpacing, Paragraph, Row, StatefulWidget,
+        Table, TableState, Wrap,
     },
     DefaultTerminal, Frame,
 };
@@ -72,7 +76,10 @@ impl FileSelector {
         }
     }
 
-    pub fn run(&mut self, mut terminal: DefaultTerminal) -> Result<Vec<usize>> {
+    pub fn run(
+        &mut self,
+        mut terminal: DefaultTerminal,
+    ) -> Result<(DefaultTerminal, Vec<usize>)> {
         while !self.should_exit {
             terminal.draw(|frame| self.render(frame))?;
 
@@ -117,7 +124,7 @@ impl FileSelector {
             }
         }
 
-        Ok(self.selected_indices.iter().copied().collect())
+        Ok((terminal, self.selected_indices.iter().copied().collect()))
     }
 
     fn update_results_from_client(&mut self) {
@@ -306,27 +313,37 @@ impl FileSelector {
     fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
 
-        let (table_area, info_area) = if self.is_searching
+        // Always split layout into table, optional info, and controls footer
+        let has_info = self.is_searching
             || !self.selected_indices.is_empty()
-            || !self.search_query.is_empty()
-        {
-            let chunks =
-                Layout::vertical([Constraint::Min(0), Constraint::Length(3)])
-                    .split(area);
-            (chunks[0], Some(chunks[1]))
+            || !self.search_query.is_empty();
+
+        let chunks = if has_info {
+            Layout::vertical([
+                Constraint::Min(0),
+                Constraint::Length(3),
+                Constraint::Length(3),
+            ])
+            .split(area)
         } else {
-            (area, None)
+            Layout::vertical([Constraint::Min(0), Constraint::Length(3)])
+                .split(area)
+        };
+
+        let table_area = chunks[0];
+        let (info_area, controls_area) = if has_info {
+            (Some(chunks[1]), chunks[2])
+        } else {
+            (None, chunks[1])
         };
 
         let title = if self.search_active {
             // Live Soulseek search is active
-            let spinner_chars =
-                ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-            let spinner = spinner_chars[self.spinner_state];
+            let spinner = get_spinner_char(self.spinner_state);
             let elapsed = self.search_start_time.elapsed().as_secs();
             let total = self.search_timeout.as_secs();
             format!(
-                "{} Searching: '{}' - {} results ({}/{}s) - Space: toggle, a: select-all, A: deselect-all, Enter: download, Esc/q: cancel",
+                "{} Searching: '{}' - {} results ({}/{}s)",
                 spinner,
                 self.soulseek_query,
                 self.all_items.len(),
@@ -335,13 +352,13 @@ impl FileSelector {
             )
         } else if self.is_searching {
             format!(
-                "Multi-select files to download ({}/{} matches, Space: toggle, a: select-all, A: deselect-all, Enter: download, Esc: exit search)",
+                "Multi-select files to download ({}/{} matches)",
                 self.items.len(),
                 self.all_items.len()
             )
         } else {
             format!(
-                "Multi-select files to download ({} selected, Space: toggle, a: select-all, A: deselect-all, Enter: download, Esc/q: cancel, /: search)",
+                "Multi-select files to download ({} selected)",
                 self.selected_indices.len()
             )
         };
@@ -392,7 +409,7 @@ impl FileSelector {
                 ];
 
                 let style = if is_selected {
-                    Style::default().fg(Color::Green)
+                    success_style()
                 } else {
                     Style::default()
                 };
@@ -413,10 +430,17 @@ impl FileSelector {
 
         let table = Table::new(rows, widths)
             .header(header)
-            .block(Block::default().borders(Borders::ALL).title(title))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(border_style(true))
+                    .border_type(border_type(true))
+                    .title(title),
+            )
             .column_spacing(1)
             .row_highlight_style(highlight_style())
-            .highlight_symbol("> ");
+            .highlight_symbol(HIGHLIGHT_SYMBOL)
+            .highlight_spacing(HighlightSpacing::Always);
 
         StatefulWidget::render(
             table,
@@ -427,9 +451,7 @@ impl FileSelector {
 
         // Show loading placeholder when search is active but no results yet
         if self.search_active && self.items.is_empty() {
-            let spinner_chars =
-                ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-            let spinner = spinner_chars[self.spinner_state];
+            let spinner = get_spinner_char(self.spinner_state);
 
             let loading_text =
                 format!("{} Searching for '{}'", spinner, self.soulseek_query);
@@ -442,19 +464,25 @@ impl FileSelector {
             ])
             .split(table_area);
 
+            // Calculate responsive width: text + generous padding for borders and spacing, max 80% of screen
+            let text_width = loading_text.chars().count() as u16 + 5; // +10 for borders, padding, and safety margin
+            let max_width = (table_area.width * 80) / 100;
+            let widget_width = text_width.min(max_width);
+
             let horizontal = Layout::horizontal([
                 Constraint::Fill(1),
-                Constraint::Max(80),
+                Constraint::Length(widget_width),
                 Constraint::Fill(1),
             ])
             .split(vertical[1]);
 
             let loading_widget = Paragraph::new(loading_text)
-                .style(Style::default().fg(Color::Cyan))
+                .style(primary_style())
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Cyan)),
+                        .border_style(primary_style())
+                        .border_type(border_type(false)),
                 )
                 .alignment(Alignment::Center)
                 .wrap(Wrap { trim: true });
@@ -463,11 +491,11 @@ impl FileSelector {
         }
 
         if let Some(info_area) = info_area {
-            let (info_text, title, color) = if self.is_searching {
+            let (info_text, title, style) = if self.is_searching {
                 (
                     format!("Search: {}", self.search_query),
                     "Filter",
-                    Color::Yellow,
+                    warning_style(),
                 )
             } else if !self.search_query.is_empty() {
                 (
@@ -476,7 +504,7 @@ impl FileSelector {
                         self.search_query
                     ),
                     "Filter",
-                    Color::Cyan,
+                    primary_style(),
                 )
             } else {
                 (
@@ -485,15 +513,61 @@ impl FileSelector {
                         self.selected_indices.len()
                     ),
                     "Selection",
-                    Color::Green,
+                    success_style(),
                 )
             };
 
             let info_widget = Paragraph::new(info_text)
-                .block(Block::default().borders(Borders::ALL).title(title))
-                .style(Style::default().fg(color));
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_type(border_type(false))
+                        .title(title),
+                )
+                .style(style);
 
             frame.render_widget(info_widget, info_area);
         }
+
+        // Render controls footer
+        self.render_controls(frame, controls_area);
+    }
+
+    fn render_controls(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
+        let controls_line = if self.is_searching {
+            format_shortcuts_styled(&[
+                ("Space", "toggle"),
+                ("a", "select-all"),
+                ("A", "deselect-all"),
+                ("Enter", "download"),
+                ("Esc", "exit search"),
+            ])
+        } else if self.search_active {
+            format_shortcuts_styled(&[
+                ("Space", "toggle"),
+                ("a", "select-all"),
+                ("A", "deselect-all"),
+                ("Enter", "download"),
+                ("Esc/q", "cancel"),
+            ])
+        } else {
+            format_shortcuts_styled(&[
+                ("Space", "toggle"),
+                ("a", "select-all"),
+                ("A", "deselect-all"),
+                ("Enter", "download"),
+                ("Esc/q", "cancel"),
+                ("/", "search"),
+            ])
+        };
+
+        let controls_widget = Paragraph::new(controls_line).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(border_type(false))
+                .title("Controls"),
+        );
+
+        frame.render_widget(controls_widget, area);
     }
 }

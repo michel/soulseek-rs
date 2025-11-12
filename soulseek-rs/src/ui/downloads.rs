@@ -1,47 +1,61 @@
 use crate::models::FileDownloadState;
 use crate::ui::{
-    format_bytes_progress, format_speed, header_style, highlight_style,
+    border_style, border_type, error_style, format_bytes_progress,
+    format_progress_bar, format_shortcuts_styled, format_speed, header_style,
+    highlight_style, inactive_style, primary_style, warning_style,
+    COLOR_PRIMARY, HIGHLIGHT_SYMBOL,
 };
 use color_eyre::Result;
 use ratatui::{
     crossterm::event::{self, poll, Event, KeyCode, KeyEvent, KeyEventKind},
-    layout::{Constraint, Layout},
-    style::{Color, Style},
+    layout::{Alignment, Constraint, Layout},
+    style::{Modifier, Style},
+    text::{Line, Span},
     widgets::{
-        Block, Borders, Cell, Paragraph, Row, StatefulWidget, Table, TableState,
+        Block, Borders, Cell, HighlightSpacing, Paragraph, Row, StatefulWidget,
+        Table, TableState,
     },
     DefaultTerminal, Frame,
 };
-use soulseek_rs::DownloadStatus;
-use std::{sync::mpsc::Receiver, time::Duration};
+use soulseek_rs::{Client, DownloadStatus};
+use std::{
+    sync::{mpsc, mpsc::Receiver, Arc},
+    thread,
+    time::Duration,
+};
 
 pub struct MultiDownloadProgress {
     downloads: Vec<FileDownloadState>,
     receivers: Vec<Option<Receiver<DownloadStatus>>>,
+    receiver_channel: Receiver<(usize, Receiver<DownloadStatus>)>,
     list_state: TableState,
     max_concurrent: usize,
     active_count: usize,
     should_exit: bool,
+    queuing_status: String,
 }
 
 impl MultiDownloadProgress {
     pub fn new(
         downloads: Vec<FileDownloadState>,
-        receivers: Vec<Receiver<DownloadStatus>>,
+        receiver_channel: Receiver<(usize, Receiver<DownloadStatus>)>,
         max_concurrent: usize,
     ) -> Self {
         let mut list_state = TableState::default();
         list_state.select(Some(0));
 
-        let receivers = receivers.into_iter().map(Some).collect();
+        // Initialize all receivers as None - they'll be populated asynchronously
+        let receivers = (0..downloads.len()).map(|_| None).collect();
 
         Self {
             downloads,
             receivers,
+            receiver_channel,
             list_state,
             max_concurrent,
             active_count: 0,
             should_exit: false,
+            queuing_status: String::from("Queuing downloads..."),
         }
     }
 
@@ -51,6 +65,20 @@ impl MultiDownloadProgress {
 
         loop {
             terminal.draw(|frame| self.render(frame))?;
+
+            // Check for incoming download receivers from background thread
+            while let Ok((index, receiver)) = self.receiver_channel.try_recv() {
+                self.receivers[index] = Some(receiver);
+                // Update status message
+                let queued =
+                    self.receivers.iter().filter(|r| r.is_none()).count();
+                if queued == 0 {
+                    self.queuing_status = String::from("All downloads queued");
+                } else {
+                    self.queuing_status =
+                        format!("Queuing... {} remaining", queued);
+                }
+            }
 
             // Poll all receivers for status updates
             for i in 0..self.receivers.len() {
@@ -93,7 +121,10 @@ impl MultiDownloadProgress {
                 break;
             }
 
-            if matches!(self.downloads[i].status, DownloadStatus::Queued) {
+            // Only start if download is queued AND receiver is available
+            if matches!(self.downloads[i].status, DownloadStatus::Queued)
+                && self.receivers[i].is_some()
+            {
                 self.active_count += 1;
                 // Download will start automatically since receiver exists
             }
@@ -198,24 +229,94 @@ impl MultiDownloadProgress {
         } else {
             0
         };
+        let progress_ratio = if total_size > 0 {
+            total_downloaded as f64 / total_size as f64
+        } else {
+            0.0
+        };
         let total_speed: f64 = self
             .downloads
             .iter()
             .filter(|d| matches!(d.status, DownloadStatus::InProgress { .. }))
             .map(|d| d.speed_bytes_per_sec)
             .sum();
-        let speed_mb = total_speed / 1_048_576.0;
+        let speed_mb = (total_speed / 1_048_576.0 * 100.0).round() / 100.0;
 
-        let stats_text = format!(
-            "Downloads: {} active, {} completed, {} failed, {} queued | Overall: {}% • {:.1} MB/s",
-            self.active_count, completed, failed, queued, overall_progress, speed_mb
-        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(border_type(false))
+            .title("Status");
 
-        let stats_widget = Paragraph::new(stats_text)
-            .block(Block::default().borders(Borders::ALL).title("Status"))
-            .style(Style::default().fg(Color::Cyan));
+        let inner_area = block.inner(area);
+        frame.render_widget(block, area);
 
-        frame.render_widget(stats_widget, area);
+        // Split into two equal 50% containers
+        let chunks = Layout::horizontal([
+            Constraint::Percentage(50),
+            Constraint::Percentage(50),
+        ])
+        .split(inner_area);
+
+        // Left container: Statistics with styled values
+        let stats_line = Line::from(vec![
+            Span::raw("Downloads: "),
+            Span::styled(
+                self.active_count.to_string(),
+                Style::default()
+                    .fg(COLOR_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" active, "),
+            Span::styled(
+                completed.to_string(),
+                Style::default()
+                    .fg(COLOR_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" completed, "),
+            Span::styled(
+                failed.to_string(),
+                Style::default()
+                    .fg(COLOR_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" failed, "),
+            Span::styled(
+                queued.to_string(),
+                Style::default()
+                    .fg(COLOR_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" queued"),
+        ]);
+
+        let stats_paragraph = Paragraph::new(stats_line);
+        frame.render_widget(stats_paragraph, chunks[0]);
+
+        let right_width = chunks[1].width as usize;
+        let bar_width = right_width.saturating_sub(42).max(10);
+        let progress_bar =
+            format_progress_bar(progress_ratio, bar_width, overall_progress);
+        let data_str = format_bytes_progress(total_downloaded, total_size);
+
+        let mut spans: Vec<Span> = Vec::new();
+
+        spans.extend(data_str.spans);
+        spans.push(Span::raw(" • "));
+        spans.push(Span::styled(
+            format!("{}", speed_mb),
+            Style::default()
+                .fg(COLOR_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" MB/s"));
+        spans.push(Span::raw(" • "));
+        spans.extend(progress_bar.spans);
+
+        let progress_line = Line::from(spans);
+        let progress_paragraph =
+            Paragraph::new(progress_line).alignment(Alignment::Right);
+        frame.render_widget(progress_paragraph, chunks[1]);
     }
 
     fn render_downloads_list(
@@ -229,7 +330,6 @@ impl MultiDownloadProgress {
             Cell::from("Username"),
             Cell::from("Size"),
             Cell::from("Progress"),
-            Cell::from("%"),
             Cell::from("Speed"),
         ])
         .style(header_style())
@@ -254,14 +354,10 @@ impl MultiDownloadProgress {
                     0.0
                 };
 
-                let bar_width = 20;
-                let filled = (progress * bar_width as f64) as usize;
-                let empty = bar_width - filled;
-                let progress_bar =
-                    format!("[{}{}]", "█".repeat(filled), "░".repeat(empty));
-
                 let percent = (progress * 100.0) as u8;
-                let percent_str = format!("{}%", percent);
+                let bar_width = 20;
+                let progress_bar =
+                    format_progress_bar(progress, bar_width, percent);
 
                 let size_str = format_bytes_progress(
                     download.bytes_downloaded,
@@ -281,20 +377,15 @@ impl MultiDownloadProgress {
                     Cell::from(download.username.clone()),
                     Cell::from(size_str),
                     Cell::from(progress_bar),
-                    Cell::from(percent_str),
                     Cell::from(speed_str),
                 ];
 
                 let style = match download.status {
-                    DownloadStatus::Queued => Style::default().fg(Color::Gray),
-                    DownloadStatus::InProgress { .. } => {
-                        Style::default().fg(Color::Yellow)
-                    }
-                    DownloadStatus::Completed => {
-                        Style::default().fg(Color::Green)
-                    }
+                    DownloadStatus::Queued => inactive_style(),
+                    DownloadStatus::InProgress { .. } => warning_style(),
+                    DownloadStatus::Completed => primary_style(),
                     DownloadStatus::Failed | DownloadStatus::TimedOut => {
-                        Style::default().fg(Color::Red)
+                        error_style()
                     }
                 };
 
@@ -307,17 +398,23 @@ impl MultiDownloadProgress {
             Constraint::Min(30),
             Constraint::Length(15),
             Constraint::Length(20),
-            Constraint::Length(22),
-            Constraint::Length(5),
+            Constraint::Length(28),
             Constraint::Length(12),
         ];
 
         let table = Table::new(rows, widths)
             .header(header)
-            .block(Block::default().borders(Borders::ALL).title("Downloads"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(border_style(true))
+                    .border_type(border_type(true))
+                    .title("Downloads"),
+            )
             .column_spacing(1)
             .row_highlight_style(highlight_style())
-            .highlight_symbol("> ");
+            .highlight_symbol(HIGHLIGHT_SYMBOL)
+            .highlight_spacing(HighlightSpacing::Always);
 
         StatefulWidget::render(
             table,
@@ -328,27 +425,71 @@ impl MultiDownloadProgress {
     }
 
     fn render_controls(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
-        let controls_text =
-            "↑↓/jk: scroll • Home/End: jump • Esc/q: cancel all";
+        let controls_line = format_shortcuts_styled(&[
+            ("↑↓/jk", "scroll"),
+            ("Home/End", "jump"),
+            ("Esc/q", "cancel all"),
+        ]);
 
-        let controls_widget = Paragraph::new(controls_text)
-            .block(Block::default().borders(Borders::ALL).title("Controls"))
-            .style(Style::default().fg(Color::DarkGray));
+        let controls_widget = Paragraph::new(controls_line).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(border_type(false))
+                .title("Controls"),
+        );
 
         frame.render_widget(controls_widget, area);
     }
 }
 
 pub fn show_multi_download_progress(
-    downloads: Vec<FileDownloadState>,
-    receivers: Vec<Receiver<DownloadStatus>>,
+    terminal: DefaultTerminal,
+    client: Arc<Client>,
+    selected_files: Vec<(String, String, u64)>,
+    download_dir: String,
     max_concurrent: usize,
 ) -> Result<()> {
     soulseek_rs::utils::logger::enable_buffering();
 
-    let terminal = ratatui::init();
+    // Create download states immediately (all with Queued status)
+    let downloads: Vec<FileDownloadState> = selected_files
+        .iter()
+        .map(|(filename, username, size)| {
+            FileDownloadState::new(filename.clone(), username.clone(), *size)
+        })
+        .collect();
+
+    // Create channel for sending receivers from background thread
+    let (tx, rx) = mpsc::channel();
+
+    // Spawn background thread to initialize downloads
+    let init_client = client.clone();
+    let init_files = selected_files.clone();
+    let init_dir = download_dir.clone();
+    thread::spawn(move || {
+        for (index, (filename, username, size)) in
+            init_files.into_iter().enumerate()
+        {
+            // Initiate download
+            match init_client.download(
+                filename,
+                username,
+                size,
+                init_dir.clone(),
+            ) {
+                Ok(receiver) => {
+                    // Send receiver back to main thread
+                    let _ = tx.send((index, receiver));
+                }
+                Err(e) => {
+                    eprintln!("Failed to start download {}: {}", index, e);
+                }
+            }
+        }
+    });
+
     let mut progress =
-        MultiDownloadProgress::new(downloads, receivers, max_concurrent);
+        MultiDownloadProgress::new(downloads, rx, max_concurrent);
     let result = progress.run(terminal);
     ratatui::restore();
 
