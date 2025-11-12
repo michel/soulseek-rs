@@ -5,7 +5,10 @@ use ratatui::{
     crossterm::event::{self, poll, Event, KeyCode, KeyEvent, KeyEventKind},
     layout::{Alignment, Constraint, Layout},
     style::{Color, Style},
-    widgets::{Block, Borders, Cell, Paragraph, Row, StatefulWidget, Table, TableState, Wrap},
+    widgets::{
+        Block, Borders, Cell, Paragraph, Row, StatefulWidget, Table,
+        TableState, Wrap,
+    },
     DefaultTerminal, Frame,
 };
 use soulseek_rs::Client;
@@ -461,11 +464,29 @@ impl FileSelector {
 
         if let Some(info_area) = info_area {
             let (info_text, title, color) = if self.is_searching {
-                (format!("Search: {}", self.search_query), "Filter", Color::Yellow)
+                (
+                    format!("Search: {}", self.search_query),
+                    "Filter",
+                    Color::Yellow,
+                )
             } else if !self.search_query.is_empty() {
-                (format!("Current filter: {} (press / to modify, c to clear)", self.search_query), "Filter", Color::Cyan)
+                (
+                    format!(
+                        "Current filter: {} (press / to modify, c to clear)",
+                        self.search_query
+                    ),
+                    "Filter",
+                    Color::Cyan,
+                )
             } else {
-                (format!("{} file(s) selected for download", self.selected_indices.len()), "Selection", Color::Green)
+                (
+                    format!(
+                        "{} file(s) selected for download",
+                        self.selected_indices.len()
+                    ),
+                    "Selection",
+                    Color::Green,
+                )
             };
 
             let info_widget = Paragraph::new(info_text)
