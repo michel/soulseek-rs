@@ -28,7 +28,8 @@ experience. For me, this is a good balance between learning and practicality.
 
 - [x] Search for files
 - [x] Download files
-- [ ] Configure credentials
+- [x] Configure credentials
+- [x] TUI for searching and downloading files
 - [ ] Configure download & upload directories
 - [ ] Share files
 - [ ] Browse user(s) files
