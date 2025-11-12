@@ -11,10 +11,7 @@ use models::FileDownloadState;
 use soulseek_rs::{Client, ClientSettings, PeerAddress};
 use std::{
     env,
-    sync::{
-        atomic::AtomicBool,
-        Arc,
-    },
+    sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
 use ui::{show_multi_download_progress, FileSelector};

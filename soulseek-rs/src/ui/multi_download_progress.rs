@@ -1,11 +1,15 @@
 use crate::models::FileDownloadState;
-use crate::ui::{format_bytes_progress, format_speed, header_style, highlight_style};
+use crate::ui::{
+    format_bytes_progress, format_speed, header_style, highlight_style,
+};
 use color_eyre::Result;
 use ratatui::{
     crossterm::event::{self, poll, Event, KeyCode, KeyEvent, KeyEventKind},
     layout::{Constraint, Layout},
     style::{Color, Style},
-    widgets::{Block, Borders, Cell, Paragraph, Row, StatefulWidget, Table, TableState},
+    widgets::{
+        Block, Borders, Cell, Paragraph, Row, StatefulWidget, Table, TableState,
+    },
     DefaultTerminal, Frame,
 };
 use soulseek_rs::DownloadStatus;
