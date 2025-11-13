@@ -157,7 +157,7 @@ fn handle_file_connection(
         Some(stream),
     ) {
         Ok((download, filename)) => {
-            download.sender.send(DownloadStatus::Completed).unwrap();
+            let _ = download.sender.send(DownloadStatus::Completed);
             info!(
                 "Successfully downloaded {} bytes to {}",
                 download.size, filename
