@@ -91,7 +91,8 @@ impl FileSelector {
             // Poll for new search results if active
             if self.search_active {
                 if let Some(ref client) = self.client {
-                    let current_count = client.get_search_results_count();
+                    let current_count =
+                        client.get_search_results_count(&self.soulseek_query);
                     if current_count != self.last_result_count {
                         self.update_results_from_client();
                         self.last_result_count = current_count;
@@ -124,7 +125,8 @@ impl FileSelector {
 
     fn update_results_from_client(&mut self) {
         if let Some(ref client) = self.client {
-            let search_results = client.get_search_results();
+            let search_results =
+                client.get_search_results(&self.soulseek_query);
 
             // Convert search results to FileDisplayData
             let mut new_items = Vec::new();

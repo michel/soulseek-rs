@@ -6,7 +6,7 @@ use crate::{
     actor::{peer_registry::PeerRegistry, ActorSystem},
     error::{Result, SoulseekRs},
     peer::{listen::Listen, ConnectionType, DownloadPeer, NewPeer, Peer},
-    types::{Download, FileSearchResult},
+    types::{Download, Search, SearchResult},
     utils::{md5, thread_pool::ThreadPool},
     Transfer,
 };
@@ -70,7 +70,7 @@ impl Default for ClientSettings {
 pub enum ClientOperation {
     NewPeer(NewPeer),
     ConnectToPeer(Peer),
-    SearchResult(FileSearchResult),
+    SearchResult(SearchResult),
     PeerDisconnected(String, Option<SoulseekRs>),
     PierceFireWall(Peer),
     DownloadFromPeer(u32, Peer, bool),
@@ -89,7 +89,7 @@ pub struct ClientContext {
     pub peer_registry: Option<PeerRegistry>,
     sender: Option<Sender<ClientOperation>>,
     server_sender: Option<Sender<ServerMessage>>,
-    search_results: Vec<FileSearchResult>,
+    searches: HashMap<String, Search>,
     pub download_tokens: HashMap<u32, Download>,
     actor_system: Arc<ActorSystem>,
 }
@@ -113,7 +113,7 @@ impl ClientContext {
             peer_registry: None,
             sender: None,
             server_sender: None,
-            search_results: Vec::new(),
+            searches: HashMap::new(),
             download_tokens: HashMap::new(),
             actor_system,
         }
@@ -234,7 +234,7 @@ impl Client {
         &self,
         query: &str,
         timeout: Duration,
-    ) -> Result<Vec<FileSearchResult>> {
+    ) -> Result<Vec<SearchResult>> {
         self.search_with_cancel(query, timeout, None)
     }
 
@@ -243,15 +243,22 @@ impl Client {
         query: &str,
         timeout: Duration,
         cancel_flag: Option<Arc<AtomicBool>>,
-    ) -> Result<Vec<FileSearchResult>> {
+    ) -> Result<Vec<SearchResult>> {
         info!("Searching for {}", query);
-
-        // Clear previous search results
-        self.context.write().unwrap().search_results.clear();
 
         if let Some(handle) = &self.server_handle {
             let hash = md5::md5(query);
             let token = u32::from_str_radix(&hash[0..5], 16)?;
+
+            // Initialize new search with query string as key
+            self.context.write().unwrap().searches.insert(
+                query.to_string(),
+                Search {
+                    token,
+                    results: Vec::new(),
+                },
+            );
+
             let _ = handle.send(ServerMessage::FileSearch {
                 token,
                 query: query.to_string(),
@@ -277,15 +284,32 @@ impl Client {
                 break;
             }
         }
-        Ok(self.context.read().unwrap().search_results.clone())
+
+        Ok(self.get_search_results(query))
     }
 
-    pub fn get_search_results_count(&self) -> usize {
-        self.context.read().unwrap().search_results.len()
+    pub fn get_search_results_count(&self, search_key: &str) -> usize {
+        self.context
+            .read()
+            .unwrap()
+            .searches
+            .get(search_key)
+            .map(|s| s.results.len())
+            .unwrap_or(0)
     }
 
-    pub fn get_search_results(&self) -> Vec<FileSearchResult> {
-        self.context.read().unwrap().search_results.clone()
+    pub fn get_search_results(&self, search_key: &str) -> Vec<SearchResult> {
+        self.context
+            .read()
+            .unwrap()
+            .searches
+            .get(search_key)
+            .map(|s| s.results.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn get_all_searches(&self) -> HashMap<String, Search> {
+        self.context.read().unwrap().searches.clone()
     }
 
     pub fn download(
@@ -385,13 +409,18 @@ impl Client {
                                 );
                             });
                         }
-                        ClientOperation::SearchResult(file_search) => {
-                            trace!("[client] SearchResult {:?}", file_search);
-                            client_context
-                                .write()
-                                .unwrap()
-                                .search_results
-                                .push(file_search.clone());
+                        ClientOperation::SearchResult(search_result) => {
+                            trace!("[client] SearchResult {:?}", search_result);
+                            let mut context = client_context.write().unwrap();
+                            let result_token = search_result.token;
+
+                            // Find the search with matching token
+                            for search in context.searches.values_mut() {
+                                if search.token == result_token {
+                                    search.results.push(search_result);
+                                    break;
+                                }
+                            }
                         }
                         ClientOperation::PeerDisconnected(username, error) => {
                             let context = client_context.read().unwrap();
