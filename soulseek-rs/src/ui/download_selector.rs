@@ -5,6 +5,7 @@ use crate::ui::{
     primary_style, success_style, warning_style, HIGHLIGHT_SYMBOL,
 };
 use color_eyre::Result;
+use ratatui::text::{Line, Span};
 use ratatui::{
     crossterm::event::{self, poll, Event, KeyCode, KeyEvent, KeyEventKind},
     layout::{Alignment, Constraint, Layout},
@@ -32,8 +33,8 @@ pub struct FileSelector {
     state: TableState,
     should_exit: bool,
     selected_indices: HashSet<usize>,
-    search_query: String,
-    is_searching: bool,
+    filter_query: String,
+    is_filtering: bool,
     client: Option<Arc<Client>>,
     soulseek_query: String,
     search_timeout: Duration,
@@ -62,8 +63,8 @@ impl FileSelector {
             state,
             should_exit: false,
             selected_indices: HashSet::new(),
-            search_query: String::new(),
-            is_searching: false,
+            filter_query: String::new(),
+            is_filtering: false,
             client: Some(client),
             soulseek_query: query,
             search_timeout: timeout,
@@ -82,22 +83,16 @@ impl FileSelector {
     ) -> Result<(DefaultTerminal, Vec<usize>)> {
         while !self.should_exit {
             terminal.draw(|frame| self.render(frame))?;
+            self.spinner_state = (self.spinner_state + 1) % 10;
 
             // Update spinner animation every 80ms
-            if self.search_active
-                && self.last_spinner_update.elapsed()
-                    >= Duration::from_millis(80)
-            {
-                self.spinner_state = (self.spinner_state + 1) % 10;
-                self.last_spinner_update = Instant::now();
-            }
+            self.last_spinner_update = Instant::now();
 
             // Poll for new search results if active
             if self.search_active {
                 if let Some(ref client) = self.client {
                     let current_count = client.get_search_results_count();
                     if current_count != self.last_result_count {
-                        // New results available - update the list
                         self.update_results_from_client();
                         self.last_result_count = current_count;
                     }
@@ -177,21 +172,23 @@ impl FileSelector {
             return;
         }
 
-        if self.is_searching {
+        if self.is_filtering {
             match key.code {
                 KeyCode::Char(' ') => {
                     self.toggle_selection();
                 }
                 KeyCode::Char(c) => {
-                    self.search_query.push(c);
+                    self.filter_query.push(c);
                     self.apply_filter();
                 }
                 KeyCode::Backspace => {
-                    self.search_query.pop();
+                    self.filter_query.pop();
                     self.apply_filter();
                 }
                 KeyCode::Esc => {
-                    self.is_searching = false;
+                    self.filter_query.clear();
+                    self.apply_filter();
+                    self.is_filtering = false;
                 }
                 KeyCode::Enter => {
                     // If nothing selected, select the current item under cursor
@@ -221,7 +218,7 @@ impl FileSelector {
                     self.toggle_selection();
                 }
                 KeyCode::Char('/') => {
-                    self.is_searching = true;
+                    self.is_filtering = true;
                 }
                 KeyCode::Up | KeyCode::Char('k') => self.select_previous(),
                 KeyCode::Down | KeyCode::Char('j') => self.select_next(),
@@ -284,7 +281,7 @@ impl FileSelector {
     }
 
     fn apply_filter(&mut self) {
-        let query_lower = self.search_query.to_lowercase();
+        let query_lower = self.filter_query.to_lowercase();
 
         if query_lower.is_empty() {
             self.items = self.all_items.clone();
@@ -314,9 +311,9 @@ impl FileSelector {
         let area = frame.area();
 
         // Always split layout into table, optional info, and controls footer
-        let has_info = self.is_searching
+        let has_info = self.is_filtering
             || !self.selected_indices.is_empty()
-            || !self.search_query.is_empty();
+            || !self.filter_query.is_empty();
 
         let chunks = if has_info {
             Layout::vertical([
@@ -350,7 +347,7 @@ impl FileSelector {
                 elapsed,
                 total
             )
-        } else if self.is_searching {
+        } else if self.is_filtering {
             format!(
                 "Multi-select files to download ({}/{} matches)",
                 self.items.len(),
@@ -449,12 +446,29 @@ impl FileSelector {
             &mut self.state,
         );
 
-        // Show loading placeholder when search is active but no results yet
-        if self.search_active && self.items.is_empty() {
+        if self.items.is_empty() {
             let spinner = get_spinner_char(self.spinner_state);
 
-            let loading_text =
-                format!("{} Searching for '{}'", spinner, self.soulseek_query);
+            let mut loading_message: Vec<Span> = Vec::new();
+            if self.items.is_empty() && self.search_active {
+                loading_message.extend(vec![
+                    Span::raw(spinner),
+                    Span::raw(" Searching for '"),
+                    Span::styled(self.soulseek_query.clone(), primary_style()),
+                    Span::raw(format!(
+                        "' [{}/{}s]",
+                        self.search_start_time.elapsed().as_secs(),
+                        self.search_timeout.as_secs()
+                    )),
+                ])
+            } else {
+                loading_message.extend(vec![
+                    Span::raw(spinner),
+                    Span::raw(" Searching for '"),
+                    Span::styled(self.soulseek_query.clone(), primary_style()),
+                    Span::raw("'; No results yet"),
+                ]);
+            };
 
             // Center the loading message
             let vertical = Layout::vertical([
@@ -464,8 +478,10 @@ impl FileSelector {
             ])
             .split(table_area);
 
+            let loading_message_line = Line::from(loading_message);
             // Calculate responsive width: text + generous padding for borders and spacing, max 80% of screen
-            let text_width = loading_text.chars().count() as u16 + 5; // +10 for borders, padding, and safety margin
+            let text_width =
+                loading_message_line.to_string().chars().count() as u16 + 5; // +10 for borders, padding, and safety margin
             let max_width = (table_area.width * 80) / 100;
             let widget_width = text_width.min(max_width);
 
@@ -476,8 +492,8 @@ impl FileSelector {
             ])
             .split(vertical[1]);
 
-            let loading_widget = Paragraph::new(loading_text)
-                .style(primary_style())
+            let loading_widget = Paragraph::new(loading_message_line)
+                .style(Style::default())
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
@@ -491,17 +507,17 @@ impl FileSelector {
         }
 
         if let Some(info_area) = info_area {
-            let (info_text, title, style) = if self.is_searching {
+            let (info_text, title, style) = if self.is_filtering {
                 (
-                    format!("Search: {}", self.search_query),
+                    format!("Filter: {}", self.filter_query),
                     "Filter",
                     warning_style(),
                 )
-            } else if !self.search_query.is_empty() {
+            } else if !self.filter_query.is_empty() {
                 (
                     format!(
-                        "Current filter: {} (press / to modify, c to clear)",
-                        self.search_query
+                        "Current filter: {} (press / to modify, Esc to clear)",
+                        self.filter_query
                     ),
                     "Filter",
                     primary_style(),
@@ -534,13 +550,13 @@ impl FileSelector {
     }
 
     fn render_controls(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
-        let controls_line = if self.is_searching {
+        let controls_line = if self.is_filtering {
             format_shortcuts_styled(&[
                 ("Space", "toggle"),
                 ("a", "select-all"),
                 ("A", "deselect-all"),
                 ("Enter", "download"),
-                ("Esc", "exit search"),
+                ("Esc", "exit filter"),
             ])
         } else if self.search_active {
             format_shortcuts_styled(&[
@@ -557,7 +573,7 @@ impl FileSelector {
                 ("A", "deselect-all"),
                 ("Enter", "download"),
                 ("Esc/q", "cancel"),
-                ("/", "search"),
+                ("/", "filter"),
             ])
         };
 
