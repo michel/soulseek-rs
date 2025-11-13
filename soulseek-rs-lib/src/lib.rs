@@ -13,7 +13,7 @@ pub mod utils;
 pub mod prelude {
     pub use crate::actor::server_actor::PeerAddress;
     pub use crate::types::{
-        DownloadResult, DownloadStatus, File, FileSearchResult, Transfer,
+        DownloadResult, DownloadStatus, File, Search, SearchResult, Transfer,
     };
     pub use crate::{debug, error, info, trace, warn};
 }
@@ -23,5 +23,5 @@ pub use actor::server_actor::PeerAddress;
 pub use client::{Client, ClientSettings};
 pub use error::{Result, SoulseekRs};
 pub use types::{
-    DownloadResult, DownloadStatus, File, FileSearchResult, Transfer,
+    DownloadResult, DownloadStatus, File, Search, SearchResult, Transfer,
 };
