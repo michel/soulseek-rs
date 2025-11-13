@@ -373,7 +373,7 @@ impl Client {
                     && (filename.is_none_or(|f| download.filename == *f))
             })
             .map(|(token, download)| {
-                download.sender.send(DownloadStatus::Failed).unwrap();
+                let _ = download.sender.send(DownloadStatus::Failed);
                 *token
             })
             .collect();
@@ -494,13 +494,13 @@ impl Client {
                                                                                 None
                                                                             ) {
                                                                                 Ok((download, filename)) => {
-                                                                                    download.sender.send(DownloadStatus::Completed).unwrap();
+                                                                                    let _ = download.sender.send(DownloadStatus::Completed);
                                                                                     info!("Successfully downloaded {} bytes to {}", download.size, filename);
                                                                                 }
                                                                                 Err(e) => {
-                                                                                    download.sender.send(DownloadStatus::Failed).unwrap();
+                                                                                    let _ = download.sender.send(DownloadStatus::Failed);
                                                                                     error!(
-                                                                                        "Failed to download file '{}' from {}:{} (token: {}) - Error: {}", 
+                                                                                        "Failed to download file '{}' from {}:{} (token: {}) - Error: {}",
                                                                                         filename, peer.host, peer.port, download.token, e
                                                                                     );
                                                                                 }
@@ -744,10 +744,7 @@ impl Client {
                             filename,
                             download.size
                         );
-                        download
-                            .sender
-                            .send(DownloadStatus::Completed)
-                            .unwrap();
+                        let _ = download.sender.send(DownloadStatus::Completed);
                     }
                     Err(e) => {
                         trace!("[client] failed to download: {}", e);

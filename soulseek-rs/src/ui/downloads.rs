@@ -24,6 +24,8 @@ use std::{
     time::Duration,
 };
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub struct MultiDownloadProgress {
     downloads: Vec<FileDownloadState>,
     receivers: Vec<Option<Receiver<DownloadStatus>>>,
@@ -199,124 +201,7 @@ impl MultiDownloadProgress {
     }
 
     fn render_stats(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
-        let completed = self
-            .downloads
-            .iter()
-            .filter(|d| matches!(d.status, DownloadStatus::Completed))
-            .count();
-        let failed = self
-            .downloads
-            .iter()
-            .filter(|d| {
-                matches!(
-                    d.status,
-                    DownloadStatus::Failed | DownloadStatus::TimedOut
-                )
-            })
-            .count();
-        let queued = self
-            .downloads
-            .iter()
-            .filter(|d| matches!(d.status, DownloadStatus::Queued))
-            .count();
-
-        let total_downloaded: u64 =
-            self.downloads.iter().map(|d| d.bytes_downloaded).sum();
-        let total_size: u64 =
-            self.downloads.iter().map(|d| d.total_bytes).sum();
-        let overall_progress = if total_size > 0 {
-            (total_downloaded as f64 / total_size as f64 * 100.0) as u8
-        } else {
-            0
-        };
-        let progress_ratio = if total_size > 0 {
-            total_downloaded as f64 / total_size as f64
-        } else {
-            0.0
-        };
-        let total_speed: f64 = self
-            .downloads
-            .iter()
-            .filter(|d| matches!(d.status, DownloadStatus::InProgress { .. }))
-            .map(|d| d.speed_bytes_per_sec)
-            .sum();
-        let speed_mb = (total_speed / 1_048_576.0 * 100.0).round() / 100.0;
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(border_type(false))
-            .title("Status");
-
-        let inner_area = block.inner(area);
-        frame.render_widget(block, area);
-
-        // Split into two equal 50% containers
-        let chunks = Layout::horizontal([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50),
-        ])
-        .split(inner_area);
-
-        // Left container: Statistics with styled values
-        let stats_line = Line::from(vec![
-            Span::raw("Downloads: "),
-            Span::styled(
-                self.active_count.to_string(),
-                Style::default()
-                    .fg(COLOR_PRIMARY)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" active, "),
-            Span::styled(
-                completed.to_string(),
-                Style::default()
-                    .fg(COLOR_PRIMARY)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" completed, "),
-            Span::styled(
-                failed.to_string(),
-                Style::default()
-                    .fg(COLOR_PRIMARY)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" failed, "),
-            Span::styled(
-                queued.to_string(),
-                Style::default()
-                    .fg(COLOR_PRIMARY)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" queued"),
-        ]);
-
-        let stats_paragraph = Paragraph::new(stats_line);
-        frame.render_widget(stats_paragraph, chunks[0]);
-
-        let right_width = chunks[1].width as usize;
-        let bar_width = right_width.saturating_sub(42).max(10);
-        let progress_bar =
-            format_progress_bar(progress_ratio, bar_width, overall_progress);
-        let data_str = format_bytes_progress(total_downloaded, total_size);
-
-        let mut spans: Vec<Span> = Vec::new();
-
-        spans.extend(data_str.spans);
-        spans.push(Span::raw(" • "));
-        spans.push(Span::styled(
-            format!("{}", speed_mb),
-            Style::default()
-                .fg(COLOR_PRIMARY)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::raw(" MB/s"));
-        spans.push(Span::raw(" • "));
-        spans.extend(progress_bar.spans);
-
-        let progress_line = Line::from(spans);
-        let progress_paragraph =
-            Paragraph::new(progress_line).alignment(Alignment::Right);
-        frame.render_widget(progress_paragraph, chunks[1]);
+        render_download_stats(frame, area, &self.downloads, self.active_count);
     }
 
     fn render_downloads_list(
@@ -440,6 +325,135 @@ impl MultiDownloadProgress {
 
         frame.render_widget(controls_widget, area);
     }
+}
+
+/// Renders download statistics in a reusable way
+pub fn render_download_stats(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    downloads: &[FileDownloadState],
+    active_count: usize,
+) {
+    let completed = downloads
+        .iter()
+        .filter(|d| matches!(d.status, DownloadStatus::Completed))
+        .count();
+    let failed = downloads
+        .iter()
+        .filter(|d| {
+            matches!(
+                d.status,
+                DownloadStatus::Failed | DownloadStatus::TimedOut
+            )
+        })
+        .count();
+    let queued = downloads
+        .iter()
+        .filter(|d| matches!(d.status, DownloadStatus::Queued))
+        .count();
+
+    let total_downloaded: u64 =
+        downloads.iter().map(|d| d.bytes_downloaded).sum();
+    let total_size: u64 = downloads.iter().map(|d| d.total_bytes).sum();
+    let overall_progress = if total_size > 0 {
+        (total_downloaded as f64 / total_size as f64 * 100.0) as u8
+    } else {
+        0
+    };
+    let progress_ratio = if total_size > 0 {
+        total_downloaded as f64 / total_size as f64
+    } else {
+        0.0
+    };
+    let total_speed: f64 = downloads
+        .iter()
+        .filter(|d| matches!(d.status, DownloadStatus::InProgress { .. }))
+        .map(|d| d.speed_bytes_per_sec)
+        .sum();
+    let speed_mb = (total_speed / 1_048_576.0 * 100.0).round() / 100.0;
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(border_type(false))
+        .title("Status");
+
+    let inner_area = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Split into two equal 50% containers
+    let chunks = Layout::horizontal([
+        Constraint::Percentage(50),
+        Constraint::Percentage(50),
+    ])
+    .split(inner_area);
+
+    // Left container: Statistics with styled values
+    let stats_line = Line::from(vec![
+        Span::raw("soulseek-rs 🦀 "),
+        Span::styled(
+            format!("v{} ", VERSION),
+            Style::default()
+                .fg(COLOR_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" Downloads: "),
+        Span::styled(
+            active_count.to_string(),
+            Style::default()
+                .fg(COLOR_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" active, "),
+        Span::styled(
+            completed.to_string(),
+            Style::default()
+                .fg(COLOR_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" completed, "),
+        Span::styled(
+            failed.to_string(),
+            Style::default()
+                .fg(COLOR_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" failed, "),
+        Span::styled(
+            queued.to_string(),
+            Style::default()
+                .fg(COLOR_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" queued"),
+    ]);
+
+    let stats_paragraph = Paragraph::new(stats_line);
+    frame.render_widget(stats_paragraph, chunks[0]);
+
+    let right_width = chunks[1].width as usize;
+    let bar_width = right_width.saturating_sub(42).max(10);
+    let progress_bar =
+        format_progress_bar(progress_ratio, bar_width, overall_progress);
+    let data_str = format_bytes_progress(total_downloaded, total_size);
+
+    let mut spans: Vec<Span> = Vec::new();
+
+    spans.extend(data_str.spans);
+    spans.push(Span::raw(" • "));
+    spans.push(Span::styled(
+        format!("{}", speed_mb),
+        Style::default()
+            .fg(COLOR_PRIMARY)
+            .add_modifier(Modifier::BOLD),
+    ));
+    spans.push(Span::raw(" MB/s"));
+    spans.push(Span::raw(" • "));
+    spans.extend(progress_bar.spans);
+
+    let progress_line = Line::from(spans);
+    let progress_paragraph =
+        Paragraph::new(progress_line).alignment(Alignment::Right);
+    frame.render_widget(progress_paragraph, chunks[1]);
 }
 
 pub fn show_multi_download_progress(
