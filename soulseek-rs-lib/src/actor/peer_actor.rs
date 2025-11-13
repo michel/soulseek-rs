@@ -8,7 +8,7 @@ use crate::message::peer::{
 use crate::message::server::MessageFactory;
 use crate::message::{Handlers, Message, MessageReader, MessageType};
 use crate::peer::Peer;
-use crate::types::{Download, FileSearchResult, Transfer};
+use crate::types::{Download, SearchResult, Transfer};
 use crate::{debug, error, trace, warn};
 
 use std::io::{self, Error, Write};
@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone)]
 pub enum PeerMessage {
     SendMessage(Message),
-    FileSearchResult(FileSearchResult),
+    FileSearchResult(SearchResult),
     TransferRequest(Transfer),
     UploadFailed(String, String),
     TransferResponse {

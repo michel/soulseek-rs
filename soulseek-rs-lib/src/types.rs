@@ -22,7 +22,7 @@ impl UploadFailed {
 }
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub struct FileSearchResult {
+pub struct SearchResult {
     pub token: u32,
     pub files: Vec<File>,
     pub slots: u8,
@@ -30,7 +30,13 @@ pub struct FileSearchResult {
     pub username: String,
 }
 
-impl FileSearchResult {
+#[derive(Debug, Clone)]
+pub struct Search {
+    pub token: u32,
+    pub results: Vec<SearchResult>,
+}
+
+impl SearchResult {
     pub fn new_from_message(message: &mut Message) -> Result<Self> {
         let pointer = message.get_pointer();
         let size = message.get_size();

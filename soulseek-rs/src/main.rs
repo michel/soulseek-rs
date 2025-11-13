@@ -125,7 +125,7 @@ fn search_and_download(config: SearchConfig) -> Result<()> {
     cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
 
     // Get final results
-    let results = client.get_search_results();
+    let results = client.get_search_results(&config.query);
 
     if selected_indices.is_empty() {
         ratatui::restore();
