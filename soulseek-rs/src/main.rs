@@ -13,7 +13,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
-use ui::{show_multi_download_progress, FileSelector};
+use ui::{launch_main_tui, show_multi_download_progress, FileSelector};
 
 fn main() -> Result<()> {
     color_eyre::install()?;
@@ -38,12 +38,12 @@ fn main() -> Result<()> {
     let (server_host, server_port) = parse_server_address(&cli.server)?;
 
     match cli.command {
-        Commands::Search {
+        Some(Commands::Search {
             query,
             timeout,
             download_dir,
             max_concurrent_downloads,
-        } => {
+        }) => {
             let config = SearchConfig {
                 username,
                 password,
@@ -58,6 +58,52 @@ fn main() -> Result<()> {
                 max_concurrent_downloads,
             };
             search_and_download(config)
+        }
+        None => {
+            // Launch main TUI
+            // Enable logger buffering BEFORE connection to prevent log artifacts
+            soulseek_rs::utils::logger::enable_buffering();
+
+            let settings = ClientSettings {
+                username: username.clone(),
+                password: password.clone(),
+                server_address: PeerAddress::new(
+                    server_host.clone(),
+                    server_port,
+                ),
+                enable_listen: !cli.disable_listener,
+                listen_port: cli.listener_port,
+            };
+
+            let mut client = Client::with_settings(settings);
+            client.connect();
+            client.login().map_err(|e| {
+                color_eyre::eyre::eyre!("Failed to login: {}", e)
+            })?;
+
+            let client = Arc::new(client);
+
+            // Clear screen and enable mouse capture before initializing TUI
+            use ratatui::crossterm::{
+                event::EnableMouseCapture,
+                execute,
+                terminal::{Clear, ClearType},
+            };
+            let _ = execute!(
+                std::io::stdout(),
+                Clear(ClearType::All),
+                EnableMouseCapture
+            );
+
+            let terminal = ratatui::init();
+
+            launch_main_tui(
+                terminal,
+                client,
+                cli.download_dir,
+                cli.max_concurrent_downloads,
+                Duration::from_secs(cli.search_timeout),
+            )
         }
     }
 }

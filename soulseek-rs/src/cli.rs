@@ -6,8 +6,7 @@ use clap::{Parser, Subcommand};
     author,
     version,
     about = "Soulseek client in Rust 🦀",
-    long_about = None,
-    arg_required_else_help = true
+    long_about = None
 )]
 pub struct Cli {
     #[arg(short, long, env = "SOULSEEK_USERNAME")]
@@ -34,7 +33,21 @@ pub struct Cli {
     pub verbose: u8,
 
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
+
+    #[arg(short, long, default_value = "~/Downloads")]
+    pub download_dir: String,
+
+    #[arg(
+        short = 'c',
+        long,
+        env = "MAX_CONCURRENT_DOWNLOADS",
+        default_value = "5"
+    )]
+    pub max_concurrent_downloads: usize,
+
+    #[arg(long, default_value = "10")]
+    pub search_timeout: u64,
 }
 
 #[derive(Subcommand, Debug)]
