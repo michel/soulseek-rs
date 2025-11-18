@@ -374,6 +374,10 @@ impl Client {
         self.context.read().unwrap().searches.clone()
     }
 
+    pub fn get_all_downloads(&self) -> Vec<Download> {
+        self.context.read().unwrap().get_downloads().clone()
+    }
+
     pub fn download(
         &self,
         filename: String,
