@@ -1,4 +1,6 @@
 use std::env;
+use std::fs::{File, OpenOptions};
+use std::io::Write;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Mutex, Once,
@@ -18,6 +20,7 @@ static mut LOG_LEVEL: LogLevel = LogLevel::Warn;
 
 static BUFFER: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static BUFFERING: AtomicBool = AtomicBool::new(false);
+static LOG_FILE: Mutex<Option<File>> = Mutex::new(None);
 
 pub fn init() {
     INIT.call_once(|| {
@@ -36,6 +39,24 @@ pub fn init() {
                 "VERBOSE" => LogLevel::Debug, // Map VERBOSE to DEBUG
                 _ => LogLevel::Warn,          // Default to WARN
             };
+        }
+
+        // Initialize log file if LOG_FILE env var is set
+        if let Ok(log_file_path) = env::var("LOG_FILE") {
+            match OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_file_path)
+            {
+                Ok(file) => {
+                    if let Ok(mut log_file) = LOG_FILE.lock() {
+                        *log_file = Some(file);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to open log file '{}': {}", log_file_path, e);
+                }
+            }
         }
     });
 }
@@ -103,6 +124,14 @@ pub fn log(level: LogLevel, message: &str) {
             let minutes = (seconds_in_day % 3600) / 60;
             let seconds = seconds_in_day % 60;
 
+            let level_str_plain = match level {
+                LogLevel::Error => "ERROR",
+                LogLevel::Warn => "WARN",
+                LogLevel::Info => "INFO",
+                LogLevel::Debug => "DEBUG",
+                LogLevel::Trace => "TRACE",
+            };
+
             let formatted_message = format!(
                 "[{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}] [{}] {}",
                 year,
@@ -116,12 +145,44 @@ pub fn log(level: LogLevel, message: &str) {
                 message
             );
 
+            let formatted_message_plain = format!(
+                "[{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}] [{}] {}",
+                year,
+                month,
+                day,
+                hours,
+                minutes,
+                seconds,
+                subsec_millis,
+                level_str_plain,
+                message
+            );
+
             if BUFFERING.load(Ordering::Relaxed) {
+                // When buffering is enabled, add to buffer for stderr
                 if let Ok(mut buffer) = BUFFER.lock() {
-                    buffer.push(formatted_message);
+                    buffer.push(formatted_message.clone());
+                }
+                // But ALSO write to file if configured (file logging bypasses buffering)
+                if let Ok(mut log_file) = LOG_FILE.lock() {
+                    if let Some(file) = log_file.as_mut() {
+                        let _ = writeln!(file, "{}", formatted_message_plain);
+                        let _ = file.flush();
+                    }
                 }
             } else {
-                eprintln!("{}", formatted_message);
+                // Write to file if configured, otherwise to stderr
+                if let Ok(mut log_file) = LOG_FILE.lock() {
+                    if let Some(file) = log_file.as_mut() {
+                        let _ = writeln!(file, "{}", formatted_message_plain);
+                        let _ = file.flush();
+                    } else {
+                        eprintln!("{}", formatted_message);
+                    }
+                } else {
+                    // If lock fails, fall back to stderr
+                    eprintln!("{}", formatted_message);
+                }
             }
         }
     }
@@ -139,11 +200,52 @@ pub fn flush_buffered_logs() {
     disable_buffering();
 
     if let Ok(mut buffer) = BUFFER.lock() {
-        for message in buffer.iter() {
-            eprintln!("{}", message);
+        // Write to file if configured, otherwise to stderr
+        if let Ok(mut log_file) = LOG_FILE.lock() {
+            if let Some(file) = log_file.as_mut() {
+                for message in buffer.iter() {
+                    // Strip ANSI codes for file output
+                    let plain_message = strip_ansi_codes(message);
+                    let _ = writeln!(file, "{}", plain_message);
+                }
+                let _ = file.flush();
+            } else {
+                for message in buffer.iter() {
+                    eprintln!("{}", message);
+                }
+            }
+        } else {
+            // If lock fails, fall back to stderr
+            for message in buffer.iter() {
+                eprintln!("{}", message);
+            }
         }
         buffer.clear();
     }
+}
+
+fn strip_ansi_codes(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Skip ANSI escape sequence
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume '['
+                while let Some(&ch) = chars.peek() {
+                    chars.next();
+                    if ch.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+
+    result
 }
 
 #[macro_export]

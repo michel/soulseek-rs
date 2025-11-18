@@ -29,6 +29,11 @@ fn main() -> Result<()> {
     };
     env::set_var("LOG_LEVEL", log_level);
 
+    // Set LOG_FILE env var if provided via CLI
+    if let Some(log_file) = &cli.log_file {
+        env::set_var("LOG_FILE", log_file.to_string_lossy().to_string());
+    }
+
     let username = cli.username
         .ok_or_else(|| color_eyre::eyre::eyre!("Username required: use --username or set SOULSEEK_USERNAME env var"))?;
 
