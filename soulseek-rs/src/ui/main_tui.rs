@@ -1,5 +1,5 @@
 use crate::models::{
-    AppState, DownloadEntry, FileDisplayData, FileDownloadState, FocusedPane,
+    AppState, DownloadEntry, FileDisplayData, FocusedPane,
     SearchEntry, SearchStatus,
 };
 use crate::ui::panes::{
@@ -113,16 +113,10 @@ impl MainTui {
         };
 
         // Render status bar
-        let download_states: Vec<FileDownloadState> = self
-            .state
-            .downloads
-            .iter()
-            .map(|d| d.state.clone())
-            .collect();
         render_download_stats(
             frame,
             main_chunks[0],
-            &download_states,
+            &self.state.downloads,
             self.state.active_downloads_count,
         );
 
@@ -184,16 +178,10 @@ impl MainTui {
         );
 
         // Render Downloads pane
-        let download_states: Vec<FileDownloadState> = self
-            .state
-            .downloads
-            .iter()
-            .map(|d| d.state.clone())
-            .collect();
         render_downloads_pane(
             frame,
             right_chunks[1],
-            &download_states,
+            &self.state.downloads,
             &mut self.state.downloads_table_state,
             self.state.focused_pane == FocusedPane::Downloads,
         );
@@ -792,27 +780,12 @@ impl MainTui {
         let (sender, receiver) = mpsc::channel();
         self.state.downloads_receiver_channel = Some(receiver);
 
-        // Add downloads to state
-        for (filename, username, size) in &selected_files {
-            let download_state = FileDownloadState::new(
-                filename.clone(),
-                username.clone(),
-                *size,
-            );
-            self.state.downloads.push(DownloadEntry {
-                state: download_state,
-                receiver: None,
-            });
-        }
-
         // Start downloads in background
         let client = self.client.clone();
         let download_dir = self.download_dir.clone();
 
         thread::spawn(move || {
-            for (idx, (filename, username, size)) in
-                selected_files.into_iter().enumerate()
-            {
+            for (filename, username, size) in selected_files.into_iter() {
                 match client.download(
                     filename.clone(),
                     username.clone(),
@@ -820,7 +793,10 @@ impl MainTui {
                     download_dir.clone(),
                 ) {
                     Ok(rx) => {
-                        let _ = sender.send((idx, rx));
+                        // Get the download from client
+                        if let Some(download) = client.get_all_downloads().iter().find(|d| d.filename == filename && d.username == username).cloned() {
+                            let _ = sender.send((download, rx));
+                        }
                     }
                     Err(e) => {
                         eprintln!(
@@ -837,37 +813,27 @@ impl MainTui {
     }
 
     fn update_downloads(&mut self) {
-        // Check for new download receivers
+        // Check for new downloads from background thread
         if let Some(ref receiver) = self.state.downloads_receiver_channel {
-            while let Ok((idx, download_receiver)) = receiver.try_recv() {
-                if let Some(download) = self.state.downloads.get_mut(idx) {
-                    download.receiver = Some(download_receiver);
-                }
+            while let Ok((download, download_receiver)) = receiver.try_recv() {
+                self.state.downloads.push(DownloadEntry {
+                    download,
+                    receiver: Some(download_receiver),
+                });
             }
         }
 
         // Update download states
         self.state.active_downloads_count = 0;
-        for download in &mut self.state.downloads {
-            if let Some(ref receiver) = download.receiver {
+        for download_entry in &mut self.state.downloads {
+            if let Some(ref receiver) = download_entry.receiver {
                 while let Ok(status) = receiver.try_recv() {
-                    download.state.status = status.clone();
-                    if let DownloadStatus::InProgress {
-                        bytes_downloaded,
-                        total_bytes,
-                        speed_bytes_per_sec,
-                    } = &status
-                    {
-                        download.state.bytes_downloaded = *bytes_downloaded;
-                        download.state.total_bytes = *total_bytes;
-                        download.state.speed_bytes_per_sec =
-                            *speed_bytes_per_sec;
-                    }
+                    download_entry.download.status = status;
                 }
             }
 
             if matches!(
-                download.state.status,
+                download_entry.download.status,
                 DownloadStatus::InProgress { .. }
             ) {
                 self.state.active_downloads_count += 1;
