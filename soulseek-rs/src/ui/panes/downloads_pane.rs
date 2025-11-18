@@ -1,4 +1,4 @@
-use crate::models::FileDownloadState;
+use crate::models::DownloadEntry;
 use crate::ui::{
     border_style, border_type, error_style, format_bytes, format_speed,
     header_style, highlight_style, inactive_style, success_style,
@@ -17,7 +17,7 @@ use soulseek_rs::DownloadStatus;
 pub fn render_downloads_pane(
     frame: &mut Frame,
     area: Rect,
-    downloads: &[FileDownloadState],
+    downloads: &[DownloadEntry],
     table_state: &mut TableState,
     focused: bool,
 ) {
@@ -47,7 +47,8 @@ pub fn render_downloads_pane(
 
     let rows: Vec<Row> = downloads
         .iter()
-        .map(|download| {
+        .map(|download_entry| {
+            let download = &download_entry.download;
             let (status_icon, status_style) = match &download.status {
                 DownloadStatus::Queued => ("⋯", inactive_style()),
                 DownloadStatus::InProgress { .. } => ("⧗", warning_style()),
@@ -59,17 +60,17 @@ pub fn render_downloads_pane(
             let progress_text = match &download.status {
                 DownloadStatus::Queued => "Queued".to_string(),
                 DownloadStatus::InProgress { .. } => {
-                    let percent = if download.total_bytes > 0 {
-                        (download.bytes_downloaded as f64
-                            / download.total_bytes as f64
+                    let percent = if download.size > 0 {
+                        (download.bytes_downloaded() as f64
+                            / download.size as f64
                             * 100.0) as u8
                     } else {
                         0
                     };
                     format!(
                         "{}/{} ({}%)",
-                        format_bytes(download.bytes_downloaded),
-                        format_bytes(download.total_bytes),
+                        format_bytes(download.bytes_downloaded()),
+                        format_bytes(download.size),
                         percent
                     )
                 }
@@ -80,7 +81,7 @@ pub fn render_downloads_pane(
 
             let speed_text = match &download.status {
                 DownloadStatus::InProgress { .. } => {
-                    format_speed(download.speed_bytes_per_sec)
+                    format_speed(download.speed_bytes_per_sec())
                 }
                 _ => "-".to_string(),
             };

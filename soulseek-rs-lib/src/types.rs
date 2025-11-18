@@ -98,6 +98,30 @@ pub struct Download {
     pub sender: Sender<DownloadStatus>,
 }
 
+impl Download {
+    pub fn is_finished(&self) -> bool {
+        matches!(
+            self.status,
+            DownloadStatus::Completed | DownloadStatus::Failed | DownloadStatus::TimedOut
+        )
+    }
+
+    pub fn bytes_downloaded(&self) -> u64 {
+        match &self.status {
+            DownloadStatus::InProgress { bytes_downloaded, .. } => *bytes_downloaded,
+            DownloadStatus::Completed => self.size,
+            _ => 0,
+        }
+    }
+
+    pub fn speed_bytes_per_sec(&self) -> f64 {
+        match &self.status {
+            DownloadStatus::InProgress { speed_bytes_per_sec, .. } => *speed_bytes_per_sec,
+            _ => 0.0,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum DownloadStatus {

@@ -1,6 +1,6 @@
-use crate::models::{FileDisplayData, FileDownloadState};
+use crate::models::FileDisplayData;
 use ratatui::{layout::Rect, widgets::TableState};
-use soulseek_rs::DownloadStatus;
+use soulseek_rs::{types::Download, DownloadStatus};
 use std::sync::atomic::AtomicBool;
 use std::sync::{mpsc::Receiver, Arc};
 use std::time::Instant;
@@ -22,7 +22,7 @@ pub struct SearchEntry {
 }
 
 pub struct DownloadEntry {
-    pub state: FileDownloadState,
+    pub download: Download,
     pub receiver: Option<Receiver<DownloadStatus>>,
 }
 
@@ -52,7 +52,7 @@ pub struct AppState {
     pub downloads: Vec<DownloadEntry>,
     pub downloads_table_state: TableState,
     pub downloads_receiver_channel:
-        Option<Receiver<(usize, Receiver<DownloadStatus>)>>,
+        Option<Receiver<(Download, Receiver<DownloadStatus>)>>,
     pub active_downloads_count: usize,
 
     // UI State

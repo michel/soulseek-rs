@@ -1,4 +1,4 @@
-use crate::models::FileDownloadState;
+use crate::models::DownloadEntry;
 use crate::ui::{
     border_style, border_type, error_style, format_bytes_progress,
     format_progress_bar, format_shortcuts_styled, format_speed, header_style,
@@ -27,9 +27,8 @@ use std::{
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub struct MultiDownloadProgress {
-    downloads: Vec<FileDownloadState>,
-    receivers: Vec<Option<Receiver<DownloadStatus>>>,
-    receiver_channel: Receiver<(usize, Receiver<DownloadStatus>)>,
+    downloads: Vec<DownloadEntry>,
+    receiver_channel: Receiver<(soulseek_rs::types::Download, Receiver<DownloadStatus>)>,
     list_state: TableState,
     max_concurrent: usize,
     active_count: usize,
@@ -39,19 +38,14 @@ pub struct MultiDownloadProgress {
 
 impl MultiDownloadProgress {
     pub fn new(
-        downloads: Vec<FileDownloadState>,
-        receiver_channel: Receiver<(usize, Receiver<DownloadStatus>)>,
+        receiver_channel: Receiver<(soulseek_rs::types::Download, Receiver<DownloadStatus>)>,
         max_concurrent: usize,
     ) -> Self {
         let mut list_state = TableState::default();
         list_state.select(Some(0));
 
-        // Initialize all receivers as None - they'll be populated asynchronously
-        let receivers = (0..downloads.len()).map(|_| None).collect();
-
         Self {
-            downloads,
-            receivers,
+            downloads: Vec::new(),
             receiver_channel,
             list_state,
             max_concurrent,
@@ -68,36 +62,37 @@ impl MultiDownloadProgress {
         loop {
             terminal.draw(|frame| self.render(frame))?;
 
-            // Check for incoming download receivers from background thread
-            while let Ok((index, receiver)) = self.receiver_channel.try_recv() {
-                self.receivers[index] = Some(receiver);
-                // Update status message
-                let queued =
-                    self.receivers.iter().filter(|r| r.is_none()).count();
-                if queued == 0 {
-                    self.queuing_status = String::from("All downloads queued");
-                } else {
-                    self.queuing_status =
-                        format!("Queuing... {} remaining", queued);
-                }
+            // Check for incoming downloads from background thread
+            while let Ok((download, receiver)) = self.receiver_channel.try_recv() {
+                self.downloads.push(DownloadEntry {
+                    download,
+                    receiver: Some(receiver),
+                });
+                self.queuing_status = format!("{} downloads queued", self.downloads.len());
             }
 
             // Poll all receivers for status updates
-            for i in 0..self.receivers.len() {
-                if let Some(receiver) = &self.receivers[i] {
+            let mut need_start_next = false;
+            for download_entry in &mut self.downloads {
+                if let Some(receiver) = &download_entry.receiver {
                     if let Ok(status) = receiver.try_recv() {
-                        let was_active = !self.downloads[i].is_finished();
-                        self.downloads[i].update_status(status);
-                        let is_finished = self.downloads[i].is_finished();
+                        let was_active = !download_entry.download.is_finished();
+                        download_entry.download.status = status;
+                        let is_finished = download_entry.download.is_finished();
 
-                        // If download just finished, decrement active count and start next
+                        // If download just finished, decrement active count
                         if was_active && is_finished {
                             self.active_count =
                                 self.active_count.saturating_sub(1);
-                            self.start_next_batch();
+                            need_start_next = true;
                         }
                     }
                 }
+            }
+
+            // Start next batch after iteration completes
+            if need_start_next {
+                self.start_next_batch();
             }
 
             // Handle keyboard input
@@ -118,14 +113,14 @@ impl MultiDownloadProgress {
 
     fn start_next_batch(&mut self) {
         // Start queued downloads up to max_concurrent limit
-        for i in 0..self.downloads.len() {
+        for download_entry in &self.downloads {
             if self.active_count >= self.max_concurrent {
                 break;
             }
 
             // Only start if download is queued AND receiver is available
-            if matches!(self.downloads[i].status, DownloadStatus::Queued)
-                && self.receivers[i].is_some()
+            if matches!(download_entry.download.status, DownloadStatus::Queued)
+                && download_entry.receiver.is_some()
             {
                 self.active_count += 1;
                 // Download will start automatically since receiver exists
@@ -134,7 +129,7 @@ impl MultiDownloadProgress {
     }
 
     fn all_finished(&self) -> bool {
-        self.downloads.iter().all(|d| d.is_finished())
+        self.downloads.iter().all(|d| d.download.is_finished())
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
@@ -223,7 +218,8 @@ impl MultiDownloadProgress {
         let rows: Vec<Row> = self
             .downloads
             .iter()
-            .map(|download| {
+            .map(|download_entry| {
+                let download = &download_entry.download;
                 let status_icon = match download.status {
                     DownloadStatus::Queued => "⋯",
                     DownloadStatus::InProgress { .. } => "⧗",
@@ -232,9 +228,9 @@ impl MultiDownloadProgress {
                     DownloadStatus::TimedOut => "⏱",
                 };
 
-                let progress = if download.total_bytes > 0 {
-                    download.bytes_downloaded as f64
-                        / download.total_bytes as f64
+                let progress = if download.size > 0 {
+                    download.bytes_downloaded() as f64
+                        / download.size as f64
                 } else {
                     0.0
                 };
@@ -245,13 +241,13 @@ impl MultiDownloadProgress {
                     format_progress_bar(progress, bar_width, percent);
 
                 let size_str = format_bytes_progress(
-                    download.bytes_downloaded,
-                    download.total_bytes,
+                    download.bytes_downloaded(),
+                    download.size,
                 );
 
                 let speed_str = match download.status {
                     DownloadStatus::InProgress { .. } => {
-                        format_speed(download.speed_bytes_per_sec)
+                        format_speed(download.speed_bytes_per_sec())
                     }
                     _ => "-".to_string(),
                 };
@@ -331,30 +327,30 @@ impl MultiDownloadProgress {
 pub fn render_download_stats(
     frame: &mut Frame,
     area: ratatui::layout::Rect,
-    downloads: &[FileDownloadState],
+    downloads: &[DownloadEntry],
     active_count: usize,
 ) {
     let completed = downloads
         .iter()
-        .filter(|d| matches!(d.status, DownloadStatus::Completed))
+        .filter(|d| matches!(d.download.status, DownloadStatus::Completed))
         .count();
     let failed = downloads
         .iter()
         .filter(|d| {
             matches!(
-                d.status,
+                d.download.status,
                 DownloadStatus::Failed | DownloadStatus::TimedOut
             )
         })
         .count();
     let queued = downloads
         .iter()
-        .filter(|d| matches!(d.status, DownloadStatus::Queued))
+        .filter(|d| matches!(d.download.status, DownloadStatus::Queued))
         .count();
 
     let total_downloaded: u64 =
-        downloads.iter().map(|d| d.bytes_downloaded).sum();
-    let total_size: u64 = downloads.iter().map(|d| d.total_bytes).sum();
+        downloads.iter().map(|d| d.download.bytes_downloaded()).sum();
+    let total_size: u64 = downloads.iter().map(|d| d.download.size).sum();
     let overall_progress = if total_size > 0 {
         (total_downloaded as f64 / total_size as f64 * 100.0) as u8
     } else {
@@ -367,8 +363,8 @@ pub fn render_download_stats(
     };
     let total_speed: f64 = downloads
         .iter()
-        .filter(|d| matches!(d.status, DownloadStatus::InProgress { .. }))
-        .map(|d| d.speed_bytes_per_sec)
+        .filter(|d| matches!(d.download.status, DownloadStatus::InProgress { .. }))
+        .map(|d| d.download.speed_bytes_per_sec())
         .sum();
     let speed_mb = (total_speed / 1_048_576.0 * 100.0).round() / 100.0;
 
@@ -465,45 +461,35 @@ pub fn show_multi_download_progress(
 ) -> Result<()> {
     soulseek_rs::utils::logger::enable_buffering();
 
-    // Create download states immediately (all with Queued status)
-    let downloads: Vec<FileDownloadState> = selected_files
-        .iter()
-        .map(|(filename, username, size)| {
-            FileDownloadState::new(filename.clone(), username.clone(), *size)
-        })
-        .collect();
-
-    // Create channel for sending receivers from background thread
+    // Create channel for sending downloads and receivers from background thread
     let (tx, rx) = mpsc::channel();
 
     // Spawn background thread to initialize downloads
     let init_client = client.clone();
-    let init_files = selected_files.clone();
-    let init_dir = download_dir.clone();
     thread::spawn(move || {
-        for (index, (filename, username, size)) in
-            init_files.into_iter().enumerate()
-        {
+        for (filename, username, size) in selected_files.into_iter() {
             // Initiate download
             match init_client.download(
-                filename,
-                username,
+                filename.clone(),
+                username.clone(),
                 size,
-                init_dir.clone(),
+                download_dir.clone(),
             ) {
                 Ok(receiver) => {
-                    // Send receiver back to main thread
-                    let _ = tx.send((index, receiver));
+                    // Get the download from client
+                    if let Some(download) = init_client.get_all_downloads().iter().find(|d| d.filename == filename && d.username == username).cloned() {
+                        let _ = tx.send((download, receiver));
+                    }
                 }
                 Err(e) => {
-                    eprintln!("Failed to start download {}: {}", index, e);
+                    eprintln!("Failed to start download for {}: {}", filename, e);
                 }
             }
         }
     });
 
     let mut progress =
-        MultiDownloadProgress::new(downloads, rx, max_concurrent);
+        MultiDownloadProgress::new(rx, max_concurrent);
     let result = progress.run(terminal);
     ratatui::restore();
 
