@@ -711,13 +711,8 @@ impl MainTui {
         let selected_search_index = self.state.selected_search_index;
 
         for (idx, search) in self.state.searches.iter_mut().enumerate() {
-            if search.status != SearchStatus::Active {
-                continue;
-            }
-
-            // Check timeout
-            if search.start_time.elapsed() > timeout {
-                search.status = SearchStatus::Failed("Timeout".to_string());
+            // Only skip failed searches; allow Active and Completed to update
+            if matches!(search.status, SearchStatus::Failed(_)) {
                 continue;
             }
 
@@ -752,10 +747,8 @@ impl MainTui {
                 }
             }
 
-            // Mark as completed if we have results and some time has passed
-            if !search.results.is_empty()
-                && search.start_time.elapsed() > Duration::from_secs(5)
-            {
+            // Mark as completed after timeout (but continue updating)
+            if search.status == SearchStatus::Active && search.start_time.elapsed() > timeout {
                 search.status = SearchStatus::Completed;
             }
         }
