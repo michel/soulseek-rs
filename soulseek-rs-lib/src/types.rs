@@ -94,16 +94,8 @@ pub struct Download {
     pub token: u32,
     pub size: u64,
     pub download_directory: String,
-    pub sender: Sender<DownloadStatus>,
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct DownloadResult {
-    pub filename: String,
-    pub username: String,
     pub status: DownloadStatus,
-    pub elapsed_time: std::time::Duration,
+    pub sender: Sender<DownloadStatus>,
 }
 
 #[derive(Debug, Clone)]

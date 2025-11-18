@@ -84,11 +84,10 @@ fn extract_download_from_buffer(
     );
 
     let context = client_context.read().unwrap();
-    let download = context.download_tokens.get(&token).cloned();
+    let download = context.get_download_by_token(token).cloned();
 
     if download.is_none() {
-        let download_tokens: Vec<u32> =
-            context.download_tokens.keys().cloned().collect();
+        let download_tokens = context.get_download_tokens();
         trace!("[listener:{peer_ip}:{peer_port}] download token not found: {:?}, download tokens: {:?}", token, download_tokens);
     }
 
@@ -158,6 +157,7 @@ fn handle_file_connection(
     ) {
         Ok((download, filename)) => {
             let _ = download.sender.send(DownloadStatus::Completed);
+            context.client_context.write().unwrap().update_download_with_status(download.token, DownloadStatus::Completed);
             info!(
                 "Successfully downloaded {} bytes to {}",
                 download.size, filename

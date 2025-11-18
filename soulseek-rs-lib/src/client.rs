@@ -90,13 +90,75 @@ pub struct ClientContext {
     sender: Option<Sender<ClientOperation>>,
     server_sender: Option<Sender<ServerMessage>>,
     searches: HashMap<String, Search>,
-    pub download_tokens: HashMap<u32, Download>,
+    downloads: Vec<Download>,
     actor_system: Arc<ActorSystem>,
 }
 impl Default for ClientContext {
     fn default() -> Self {
         Self::new()
     }
+}
+impl ClientContext {
+    pub fn add_download(&mut self, download: Download) {
+        self.downloads.push(download);
+    }
+    pub fn remove_download(&mut self, token: u32) {
+        self.downloads.retain(|d| d.token != token);
+    }
+    pub fn get_download_by_token(&self, token: u32) -> Option<&Download> {
+        self.downloads.iter().find(|d| d.token == token)
+    }
+
+    pub fn get_download_by_token_mut(
+        &mut self,
+        token: u32,
+    ) -> Option<&mut Download> {
+        self.downloads.iter_mut().find(|d| d.token == token)
+    }
+    pub fn get_download_tokens(&self) -> Vec<u32> {
+        self.downloads.iter().map(|d| d.token).collect()
+    }
+    pub fn get_downloads(&self) -> &Vec<Download> {
+        &self.downloads
+    }
+
+    pub fn update_download_with_status(
+        &mut self,
+        token: u32,
+        status: DownloadStatus,
+    ) {
+        if let Some(download) = self.get_download_by_token_mut(token) {
+            download.status = status;
+        }
+    }
+}
+#[test]
+fn test_client_context_downloads() {
+    let mut context = ClientContext::new();
+    let token = 123;
+    let new_token = 1234;
+    let download = Download {
+        username: "test".to_string(),
+        filename: "test.txt".to_string(),
+        token,
+        size: 100,
+        download_directory: "test".to_string(),
+        status: DownloadStatus::Queued,
+        sender: mpsc::channel().0,
+    };
+    context.add_download(download);
+    assert!(context.get_download_by_token(123).is_some());
+    assert_eq!(context.get_download_tokens(), vec![123]);
+    assert_eq!(context.get_downloads().len(), 1);
+    if let Some(download) = context.get_download_by_token_mut(token) {
+        assert_eq!(download.token, token);
+        download.token = new_token
+    }
+    assert!(context.get_download_by_token(new_token).is_some());
+    assert_eq!(context.get_download_tokens(), vec![new_token]);
+    context.remove_download(new_token);
+    assert_eq!(context.get_downloads().len(), 0);
+    assert!(context.get_download_by_token(1234).is_none());
 }
 
 impl ClientContext {
@@ -114,7 +176,7 @@ impl ClientContext {
             sender: None,
             server_sender: None,
             searches: HashMap::new(),
-            download_tokens: HashMap::new(),
+            downloads: Vec::new(),
             actor_system,
         }
     }
@@ -335,11 +397,12 @@ impl Client {
             token,
             size,
             download_directory,
+            status: DownloadStatus::Queued,
             sender: download_sender,
         };
 
         let mut context = self.context.write().unwrap();
-        context.download_tokens.insert(token, download.clone());
+        context.add_download(download.clone());
 
         let download_initiated =
             if let Some(ref registry) = context.peer_registry {
@@ -354,6 +417,7 @@ impl Client {
 
         if !download_initiated {
             let _ = download.sender.send(DownloadStatus::Failed);
+            self.context.write().unwrap().update_download_with_status(token, DownloadStatus::Failed);
         }
 
         Ok(download_receiver)
@@ -365,25 +429,24 @@ impl Client {
         filename: Option<&str>,
     ) {
         let context = client_context.read().unwrap();
-        let download_tokens = &context.download_tokens;
-        let failed_downloads: Vec<_> = download_tokens
+        let failed_downloads: Vec<_> = context
+            .get_downloads()
             .iter()
-            .filter(|(_, download)| {
+            .filter(|download| {
                 download.username == username
                     && (filename.is_none_or(|f| download.filename == *f))
             })
-            .map(|(token, download)| {
+            .map(|download| {
                 let _ = download.sender.send(DownloadStatus::Failed);
-                *token
+                download.token
             })
             .collect();
+        drop(context);
 
         failed_downloads.iter().for_each(|token| {
-            client_context
-                .write()
-                .unwrap()
-                .download_tokens
-                .remove(token);
+            let mut context = client_context.write().unwrap();
+            context.update_download_with_status(*token, DownloadStatus::Failed);
+            context.remove_download(*token);
         });
     }
 
@@ -459,8 +522,7 @@ impl Client {
                                 let client_context =
                                     client_context.read().unwrap();
                                 client_context
-                                    .download_tokens
-                                    .get(&token)
+                                    .get_download_by_token(token)
                                     .cloned()
                             };
                             let own_username = own_username.clone();
@@ -489,16 +551,18 @@ impl Client {
                                         match filename {
                                                                         Some(filename) => {
                                                                             match download_peer.download_file(
-                                                                                client_context_clone,
+                                                                                client_context_clone.clone(),
                                                                                 Some(download.clone()),
                                                                                 None
                                                                             ) {
                                                                                 Ok((download, filename)) => {
                                                                                     let _ = download.sender.send(DownloadStatus::Completed);
+                                                                                    client_context_clone.write().unwrap().update_download_with_status(download.token, DownloadStatus::Completed);
                                                                                     info!("Successfully downloaded {} bytes to {}", download.size, filename);
                                                                                 }
                                                                                 Err(e) => {
                                                                                     let _ = download.sender.send(DownloadStatus::Failed);
+                                                                                    client_context_clone.write().unwrap().update_download_with_status(download.token, DownloadStatus::Failed);
                                                                                     error!(
                                                                                         "Failed to download file '{}' from {}:{} (token: {}) - Error: {}",
                                                                                         filename, peer.host, peer.port, download.token, e
@@ -631,38 +695,36 @@ impl Client {
                         ) => {
                             let mut context = client_context.write().unwrap();
 
-                            let key_to_remove = context
-                                .download_tokens
-                                .iter()
-                                .find_map(|(key, d)| {
+                            let download_to_update =
+                                context.get_downloads().iter().find_map(|d| {
                                     if d.username == username
                                         && d.filename == transfer.filename
                                     {
-                                        Some((*key, d.clone()))
+                                        Some((d.token, d.clone()))
                                     } else {
                                         None
                                     }
                                 });
 
-                            if let Some((key, download)) = key_to_remove {
+                            if let Some((old_token, download)) =
+                                download_to_update
+                            {
                                 trace!(
-                                                "[client] UpdateDownloadTokens found {key}, transfer: {:?}",
+                                                "[client] UpdateDownloadTokens found {old_token}, transfer: {:?}",
                                                 transfer
                                             );
 
-                                context.download_tokens.insert(
-                                    transfer.token,
-                                    Download {
-                                        username: username.clone(),
-                                        filename: transfer.filename,
-                                        token: transfer.token,
-                                        size: transfer.size,
-                                        download_directory: download
-                                            .download_directory,
-                                        sender: download.sender.clone(),
-                                    },
-                                );
-                                context.download_tokens.remove(&key);
+                                context.add_download(Download {
+                                    username: username.clone(),
+                                    filename: transfer.filename,
+                                    token: transfer.token,
+                                    size: transfer.size,
+                                    download_directory: download
+                                        .download_directory,
+                                    status: download.status.clone(),
+                                    sender: download.sender.clone(),
+                                });
+                                context.remove_download(old_token);
                             }
                         }
                         ClientOperation::UploadFailed(username, filename) => {
@@ -745,6 +807,7 @@ impl Client {
                             download.size
                         );
                         let _ = download.sender.send(DownloadStatus::Completed);
+                        client_context.write().unwrap().update_download_with_status(download.token, DownloadStatus::Completed);
                     }
                     Err(e) => {
                         trace!("[client] failed to download: {}", e);
