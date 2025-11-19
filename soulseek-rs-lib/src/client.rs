@@ -384,7 +384,7 @@ impl Client {
         username: String,
         size: u64,
         download_directory: String,
-    ) -> Result<Receiver<DownloadStatus>> {
+    ) -> Result<(Download, Receiver<DownloadStatus>)> {
         info!("[client] Downloading {} from {}", filename, username);
 
         let hash = md5::md5(&filename);
@@ -421,10 +421,13 @@ impl Client {
 
         if !download_initiated {
             let _ = download.sender.send(DownloadStatus::Failed);
-            self.context.write().unwrap().update_download_with_status(token, DownloadStatus::Failed);
+            self.context
+                .write()
+                .unwrap()
+                .update_download_with_status(token, DownloadStatus::Failed);
         }
 
-        Ok(download_receiver)
+        Ok((download, download_receiver))
     }
 
     fn process_failed_uploads(
@@ -811,7 +814,13 @@ impl Client {
                             download.size
                         );
                         let _ = download.sender.send(DownloadStatus::Completed);
-                        client_context.write().unwrap().update_download_with_status(download.token, DownloadStatus::Completed);
+                        client_context
+                            .write()
+                            .unwrap()
+                            .update_download_with_status(
+                                download.token,
+                                DownloadStatus::Completed,
+                            );
                     }
                     Err(e) => {
                         trace!("[client] failed to download: {}", e);

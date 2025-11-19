@@ -54,7 +54,10 @@ pub fn init() {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to open log file '{}': {}", log_file_path, e);
+                    eprintln!(
+                        "Failed to open log file '{}': {}",
+                        log_file_path, e
+                    );
                 }
             }
         }

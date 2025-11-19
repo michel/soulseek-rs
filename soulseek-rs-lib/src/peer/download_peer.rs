@@ -242,7 +242,8 @@ impl DownloadPeer {
         let client_guard = client_context
             .read()
             .map_err(|_| DownloadError::LockPoisoned)?;
-        let download_info = client_guard.get_download_by_token(token_u32).cloned();
+        let download_info =
+            client_guard.get_download_by_token(token_u32).cloned();
         drop(client_guard);
 
         download_info.ok_or(DownloadError::TokenNotFound(token_u32))
@@ -323,7 +324,10 @@ impl DownloadPeer {
                                 speed_bytes_per_sec: speed,
                             };
                             let _ = dl.sender.send(status.clone());
-                            client_context.write().unwrap().update_download_with_status(dl.token, status);
+                            client_context
+                                .write()
+                                .unwrap()
+                                .update_download_with_status(dl.token, status);
 
                             last_update_time = Instant::now();
                         }
@@ -421,7 +425,10 @@ impl DownloadPeer {
 
         if let Some(ref dl) = download {
             let _ = dl.sender.send(DownloadStatus::Queued);
-            client_context.write().unwrap().update_download_with_status(dl.token, DownloadStatus::Queued);
+            client_context
+                .write()
+                .unwrap()
+                .update_download_with_status(dl.token, DownloadStatus::Queued);
         }
 
         let mut stream = match stream {
