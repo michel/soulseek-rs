@@ -2,14 +2,13 @@ use crate::models::FileDisplayData;
 use ratatui::{layout::Rect, widgets::TableState};
 use soulseek_rs::{types::Download, DownloadStatus};
 use std::sync::atomic::AtomicBool;
-use std::sync::{mpsc::Receiver, Arc};
+use std::sync::{mpsc::Receiver, mpsc::Sender, Arc};
 use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SearchStatus {
     Active,
     Completed,
-    Failed(String),
 }
 
 pub struct SearchEntry {
@@ -53,6 +52,8 @@ pub struct AppState {
     pub downloads_table_state: TableState,
     pub downloads_receiver_channel:
         Option<Receiver<(Download, Receiver<DownloadStatus>)>>,
+    pub downloads_sender_channel:
+        Option<Sender<(Download, Receiver<DownloadStatus>)>>,
     pub active_downloads_count: usize,
 
     // UI State
@@ -94,6 +95,7 @@ impl AppState {
             downloads: Vec::new(),
             downloads_table_state,
             downloads_receiver_channel: None,
+            downloads_sender_channel: None,
             active_downloads_count: 0,
 
             focused_pane: FocusedPane::Searches,

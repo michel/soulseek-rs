@@ -1,6 +1,6 @@
 use crate::models::{
-    AppState, DownloadEntry, FileDisplayData, FocusedPane,
-    SearchEntry, SearchStatus,
+    AppState, DownloadEntry, FileDisplayData, FocusedPane, SearchEntry,
+    SearchStatus,
 };
 use crate::ui::panes::{
     render_downloads_pane, render_results_pane, render_searches_pane,
@@ -711,11 +711,6 @@ impl MainTui {
         let selected_search_index = self.state.selected_search_index;
 
         for (idx, search) in self.state.searches.iter_mut().enumerate() {
-            // Only skip failed searches; allow Active and Completed to update
-            if matches!(search.status, SearchStatus::Failed(_)) {
-                continue;
-            }
-
             // Poll for new results
             let search_query = search.query.clone();
             let search_results = self.client.get_search_results(&search_query);
@@ -748,7 +743,9 @@ impl MainTui {
             }
 
             // Mark as completed after timeout (but continue updating)
-            if search.status == SearchStatus::Active && search.start_time.elapsed() > timeout {
+            if search.status == SearchStatus::Active
+                && search.start_time.elapsed() > timeout
+            {
                 search.status = SearchStatus::Completed;
             }
         }
@@ -769,13 +766,15 @@ impl MainTui {
             return;
         }
 
-        // Create channel for async download initialization
-        let (sender, receiver) = mpsc::channel();
-        self.state.downloads_receiver_channel = Some(receiver);
+        if self.state.downloads_receiver_channel.is_none() {
+            let (sender, receiver) = mpsc::channel();
+            self.state.downloads_receiver_channel = Some(receiver);
+            self.state.downloads_sender_channel = Some(sender);
+        }
 
-        // Start downloads in background
         let client = self.client.clone();
         let download_dir = self.download_dir.clone();
+        let sender = self.state.downloads_sender_channel.clone().unwrap();
 
         thread::spawn(move || {
             for (filename, username, size) in selected_files.into_iter() {
@@ -786,8 +785,14 @@ impl MainTui {
                     download_dir.clone(),
                 ) {
                     Ok(rx) => {
-                        // Get the download from client
-                        if let Some(download) = client.get_all_downloads().iter().find(|d| d.filename == filename && d.username == username).cloned() {
+                        if let Some(download) = client
+                            .get_all_downloads()
+                            .iter()
+                            .find(|d| {
+                                d.filename == filename && d.username == username
+                            })
+                            .cloned()
+                        {
                             let _ = sender.send((download, rx));
                         }
                     }

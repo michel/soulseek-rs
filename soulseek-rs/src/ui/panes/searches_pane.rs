@@ -1,7 +1,7 @@
 use crate::models::{SearchEntry, SearchStatus};
 use crate::ui::{
-    border_style, border_type, error_style, header_style, highlight_style,
-    success_style, warning_style, HIGHLIGHT_SYMBOL,
+    border_style, border_type, header_style, highlight_style, success_style,
+    warning_style, HIGHLIGHT_SYMBOL,
 };
 use ratatui::{
     layout::Rect,
@@ -32,9 +32,6 @@ pub fn render_searches_pane(
                 }
                 SearchStatus::Completed => {
                     Cell::from("Done").style(success_style())
-                }
-                SearchStatus::Failed(msg) => {
-                    Cell::from(format!("Failed: {}", msg)).style(error_style())
                 }
             };
 
