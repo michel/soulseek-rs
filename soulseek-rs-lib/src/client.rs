@@ -370,6 +370,16 @@ impl Client {
             .unwrap_or_default()
     }
 
+    /// Non-blocking variant that returns None if the lock is unavailable
+    pub fn try_get_search_results(
+        &self,
+        search_key: &str,
+    ) -> Option<Vec<SearchResult>> {
+        self.context.try_read().ok().and_then(|ctx| {
+            ctx.searches.get(search_key).map(|s| s.results.clone())
+        })
+    }
+
     pub fn get_all_searches(&self) -> HashMap<String, Search> {
         self.context.read().unwrap().searches.clone()
     }
