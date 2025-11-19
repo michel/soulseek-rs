@@ -710,43 +710,62 @@ impl MainTui {
         let timeout = self.search_timeout;
         let selected_search_index = self.state.selected_search_index;
 
-        for (idx, search) in self.state.searches.iter_mut().enumerate() {
-            // Poll for new results
-            let search_query = search.query.clone();
-            let search_results = self.client.get_search_results(&search_query);
+        // Collect all queries first
+        let queries: Vec<(usize, String)> = self
+            .state
+            .searches
+            .iter()
+            .enumerate()
+            .map(|(idx, s)| (idx, s.query.clone()))
+            .collect();
 
-            if !search_results.is_empty() {
-                search.results.clear();
-                for result in search_results {
-                    for file in result.files {
-                        search.results.push(FileDisplayData {
-                            filename: file.name.clone(),
-                            size: file.size,
-                            username: result.username.clone(),
-                            speed: result.speed,
-                            slots: result.slots,
-                            bitrate: file.attribs.get(&0).copied(),
-                        });
+        // Fetch all results in one go (single lock acquisition per query)
+        // Use try_get_search_results to avoid blocking the UI thread
+        let all_results: Vec<(usize, Vec<_>)> = queries
+            .into_iter()
+            .filter_map(|(idx, query)| {
+                self.client
+                    .try_get_search_results(&query)
+                    .map(|results| (idx, results))
+            })
+            .collect();
+
+        // Now update state without holding any client locks
+        for (idx, search_results) in all_results {
+            if let Some(search) = self.state.searches.get_mut(idx) {
+                if !search_results.is_empty() {
+                    search.results.clear();
+                    for result in search_results {
+                        for file in result.files {
+                            search.results.push(FileDisplayData {
+                                filename: file.name.clone(),
+                                size: file.size,
+                                username: result.username.clone(),
+                                speed: result.speed,
+                                slots: result.slots,
+                                bitrate: file.attribs.get(&0).copied(),
+                            });
+                        }
+                    }
+
+                    // Update selected search if this is the active one
+                    if let Some(selected_idx) = selected_search_index {
+                        if selected_idx == idx {
+                            self.state.results_items = search.results.clone();
+                            self.state.results_filtered_items =
+                                search.results.clone();
+                            self.state.results_filtered_indices =
+                                (0..search.results.len()).collect();
+                        }
                     }
                 }
 
-                // Update selected search if this is the active one
-                if let Some(selected_idx) = selected_search_index {
-                    if selected_idx == idx {
-                        self.state.results_items = search.results.clone();
-                        self.state.results_filtered_items =
-                            search.results.clone();
-                        self.state.results_filtered_indices =
-                            (0..search.results.len()).collect();
-                    }
+                // Mark as completed after timeout
+                if search.status == SearchStatus::Active
+                    && search.start_time.elapsed() > timeout
+                {
+                    search.status = SearchStatus::Completed;
                 }
-            }
-
-            // Mark as completed after timeout (but continue updating)
-            if search.status == SearchStatus::Active
-                && search.start_time.elapsed() > timeout
-            {
-                search.status = SearchStatus::Completed;
             }
         }
     }
@@ -777,26 +796,24 @@ impl MainTui {
         let sender = self.state.downloads_sender_channel.clone().unwrap();
 
         thread::spawn(move || {
-            thread::spawn(move || {
-                for (filename, username, size) in selected_files.into_iter() {
-                    match client.download(
-                        filename.clone(),
-                        username.clone(),
-                        size,
-                        download_dir.clone(),
-                    ) {
-                        Ok((download, rx)) => {
-                            let _ = sender.send((download, rx));
-                        }
-                        Err(e) => {
-                            eprintln!(
-                                "Failed to start download for {}: {}",
-                                filename, e
-                            );
-                        }
+            for (filename, username, size) in selected_files.into_iter() {
+                match client.download(
+                    filename.clone(),
+                    username.clone(),
+                    size,
+                    download_dir.clone(),
+                ) {
+                    Ok((download, rx)) => {
+                        let _ = sender.send((download, rx));
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "Failed to start download for {}: {}",
+                            filename, e
+                        );
                     }
                 }
-            });
+            }
         });
 
         // Clear selection
