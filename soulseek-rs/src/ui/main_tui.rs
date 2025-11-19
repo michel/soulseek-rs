@@ -777,33 +777,26 @@ impl MainTui {
         let sender = self.state.downloads_sender_channel.clone().unwrap();
 
         thread::spawn(move || {
-            for (filename, username, size) in selected_files.into_iter() {
-                match client.download(
-                    filename.clone(),
-                    username.clone(),
-                    size,
-                    download_dir.clone(),
-                ) {
-                    Ok(rx) => {
-                        if let Some(download) = client
-                            .get_all_downloads()
-                            .iter()
-                            .find(|d| {
-                                d.filename == filename && d.username == username
-                            })
-                            .cloned()
-                        {
+            thread::spawn(move || {
+                for (filename, username, size) in selected_files.into_iter() {
+                    match client.download(
+                        filename.clone(),
+                        username.clone(),
+                        size,
+                        download_dir.clone(),
+                    ) {
+                        Ok((download, rx)) => {
                             let _ = sender.send((download, rx));
                         }
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "Failed to start download for {}: {}",
-                            filename, e
-                        );
+                        Err(e) => {
+                            eprintln!(
+                                "Failed to start download for {}: {}",
+                                filename, e
+                            );
+                        }
                     }
                 }
-            }
+            });
         });
 
         // Clear selection

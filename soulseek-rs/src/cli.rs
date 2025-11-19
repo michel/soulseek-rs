@@ -33,7 +33,11 @@ pub struct Cli {
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
     pub verbose: u8,
 
-    #[arg(long, env = "LOG_FILE", help = "Write logs to file instead of stderr")]
+    #[arg(
+        long,
+        env = "LOG_FILE",
+        help = "Write logs to file instead of stderr"
+    )]
     pub log_file: Option<PathBuf>,
 
     #[command(subcommand)]
