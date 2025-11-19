@@ -28,7 +28,8 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub struct MultiDownloadProgress {
     downloads: Vec<DownloadEntry>,
-    receiver_channel: Receiver<(soulseek_rs::types::Download, Receiver<DownloadStatus>)>,
+    receiver_channel:
+        Receiver<(soulseek_rs::types::Download, Receiver<DownloadStatus>)>,
     list_state: TableState,
     max_concurrent: usize,
     active_count: usize,
@@ -38,7 +39,10 @@ pub struct MultiDownloadProgress {
 
 impl MultiDownloadProgress {
     pub fn new(
-        receiver_channel: Receiver<(soulseek_rs::types::Download, Receiver<DownloadStatus>)>,
+        receiver_channel: Receiver<(
+            soulseek_rs::types::Download,
+            Receiver<DownloadStatus>,
+        )>,
         max_concurrent: usize,
     ) -> Self {
         let mut list_state = TableState::default();
@@ -63,12 +67,15 @@ impl MultiDownloadProgress {
             terminal.draw(|frame| self.render(frame))?;
 
             // Check for incoming downloads from background thread
-            while let Ok((download, receiver)) = self.receiver_channel.try_recv() {
+            while let Ok((download, receiver)) =
+                self.receiver_channel.try_recv()
+            {
                 self.downloads.push(DownloadEntry {
                     download,
                     receiver: Some(receiver),
                 });
-                self.queuing_status = format!("{} downloads queued", self.downloads.len());
+                self.queuing_status =
+                    format!("{} downloads queued", self.downloads.len());
             }
 
             // Poll all receivers for status updates
@@ -229,8 +236,7 @@ impl MultiDownloadProgress {
                 };
 
                 let progress = if download.size > 0 {
-                    download.bytes_downloaded() as f64
-                        / download.size as f64
+                    download.bytes_downloaded() as f64 / download.size as f64
                 } else {
                     0.0
                 };
@@ -348,8 +354,10 @@ pub fn render_download_stats(
         .filter(|d| matches!(d.download.status, DownloadStatus::Queued))
         .count();
 
-    let total_downloaded: u64 =
-        downloads.iter().map(|d| d.download.bytes_downloaded()).sum();
+    let total_downloaded: u64 = downloads
+        .iter()
+        .map(|d| d.download.bytes_downloaded())
+        .sum();
     let total_size: u64 = downloads.iter().map(|d| d.download.size).sum();
     let overall_progress = if total_size > 0 {
         (total_downloaded as f64 / total_size as f64 * 100.0) as u8
@@ -363,7 +371,9 @@ pub fn render_download_stats(
     };
     let total_speed: f64 = downloads
         .iter()
-        .filter(|d| matches!(d.download.status, DownloadStatus::InProgress { .. }))
+        .filter(|d| {
+            matches!(d.download.status, DownloadStatus::InProgress { .. })
+        })
         .map(|d| d.download.speed_bytes_per_sec())
         .sum();
     let speed_mb = (total_speed / 1_048_576.0 * 100.0).round() / 100.0;
@@ -461,7 +471,6 @@ pub fn show_multi_download_progress(
 ) -> Result<()> {
     soulseek_rs::utils::logger::enable_buffering();
 
-    // Create channel for sending downloads and receivers from background thread
     let (tx, rx) = mpsc::channel();
 
     // Spawn background thread to initialize downloads
@@ -475,21 +484,20 @@ pub fn show_multi_download_progress(
                 size,
                 download_dir.clone(),
             ) {
-                Ok(receiver) => {
-                    // Get the download from client
-                    if let Some(download) = init_client.get_all_downloads().iter().find(|d| d.filename == filename && d.username == username).cloned() {
-                        let _ = tx.send((download, receiver));
-                    }
+                Ok((download, receiver)) => {
+                    let _ = tx.send((download, receiver));
                 }
                 Err(e) => {
-                    eprintln!("Failed to start download for {}: {}", filename, e);
+                    eprintln!(
+                        "Failed to start download for {}: {}",
+                        filename, e
+                    );
                 }
             }
         }
     });
 
-    let mut progress =
-        MultiDownloadProgress::new(rx, max_concurrent);
+    let mut progress = MultiDownloadProgress::new(rx, max_concurrent);
     let result = progress.run(terminal);
     ratatui::restore();
 

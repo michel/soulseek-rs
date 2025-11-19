@@ -157,7 +157,14 @@ fn handle_file_connection(
     ) {
         Ok((download, filename)) => {
             let _ = download.sender.send(DownloadStatus::Completed);
-            context.client_context.write().unwrap().update_download_with_status(download.token, DownloadStatus::Completed);
+            context
+                .client_context
+                .write()
+                .unwrap()
+                .update_download_with_status(
+                    download.token,
+                    DownloadStatus::Completed,
+                );
             info!(
                 "Successfully downloaded {} bytes to {}",
                 download.size, filename
