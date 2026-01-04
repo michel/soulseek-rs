@@ -113,11 +113,10 @@ impl FileSelector {
                 Duration::from_millis(100)
             };
 
-            if poll(timeout)? {
-                if let Event::Key(key) = event::read()? {
+            if poll(timeout)?
+                && let Event::Key(key) = event::read()? {
                     self.handle_key(key);
                 }
-            }
         }
 
         Ok((terminal, self.selected_indices.iter().copied().collect()))
@@ -157,8 +156,8 @@ impl FileSelector {
     }
 
     fn toggle_selection(&mut self) {
-        if let Some(filtered_idx) = self.state.selected() {
-            if let Some(&original_idx) = self.filtered_indices.get(filtered_idx)
+        if let Some(filtered_idx) = self.state.selected()
+            && let Some(&original_idx) = self.filtered_indices.get(filtered_idx)
             {
                 if self.selected_indices.contains(&original_idx) {
                     self.selected_indices.remove(&original_idx);
@@ -166,7 +165,6 @@ impl FileSelector {
                     self.selected_indices.insert(original_idx);
                 }
             }
-        }
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
@@ -194,15 +192,13 @@ impl FileSelector {
                 }
                 KeyCode::Enter => {
                     // If nothing selected, select the current item under cursor
-                    if self.selected_indices.is_empty() {
-                        if let Some(filtered_idx) = self.state.selected() {
-                            if let Some(&original_idx) =
+                    if self.selected_indices.is_empty()
+                        && let Some(filtered_idx) = self.state.selected()
+                            && let Some(&original_idx) =
                                 self.filtered_indices.get(filtered_idx)
                             {
                                 self.selected_indices.insert(original_idx);
                             }
-                        }
-                    }
                     self.should_exit = true;
                 }
                 KeyCode::Up | KeyCode::Down => {
@@ -238,15 +234,13 @@ impl FileSelector {
                 }
                 KeyCode::Enter => {
                     // If nothing selected, select the current item under cursor
-                    if self.selected_indices.is_empty() {
-                        if let Some(filtered_idx) = self.state.selected() {
-                            if let Some(&original_idx) =
+                    if self.selected_indices.is_empty()
+                        && let Some(filtered_idx) = self.state.selected()
+                            && let Some(&original_idx) =
                                 self.filtered_indices.get(filtered_idx)
                             {
                                 self.selected_indices.insert(original_idx);
                             }
-                        }
-                    }
                     self.should_exit = true;
                 }
                 KeyCode::Esc | KeyCode::Char('q') => {

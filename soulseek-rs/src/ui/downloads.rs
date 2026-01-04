@@ -81,8 +81,8 @@ impl MultiDownloadProgress {
             // Poll all receivers for status updates
             let mut need_start_next = false;
             for download_entry in &mut self.downloads {
-                if let Some(receiver) = &download_entry.receiver {
-                    if let Ok(status) = receiver.try_recv() {
+                if let Some(receiver) = &download_entry.receiver
+                    && let Ok(status) = receiver.try_recv() {
                         let was_active = !download_entry.download.is_finished();
                         download_entry.download.status = status;
                         let is_finished = download_entry.download.is_finished();
@@ -94,7 +94,6 @@ impl MultiDownloadProgress {
                             need_start_next = true;
                         }
                     }
-                }
             }
 
             // Start next batch after iteration completes
@@ -103,11 +102,10 @@ impl MultiDownloadProgress {
             }
 
             // Handle keyboard input
-            if poll(Duration::from_millis(100))? {
-                if let Event::Key(key) = event::read()? {
+            if poll(Duration::from_millis(100))?
+                && let Event::Key(key) = event::read()? {
                     self.handle_key(key);
                 }
-            }
 
             // Exit when user cancels or all downloads finished
             if self.should_exit || self.all_finished() {
