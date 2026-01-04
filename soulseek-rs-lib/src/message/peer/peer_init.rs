@@ -20,9 +20,7 @@ impl MessageHandler<PeerMessage> for PeerInit {
         let token = message.read_int32();
         trace!(
             "PeerInit: username: {}, connection_type: {}, token: {}",
-            username,
-            connection_type,
-            token
+            username, connection_type, token
         );
 
         sender.send(PeerMessage::SetUsername(username)).unwrap();

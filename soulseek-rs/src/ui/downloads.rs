@@ -1,13 +1,14 @@
 use crate::models::DownloadEntry;
 use crate::ui::{
-    border_style, border_type, error_style, format_bytes_progress,
-    format_progress_bar, format_shortcuts_styled, format_speed, header_style,
-    highlight_style, inactive_style, primary_style, warning_style,
-    COLOR_PRIMARY, HIGHLIGHT_SYMBOL,
+    COLOR_PRIMARY, HIGHLIGHT_SYMBOL, border_style, border_type, error_style,
+    format_bytes_progress, format_progress_bar, format_shortcuts_styled,
+    format_speed, header_style, highlight_style, inactive_style, primary_style,
+    warning_style,
 };
 use color_eyre::Result;
 use ratatui::{
-    crossterm::event::{self, poll, Event, KeyCode, KeyEvent, KeyEventKind},
+    DefaultTerminal, Frame,
+    crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, poll},
     layout::{Alignment, Constraint, Layout},
     style::{Modifier, Style},
     text::{Line, Span},
@@ -15,11 +16,10 @@ use ratatui::{
         Block, Borders, Cell, HighlightSpacing, Paragraph, Row, StatefulWidget,
         Table, TableState,
     },
-    DefaultTerminal, Frame,
 };
 use soulseek_rs::{Client, DownloadStatus};
 use std::{
-    sync::{mpsc, mpsc::Receiver, Arc},
+    sync::{Arc, mpsc, mpsc::Receiver},
     thread,
     time::Duration,
 };
@@ -82,18 +82,18 @@ impl MultiDownloadProgress {
             let mut need_start_next = false;
             for download_entry in &mut self.downloads {
                 if let Some(receiver) = &download_entry.receiver
-                    && let Ok(status) = receiver.try_recv() {
-                        let was_active = !download_entry.download.is_finished();
-                        download_entry.download.status = status;
-                        let is_finished = download_entry.download.is_finished();
+                    && let Ok(status) = receiver.try_recv()
+                {
+                    let was_active = !download_entry.download.is_finished();
+                    download_entry.download.status = status;
+                    let is_finished = download_entry.download.is_finished();
 
-                        // If download just finished, decrement active count
-                        if was_active && is_finished {
-                            self.active_count =
-                                self.active_count.saturating_sub(1);
-                            need_start_next = true;
-                        }
+                    // If download just finished, decrement active count
+                    if was_active && is_finished {
+                        self.active_count = self.active_count.saturating_sub(1);
+                        need_start_next = true;
                     }
+                }
             }
 
             // Start next batch after iteration completes
@@ -103,9 +103,10 @@ impl MultiDownloadProgress {
 
             // Handle keyboard input
             if poll(Duration::from_millis(100))?
-                && let Event::Key(key) = event::read()? {
-                    self.handle_key(key);
-                }
+                && let Event::Key(key) = event::read()?
+            {
+                self.handle_key(key);
+            }
 
             // Exit when user cancels or all downloads finished
             if self.should_exit || self.all_finished() {

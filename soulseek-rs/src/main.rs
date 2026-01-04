@@ -4,16 +4,16 @@ mod models;
 mod ui;
 
 use clap::Parser;
-use cli::{parse_server_address, Cli, Commands};
+use cli::{Cli, Commands, parse_server_address};
 use color_eyre::Result;
 use config::SearchConfig;
 use soulseek_rs::{Client, ClientSettings, PeerAddress};
 use std::{
     env,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
-use ui::{launch_main_tui, show_multi_download_progress, FileSelector};
+use ui::{FileSelector, launch_main_tui, show_multi_download_progress};
 
 fn main() -> Result<()> {
     color_eyre::install()?;
@@ -33,14 +33,22 @@ fn main() -> Result<()> {
     // Set LOG_FILE env var if provided via CLI
     if let Some(log_file) = &cli.log_file {
         // SAFETY: Called before any threads are spawned
-        unsafe { env::set_var("LOG_FILE", log_file.to_string_lossy().to_string()) };
+        unsafe {
+            env::set_var("LOG_FILE", log_file.to_string_lossy().to_string())
+        };
     }
 
-    let username = cli.username
-        .ok_or_else(|| color_eyre::eyre::eyre!("Username required: use --username or set SOULSEEK_USERNAME env var"))?;
+    let username = cli.username.ok_or_else(|| {
+        color_eyre::eyre::eyre!(
+            "Username required: use --username or set SOULSEEK_USERNAME env var"
+        )
+    })?;
 
-    let password = cli.password
-        .ok_or_else(|| color_eyre::eyre::eyre!("Password required: use --password or set SOULSEEK_PASSWORD env var"))?;
+    let password = cli.password.ok_or_else(|| {
+        color_eyre::eyre::eyre!(
+            "Password required: use --password or set SOULSEEK_PASSWORD env var"
+        )
+    })?;
 
     let (server_host, server_port) = parse_server_address(&cli.server)?;
 

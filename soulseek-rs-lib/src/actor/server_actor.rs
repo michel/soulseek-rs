@@ -24,7 +24,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use crate::{debug, error, info, trace, warn, SoulseekRs};
+use crate::{SoulseekRs, debug, error, info, trace, warn};
 
 #[derive(Debug, Clone)]
 pub struct PeerAddress {
@@ -483,8 +483,8 @@ impl ServerActor {
                 obfuscated_port,
             } => {
                 debug!(
-                    "[server] Received GetPeerAddress response for {}: {}:{} (obf_type: {}, obf_port: {})"
-                    , username, host, port, obfuscation_type, obfuscated_port
+                    "[server] Received GetPeerAddress response for {}: {}:{} (obf_type: {}, obf_port: {})",
+                    username, host, port, obfuscation_type, obfuscated_port
                 );
 
                 if let Err(e) = self.client_channel.send(
@@ -496,7 +496,10 @@ impl ServerActor {
                         obfuscated_port,
                     },
                 ) {
-                    error!("[server] Error forwarding GetPeerAddress response to client: {}", e);
+                    error!(
+                        "[server] Error forwarding GetPeerAddress response to client: {}",
+                        e
+                    );
                 }
             }
             ServerMessage::ProcessRead => {
@@ -515,23 +518,27 @@ impl ServerActor {
                 let timeout = Duration::from_secs(5);
 
                 let context = self.context.clone();
-                std::thread::spawn(move || loop {
-                    if start.elapsed() >= timeout {
-                        let _ = response.send(Err(SoulseekRs::Timeout));
-                        break;
-                    }
+                std::thread::spawn(move || {
+                    loop {
+                        if start.elapsed() >= timeout {
+                            let _ = response.send(Err(SoulseekRs::Timeout));
+                            break;
+                        }
 
-                    if let Some(logged_in) = context.read().unwrap().logged_in {
-                        let result = if logged_in {
-                            Ok(true)
-                        } else {
-                            Err(SoulseekRs::AuthenticationFailed)
-                        };
-                        let _ = response.send(result);
-                        break;
-                    }
+                        if let Some(logged_in) =
+                            context.read().unwrap().logged_in
+                        {
+                            let result = if logged_in {
+                                Ok(true)
+                            } else {
+                                Err(SoulseekRs::AuthenticationFailed)
+                            };
+                            let _ = response.send(result);
+                            break;
+                        }
 
-                    std::thread::sleep(Duration::from_millis(100));
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
                 });
             }
             ServerMessage::FileSearch { token, query } => {
@@ -560,7 +567,8 @@ impl ServerActor {
                 Err(e) => {
                     error!(
                         "[server] Error reading from server: {} (kind: {:?}). Disconnecting.",
-                         e, e.kind()
+                        e,
+                        e.kind()
                     );
                     self.disconnect_with_error(e);
                     return;

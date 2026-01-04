@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
@@ -89,37 +89,39 @@ impl Worker {
         _active_threads: Arc<AtomicUsize>,
         _total_threads: usize,
     ) -> Worker {
-        let thread = thread::spawn(move || loop {
-            let message = receiver.lock().unwrap().recv();
-            match message {
-                Ok(Message::NewJob(job)) => {
-                    // let active =
-                    //     active_threads.fetch_add(1, Ordering::SeqCst) + 1;
-                    // trace!(
-                    //     "Thread {} started job (active: {}/{})",
-                    //     id,
-                    //     active,
-                    //     total_threads
-                    // );
+        let thread = thread::spawn(move || {
+            loop {
+                let message = receiver.lock().unwrap().recv();
+                match message {
+                    Ok(Message::NewJob(job)) => {
+                        // let active =
+                        //     active_threads.fetch_add(1, Ordering::SeqCst) + 1;
+                        // trace!(
+                        //     "Thread {} started job (active: {}/{})",
+                        //     id,
+                        //     active,
+                        //     total_threads
+                        // );
 
-                    job();
+                        job();
 
-                    // let active =
-                    // active_threads.fetch_sub(1, Ordering::SeqCst) - 1;
-                    // trace!(
-                    //     "Thread {} finished job (active: {}/{})",
-                    //     id,
-                    //     active,
-                    //     total_threads
-                    // );
-                }
-                Ok(Message::Terminate) => {
-                    // Received termination signal
-                    break;
-                }
-                Err(_) => {
-                    // Channel disconnected
-                    break;
+                        // let active =
+                        // active_threads.fetch_sub(1, Ordering::SeqCst) - 1;
+                        // trace!(
+                        //     "Thread {} finished job (active: {}/{})",
+                        //     id,
+                        //     active,
+                        //     total_threads
+                        // );
+                    }
+                    Ok(Message::Terminate) => {
+                        // Received termination signal
+                        break;
+                    }
+                    Err(_) => {
+                        // Channel disconnected
+                        break;
+                    }
                 }
             }
         });

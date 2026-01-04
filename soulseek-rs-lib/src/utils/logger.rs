@@ -2,8 +2,8 @@ use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Mutex, Once,
+    atomic::{AtomicBool, Ordering},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -168,10 +168,11 @@ pub fn log(level: LogLevel, message: &str) {
                 }
                 // But ALSO write to file if configured (file logging bypasses buffering)
                 if let Ok(mut log_file) = LOG_FILE.lock()
-                    && let Some(file) = log_file.as_mut() {
-                        let _ = writeln!(file, "{}", formatted_message_plain);
-                        let _ = file.flush();
-                    }
+                    && let Some(file) = log_file.as_mut()
+                {
+                    let _ = writeln!(file, "{}", formatted_message_plain);
+                    let _ = file.flush();
+                }
             } else {
                 // Write to file if configured, otherwise to stderr
                 if let Ok(mut log_file) = LOG_FILE.lock() {

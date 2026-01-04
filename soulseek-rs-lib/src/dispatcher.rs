@@ -1,4 +1,4 @@
-use crate::message::{handlers::Handlers, Message};
+use crate::message::{Message, handlers::Handlers};
 use std::sync::mpsc::Sender;
 
 use crate::warn;

@@ -3,28 +3,28 @@ use crate::models::{
     SearchStatus,
 };
 use crate::ui::panes::{
-    render_downloads_pane, render_results_pane, render_searches_pane,
-    ResultsPaneParams,
+    ResultsPaneParams, render_downloads_pane, render_results_pane,
+    render_searches_pane,
 };
 use crate::ui::{
     border_style, border_type, format_shortcuts_styled, render_download_stats,
 };
 use color_eyre::Result;
 use ratatui::{
+    DefaultTerminal, Frame,
     crossterm::event::{
-        self, poll, Event, KeyCode, KeyEvent, KeyEventKind, MouseButton,
-        MouseEvent, MouseEventKind,
+        self, Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent,
+        MouseEventKind, poll,
     },
     layout::{Constraint, Layout},
     widgets::{Block, Borders, Paragraph},
-    DefaultTerminal, Frame,
 };
 use soulseek_rs::{Client, DownloadStatus};
 use std::{
     sync::{
+        Arc,
         atomic::AtomicBool,
         mpsc::{self},
-        Arc,
     },
     thread,
     time::{Duration, Instant},
@@ -521,35 +521,35 @@ impl MainTui {
             // Check if click is within searches pane
             if let Some(area) = self.state.searches_pane_area
                 && col >= area.x
-                    && col < area.x + area.width
-                    && row >= area.y
-                    && row < area.y + area.height
-                {
-                    self.state.focused_pane = FocusedPane::Searches;
-                    return Ok(());
-                }
+                && col < area.x + area.width
+                && row >= area.y
+                && row < area.y + area.height
+            {
+                self.state.focused_pane = FocusedPane::Searches;
+                return Ok(());
+            }
 
             // Check if click is within results pane
             if let Some(area) = self.state.results_pane_area
                 && col >= area.x
-                    && col < area.x + area.width
-                    && row >= area.y
-                    && row < area.y + area.height
-                {
-                    self.state.focused_pane = FocusedPane::Results;
-                    return Ok(());
-                }
+                && col < area.x + area.width
+                && row >= area.y
+                && row < area.y + area.height
+            {
+                self.state.focused_pane = FocusedPane::Results;
+                return Ok(());
+            }
 
             // Check if click is within downloads pane
             if let Some(area) = self.state.downloads_pane_area
                 && col >= area.x
-                    && col < area.x + area.width
-                    && row >= area.y
-                    && row < area.y + area.height
-                {
-                    self.state.focused_pane = FocusedPane::Downloads;
-                    return Ok(());
-                }
+                && col < area.x + area.width
+                && row >= area.y
+                && row < area.y + area.height
+            {
+                self.state.focused_pane = FocusedPane::Downloads;
+                return Ok(());
+            }
         }
 
         Ok(())
@@ -747,13 +747,14 @@ impl MainTui {
 
                     // Update selected search if this is the active one
                     if let Some(selected_idx) = selected_search_index
-                        && selected_idx == idx {
-                            self.state.results_items = search.results.clone();
-                            self.state.results_filtered_items =
-                                search.results.clone();
-                            self.state.results_filtered_indices =
-                                (0..search.results.len()).collect();
-                        }
+                        && selected_idx == idx
+                    {
+                        self.state.results_items = search.results.clone();
+                        self.state.results_filtered_items =
+                            search.results.clone();
+                        self.state.results_filtered_indices =
+                            (0..search.results.len()).collect();
+                    }
                 }
 
                 // Mark as completed after timeout

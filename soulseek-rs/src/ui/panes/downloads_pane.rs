@@ -1,16 +1,16 @@
 use crate::models::DownloadEntry;
 use crate::ui::{
-    border_style, border_type, error_style, format_bytes, format_speed,
-    header_style, highlight_style, inactive_style, success_style,
-    warning_style, HIGHLIGHT_SYMBOL,
+    HIGHLIGHT_SYMBOL, border_style, border_type, error_style, format_bytes,
+    format_speed, header_style, highlight_style, inactive_style, success_style,
+    warning_style,
 };
 use ratatui::{
+    Frame,
     layout::Rect,
     widgets::{
         Block, Borders, Cell, HighlightSpacing, Paragraph, Row, Table,
         TableState,
     },
-    Frame,
 };
 use soulseek_rs::DownloadStatus;
 
