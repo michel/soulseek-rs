@@ -156,13 +156,12 @@ impl PeerActor {
                 let transfer_response =
                     MessageFactory::build_transfer_response_message(transfer);
 
-                if let Some(ref handle) = self.self_handle {
-                    if let Err(e) =
+                if let Some(ref handle) = self.self_handle
+                    && let Err(e) =
                         handle.send(PeerMessage::SendMessage(transfer_response))
                     {
                         error!("[peer:{}] Failed to send TransferResponse message: {}", username, e);
                     }
-                }
             }
             PeerMessage::TransferResponse {
                 token,

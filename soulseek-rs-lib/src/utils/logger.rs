@@ -167,12 +167,11 @@ pub fn log(level: LogLevel, message: &str) {
                     buffer.push(formatted_message.clone());
                 }
                 // But ALSO write to file if configured (file logging bypasses buffering)
-                if let Ok(mut log_file) = LOG_FILE.lock() {
-                    if let Some(file) = log_file.as_mut() {
+                if let Ok(mut log_file) = LOG_FILE.lock()
+                    && let Some(file) = log_file.as_mut() {
                         let _ = writeln!(file, "{}", formatted_message_plain);
                         let _ = file.flush();
                     }
-                }
             } else {
                 // Write to file if configured, otherwise to stderr
                 if let Ok(mut log_file) = LOG_FILE.lock() {

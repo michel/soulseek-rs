@@ -285,11 +285,10 @@ impl Client {
     #[allow(dead_code)]
     pub fn remove_peer(&self, username: &str) {
         let context = self.context.read().unwrap();
-        if let Some(ref registry) = context.peer_registry {
-            if let Some(handle) = registry.remove_peer(username) {
+        if let Some(ref registry) = context.peer_registry
+            && let Some(handle) = registry.remove_peer(username) {
                 let _ = handle.stop();
             }
-        }
     }
 
     pub fn search(
@@ -334,12 +333,11 @@ impl Client {
             sleep(Duration::from_millis(100));
 
             // Check if cancelled
-            if let Some(ref flag) = cancel_flag {
-                if flag.load(Ordering::Relaxed) {
+            if let Some(ref flag) = cancel_flag
+                && flag.load(Ordering::Relaxed) {
                     info!("Search cancelled by user");
                     break;
                 }
-            }
 
             // Check if timeout reached
             if start.elapsed() >= timeout {
@@ -504,13 +502,12 @@ impl Client {
                         }
                         ClientOperation::PeerDisconnected(username, error) => {
                             let context = client_context.read().unwrap();
-                            if let Some(ref registry) = context.peer_registry {
-                                if let Some(handle) =
+                            if let Some(ref registry) = context.peer_registry
+                                && let Some(handle) =
                                     registry.remove_peer(&username)
                                 {
                                     let _ = handle.stop();
                                 }
-                            }
                             if let Some(error) = error {
                                 warn!(
                                                 "[client] Peer {} disconnected with error: {:?}",

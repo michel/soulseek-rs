@@ -519,8 +519,8 @@ impl MainTui {
             let (col, row) = (mouse.column, mouse.row);
 
             // Check if click is within searches pane
-            if let Some(area) = self.state.searches_pane_area {
-                if col >= area.x
+            if let Some(area) = self.state.searches_pane_area
+                && col >= area.x
                     && col < area.x + area.width
                     && row >= area.y
                     && row < area.y + area.height
@@ -528,11 +528,10 @@ impl MainTui {
                     self.state.focused_pane = FocusedPane::Searches;
                     return Ok(());
                 }
-            }
 
             // Check if click is within results pane
-            if let Some(area) = self.state.results_pane_area {
-                if col >= area.x
+            if let Some(area) = self.state.results_pane_area
+                && col >= area.x
                     && col < area.x + area.width
                     && row >= area.y
                     && row < area.y + area.height
@@ -540,11 +539,10 @@ impl MainTui {
                     self.state.focused_pane = FocusedPane::Results;
                     return Ok(());
                 }
-            }
 
             // Check if click is within downloads pane
-            if let Some(area) = self.state.downloads_pane_area {
-                if col >= area.x
+            if let Some(area) = self.state.downloads_pane_area
+                && col >= area.x
                     && col < area.x + area.width
                     && row >= area.y
                     && row < area.y + area.height
@@ -552,7 +550,6 @@ impl MainTui {
                     self.state.focused_pane = FocusedPane::Downloads;
                     return Ok(());
                 }
-            }
         }
 
         Ok(())
@@ -749,15 +746,14 @@ impl MainTui {
                     }
 
                     // Update selected search if this is the active one
-                    if let Some(selected_idx) = selected_search_index {
-                        if selected_idx == idx {
+                    if let Some(selected_idx) = selected_search_index
+                        && selected_idx == idx {
                             self.state.results_items = search.results.clone();
                             self.state.results_filtered_items =
                                 search.results.clone();
                             self.state.results_filtered_indices =
                                 (0..search.results.len()).collect();
                         }
-                    }
                 }
 
                 // Mark as completed after timeout

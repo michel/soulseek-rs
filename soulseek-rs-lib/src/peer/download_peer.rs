@@ -306,8 +306,8 @@ impl DownloadPeer {
                     processor.process_data_chunk(data);
                     chunk_counter += 1;
 
-                    if let Some(ref dl) = download {
-                        if chunk_counter % PROGRESS_UPDATE_CHUNKS == 0 {
+                    if let Some(ref dl) = download
+                        && chunk_counter % PROGRESS_UPDATE_CHUNKS == 0 {
                             let elapsed =
                                 last_update_time.elapsed().as_secs_f64();
                             let bytes_since_last_update =
@@ -331,7 +331,6 @@ impl DownloadPeer {
 
                             last_update_time = Instant::now();
                         }
-                    }
 
                     let expected_size = download
                         .as_ref()

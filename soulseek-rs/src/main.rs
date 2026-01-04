@@ -27,11 +27,13 @@ fn main() -> Result<()> {
         3 => "DEBUG",
         _ => "TRACE",
     };
-    env::set_var("LOG_LEVEL", log_level);
+    // SAFETY: Called before any threads are spawned
+    unsafe { env::set_var("LOG_LEVEL", log_level) };
 
     // Set LOG_FILE env var if provided via CLI
     if let Some(log_file) = &cli.log_file {
-        env::set_var("LOG_FILE", log_file.to_string_lossy().to_string());
+        // SAFETY: Called before any threads are spawned
+        unsafe { env::set_var("LOG_FILE", log_file.to_string_lossy().to_string()) };
     }
 
     let username = cli.username
