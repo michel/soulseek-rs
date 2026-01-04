@@ -369,7 +369,7 @@ fn bit_padding(input: &str) -> Vec<u8> {
     //check if bit length % 512 is 448 (64 less than 512)
     while (input_vector.len() * 8) % 512 != 448 {
         input_vector.push(0_u8); // push in another 8-bit 0 padded value until the correct
-                                 // result is reached;
+        // result is reached;
     }
 
     let length_bits_as_u8_array = split_u64_to_u8_array(bit_length);
@@ -467,8 +467,7 @@ fn all_alphanumeric_correct_hash() {
 
 #[test]
 fn repeated_numbers_correct_hash() {
-    let repeated_number_str =
-        "12345678901234567890123456789012345678901234567890123456789012345678901234567890";
+    let repeated_number_str = "12345678901234567890123456789012345678901234567890123456789012345678901234567890";
 
     assert_eq!("57edf4a22be3c955ac49da2e2107b67a", md5(repeated_number_str));
 }

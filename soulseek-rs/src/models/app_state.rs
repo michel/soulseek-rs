@@ -1,8 +1,8 @@
 use crate::models::FileDisplayData;
 use ratatui::{layout::Rect, widgets::TableState};
-use soulseek_rs::{types::Download, DownloadStatus};
+use soulseek_rs::{DownloadStatus, types::Download};
 use std::sync::atomic::AtomicBool;
-use std::sync::{mpsc::Receiver, mpsc::Sender, Arc};
+use std::sync::{Arc, mpsc::Receiver, mpsc::Sender};
 use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq)]

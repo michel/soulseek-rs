@@ -9,7 +9,7 @@ use crate::client::{ClientContext, ClientOperation};
 use crate::message::{Message, MessageReader};
 use crate::peer::{ConnectionType, DownloadPeer, Peer};
 use crate::types::Download;
-use crate::{debug, error, info, trace, DownloadStatus};
+use crate::{DownloadStatus, debug, error, info, trace};
 
 const PEER_INIT_MESSAGE_CODE: u8 = 1;
 
@@ -79,8 +79,7 @@ fn extract_download_from_buffer(
     let token = parse_token_from_buffer(&buffer, username)?;
     trace!(
         "[listener:{}] got transfer_token: {} from data chunk",
-        username,
-        token
+        username, token
     );
 
     let context = client_context.read().unwrap();
@@ -88,7 +87,10 @@ fn extract_download_from_buffer(
 
     if download.is_none() {
         let download_tokens = context.get_download_tokens();
-        trace!("[listener:{peer_ip}:{peer_port}] download token not found: {:?}, download tokens: {:?}", token, download_tokens);
+        trace!(
+            "[listener:{peer_ip}:{peer_port}] download token not found: {:?}, download tokens: {:?}",
+            token, download_tokens
+        );
     }
 
     download
@@ -129,8 +131,7 @@ fn handle_file_connection(
 ) {
     trace!(
         "[client] DownloadFromPeer token: {} peer: {:?}",
-        token,
-        peer
+        token, peer
     );
 
     let download = extract_download_from_buffer(
@@ -198,7 +199,9 @@ fn handle_incoming_connection(stream: TcpStream, context: ConnectionContext) {
     };
 
     let Some(init_data) = parse_peer_init_message(message) else {
-        error!("[listener:{peer_ip}:{peer_port}] Invalid or unknown peer init message");
+        error!(
+            "[listener:{peer_ip}:{peer_port}] Invalid or unknown peer init message"
+        );
         return;
     };
 
@@ -241,7 +244,9 @@ fn handle_incoming_connection(stream: TcpStream, context: ConnectionContext) {
             });
         }
         ConnectionType::D => {
-            debug!("[listener:{peer_ip}:{peer_port}] connection type is D, not supported yet, closing connection. ");
+            debug!(
+                "[listener:{peer_ip}:{peer_port}] connection type is D, not supported yet, closing connection. "
+            );
         }
     }
 }

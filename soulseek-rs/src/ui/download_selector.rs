@@ -1,27 +1,27 @@
 use crate::models::FileDisplayData;
 use crate::ui::{
-    border_style, border_type, format_bytes, format_shortcuts_styled,
-    get_bitrate, get_spinner_char, header_style, highlight_style,
-    primary_style, success_style, warning_style, HIGHLIGHT_SYMBOL,
+    HIGHLIGHT_SYMBOL, border_style, border_type, format_bytes,
+    format_shortcuts_styled, get_bitrate, get_spinner_char, header_style,
+    highlight_style, primary_style, success_style, warning_style,
 };
 use color_eyre::Result;
 use ratatui::text::{Line, Span};
 use ratatui::{
-    crossterm::event::{self, poll, Event, KeyCode, KeyEvent, KeyEventKind},
+    DefaultTerminal, Frame,
+    crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, poll},
     layout::{Alignment, Constraint, Layout},
     style::Style,
     widgets::{
         Block, Borders, Cell, HighlightSpacing, Paragraph, Row, StatefulWidget,
         Table, TableState, Wrap,
     },
-    DefaultTerminal, Frame,
 };
 use soulseek_rs::Client;
 use std::{
     collections::HashSet,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -114,9 +114,10 @@ impl FileSelector {
             };
 
             if poll(timeout)?
-                && let Event::Key(key) = event::read()? {
-                    self.handle_key(key);
-                }
+                && let Event::Key(key) = event::read()?
+            {
+                self.handle_key(key);
+            }
         }
 
         Ok((terminal, self.selected_indices.iter().copied().collect()))
@@ -158,13 +159,13 @@ impl FileSelector {
     fn toggle_selection(&mut self) {
         if let Some(filtered_idx) = self.state.selected()
             && let Some(&original_idx) = self.filtered_indices.get(filtered_idx)
-            {
-                if self.selected_indices.contains(&original_idx) {
-                    self.selected_indices.remove(&original_idx);
-                } else {
-                    self.selected_indices.insert(original_idx);
-                }
+        {
+            if self.selected_indices.contains(&original_idx) {
+                self.selected_indices.remove(&original_idx);
+            } else {
+                self.selected_indices.insert(original_idx);
             }
+        }
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
@@ -194,11 +195,11 @@ impl FileSelector {
                     // If nothing selected, select the current item under cursor
                     if self.selected_indices.is_empty()
                         && let Some(filtered_idx) = self.state.selected()
-                            && let Some(&original_idx) =
-                                self.filtered_indices.get(filtered_idx)
-                            {
-                                self.selected_indices.insert(original_idx);
-                            }
+                        && let Some(&original_idx) =
+                            self.filtered_indices.get(filtered_idx)
+                    {
+                        self.selected_indices.insert(original_idx);
+                    }
                     self.should_exit = true;
                 }
                 KeyCode::Up | KeyCode::Down => {
@@ -236,11 +237,11 @@ impl FileSelector {
                     // If nothing selected, select the current item under cursor
                     if self.selected_indices.is_empty()
                         && let Some(filtered_idx) = self.state.selected()
-                            && let Some(&original_idx) =
-                                self.filtered_indices.get(filtered_idx)
-                            {
-                                self.selected_indices.insert(original_idx);
-                            }
+                        && let Some(&original_idx) =
+                            self.filtered_indices.get(filtered_idx)
+                    {
+                        self.selected_indices.insert(original_idx);
+                    }
                     self.should_exit = true;
                 }
                 KeyCode::Esc | KeyCode::Char('q') => {
