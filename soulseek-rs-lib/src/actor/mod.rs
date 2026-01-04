@@ -1,5 +1,5 @@
-use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
 use crate::trace;
@@ -161,7 +161,10 @@ impl ActorSystem {
                 }
             }
         }
-        trace!("[actor_system] run_actor_loop ENDED - processed {} messages, {} ticks", message_count, tick_count);
+        trace!(
+            "[actor_system] run_actor_loop ENDED - processed {} messages, {} ticks",
+            message_count, tick_count
+        );
     }
 }
 

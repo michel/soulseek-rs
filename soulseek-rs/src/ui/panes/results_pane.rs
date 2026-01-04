@@ -1,15 +1,15 @@
 use crate::models::FileDisplayData;
 use crate::ui::{
-    border_style, border_type, format_bytes, header_style, highlight_style,
-    HIGHLIGHT_SYMBOL,
+    HIGHLIGHT_SYMBOL, border_style, border_type, format_bytes, header_style,
+    highlight_style,
 };
 use ratatui::{
+    Frame,
     layout::Rect,
     widgets::{
         Block, Borders, Cell, HighlightSpacing, Paragraph, Row, Table,
         TableState,
     },
-    Frame,
 };
 use std::collections::HashSet;
 

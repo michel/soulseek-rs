@@ -159,9 +159,12 @@ impl PeerActor {
                 if let Some(ref handle) = self.self_handle
                     && let Err(e) =
                         handle.send(PeerMessage::SendMessage(transfer_response))
-                    {
-                        error!("[peer:{}] Failed to send TransferResponse message: {}", username, e);
-                    }
+                {
+                    error!(
+                        "[peer:{}] Failed to send TransferResponse message: {}",
+                        username, e
+                    );
+                }
             }
             PeerMessage::TransferResponse {
                 token,
@@ -177,15 +180,15 @@ impl PeerActor {
                 if !allowed {
                     if let Some(reason_text) = reason {
                         debug!(
-                                    "[peer:{}] Transfer rejected: {} - token {}, waiting for TransferRequest...",
-                                    username, reason_text, token
-                                );
+                            "[peer:{}] Transfer rejected: {} - token {}, waiting for TransferRequest...",
+                            username, reason_text, token
+                        );
                     }
                 } else {
                     debug!(
-                                "[peer:{}] Transfer allowed, ready to connect with token {:}",
-                                username, token
-                            );
+                        "[peer:{}] Transfer allowed, ready to connect with token {:}",
+                        username, token
+                    );
                     self.client_channel
                         .send(ClientOperation::DownloadFromPeer(
                             token,
@@ -258,7 +261,9 @@ impl PeerActor {
                     let username = self.peer.read().unwrap().username.clone();
                     error!(
                         "[peer:{}] Error reading from peer: {} (kind: {:?}). Disconnecting.",
-                        username, e, e.kind()
+                        username,
+                        e,
+                        e.kind()
                     );
                     self.disconnect_with_error(e);
                     return;

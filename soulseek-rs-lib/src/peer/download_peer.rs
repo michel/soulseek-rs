@@ -195,8 +195,7 @@ impl DownloadPeer {
     ) -> Result<(), DownloadError> {
         trace!(
             "[download_peer:{}] performing handshake no_pierce: {}",
-            self.username,
-            self.no_pierce
+            self.username, self.no_pierce
         );
 
         if !self.no_pierce {
@@ -231,8 +230,7 @@ impl DownloadPeer {
 
         trace!(
             "[download_peer:{}] got token: {} from data chunk",
-            self.username,
-            token_u32
+            self.username, token_u32
         );
 
         stream
@@ -277,8 +275,7 @@ impl DownloadPeer {
                 Ok(0) => {
                     trace!(
                         "[download_peer:{}] connection closed by peer. bytes read: {}",
-                        self.username,
-                        processor.total_bytes
+                        self.username, processor.total_bytes
                     );
                     break;
                 }
@@ -294,9 +291,7 @@ impl DownloadPeer {
                             )?;
                         trace!(
                             "[download_peer:{}] got download info for token: {} - filename: {}",
-                            self.username,
-                            self.token,
-                            new_download.filename
+                            self.username, self.token, new_download.filename
                         );
                         download = Some(new_download);
                         processor.received = true;
@@ -307,30 +302,30 @@ impl DownloadPeer {
                     chunk_counter += 1;
 
                     if let Some(ref dl) = download
-                        && chunk_counter % PROGRESS_UPDATE_CHUNKS == 0 {
-                            let elapsed =
-                                last_update_time.elapsed().as_secs_f64();
-                            let bytes_since_last_update =
-                                PROGRESS_UPDATE_CHUNKS * READ_BUFFER_SIZE;
-                            let speed = if elapsed > 0.0 {
-                                bytes_since_last_update as f64 / elapsed
-                            } else {
-                                0.0
-                            };
+                        && chunk_counter % PROGRESS_UPDATE_CHUNKS == 0
+                    {
+                        let elapsed = last_update_time.elapsed().as_secs_f64();
+                        let bytes_since_last_update =
+                            PROGRESS_UPDATE_CHUNKS * READ_BUFFER_SIZE;
+                        let speed = if elapsed > 0.0 {
+                            bytes_since_last_update as f64 / elapsed
+                        } else {
+                            0.0
+                        };
 
-                            let status = DownloadStatus::InProgress {
-                                bytes_downloaded: processor.total_bytes as u64,
-                                total_bytes: dl.size,
-                                speed_bytes_per_sec: speed,
-                            };
-                            let _ = dl.sender.send(status.clone());
-                            client_context
-                                .write()
-                                .unwrap()
-                                .update_download_with_status(dl.token, status);
+                        let status = DownloadStatus::InProgress {
+                            bytes_downloaded: processor.total_bytes as u64,
+                            total_bytes: dl.size,
+                            speed_bytes_per_sec: speed,
+                        };
+                        let _ = dl.sender.send(status.clone());
+                        client_context
+                            .write()
+                            .unwrap()
+                            .update_download_with_status(dl.token, status);
 
-                            last_update_time = Instant::now();
-                        }
+                        last_update_time = Instant::now();
+                    }
 
                     let expected_size = download
                         .as_ref()
@@ -486,7 +481,9 @@ mod tests {
             "file.mp3"
         );
         assert_eq!(
-            FileManager::extract_filename_from_path("@@bhfrv\\Soulseek Downloads\\complete\\Beatport Top Deep House (2021)\\michel test file.mp3"),
+            FileManager::extract_filename_from_path(
+                "@@bhfrv\\Soulseek Downloads\\complete\\Beatport Top Deep House (2021)\\michel test file.mp3"
+            ),
             "michel test file.mp3"
         );
         assert_eq!(

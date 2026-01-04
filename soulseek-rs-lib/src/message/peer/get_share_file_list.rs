@@ -1,5 +1,5 @@
 use crate::{
-    message::{server::MessageFactory, Message, MessageHandler},
+    message::{Message, MessageHandler, server::MessageFactory},
     peer::PeerMessage,
 };
 use std::sync::mpsc::Sender;

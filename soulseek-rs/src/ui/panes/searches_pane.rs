@@ -1,12 +1,12 @@
 use crate::models::{SearchEntry, SearchStatus};
 use crate::ui::{
-    border_style, border_type, header_style, highlight_style, success_style,
-    warning_style, HIGHLIGHT_SYMBOL,
+    HIGHLIGHT_SYMBOL, border_style, border_type, header_style, highlight_style,
+    success_style, warning_style,
 };
 use ratatui::{
+    Frame,
     layout::Rect,
     widgets::{Block, Borders, Cell, HighlightSpacing, Row, Table, TableState},
-    Frame,
 };
 
 pub fn render_searches_pane(
