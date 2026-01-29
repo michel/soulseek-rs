@@ -16,6 +16,7 @@ use std::{
 use ui::{FileSelector, launch_main_tui, show_multi_download_progress};
 
 fn main() -> Result<()> {
+    dotenv::dotenv().ok();
     color_eyre::install()?;
 
     let cli = Cli::parse();
