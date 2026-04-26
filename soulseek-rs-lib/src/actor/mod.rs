@@ -56,8 +56,6 @@ impl<M: Send> ActorHandle<M> {
 pub(crate) enum ActorMessage<M> {
     UserMessage(M),
     Stop,
-    #[allow(dead_code)]
-    Tick,
 }
 
 /// Actor system that manages actor lifecycle
@@ -134,21 +132,9 @@ impl ActorSystem {
                     );
                     break;
                 }
-                Ok(ActorMessage::Tick) => {
-                    tick_count += 1;
-                    trace!(
-                        "[actor_system] Received explicit Tick message #{}",
-                        tick_count
-                    );
-
-                    actor.tick();
-                }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                     if last_tick.elapsed() >= tick_interval {
                         tick_count += 1;
-                        // if tick_count % 10 == 0 {
-                        //     trace!("[actor_system] Periodic tick #{} (every 1s log)", tick_count);
-                        // }
                         actor.tick();
                         last_tick = Instant::now();
                     }

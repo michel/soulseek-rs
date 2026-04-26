@@ -53,26 +53,14 @@ impl std::fmt::Display for PeerAddress {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Context {
     pub logged_in: Option<bool>,
-    #[allow(dead_code)]
-    rooms: Rooms,
-}
-
-impl Default for Context {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl Context {
     pub fn new() -> Self {
-        Self {
-            #[allow(dead_code)]
-            rooms: Rooms::new(),
-            logged_in: Option::None,
-        }
+        Self::default()
     }
 }
 #[derive(Debug, Clone)]
@@ -107,72 +95,6 @@ impl UserMessage {
             self.id,
             self.new_message,
             self.message
-        );
-    }
-}
-
-#[allow(dead_code)]
-#[derive(Debug)]
-pub struct Rooms {
-    pub public_rooms: Vec<Room>,
-    pub owned_private_rooms: Vec<Room>,
-    pub private_rooms: Vec<Room>,
-    pub operated_private_rooms: Vec<Room>,
-}
-impl Rooms {
-    fn new() -> Self {
-        Self {
-            public_rooms: Vec::new(),
-            owned_private_rooms: Vec::new(),
-            private_rooms: Vec::new(),
-            operated_private_rooms: Vec::new(),
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn print(&self) {
-        info!("Public rooms ({}):", self.public_rooms.len());
-        for room in &self.public_rooms {
-            room.print();
-        }
-        info!("Owned private rooms ({}):", self.owned_private_rooms.len());
-        for room in &self.owned_private_rooms {
-            room.print();
-        }
-        info!("Private rooms ({}):", self.private_rooms.len());
-        for room in &self.private_rooms {
-            room.print();
-        }
-        info!(
-            "Operated private rooms ({}):",
-            self.operated_private_rooms.len()
-        );
-        for room in &self.operated_private_rooms {
-            room.print();
-        }
-    }
-}
-#[derive(Debug)]
-pub struct Room {
-    name: String,
-    number_of_users: i32,
-}
-impl Room {
-    #[allow(dead_code)]
-    pub fn new(name: String, number_of_users: i32) -> Self {
-        Self {
-            name,
-            number_of_users,
-        }
-    }
-    #[allow(dead_code)]
-    pub fn set_number_of_users(&mut self, number_of_users: i32) {
-        self.number_of_users = number_of_users;
-    }
-    pub fn print(&self) {
-        debug!(
-            "Room: {}, Number of users: {}",
-            self.name, self.number_of_users
         );
     }
 }
@@ -273,59 +195,37 @@ impl ServerActor {
 
         let socket_addr = socket_addrs.next();
 
-        match socket_addr {
-            Some(addr) => {
-                if let Ok(stream) = TcpStream::connect(addr) {
-                    if let Err(e) = stream.set_nonblocking(true) {
-                        error!("[server] Failed to set non-blocking: {}", e);
-                        self.disconnect_with_error(e);
-                        return false;
-                    }
+        let Some(addr) = socket_addr else {
+            let error_msg =
+                format!("No socket addresses found for {}:{}", host, port);
+            error!("[server] {}", error_msg);
+            self.disconnect_with_error(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                error_msg,
+            ));
+            return false;
+        };
 
-                    stream.set_nodelay(true).ok();
+        let stream = match TcpStream::connect(addr) {
+            Ok(s) => s,
+            Err(e) => {
+                self.disconnect_with_error(e);
+                return false;
+            }
+        };
 
-                    self.stream = Some(stream);
-                    self.connection_state = ConnectionState::Connecting {
-                        since: Instant::now(),
-                    };
-                    true
-                } else {
-                    match TcpStream::connect(addr) {
-                        Ok(stream) => {
-                            if let Err(e) = stream.set_nonblocking(true) {
-                                error!(
-                                    "[server] Failed to set non-blocking: {}",
-                                    e
-                                );
-                                self.disconnect_with_error(e);
-                                return false;
-                            }
-                            stream.set_nodelay(true).ok();
-                            self.stream = Some(stream);
-                            self.connection_state =
-                                ConnectionState::Connecting {
-                                    since: Instant::now(),
-                                };
-                            true
-                        }
-                        Err(e) => {
-                            self.disconnect_with_error(e);
-                            false
-                        }
-                    }
-                }
-            }
-            None => {
-                let error_msg =
-                    format!("No socket addresses found for {}:{}", host, port);
-                error!("[server] {}", error_msg);
-                self.disconnect_with_error(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    error_msg,
-                ));
-                false
-            }
+        if let Err(e) = stream.set_nonblocking(true) {
+            error!("[server] Failed to set non-blocking: {}", e);
+            self.disconnect_with_error(e);
+            return false;
         }
+        stream.set_nodelay(true).ok();
+
+        self.stream = Some(stream);
+        self.connection_state = ConnectionState::Connecting {
+            since: Instant::now(),
+        };
+        true
     }
 
     pub fn set_self_handle(&mut self, handle: ActorHandle<ServerMessage>) {
