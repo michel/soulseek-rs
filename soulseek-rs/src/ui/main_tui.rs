@@ -13,10 +13,10 @@ use color_eyre::Result;
 use ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{
-        self, Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent,
-        MouseEventKind, poll,
+        self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+        MouseButton, MouseEvent, MouseEventKind, poll,
     },
-    layout::{Constraint, Layout},
+    layout::{Constraint, Layout, Position, Rect},
     widgets::{Block, Borders, Paragraph},
 };
 use soulseek_rs::{Client, DownloadStatus};
@@ -29,6 +29,8 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+
+const COMMAND_BAR_PREFIX: &str = "search: ";
 
 pub struct MainTui {
     client: Arc<Client>,
@@ -195,34 +197,50 @@ impl MainTui {
         }
     }
 
-    fn render_shortcuts(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
-        let shortcuts = match self.state.focused_pane {
-            FocusedPane::Searches => vec![
-                ("s", "search"),
-                ("1-3", "focus pane"),
-                ("↑↓", "navigate"),
-                ("Enter", "view results"),
-                ("d", "remove search"),
-                ("C", "clear all"),
-                ("q", "quit"),
-            ],
-            FocusedPane::Results if self.state.results_is_filtering => vec![
-                ("Type", "filter"),
-                ("Esc", "clear filter"),
-                ("1-3", "focus pane"),
-                ("q", "quit"),
-            ],
-            FocusedPane::Results => vec![
-                ("Space", "select"),
-                ("/", "filter"),
-                ("a/A", "select all/none"),
-                ("Enter", "download"),
-                ("1-3", "focus pane"),
-                ("↑↓", "navigate"),
-                ("q", "quit"),
-            ],
-            FocusedPane::Downloads => {
-                vec![("1-3", "focus pane"), ("↑↓", "navigate"), ("q", "quit")]
+    fn render_shortcuts(&self, frame: &mut Frame, area: Rect) {
+        let shortcuts = if self.state.command_bar_active {
+            vec![
+                ("Type", "search term"),
+                ("←→", "move cursor"),
+                ("Backspace/Del", "edit"),
+                ("Enter", "search"),
+                ("Esc", "cancel"),
+            ]
+        } else {
+            match self.state.focused_pane {
+                FocusedPane::Searches => vec![
+                    ("s", "search"),
+                    ("1-3", "focus pane"),
+                    ("↑↓", "navigate"),
+                    ("Enter", "view results"),
+                    ("d", "remove search"),
+                    ("C", "clear all"),
+                    ("q", "quit"),
+                ],
+                FocusedPane::Results if self.state.results_is_filtering => {
+                    vec![
+                        ("Type", "filter"),
+                        ("Esc", "clear filter"),
+                        ("1-3", "focus pane"),
+                        ("q", "quit"),
+                    ]
+                }
+                FocusedPane::Results => vec![
+                    ("Space", "select"),
+                    ("/", "filter"),
+                    ("a/A", "select all/none"),
+                    ("Enter", "download"),
+                    ("1-3", "focus pane"),
+                    ("↑↓", "navigate"),
+                    ("q", "quit"),
+                ],
+                FocusedPane::Downloads => {
+                    vec![
+                        ("1-3", "focus pane"),
+                        ("↑↓", "navigate"),
+                        ("q", "quit"),
+                    ]
+                }
             }
         };
 
@@ -237,13 +255,16 @@ impl MainTui {
         frame.render_widget(shortcuts_widget, area);
     }
 
-    fn render_command_bar(
-        &self,
-        frame: &mut Frame,
-        area: ratatui::layout::Rect,
-    ) {
-        // Vim-style command bar with ":" prefix
-        let command_text = format!("search: {}", self.state.command_bar_input);
+    fn render_command_bar(&self, frame: &mut Frame, area: Rect) {
+        let content_width = area.width.saturating_sub(2);
+        let prefix_width = COMMAND_BAR_PREFIX.chars().count() as u16;
+        let input_width = content_width.saturating_sub(prefix_width);
+        let (visible_input, cursor_column) = visible_input_at_cursor(
+            &self.state.command_bar_input,
+            self.state.command_bar_cursor_position,
+            input_width,
+        );
+        let command_text = format!("{COMMAND_BAR_PREFIX}{visible_input}");
 
         let paragraph = Paragraph::new(command_text).block(
             Block::default()
@@ -253,6 +274,16 @@ impl MainTui {
         );
 
         frame.render_widget(paragraph, area);
+
+        if area.width > 2 && area.height > 2 {
+            let cursor_x = area
+                .x
+                .saturating_add(1)
+                .saturating_add(prefix_width)
+                .saturating_add(cursor_column)
+                .min(area.x.saturating_add(area.width.saturating_sub(2)));
+            frame.set_cursor_position(Position::new(cursor_x, area.y + 1));
+        }
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) -> Result<()> {
@@ -289,6 +320,7 @@ impl MainTui {
             KeyCode::Char('s') => {
                 self.state.command_bar_active = true;
                 self.state.command_bar_input.clear();
+                self.state.command_bar_cursor_position = 0;
                 return Ok(());
             }
             _ => {}
@@ -303,6 +335,11 @@ impl MainTui {
     }
 
     fn handle_command_bar_input(&mut self, key: KeyEvent) -> Result<()> {
+        self.state.command_bar_cursor_position = clamp_cursor_to_char_boundary(
+            &self.state.command_bar_input,
+            self.state.command_bar_cursor_position,
+        );
+
         match key.code {
             KeyCode::Enter => {
                 let query = self.state.command_bar_input.trim().to_string();
@@ -311,16 +348,87 @@ impl MainTui {
                 }
                 self.state.command_bar_active = false;
                 self.state.command_bar_input.clear();
+                self.state.command_bar_cursor_position = 0;
             }
             KeyCode::Esc => {
                 self.state.command_bar_active = false;
                 self.state.command_bar_input.clear();
-            }
-            KeyCode::Char(c) => {
-                self.state.command_bar_input.push(c);
+                self.state.command_bar_cursor_position = 0;
             }
             KeyCode::Backspace => {
-                self.state.command_bar_input.pop();
+                let cursor_position = self.state.command_bar_cursor_position;
+                if cursor_position > 0 {
+                    let previous_position = previous_char_boundary(
+                        &self.state.command_bar_input,
+                        cursor_position,
+                    );
+                    self.state
+                        .command_bar_input
+                        .drain(previous_position..cursor_position);
+                    self.state.command_bar_cursor_position = previous_position;
+                }
+            }
+            KeyCode::Delete => {
+                let cursor_position = self.state.command_bar_cursor_position;
+                if cursor_position < self.state.command_bar_input.len() {
+                    let next_position = next_char_boundary(
+                        &self.state.command_bar_input,
+                        cursor_position,
+                    );
+                    self.state
+                        .command_bar_input
+                        .drain(cursor_position..next_position);
+                }
+            }
+            KeyCode::Left => {
+                self.state.command_bar_cursor_position = previous_char_boundary(
+                    &self.state.command_bar_input,
+                    self.state.command_bar_cursor_position,
+                );
+            }
+            KeyCode::Right => {
+                self.state.command_bar_cursor_position = next_char_boundary(
+                    &self.state.command_bar_input,
+                    self.state.command_bar_cursor_position,
+                );
+            }
+            KeyCode::Home => {
+                self.state.command_bar_cursor_position = 0;
+            }
+            KeyCode::End => {
+                self.state.command_bar_cursor_position =
+                    self.state.command_bar_input.len();
+            }
+            KeyCode::Char('a')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                self.state.command_bar_cursor_position = 0;
+            }
+            KeyCode::Char('e')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                self.state.command_bar_cursor_position =
+                    self.state.command_bar_input.len();
+            }
+            KeyCode::Char('u')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                self.state.command_bar_input.clear();
+                self.state.command_bar_cursor_position = 0;
+            }
+            KeyCode::Char(c)
+                if !key.modifiers.intersects(
+                    KeyModifiers::CONTROL
+                        | KeyModifiers::ALT
+                        | KeyModifiers::SUPER
+                        | KeyModifiers::HYPER
+                        | KeyModifiers::META,
+                ) =>
+            {
+                let cursor_position = self.state.command_bar_cursor_position;
+                self.state.command_bar_input.insert(cursor_position, c);
+                self.state.command_bar_cursor_position =
+                    cursor_position + c.len_utf8();
             }
             _ => {}
         }
@@ -861,4 +969,68 @@ pub fn launch_main_tui(
         search_timeout,
     );
     tui.run(terminal)
+}
+
+fn clamp_cursor_to_char_boundary(input: &str, cursor_position: usize) -> usize {
+    if cursor_position >= input.len() {
+        return input.len();
+    }
+
+    let mut cursor_position = cursor_position;
+    while cursor_position > 0 && !input.is_char_boundary(cursor_position) {
+        cursor_position -= 1;
+    }
+    cursor_position
+}
+
+fn previous_char_boundary(input: &str, cursor_position: usize) -> usize {
+    let cursor_position = clamp_cursor_to_char_boundary(input, cursor_position);
+
+    input[..cursor_position]
+        .char_indices()
+        .last()
+        .map(|(index, _)| index)
+        .unwrap_or(0)
+}
+
+fn next_char_boundary(input: &str, cursor_position: usize) -> usize {
+    let cursor_position = clamp_cursor_to_char_boundary(input, cursor_position);
+
+    if cursor_position >= input.len() {
+        return input.len();
+    }
+
+    cursor_position
+        + input[cursor_position..]
+            .chars()
+            .next()
+            .map(char::len_utf8)
+            .unwrap_or(0)
+}
+
+fn visible_input_at_cursor(
+    input: &str,
+    cursor_position: usize,
+    width: u16,
+) -> (String, u16) {
+    if width == 0 {
+        return (String::new(), 0);
+    }
+
+    let cursor_position = clamp_cursor_to_char_boundary(input, cursor_position);
+    let cursor_character_index = input[..cursor_position].chars().count();
+    let max_cursor_column = usize::from(width.saturating_sub(1));
+    let start_character_index =
+        cursor_character_index.saturating_sub(max_cursor_column);
+
+    let visible_input = input
+        .chars()
+        .skip(start_character_index)
+        .take(usize::from(width))
+        .collect();
+    let cursor_column = cursor_character_index
+        .saturating_sub(start_character_index)
+        .min(max_cursor_column);
+
+    (visible_input, cursor_column as u16)
 }
