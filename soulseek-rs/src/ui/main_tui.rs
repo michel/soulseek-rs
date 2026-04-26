@@ -465,25 +465,25 @@ impl MainTui {
 
     fn handle_searches_input(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                if !self.state.searches.is_empty() {
-                    let current =
-                        self.state.searches_table_state.selected().unwrap_or(0);
-                    let new = if current == 0 {
-                        self.state.searches.len() - 1
-                    } else {
-                        current - 1
-                    };
-                    self.state.searches_table_state.select(Some(new));
-                }
+            KeyCode::Up | KeyCode::Char('k')
+                if !self.state.searches.is_empty() =>
+            {
+                let current =
+                    self.state.searches_table_state.selected().unwrap_or(0);
+                let new = if current == 0 {
+                    self.state.searches.len() - 1
+                } else {
+                    current - 1
+                };
+                self.state.searches_table_state.select(Some(new));
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if !self.state.searches.is_empty() {
-                    let current =
-                        self.state.searches_table_state.selected().unwrap_or(0);
-                    let new = (current + 1) % self.state.searches.len();
-                    self.state.searches_table_state.select(Some(new));
-                }
+            KeyCode::Down | KeyCode::Char('j')
+                if !self.state.searches.is_empty() =>
+            {
+                let current =
+                    self.state.searches_table_state.selected().unwrap_or(0);
+                let new = (current + 1) % self.state.searches.len();
+                self.state.searches_table_state.select(Some(new));
             }
             KeyCode::Enter => {
                 if let Some(selected) =
@@ -525,25 +525,21 @@ impl MainTui {
         };
 
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                if items_count > 0 {
-                    let current =
-                        self.state.results_table_state.selected().unwrap_or(0);
-                    let new = if current == 0 {
-                        items_count - 1
-                    } else {
-                        current - 1
-                    };
-                    self.state.results_table_state.select(Some(new));
-                }
+            KeyCode::Up | KeyCode::Char('k') if items_count > 0 => {
+                let current =
+                    self.state.results_table_state.selected().unwrap_or(0);
+                let new = if current == 0 {
+                    items_count - 1
+                } else {
+                    current - 1
+                };
+                self.state.results_table_state.select(Some(new));
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if items_count > 0 {
-                    let current =
-                        self.state.results_table_state.selected().unwrap_or(0);
-                    let new = (current + 1) % items_count;
-                    self.state.results_table_state.select(Some(new));
-                }
+            KeyCode::Down | KeyCode::Char('j') if items_count > 0 => {
+                let current =
+                    self.state.results_table_state.selected().unwrap_or(0);
+                let new = (current + 1) % items_count;
+                self.state.results_table_state.select(Some(new));
             }
             KeyCode::Char(' ') => {
                 if let Some(current) = self.state.results_table_state.selected()
@@ -596,31 +592,25 @@ impl MainTui {
 
     fn handle_downloads_input(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                if !self.state.downloads.is_empty() {
-                    let current = self
-                        .state
-                        .downloads_table_state
-                        .selected()
-                        .unwrap_or(0);
-                    let new = if current == 0 {
-                        self.state.downloads.len() - 1
-                    } else {
-                        current - 1
-                    };
-                    self.state.downloads_table_state.select(Some(new));
-                }
+            KeyCode::Up | KeyCode::Char('k')
+                if !self.state.downloads.is_empty() =>
+            {
+                let current =
+                    self.state.downloads_table_state.selected().unwrap_or(0);
+                let new = if current == 0 {
+                    self.state.downloads.len() - 1
+                } else {
+                    current - 1
+                };
+                self.state.downloads_table_state.select(Some(new));
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if !self.state.downloads.is_empty() {
-                    let current = self
-                        .state
-                        .downloads_table_state
-                        .selected()
-                        .unwrap_or(0);
-                    let new = (current + 1) % self.state.downloads.len();
-                    self.state.downloads_table_state.select(Some(new));
-                }
+            KeyCode::Down | KeyCode::Char('j')
+                if !self.state.downloads.is_empty() =>
+            {
+                let current =
+                    self.state.downloads_table_state.selected().unwrap_or(0);
+                let new = (current + 1) % self.state.downloads.len();
+                self.state.downloads_table_state.select(Some(new));
             }
             KeyCode::Char('p') => {
                 self.toggle_selected_download_pause();
