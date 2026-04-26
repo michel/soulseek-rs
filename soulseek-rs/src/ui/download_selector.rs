@@ -1,6 +1,6 @@
 use crate::models::FileDisplayData;
 use crate::ui::{
-    HIGHLIGHT_SYMBOL, border_style, border_type, format_bytes,
+    BYTES_PER_MB, HIGHLIGHT_SYMBOL, border_style, border_type, format_bytes,
     format_shortcuts_styled, get_bitrate, get_spinner_char, header_style,
     highlight_style, primary_style, success_style, warning_style,
 };
@@ -379,7 +379,7 @@ impl FileSelector {
                 let is_selected = self.selected_indices.contains(&original_idx);
                 let checkbox = if is_selected { "[✓]" } else { "[ ]" };
 
-                let speed_mb = item.speed as f64 / 1_048_576.0;
+                let speed_mb = item.speed as f64 / BYTES_PER_MB;
                 let speed_str = if speed_mb > 0.0 {
                     format!("{:.1} MB/s", speed_mb)
                 } else {
