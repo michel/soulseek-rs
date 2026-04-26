@@ -2,6 +2,7 @@
 pub mod actor;
 pub mod client;
 pub mod dispatcher;
+pub mod download_store;
 pub mod error;
 pub mod message;
 pub mod peer;
