@@ -119,17 +119,13 @@ impl Peer {
         let username = message.read_string();
         let connection_type = message.read_string().parse().unwrap();
 
-        let mut ip: Vec<i32> = vec![];
-        for _ in 0..4 {
-            ip.push(message.read_int8().into());
-        }
-        let host: String = format!(
-            "{}.{}.{}.{}",
-            ip[3].abs(),
-            ip[2].abs(),
-            ip[1].abs(),
-            ip[0].abs()
-        );
+        let ip = [
+            message.read_int8(),
+            message.read_int8(),
+            message.read_int8(),
+            message.read_int8(),
+        ];
+        let host = format!("{}.{}.{}.{}", ip[3], ip[2], ip[1], ip[0]);
 
         let (port, token, privileged, unknown, obfuscated_port) = (
             message.read_int32(),

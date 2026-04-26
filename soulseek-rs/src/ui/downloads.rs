@@ -1,9 +1,9 @@
 use crate::models::DownloadEntry;
 use crate::ui::{
-    COLOR_PRIMARY, HIGHLIGHT_SYMBOL, border_style, border_type, error_style,
-    format_bytes_progress, format_progress_bar, format_shortcuts_styled,
-    format_speed, header_style, highlight_style, inactive_style, info_style,
-    primary_style, warning_style,
+    BYTES_PER_MB, COLOR_PRIMARY, HIGHLIGHT_SYMBOL, border_style, border_type,
+    error_style, format_bytes_progress, format_progress_bar,
+    format_shortcuts_styled, format_speed, header_style, highlight_style,
+    inactive_style, info_style, primary_style, warning_style,
 };
 use color_eyre::Result;
 use ratatui::{
@@ -381,7 +381,7 @@ pub fn render_download_stats(
         })
         .map(|d| d.download.speed_bytes_per_sec())
         .sum();
-    let speed_mb = (total_speed / 1_048_576.0 * 100.0).round() / 100.0;
+    let speed_mb = (total_speed / BYTES_PER_MB * 100.0).round() / 100.0;
 
     let block = Block::default()
         .borders(Borders::ALL)

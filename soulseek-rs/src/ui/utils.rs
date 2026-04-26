@@ -5,28 +5,29 @@ use ratatui::{
 
 use crate::ui::COLOR_PRIMARY;
 
+pub const BYTES_PER_MB: f64 = 1_048_576.0;
+
 pub fn format_bytes(bytes: u64) -> String {
-    let mb = bytes as f64 / 1_048_576.0;
-    format!("{:.1} MB", mb)
+    let mb = bytes as f64 / BYTES_PER_MB;
+    format!("{mb:.1} MB")
 }
 
 pub fn format_bytes_progress(downloaded: u64, total: u64) -> Line<'static> {
-    let downloaded_mb = downloaded as f64 / 1_048_576.0;
-    let total_mb = total as f64 / 1_048_576.0;
+    let downloaded_mb = downloaded as f64 / BYTES_PER_MB;
+    let total_mb = total as f64 / BYTES_PER_MB;
 
-    let mut spans = vec![];
-    spans.push(Span::styled(
-        format!("{:.1}/{:.1}", downloaded_mb, total_mb),
-        Style::default().fg(COLOR_PRIMARY),
-    ));
-    spans.push(Span::raw(" MB"));
-
-    Line::from(spans)
+    Line::from(vec![
+        Span::styled(
+            format!("{downloaded_mb:.1}/{total_mb:.1}"),
+            Style::default().fg(COLOR_PRIMARY),
+        ),
+        Span::raw(" MB"),
+    ])
 }
 
 pub fn format_speed(speed_bytes_per_sec: f64) -> String {
-    let mb = speed_bytes_per_sec / 1_048_576.0;
-    format!("{:.1} MB/s", mb)
+    let mb = speed_bytes_per_sec / BYTES_PER_MB;
+    format!("{mb:.1} MB/s")
 }
 
 pub fn get_bitrate(
@@ -35,7 +36,6 @@ pub fn get_bitrate(
     attribs.get(&0).copied()
 }
 
-// Spinner animation chars
 const SPINNER_CHARS: [&str; 10] =
     ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
