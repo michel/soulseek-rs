@@ -1,8 +1,8 @@
 use crate::models::DownloadEntry;
 use crate::ui::{
     HIGHLIGHT_SYMBOL, border_style, border_type, error_style, format_bytes,
-    format_speed, header_style, highlight_style, inactive_style, success_style,
-    warning_style,
+    format_speed, header_style, highlight_style, inactive_style, info_style,
+    success_style, warning_style,
 };
 use ratatui::{
     Frame,
@@ -52,6 +52,7 @@ pub fn render_downloads_pane(
             let (status_icon, status_style) = match &download.status {
                 DownloadStatus::Queued => ("⋯", inactive_style()),
                 DownloadStatus::InProgress { .. } => ("⧗", warning_style()),
+                DownloadStatus::Paused { .. } => ("⏸", info_style()),
                 DownloadStatus::Completed => ("✓", success_style()),
                 DownloadStatus::Failed => ("✗", error_style()),
                 DownloadStatus::TimedOut => ("⏱", error_style()),
@@ -69,6 +70,21 @@ pub fn render_downloads_pane(
                     };
                     format!(
                         "{}/{} ({}%)",
+                        format_bytes(download.bytes_downloaded()),
+                        format_bytes(download.size),
+                        percent
+                    )
+                }
+                DownloadStatus::Paused { .. } => {
+                    let percent = if download.size > 0 {
+                        (download.bytes_downloaded() as f64
+                            / download.size as f64
+                            * 100.0) as u8
+                    } else {
+                        0
+                    };
+                    format!(
+                        "Paused {}/{} ({}%)",
                         format_bytes(download.bytes_downloaded()),
                         format_bytes(download.size),
                         percent

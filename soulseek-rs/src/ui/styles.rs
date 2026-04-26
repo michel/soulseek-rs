@@ -139,6 +139,7 @@ pub fn status_color(status: &str) -> Color {
     match status {
         "queued" => COLOR_INACTIVE,
         "in_progress" => COLOR_WARNING,
+        "paused" => COLOR_INFO,
         "completed" => COLOR_PRIMARY,
         "failed" | "timed_out" => COLOR_ERROR,
         _ => Color::default(),

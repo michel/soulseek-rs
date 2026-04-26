@@ -112,6 +112,9 @@ impl Download {
         match &self.status {
             DownloadStatus::InProgress {
                 bytes_downloaded, ..
+            }
+            | DownloadStatus::Paused {
+                bytes_downloaded, ..
             } => *bytes_downloaded,
             DownloadStatus::Completed => self.size,
             _ => 0,
@@ -137,6 +140,10 @@ pub enum DownloadStatus {
         bytes_downloaded: u64,
         total_bytes: u64,
         speed_bytes_per_sec: f64,
+    },
+    Paused {
+        bytes_downloaded: u64,
+        total_bytes: u64,
     },
     Completed,
     Failed,
