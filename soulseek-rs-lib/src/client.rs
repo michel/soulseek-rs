@@ -1,7 +1,7 @@
 use crate::actor::ActorHandle;
 use crate::actor::server_actor::{PeerAddress, ServerActor, ServerMessage};
 use crate::download_store::{DownloadStore, collect_failed_tokens};
-use crate::types::DownloadStatus;
+use crate::types::{DownloadMetadata, DownloadStatus};
 use crate::utils::logger;
 use crate::{
     Transfer,
@@ -84,6 +84,11 @@ pub enum ClientOperation {
         obfuscated_port: u16,
     },
     UploadFailed(String, String),
+    PlaceInQueueUpdate {
+        username: String,
+        filename: String,
+        place: u32,
+    },
     SetServerSender(Sender<ServerMessage>),
 }
 pub struct ClientContext {
@@ -159,6 +164,8 @@ fn test_client_context_downloads() {
         download_directory: "test".to_string(),
         status: DownloadStatus::Queued,
         sender: mpsc::channel().0,
+        queue_position: None,
+        metadata: Default::default(),
     };
     context.add_download(download);
     assert!(context.get_download_by_token(123).is_some());
@@ -191,6 +198,8 @@ fn test_client_pause_and_resume_download() {
             speed_bytes_per_sec: 10.0,
         },
         sender: download_sender,
+        queue_position: None,
+        metadata: Default::default(),
     };
 
     client.context.write().unwrap().add_download(download);
@@ -245,6 +254,8 @@ fn test_client_removes_only_queued_downloads() {
         download_directory: "test".to_string(),
         status: DownloadStatus::Queued,
         sender: mpsc::channel().0,
+        queue_position: None,
+        metadata: Default::default(),
     };
     let active_download = Download {
         username: "peer".to_string(),
@@ -258,6 +269,8 @@ fn test_client_removes_only_queued_downloads() {
             speed_bytes_per_sec: 10.0,
         },
         sender: mpsc::channel().0,
+        queue_position: None,
+        metadata: Default::default(),
     };
 
     {
@@ -557,6 +570,23 @@ impl Client {
         size: u64,
         download_directory: String,
     ) -> Result<(Download, Receiver<DownloadStatus>)> {
+        self.download_with_metadata(
+            filename,
+            username,
+            size,
+            download_directory,
+            DownloadMetadata::default(),
+        )
+    }
+
+    pub fn download_with_metadata(
+        &self,
+        filename: String,
+        username: String,
+        size: u64,
+        download_directory: String,
+        metadata: DownloadMetadata,
+    ) -> Result<(Download, Receiver<DownloadStatus>)> {
         info!("[client] Downloading {} from {}", filename, username);
 
         let hash = md5::md5(&filename);
@@ -575,6 +605,8 @@ impl Client {
             download_directory,
             status: DownloadStatus::Queued,
             sender: download_sender,
+            queue_position: None,
+            metadata,
         };
 
         let mut context = self.context.write_safe()?;
@@ -1025,6 +1057,8 @@ impl Client {
                                             .download_directory,
                                         status: download.status.clone(),
                                         sender: download.sender.clone(),
+                                        queue_position: download.queue_position,
+                                        metadata: download.metadata.clone(),
                                     });
                                     context.remove_download(old_token);
                                 }
@@ -1039,6 +1073,29 @@ impl Client {
                                     Some(&filename),
                                 );
                             }
+                            ClientOperation::PlaceInQueueUpdate {
+                                username,
+                                filename,
+                                place,
+                            } => match client_context.write_safe() {
+                                Ok(mut ctx) => {
+                                    let updated = ctx
+                                        .downloads
+                                        .update_queue_position(
+                                            &username, &filename, place,
+                                        );
+                                    if !updated {
+                                        debug!(
+                                            "[client] PlaceInQueueUpdate: no matching download for {}/{}",
+                                            username, filename
+                                        );
+                                    }
+                                }
+                                Err(e) => error!(
+                                    "[client] PlaceInQueueUpdate write: {}",
+                                    e
+                                ),
+                            },
                             ClientOperation::SetServerSender(sender) => {
                                 match client_context.write_safe() {
                                     Ok(mut ctx) => {
