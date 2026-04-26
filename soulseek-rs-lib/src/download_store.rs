@@ -191,10 +191,7 @@ mod tests {
         store.add(download);
 
         assert!(store.update_queue_position("peer", "song.mp3", 42));
-        assert_eq!(
-            store.get_by_token(1).unwrap().queue_position,
-            Some(42)
-        );
+        assert_eq!(store.get_by_token(1).unwrap().queue_position, Some(42));
 
         assert!(!store.update_queue_position("peer", "missing.mp3", 1));
         assert!(!store.update_queue_position("other", "song.mp3", 1));

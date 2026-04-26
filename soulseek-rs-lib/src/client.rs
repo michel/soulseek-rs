@@ -1066,9 +1066,8 @@ impl Client {
                                 place,
                             } => match client_context.write_safe() {
                                 Ok(mut ctx) => {
-                                    let updated = ctx
-                                        .downloads
-                                        .update_queue_position(
+                                    let updated =
+                                        ctx.downloads.update_queue_position(
                                             &username, &filename, place,
                                         );
                                     if !updated {

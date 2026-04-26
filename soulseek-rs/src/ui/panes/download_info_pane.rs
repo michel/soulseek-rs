@@ -1,7 +1,7 @@
 use crate::models::DownloadEntry;
 use crate::ui::{
     border_style, border_type, dimmed_style, error_style, format_bytes,
-    format_progress_bar, format_speed, info_style, inactive_style,
+    format_progress_bar, format_speed, inactive_style, info_style,
     primary_style, success_style, warning_style,
 };
 use ratatui::{
@@ -29,12 +29,10 @@ pub fn render_download_info_pane(
         .title("[Info]");
 
     let Some(entry) = selected else {
-        let paragraph = Paragraph::new(
-            Line::from(Span::styled(
-                "Select a download for details.",
-                dimmed_style(),
-            )),
-        )
+        let paragraph = Paragraph::new(Line::from(Span::styled(
+            "Select a download for details.",
+            dimmed_style(),
+        )))
         .block(block);
         frame.render_widget(paragraph, area);
         return;
@@ -42,7 +40,9 @@ pub fn render_download_info_pane(
 
     let lines = build_info_lines(&entry.download);
 
-    let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
 }
 
@@ -121,7 +121,10 @@ fn build_info_lines(
         } => {
             lines.push(Line::from(""));
             push_progress_lines(&mut lines, *bytes_downloaded, *total_bytes);
-            lines.push(label_value("Speed", &format_speed(*speed_bytes_per_sec)));
+            lines.push(label_value(
+                "Speed",
+                &format_speed(*speed_bytes_per_sec),
+            ));
 
             if *speed_bytes_per_sec > 0.0 && *total_bytes > *bytes_downloaded {
                 let remaining = *total_bytes - *bytes_downloaded;
@@ -194,7 +197,10 @@ fn split_filename(path: &str) -> (String, String) {
     let normalized = path.replace('\\', "/");
     if let Some(idx) = normalized.rfind('/') {
         let (parent, basename) = normalized.split_at(idx);
-        (basename.trim_start_matches('/').to_string(), parent.to_string())
+        (
+            basename.trim_start_matches('/').to_string(),
+            parent.to_string(),
+        )
     } else {
         (normalized, String::new())
     }
