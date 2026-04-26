@@ -61,6 +61,7 @@ pub struct AppState {
     pub should_exit: bool,
     pub command_bar_active: bool,
     pub command_bar_input: String,
+    pub command_bar_cursor_position: usize,
 
     // Pane areas for mouse interaction
     pub searches_pane_area: Option<Rect>,
@@ -102,6 +103,7 @@ impl AppState {
             should_exit: false,
             command_bar_active: false,
             command_bar_input: String::new(),
+            command_bar_cursor_position: 0,
 
             searches_pane_area: None,
             results_pane_area: None,
