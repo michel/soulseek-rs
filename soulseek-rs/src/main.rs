@@ -92,7 +92,9 @@ fn main() -> Result<()> {
             };
 
             let mut client = Client::with_settings(settings);
-            client.connect();
+            client.connect().map_err(|e| {
+                color_eyre::eyre::eyre!("Failed to connect: {}", e)
+            })?;
             client.login().map_err(|e| {
                 color_eyre::eyre::eyre!("Failed to login: {}", e)
             })?;
@@ -144,7 +146,9 @@ fn search_and_download(config: SearchConfig) -> Result<()> {
     };
 
     let mut client = Client::with_settings(settings);
-    client.connect();
+    client
+        .connect()
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to connect: {}", e))?;
     client
         .login()
         .map_err(|e| color_eyre::eyre::eyre!("Failed to login: {}", e))?;
