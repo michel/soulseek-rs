@@ -361,7 +361,7 @@ fn compute_md5_digest(mut v: Vec<u8>) -> String {
 */
 fn bit_padding(input: &str) -> Vec<u8> {
     let mut input_vector: Vec<u8> = convert_str_to_vec(input);
-    let bit_length: u64 = (input.len() as u64) * 8u64; // todo - add support for > 2^64 bit size
+    let bit_length: u64 = (input.len() as u64) * 8u64;
 
     // 128_u8 is the equivalent of padding 1 as an unsigned 8-bit integer
     // with lower-order bits first
