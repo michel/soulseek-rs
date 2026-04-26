@@ -28,7 +28,7 @@ pub struct Cli {
     pub disable_listener: bool,
 
     #[arg(short, long, env = "LISTENER_PORT", default_value = "2234")]
-    pub listener_port: u32,
+    pub listener_port: u16,
 
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
     pub verbose: u8,

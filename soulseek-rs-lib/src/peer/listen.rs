@@ -269,7 +269,7 @@ pub struct Listen {}
 
 impl Listen {
     pub fn start(
-        port: u32,
+        port: u16,
         client_sender: Sender<ClientOperation>,
         client_context: Arc<RwLock<ClientContext>>,
         own_username: String,
