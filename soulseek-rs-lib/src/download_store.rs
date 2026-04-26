@@ -50,6 +50,19 @@ impl DownloadStore {
         }
     }
 
+    pub fn update_queue_position(
+        &mut self,
+        username: &str,
+        filename: &str,
+        position: u32,
+    ) -> bool {
+        let Some(download) = self.get_by_file_mut(username, filename) else {
+            return false;
+        };
+        download.queue_position = Some(position);
+        true
+    }
+
     pub fn remove_queued_by_file(
         &mut self,
         username: &str,
@@ -150,6 +163,8 @@ mod tests {
             download_directory: "test".to_string(),
             status,
             sender: mpsc::channel().0,
+            queue_position: None,
+            metadata: Default::default(),
         }
     }
 
@@ -165,6 +180,24 @@ mod tests {
         store.remove(123);
         assert!(store.get_by_token(123).is_none());
         assert!(store.list().is_empty());
+    }
+
+    #[test]
+    fn update_queue_position_sets_field_when_match() {
+        let mut store = DownloadStore::new();
+        let mut download = make_download(1, DownloadStatus::Queued);
+        download.username = "peer".to_string();
+        download.filename = "song.mp3".to_string();
+        store.add(download);
+
+        assert!(store.update_queue_position("peer", "song.mp3", 42));
+        assert_eq!(
+            store.get_by_token(1).unwrap().queue_position,
+            Some(42)
+        );
+
+        assert!(!store.update_queue_position("peer", "missing.mp3", 1));
+        assert!(!store.update_queue_position("other", "song.mp3", 1));
     }
 
     #[test]

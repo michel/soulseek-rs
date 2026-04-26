@@ -1,4 +1,3 @@
-use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
@@ -12,6 +11,7 @@ use crate::client::ClientContext;
 use crate::message::server::MessageFactory;
 use crate::trace;
 use crate::types::{Download, DownloadStatus};
+use crate::utils::path::expand_tilde;
 
 const START_DOWNLOAD: [u8; 8] =
     [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
@@ -72,18 +72,6 @@ impl From<io::Error> for DownloadError {
 struct FileManager;
 
 impl FileManager {
-    fn expand_path(path: &str) -> PathBuf {
-        if let Some(stripped) = path.strip_prefix('~') {
-            if let Ok(home) = env::var("HOME") {
-                PathBuf::from(home).join(stripped.trim_start_matches('/'))
-            } else {
-                PathBuf::from(path)
-            }
-        } else {
-            PathBuf::from(path)
-        }
-    }
-
     fn extract_filename_from_path(full_path: &str) -> &str {
         full_path
             .split(['/', '\\'])
@@ -414,7 +402,7 @@ impl DownloadPeer {
         download: &Download,
     ) -> Result<String, DownloadError> {
         let download_directory = &download.download_directory;
-        let mut expanded_path = FileManager::expand_path(download_directory);
+        let mut expanded_path = expand_tilde(download_directory);
 
         if !expanded_path.is_dir() {
             expanded_path = expanded_path

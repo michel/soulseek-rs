@@ -87,6 +87,14 @@ pub struct Transfer {
     pub filename: String,
     pub size: u64,
 }
+#[derive(Debug, Clone, Default)]
+pub struct DownloadMetadata {
+    pub bitrate: Option<u32>,
+    pub length_seconds: Option<u32>,
+    pub peer_upload_speed: Option<u32>,
+    pub peer_free_slots: Option<u8>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Download {
     pub username: String,
@@ -96,6 +104,8 @@ pub struct Download {
     pub download_directory: String,
     pub status: DownloadStatus,
     pub sender: Sender<DownloadStatus>,
+    pub queue_position: Option<u32>,
+    pub metadata: DownloadMetadata,
 }
 
 impl Download {

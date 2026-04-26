@@ -6,4 +6,5 @@ pub struct FileDisplayData {
     pub speed: u32,
     pub slots: u8,
     pub bitrate: Option<u32>,
+    pub length_seconds: Option<u32>,
 }
