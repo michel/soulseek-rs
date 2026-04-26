@@ -245,6 +245,18 @@ impl PeerActor {
                     "[peer:{}] Place in queue response - file: {}, place: {}",
                     username, filename, place
                 );
+                if let Err(e) =
+                    self.client_channel.send(ClientOperation::PlaceInQueueUpdate {
+                        username: username.clone(),
+                        filename,
+                        place,
+                    })
+                {
+                    error!(
+                        "[peer:{}] failed to forward PlaceInQueueUpdate: {}",
+                        username, e
+                    );
+                }
             }
             PeerMessage::SetUsername(username) => {
                 trace!(

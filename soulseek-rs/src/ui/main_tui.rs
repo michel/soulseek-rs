@@ -3,8 +3,8 @@ use crate::models::{
     SearchStatus,
 };
 use crate::ui::panes::{
-    ResultsPaneParams, render_downloads_pane, render_results_pane,
-    render_searches_pane,
+    ResultsPaneParams, render_download_info_pane, render_downloads_pane,
+    render_results_pane, render_searches_pane,
 };
 use crate::ui::{
     border_style, border_type, format_shortcuts_styled, render_download_stats,
@@ -151,9 +151,16 @@ impl MainTui {
         ])
         .split(content_chunks[1]);
 
+        // Split bottom-right into Downloads list and Info pane
+        let downloads_chunks = Layout::horizontal([
+            Constraint::Percentage(60), // Downloads list
+            Constraint::Percentage(40), // Info pane
+        ])
+        .split(right_chunks[1]);
+
         // Store results and downloads pane areas
         self.state.results_pane_area = Some(right_chunks[0]);
-        self.state.downloads_pane_area = Some(right_chunks[1]);
+        self.state.downloads_pane_area = Some(downloads_chunks[0]);
 
         // Render Results pane
         let results_items = if self.state.results_filter_query.is_empty() {
@@ -185,9 +192,22 @@ impl MainTui {
         // Render Downloads pane
         render_downloads_pane(
             frame,
-            right_chunks[1],
+            downloads_chunks[0],
             &self.state.downloads,
             &mut self.state.downloads_table_state,
+            self.state.focused_pane == FocusedPane::Downloads,
+        );
+
+        // Render Info pane next to downloads
+        let selected_download = self
+            .state
+            .downloads_table_state
+            .selected()
+            .and_then(|idx| self.state.downloads.get(idx));
+        render_download_info_pane(
+            frame,
+            downloads_chunks[1],
+            selected_download,
             self.state.focused_pane == FocusedPane::Downloads,
         );
 
@@ -906,6 +926,7 @@ impl MainTui {
                                 speed: result.speed,
                                 slots: result.slots,
                                 bitrate: file.attribs.get(&0).copied(),
+                                length_seconds: file.attribs.get(&1).copied(),
                             });
                         }
                     }
@@ -933,14 +954,12 @@ impl MainTui {
     }
 
     fn queue_selected_downloads(&mut self) {
-        let selected_files: Vec<(String, String, u64)> = self
+        let selected_files: Vec<FileDisplayData> = self
             .state
             .results_selected_indices
             .iter()
             .filter_map(|&idx| self.state.results_items.get(idx))
-            .map(|file| {
-                (file.filename.clone(), file.username.clone(), file.size)
-            })
+            .cloned()
             .collect();
 
         if selected_files.is_empty() {
@@ -958,12 +977,19 @@ impl MainTui {
         let sender = self.state.downloads_sender_channel.clone().unwrap();
 
         thread::spawn(move || {
-            for (filename, username, size) in selected_files.into_iter() {
-                match client.download(
-                    filename.clone(),
-                    username.clone(),
-                    size,
+            for file in selected_files.into_iter() {
+                let metadata = soulseek_rs::types::DownloadMetadata {
+                    bitrate: file.bitrate,
+                    length_seconds: file.length_seconds,
+                    peer_upload_speed: Some(file.speed),
+                    peer_free_slots: Some(file.slots),
+                };
+                match client.download_with_metadata(
+                    file.filename.clone(),
+                    file.username.clone(),
+                    file.size,
                     download_dir.clone(),
+                    metadata,
                 ) {
                     Ok((download, rx)) => {
                         let _ = sender.send((download, rx));
@@ -971,7 +997,7 @@ impl MainTui {
                     Err(e) => {
                         eprintln!(
                             "Failed to start download for {}: {}",
-                            filename, e
+                            file.filename, e
                         );
                     }
                 }

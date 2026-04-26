@@ -139,6 +139,7 @@ impl FileSelector {
                         speed: result.speed,
                         slots: result.slots,
                         bitrate: get_bitrate(&file.attribs),
+                        length_seconds: file.attribs.get(&1).copied(),
                     });
                 }
             }
