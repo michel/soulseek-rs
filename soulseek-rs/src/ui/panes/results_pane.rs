@@ -1,7 +1,7 @@
 use crate::models::FileDisplayData;
 use crate::ui::{
-    HIGHLIGHT_SYMBOL, border_style, border_type, format_bytes, header_style,
-    highlight_style,
+    BYTES_PER_MB, HIGHLIGHT_SYMBOL, border_style, border_type, format_bytes,
+    header_style, highlight_style,
 };
 use ratatui::{
     Frame,
@@ -96,7 +96,7 @@ No results. Select a search from the Searches pane [1]. Or start new search [s â
 
             let speed_str = if file.speed > 0 {
                 let speed_mb =
-                    (file.speed as f64 / 1_048_576.0 * 100.0).round() / 100.0;
+                    (file.speed as f64 / BYTES_PER_MB * 100.0).round() / 100.0;
                 format!("{} MB/s", speed_mb)
             } else {
                 "-".to_string()
