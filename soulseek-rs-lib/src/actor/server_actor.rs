@@ -17,6 +17,7 @@ use crate::message::{Handlers, MessageType};
 use crate::message::{Message, MessageReader};
 use crate::peer::ConnectionType;
 use crate::peer::Peer;
+use crate::utils::lock::RwLockExt;
 
 use std::io::{self, Error, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -338,9 +339,12 @@ impl ServerActor {
         self.dispatcher_receiver = Some(dispatcher_receiver);
         self.dispatcher_sender = Some(dispatcher_sender.clone());
 
-        self.client_channel
+        if let Err(e) = self
+            .client_channel
             .send(ClientOperation::SetServerSender(dispatcher_sender.clone()))
-            .unwrap();
+        {
+            error!("[server] failed to send SetServerSender: {}", e);
+        }
 
         let mut handlers = Handlers::new();
 
@@ -401,7 +405,7 @@ impl ServerActor {
             }
 
             {
-                logged_in = context.read().unwrap().logged_in
+                logged_in = context.read_safe()?.logged_in
             }
 
             if logged_in.is_some() {
@@ -409,7 +413,8 @@ impl ServerActor {
             }
         }
 
-        if logged_in.unwrap() {
+        let logged_in = logged_in.ok_or(SoulseekRs::Timeout)?;
+        if logged_in {
             info!("Logged in as {}", username);
             self.queue_message(MessageFactory::build_shared_folders_message(
                 1, 499,
@@ -425,7 +430,7 @@ impl ServerActor {
             }
         }
 
-        Ok(logged_in.unwrap())
+        Ok(logged_in)
     }
 
     pub fn file_search(&mut self, token: u32, query: &str) {
@@ -455,12 +460,18 @@ impl ServerActor {
                         Some(ClientOperation::ConnectToPeer(peer.clone()))
                     }
                     ConnectionType::D => None,
-                } {
-                    self.client_channel.send(op).unwrap();
+                } && let Err(e) = self.client_channel.send(op)
+                {
+                    error!("[server] failed to send ConnectToPeer: {}", e);
                 }
             }
             ServerMessage::LoginStatus(message) => {
-                self.context.write().unwrap().logged_in = Some(message);
+                match self.context.write_safe() {
+                    Ok(mut ctx) => ctx.logged_in = Some(message),
+                    Err(e) => {
+                        error!("[server] LoginStatus write: {}", e)
+                    }
+                }
             }
             ServerMessage::PierceFirewall(token) => {
                 self.send_message(
@@ -525,9 +536,14 @@ impl ServerActor {
                             break;
                         }
 
-                        if let Some(logged_in) =
-                            context.read().unwrap().logged_in
-                        {
+                        let logged_in = match context.read_safe() {
+                            Ok(ctx) => ctx.logged_in,
+                            Err(e) => {
+                                let _ = response.send(Err(e));
+                                break;
+                            }
+                        };
+                        if let Some(logged_in) = logged_in {
                             let result = if logged_in {
                                 Ok(true)
                             } else {

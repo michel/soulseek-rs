@@ -2,6 +2,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
+use crate::utils::lock::MutexExt;
+
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
 enum Message {
@@ -91,7 +93,10 @@ impl Worker {
     ) -> Worker {
         let thread = thread::spawn(move || {
             loop {
-                let message = receiver.lock().unwrap().recv();
+                let message = match receiver.lock_safe() {
+                    Ok(rx) => rx.recv(),
+                    Err(_) => break,
+                };
                 match message {
                     Ok(Message::NewJob(job)) => {
                         // let active =
