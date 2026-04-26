@@ -9,6 +9,7 @@ use crate::client::{ClientContext, ClientOperation};
 use crate::message::{Message, MessageReader};
 use crate::peer::{ConnectionType, DownloadPeer, Peer};
 use crate::types::Download;
+use crate::utils::lock::RwLockExt;
 use crate::{DownloadStatus, debug, error, info, trace};
 
 const PEER_INIT_MESSAGE_CODE: u8 = 1;
@@ -82,7 +83,13 @@ fn extract_download_from_buffer(
         username, token
     );
 
-    let context = client_context.read().unwrap();
+    let context = match client_context.read_safe() {
+        Ok(c) => c,
+        Err(e) => {
+            error!("[listener] client context lock: {}", e);
+            return None;
+        }
+    };
     let download = context.get_download_by_token(token).cloned();
 
     if download.is_none() {
@@ -104,7 +111,13 @@ fn handle_peer_connection(
     _peer_ip: &str,
     _peer_port: u16,
 ) {
-    let client_context = context.client_context.read().unwrap();
+    let client_context = match context.client_context.read_safe() {
+        Ok(c) => c,
+        Err(e) => {
+            error!("[listener] handle_peer_connection lock: {}", e);
+            return;
+        }
+    };
     if let Some(ref registry) = client_context.peer_registry {
         match registry.register_peer(peer.clone(), Some(stream), Some(reader)) {
             Ok(_) => (),
@@ -158,14 +171,15 @@ fn handle_file_connection(
     ) {
         Ok((download, filename)) => {
             let _ = download.sender.send(DownloadStatus::Completed);
-            context
-                .client_context
-                .write()
-                .unwrap()
-                .update_download_with_status(
+            match context.client_context.write_safe() {
+                Ok(mut ctx) => ctx.update_download_with_status(
                     download.token,
                     DownloadStatus::Completed,
-                );
+                ),
+                Err(e) => {
+                    error!("[listener] handle_file_connection write: {}", e)
+                }
+            }
             info!(
                 "Successfully downloaded {} bytes to {}",
                 download.size, filename
