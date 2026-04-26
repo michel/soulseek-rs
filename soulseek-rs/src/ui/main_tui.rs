@@ -91,6 +91,9 @@ impl MainTui {
         use ratatui::crossterm::{event::DisableMouseCapture, execute};
         let _ = execute!(std::io::stdout(), DisableMouseCapture);
 
+        // Restore terminal state
+        ratatui::restore();
+
         soulseek_rs::utils::logger::disable_buffering();
         Ok(())
     }
