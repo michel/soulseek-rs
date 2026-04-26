@@ -18,6 +18,8 @@ pub enum SoulseekRs {
     NotConnected,
     /// Compression/decompression error
     CompressionError(String),
+    /// A lock was poisoned by a panic in another thread
+    LockPoisoned,
 }
 
 impl fmt::Display for SoulseekRs {
@@ -38,6 +40,9 @@ impl fmt::Display for SoulseekRs {
             SoulseekRs::NotConnected => write!(f, "Not connected to server"),
             SoulseekRs::CompressionError(msg) => {
                 write!(f, "Compression error: {}", msg)
+            }
+            SoulseekRs::LockPoisoned => {
+                write!(f, "Lock poisoned by panicking thread")
             }
         }
     }
