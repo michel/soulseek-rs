@@ -68,12 +68,10 @@ impl MessageFactory {
     pub fn build_no_parent_message() -> Message {
         Message::new().write_int32(71).write_bool(true).clone()
     }
-    pub fn build_set_wait_port_message(port: u32) -> Message {
+    pub fn build_set_wait_port_message(port: u16) -> Message {
         Message::new()
             .write_int32(2)
-            .write_int32(port)
-            // .write_int32(0)
-            // .write_int32(port) // should be different port
+            .write_int32(port.into())
             .clone()
     }
     pub fn build_watch_user(token: u32) -> Message {

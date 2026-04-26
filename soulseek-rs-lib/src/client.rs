@@ -27,7 +27,7 @@ use std::{
 };
 
 use crate::{debug, error, info, trace, warn};
-const DEFALT_LISTEN_PORT: u32 = 2234;
+const DEFAULT_LISTEN_PORT: u16 = 2234;
 
 #[derive(Debug, Clone)]
 pub struct ClientSettings {
@@ -35,7 +35,7 @@ pub struct ClientSettings {
     pub password: String,
     pub server_address: PeerAddress,
     pub enable_listen: bool,
-    pub listen_port: u32,
+    pub listen_port: u16,
 }
 
 impl ClientSettings {
@@ -61,7 +61,7 @@ impl Default for ClientSettings {
                 2416,
             ),
             enable_listen: true,
-            listen_port: DEFALT_LISTEN_PORT,
+            listen_port: DEFAULT_LISTEN_PORT,
         }
     }
 }
@@ -308,7 +308,7 @@ impl ClientContext {
 }
 pub struct Client {
     enable_listen: bool,
-    listen_port: u32,
+    listen_port: u16,
     address: PeerAddress,
     username: String,
     password: String,

@@ -4,7 +4,7 @@ pub struct SearchConfig {
     pub server_host: String,
     pub server_port: u16,
     pub enable_listener: bool,
-    pub listener_port: u32,
+    pub listener_port: u16,
     pub query: String,
     pub timeout: u64,
     pub download_dir: String,
