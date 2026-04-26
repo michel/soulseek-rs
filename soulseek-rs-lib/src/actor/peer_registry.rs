@@ -1,9 +1,10 @@
 use crate::actor::peer_actor::{PeerActor, PeerMessage};
 use crate::actor::{ActorHandle, ActorSystem};
 use crate::client::ClientOperation;
-use crate::debug;
 use crate::message::MessageReader;
 use crate::peer::Peer;
+use crate::utils::lock::MutexExt;
+use crate::{debug, error};
 
 use std::collections::HashMap;
 use std::net::TcpStream;
@@ -44,22 +45,36 @@ impl PeerRegistry {
                 actor.set_self_handle(handle);
             });
 
-        let mut peers = self.peers.lock().unwrap();
+        let mut peers = self
+            .peers
+            .lock_safe()
+            .map_err(|e| format!("peer registry lock poisoned: {}", e))?;
         peers.insert(username.clone(), handle.clone());
 
         Ok(handle)
     }
 
     pub fn get_peer(&self, username: &str) -> Option<ActorHandle<PeerMessage>> {
-        let peers = self.peers.lock().unwrap();
-        peers.get(username).cloned()
+        match self.peers.lock_safe() {
+            Ok(peers) => peers.get(username).cloned(),
+            Err(e) => {
+                error!("[peer_registry] get_peer: {}", e);
+                None
+            }
+        }
     }
 
     pub fn remove_peer(
         &self,
         username: &str,
     ) -> Option<ActorHandle<PeerMessage>> {
-        let mut peers = self.peers.lock().unwrap();
+        let mut peers = match self.peers.lock_safe() {
+            Ok(p) => p,
+            Err(e) => {
+                error!("[peer_registry] remove_peer: {}", e);
+                return None;
+            }
+        };
         let handle = peers.remove(username);
 
         if handle.is_some() {
@@ -70,18 +85,33 @@ impl PeerRegistry {
     }
 
     pub fn get_all_usernames(&self) -> Vec<String> {
-        let peers = self.peers.lock().unwrap();
-        peers.keys().cloned().collect()
+        match self.peers.lock_safe() {
+            Ok(peers) => peers.keys().cloned().collect(),
+            Err(e) => {
+                error!("[peer_registry] get_all_usernames: {}", e);
+                Vec::new()
+            }
+        }
     }
 
     pub fn count(&self) -> usize {
-        let peers = self.peers.lock().unwrap();
-        peers.len()
+        match self.peers.lock_safe() {
+            Ok(peers) => peers.len(),
+            Err(e) => {
+                error!("[peer_registry] count: {}", e);
+                0
+            }
+        }
     }
 
     pub fn contains(&self, username: &str) -> bool {
-        let peers = self.peers.lock().unwrap();
-        peers.contains_key(username)
+        match self.peers.lock_safe() {
+            Ok(peers) => peers.contains_key(username),
+            Err(e) => {
+                error!("[peer_registry] contains: {}", e);
+                false
+            }
+        }
     }
 
     pub fn send_to_peer(
