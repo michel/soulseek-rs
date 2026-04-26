@@ -5,6 +5,7 @@ use std::net::TcpStream;
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::client::ClientContext;
@@ -268,9 +269,24 @@ impl DownloadPeer {
             stream
                 .write_all(&START_DOWNLOAD)
                 .map_err(DownloadError::StreamWriteError)?;
+            if let Some(ref dl) = download {
+                Self::send_download_status(
+                    client_context,
+                    dl,
+                    DownloadStatus::InProgress {
+                        bytes_downloaded: 0,
+                        total_bytes: dl.size,
+                        speed_bytes_per_sec: 0.0,
+                    },
+                );
+            }
         }
 
         loop {
+            if let Some(ref dl) = download {
+                self.wait_while_paused(client_context, dl)?;
+            }
+
             match stream.read(&mut read_buffer) {
                 Ok(0) => {
                     trace!(
@@ -295,6 +311,17 @@ impl DownloadPeer {
                         );
                         download = Some(new_download);
                         processor.received = true;
+                        if let Some(ref dl) = download {
+                            Self::send_download_status(
+                                client_context,
+                                dl,
+                                DownloadStatus::InProgress {
+                                    bytes_downloaded: 0,
+                                    total_bytes: dl.size,
+                                    speed_bytes_per_sec: 0.0,
+                                },
+                            );
+                        }
                         continue;
                     }
 
@@ -318,11 +345,7 @@ impl DownloadPeer {
                             total_bytes: dl.size,
                             speed_bytes_per_sec: speed,
                         };
-                        let _ = dl.sender.send(status.clone());
-                        client_context
-                            .write()
-                            .unwrap()
-                            .update_download_with_status(dl.token, status);
+                        Self::send_download_status(client_context, dl, status);
 
                         last_update_time = Instant::now();
                     }
@@ -351,6 +374,39 @@ impl DownloadPeer {
             download.ok_or(DownloadError::DownloadInfoMissing(self.token))?;
 
         Ok((processor.buffer, download))
+    }
+
+    fn send_download_status(
+        client_context: &Arc<RwLock<ClientContext>>,
+        download: &Download,
+        status: DownloadStatus,
+    ) {
+        let _ = download.sender.send(status.clone());
+        client_context
+            .write()
+            .unwrap()
+            .update_download_with_status(download.token, status);
+    }
+
+    fn wait_while_paused(
+        &self,
+        client_context: &Arc<RwLock<ClientContext>>,
+        download: &Download,
+    ) -> Result<(), DownloadError> {
+        loop {
+            let status = client_context
+                .read()
+                .map_err(|_| DownloadError::LockPoisoned)?
+                .get_download_by_token(download.token)
+                .map(|download| download.status.clone())
+                .ok_or(DownloadError::TokenNotFound(download.token))?;
+
+            if !matches!(status, DownloadStatus::Paused { .. }) {
+                return Ok(());
+            }
+
+            thread::sleep(Duration::from_millis(200));
+        }
     }
 
     fn resolve_download_path(

@@ -238,6 +238,8 @@ impl MainTui {
                     vec![
                         ("1-3", "focus pane"),
                         ("↑↓", "navigate"),
+                        ("p", "pause/resume"),
+                        ("d", "delete queued"),
                         ("q", "quit"),
                     ]
                 }
@@ -617,9 +619,71 @@ impl MainTui {
                     self.state.downloads_table_state.select(Some(new));
                 }
             }
+            KeyCode::Char('p') => {
+                self.toggle_selected_download_pause();
+            }
+            KeyCode::Char('d') => {
+                self.remove_selected_queued_download();
+            }
             _ => {}
         }
         Ok(())
+    }
+
+    fn toggle_selected_download_pause(&mut self) {
+        let Some(index) = self.state.downloads_table_state.selected() else {
+            return;
+        };
+        let Some(download_entry) = self.state.downloads.get(index) else {
+            return;
+        };
+
+        let download = &download_entry.download;
+        match download.status {
+            DownloadStatus::InProgress { .. } => {
+                self.client
+                    .pause_download(&download.username, &download.filename);
+            }
+            DownloadStatus::Paused { .. } => {
+                self.client
+                    .resume_download(&download.username, &download.filename);
+            }
+            _ => {}
+        }
+    }
+
+    fn remove_selected_queued_download(&mut self) {
+        let Some(index) = self.state.downloads_table_state.selected() else {
+            return;
+        };
+        let Some(download_entry) = self.state.downloads.get(index) else {
+            return;
+        };
+
+        let download = &download_entry.download;
+        if !matches!(download.status, DownloadStatus::Queued) {
+            return;
+        }
+
+        if !self
+            .client
+            .remove_queued_download(&download.username, &download.filename)
+        {
+            return;
+        }
+
+        self.state.downloads.remove(index);
+        self.select_download_after_removal(index);
+    }
+
+    fn select_download_after_removal(&mut self, removed_index: usize) {
+        if self.state.downloads.is_empty() {
+            self.state.downloads_table_state.select(None);
+            return;
+        }
+
+        let next_index = removed_index.min(self.state.downloads.len() - 1);
+        self.state.downloads_table_state.select(Some(next_index));
     }
 
     fn handle_mouse_event(&mut self, mouse: MouseEvent) -> Result<()> {
