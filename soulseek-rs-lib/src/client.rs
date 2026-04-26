@@ -969,21 +969,8 @@ impl Client {
                                 };
 
                                 if peer_exists {
-                                    // don't know if i should update? and or reconnect the peer
-                                    // debug!(
-                                    //     "existing peer: {:?}, new peer details:
-                                    //     username: {},
-                                    //     host: {},
-                                    //     port: {}
-                                    //     obfuscation_type: {}
-                                    //     obfuscated_port: {}",
-                                    //     peer,
-                                    //     username,
-                                    //     host,
-                                    //     port,
-                                    //     obfuscation_type,
-                                    //     obfuscated_port,
-                                    // );
+                                    // Existing peer: skip re-registration. Reconnect
+                                    // policy on conflict is intentionally undecided.
                                 } else {
                                     let peer = Peer::new(
                                         username,

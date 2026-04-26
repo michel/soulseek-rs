@@ -1,4 +1,3 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
@@ -14,7 +13,6 @@ enum Message {
 pub struct ThreadPool {
     workers: Vec<Worker>,
     sender: Option<mpsc::Sender<Message>>,
-    active_threads: Arc<AtomicUsize>,
 }
 
 impl ThreadPool {
@@ -23,22 +21,15 @@ impl ThreadPool {
 
         let (sender, receiver) = mpsc::channel();
         let receiver = Arc::new(Mutex::new(receiver));
-        let active_threads = Arc::new(AtomicUsize::new(0));
         let mut workers = Vec::with_capacity(size);
 
-        for id in 0..size {
-            workers.push(Worker::new(
-                id,
-                Arc::clone(&receiver),
-                Arc::clone(&active_threads),
-                size,
-            ));
+        for _ in 0..size {
+            workers.push(Worker::new(Arc::clone(&receiver)));
         }
 
         ThreadPool {
             workers,
             sender: Some(sender),
-            active_threads,
         }
     }
 
@@ -51,26 +42,16 @@ impl ThreadPool {
             sender.send(Message::NewJob(job)).unwrap();
         }
     }
-
-    pub fn thread_count(&self) -> usize {
-        self.workers.len()
-    }
-
-    pub fn active_thread_count(&self) -> usize {
-        self.active_threads.load(Ordering::SeqCst)
-    }
 }
 
 impl Drop for ThreadPool {
     fn drop(&mut self) {
-        // Send termination message to all workers
         if let Some(sender) = self.sender.take() {
             for _ in &self.workers {
                 sender.send(Message::Terminate).unwrap();
             }
         }
 
-        // Wait for all workers to finish
         for worker in &mut self.workers {
             if let Some(thread) = worker.thread.take() {
                 thread.join().unwrap();
@@ -80,17 +61,11 @@ impl Drop for ThreadPool {
 }
 
 struct Worker {
-    _id: usize,
     thread: Option<thread::JoinHandle<()>>,
 }
 
 impl Worker {
-    fn new(
-        id: usize,
-        receiver: Arc<Mutex<mpsc::Receiver<Message>>>,
-        _active_threads: Arc<AtomicUsize>,
-        _total_threads: usize,
-    ) -> Worker {
+    fn new(receiver: Arc<Mutex<mpsc::Receiver<Message>>>) -> Worker {
         let thread = thread::spawn(move || {
             loop {
                 let message = match receiver.lock_safe() {
@@ -98,41 +73,13 @@ impl Worker {
                     Err(_) => break,
                 };
                 match message {
-                    Ok(Message::NewJob(job)) => {
-                        // let active =
-                        //     active_threads.fetch_add(1, Ordering::SeqCst) + 1;
-                        // trace!(
-                        //     "Thread {} started job (active: {}/{})",
-                        //     id,
-                        //     active,
-                        //     total_threads
-                        // );
-
-                        job();
-
-                        // let active =
-                        // active_threads.fetch_sub(1, Ordering::SeqCst) - 1;
-                        // trace!(
-                        //     "Thread {} finished job (active: {}/{})",
-                        //     id,
-                        //     active,
-                        //     total_threads
-                        // );
-                    }
-                    Ok(Message::Terminate) => {
-                        // Received termination signal
-                        break;
-                    }
-                    Err(_) => {
-                        // Channel disconnected
-                        break;
-                    }
+                    Ok(Message::NewJob(job)) => job(),
+                    Ok(Message::Terminate) | Err(_) => break,
                 }
             }
         });
 
         Worker {
-            _id: id,
             thread: Some(thread),
         }
     }

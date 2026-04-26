@@ -106,7 +106,6 @@ impl MessageFactory {
             .write_int32(41)
             .write_int32(transfer.token)
             .write_bool(true)
-            // .write_int64(transfer.size)
             .clone()
     }
     pub fn build_pierce_firewall_message(token: u32) -> Message {
@@ -154,8 +153,6 @@ fn test_build_login_message() {
     ]
     .to_vec();
 
-    // println!("{:?}", print_hex(message.get_data()));
-    // assert_eq!(expect, message.get_data());
     assert_eq!(expect, message.get_data())
 }
 

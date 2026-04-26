@@ -93,50 +93,6 @@ impl Message {
             trace!("");
         }
     }
-    //
-    // pub fn print_hex2(&self) -> String {
-    //     let data = &self.data;
-    //     let mut out = String::from("");
-    //     const BYTES_PER_LINE: usize = 16;
-    //
-    //     let chunks = data.chunks(BYTES_PER_LINE);
-    //     for (i, chunk) in chunks.enumerate() {
-    //         // Print the offset
-    //         // out += &format!("{:04x}  ", i * BYTES_PER_LINE);
-    //
-    //         // Print the hexadecimal part
-    //         for j in 0..BYTES_PER_LINE {
-    //             if j < chunk.len() {
-    //                 out += &format!("{:02x} ", chunk[j]);
-    //             } else {
-    //                 // out += &format!(" ");
-    //             }
-    //
-    //             // Add extra space in the middle
-    //             // if j == 7 {
-    //             //     out += &format!(" ");
-    //             // }
-    //         }
-    //
-    //         // // Print the ASCII part
-    //         // let mut i = 0;
-    //         // for &byte in chunk {
-    //         //     i = i + 1;
-    //         //     if byte.is_ascii_graphic() || byte.is_ascii_whitespace() {
-    //         //         print!("{}", byte as char);
-    //         //     } else {messa
-    //         //         print!(".");
-    //         //     }
-    //         //
-    //         //     if i == 8 {
-    //         //         print!(" ");
-    //         //     }
-    //         // }
-    //         //
-    //     }
-    //     println!("{:?}", out.trim());
-    //     return out.trim().into();
-    // }
 
     #[allow(dead_code)]
     pub fn get_message_code_u32(&self) -> u32 {
@@ -390,9 +346,6 @@ impl Message {
             },
         }
     }
-    // pub fn decode(&self) {
-    //     println!("{:?}", self.data);
-    // }
 }
 
 #[test]

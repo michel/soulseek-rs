@@ -3,25 +3,9 @@ use std::{collections::VecDeque, net::TcpStream};
 
 use crate::message::Message;
 
-// # why buffered message reader?
-// the stream comes in chunks of bytes: 1024 for example
-// the soulseek protocol has binary messages
-// the first 4 bytes of the message represent the message size
-// the rest of the bytes represent the message itself
-//
-// # how to implement the buffered message reader?
-// read 4 bytes from the stream
-// if the stream has less than 4 bytes, buffer then add the rest of the bytes to the buffered
-// message reader buffer and return
-// if the stream has 4 bytes, read the message size
-// if the stream is as long as the message size + 4 bytes, read the message
-//  create a new message struct and read the message size from the buffer, thats a message
-//  the rest of the bytes are the next message so you call the read function again with the rest of the bytes
-// else
-//  buffer the rest of the bytes and return
-//
-//
-//
+// Soulseek messages are length-prefixed (u32 LE size, then payload). TCP gives us
+// arbitrary-sized chunks, so we accumulate into a buffer and only emit a Message
+// once size + 4 bytes are available.
 
 pub struct MessageReader {
     buffer: VecDeque<u8>,
