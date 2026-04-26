@@ -2,8 +2,8 @@ use crate::models::DownloadEntry;
 use crate::ui::{
     COLOR_PRIMARY, HIGHLIGHT_SYMBOL, border_style, border_type, error_style,
     format_bytes_progress, format_progress_bar, format_shortcuts_styled,
-    format_speed, header_style, highlight_style, inactive_style, primary_style,
-    warning_style,
+    format_speed, header_style, highlight_style, inactive_style, info_style,
+    primary_style, warning_style,
 };
 use color_eyre::Result;
 use ratatui::{
@@ -229,6 +229,7 @@ impl MultiDownloadProgress {
                 let status_icon = match download.status {
                     DownloadStatus::Queued => "⋯",
                     DownloadStatus::InProgress { .. } => "⧗",
+                    DownloadStatus::Paused { .. } => "⏸",
                     DownloadStatus::Completed => "✓",
                     DownloadStatus::Failed => "✗",
                     DownloadStatus::TimedOut => "⏱",
@@ -269,6 +270,7 @@ impl MultiDownloadProgress {
                 let style = match download.status {
                     DownloadStatus::Queued => inactive_style(),
                     DownloadStatus::InProgress { .. } => warning_style(),
+                    DownloadStatus::Paused { .. } => info_style(),
                     DownloadStatus::Completed => primary_style(),
                     DownloadStatus::Failed | DownloadStatus::TimedOut => {
                         error_style()
@@ -352,6 +354,10 @@ pub fn render_download_stats(
         .iter()
         .filter(|d| matches!(d.download.status, DownloadStatus::Queued))
         .count();
+    let paused = downloads
+        .iter()
+        .filter(|d| matches!(d.download.status, DownloadStatus::Paused { .. }))
+        .count();
 
     let total_downloaded: u64 = downloads
         .iter()
@@ -430,6 +436,14 @@ pub fn render_download_stats(
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" queued"),
+        Span::raw(", "),
+        Span::styled(
+            paused.to_string(),
+            Style::default()
+                .fg(COLOR_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" paused"),
     ]);
 
     let stats_paragraph = Paragraph::new(stats_line);

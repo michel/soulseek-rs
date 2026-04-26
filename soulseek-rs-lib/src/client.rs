@@ -115,6 +115,15 @@ impl ClientContext {
     ) -> Option<&mut Download> {
         self.downloads.iter_mut().find(|d| d.token == token)
     }
+    pub fn get_download_by_file_mut(
+        &mut self,
+        username: &str,
+        filename: &str,
+    ) -> Option<&mut Download> {
+        self.downloads
+            .iter_mut()
+            .find(|d| d.username == username && d.filename == filename)
+    }
     pub fn get_download_tokens(&self) -> Vec<u32> {
         self.downloads.iter().map(|d| d.token).collect()
     }
@@ -130,6 +139,23 @@ impl ClientContext {
         if let Some(download) = self.get_download_by_token_mut(token) {
             download.status = status;
         }
+    }
+
+    pub fn remove_queued_download_by_file(
+        &mut self,
+        username: &str,
+        filename: &str,
+    ) -> bool {
+        let Some(index) = self.downloads.iter().position(|download| {
+            download.username == username
+                && download.filename == filename
+                && matches!(download.status, DownloadStatus::Queued)
+        }) else {
+            return false;
+        };
+
+        self.downloads.remove(index);
+        true
     }
 }
 #[test]
@@ -159,6 +185,104 @@ fn test_client_context_downloads() {
     context.remove_download(new_token);
     assert_eq!(context.get_downloads().len(), 0);
     assert!(context.get_download_by_token(1234).is_none());
+}
+
+#[test]
+fn test_client_pause_and_resume_download() {
+    let client = Client::new("test-user", "test-password");
+    let (download_sender, download_receiver) = mpsc::channel();
+    let download = Download {
+        username: "peer".to_string(),
+        filename: "song.mp3".to_string(),
+        token: 123,
+        size: 100,
+        download_directory: "test".to_string(),
+        status: DownloadStatus::InProgress {
+            bytes_downloaded: 25,
+            total_bytes: 100,
+            speed_bytes_per_sec: 10.0,
+        },
+        sender: download_sender,
+    };
+
+    client.context.write().unwrap().add_download(download);
+
+    assert!(client.pause_download("peer", "song.mp3"));
+    assert!(matches!(
+        client
+            .context
+            .read()
+            .unwrap()
+            .get_download_by_token(123)
+            .unwrap()
+            .status,
+        DownloadStatus::Paused {
+            bytes_downloaded: 25,
+            total_bytes: 100
+        }
+    ));
+    assert!(matches!(
+        download_receiver.try_recv().unwrap(),
+        DownloadStatus::Paused {
+            bytes_downloaded: 25,
+            total_bytes: 100
+        }
+    ));
+
+    assert!(client.resume_download("peer", "song.mp3"));
+    assert!(matches!(
+        client
+            .context
+            .read()
+            .unwrap()
+            .get_download_by_token(123)
+            .unwrap()
+            .status,
+        DownloadStatus::InProgress {
+            bytes_downloaded: 25,
+            total_bytes: 100,
+            speed_bytes_per_sec: 0.0
+        }
+    ));
+}
+
+#[test]
+fn test_client_removes_only_queued_downloads() {
+    let client = Client::new("test-user", "test-password");
+    let queued_download = Download {
+        username: "peer".to_string(),
+        filename: "queued.mp3".to_string(),
+        token: 123,
+        size: 100,
+        download_directory: "test".to_string(),
+        status: DownloadStatus::Queued,
+        sender: mpsc::channel().0,
+    };
+    let active_download = Download {
+        username: "peer".to_string(),
+        filename: "active.mp3".to_string(),
+        token: 456,
+        size: 100,
+        download_directory: "test".to_string(),
+        status: DownloadStatus::InProgress {
+            bytes_downloaded: 25,
+            total_bytes: 100,
+            speed_bytes_per_sec: 10.0,
+        },
+        sender: mpsc::channel().0,
+    };
+
+    {
+        let mut context = client.context.write().unwrap();
+        context.add_download(queued_download);
+        context.add_download(active_download);
+    }
+
+    assert!(client.remove_queued_download("peer", "queued.mp3"));
+    assert!(!client.remove_queued_download("peer", "active.mp3"));
+    let context = client.context.read().unwrap();
+    assert!(context.get_download_by_token(123).is_none());
+    assert!(context.get_download_by_token(456).is_some());
 }
 
 impl ClientContext {
@@ -386,6 +510,69 @@ impl Client {
 
     pub fn get_all_downloads(&self) -> Vec<Download> {
         self.context.read().unwrap().get_downloads().clone()
+    }
+
+    pub fn pause_download(&self, username: &str, filename: &str) -> bool {
+        let mut context = self.context.write().unwrap();
+        let Some(download) =
+            context.get_download_by_file_mut(username, filename)
+        else {
+            return false;
+        };
+
+        let paused_status = match &download.status {
+            DownloadStatus::InProgress {
+                bytes_downloaded,
+                total_bytes,
+                ..
+            } => DownloadStatus::Paused {
+                bytes_downloaded: *bytes_downloaded,
+                total_bytes: *total_bytes,
+            },
+            DownloadStatus::Paused { .. } => return true,
+            _ => return false,
+        };
+
+        download.status = paused_status.clone();
+        let _ = download.sender.send(paused_status);
+        true
+    }
+
+    pub fn resume_download(&self, username: &str, filename: &str) -> bool {
+        let mut context = self.context.write().unwrap();
+        let Some(download) =
+            context.get_download_by_file_mut(username, filename)
+        else {
+            return false;
+        };
+
+        let resumed_status = match &download.status {
+            DownloadStatus::Paused {
+                bytes_downloaded,
+                total_bytes,
+            } => DownloadStatus::InProgress {
+                bytes_downloaded: *bytes_downloaded,
+                total_bytes: *total_bytes,
+                speed_bytes_per_sec: 0.0,
+            },
+            DownloadStatus::InProgress { .. } => return true,
+            _ => return false,
+        };
+
+        download.status = resumed_status.clone();
+        let _ = download.sender.send(resumed_status);
+        true
+    }
+
+    pub fn remove_queued_download(
+        &self,
+        username: &str,
+        filename: &str,
+    ) -> bool {
+        self.context
+            .write()
+            .unwrap()
+            .remove_queued_download_by_file(username, filename)
     }
 
     pub fn download(
