@@ -1,5 +1,6 @@
 use crate::actor::ActorHandle;
 use crate::actor::server_actor::{PeerAddress, ServerActor, ServerMessage};
+use crate::download_store::{DownloadStore, collect_failed_tokens};
 use crate::types::DownloadStatus;
 use crate::utils::logger;
 use crate::{
@@ -87,10 +88,10 @@ pub enum ClientOperation {
 }
 pub struct ClientContext {
     pub peer_registry: Option<PeerRegistry>,
+    pub downloads: DownloadStore,
     sender: Option<Sender<ClientOperation>>,
     server_sender: Option<Sender<ServerMessage>>,
     searches: HashMap<String, Search>,
-    downloads: Vec<Download>,
     actor_system: Arc<ActorSystem>,
 }
 impl Default for ClientContext {
@@ -98,64 +99,51 @@ impl Default for ClientContext {
         Self::new()
     }
 }
+
+// Thin delegating shims so existing callers (peer/listen, peer/download_peer,
+// tests) keep working while download state lives in DownloadStore.
 impl ClientContext {
     pub fn add_download(&mut self, download: Download) {
-        self.downloads.push(download);
+        self.downloads.add(download);
     }
     pub fn remove_download(&mut self, token: u32) {
-        self.downloads.retain(|d| d.token != token);
+        self.downloads.remove(token);
     }
     pub fn get_download_by_token(&self, token: u32) -> Option<&Download> {
-        self.downloads.iter().find(|d| d.token == token)
+        self.downloads.get_by_token(token)
     }
-
     pub fn get_download_by_token_mut(
         &mut self,
         token: u32,
     ) -> Option<&mut Download> {
-        self.downloads.iter_mut().find(|d| d.token == token)
+        self.downloads.get_by_token_mut(token)
     }
     pub fn get_download_by_file_mut(
         &mut self,
         username: &str,
         filename: &str,
     ) -> Option<&mut Download> {
-        self.downloads
-            .iter_mut()
-            .find(|d| d.username == username && d.filename == filename)
+        self.downloads.get_by_file_mut(username, filename)
     }
     pub fn get_download_tokens(&self) -> Vec<u32> {
-        self.downloads.iter().map(|d| d.token).collect()
+        self.downloads.tokens()
     }
     pub fn get_downloads(&self) -> &Vec<Download> {
-        &self.downloads
+        self.downloads.list()
     }
-
     pub fn update_download_with_status(
         &mut self,
         token: u32,
         status: DownloadStatus,
     ) {
-        if let Some(download) = self.get_download_by_token_mut(token) {
-            download.status = status;
-        }
+        self.downloads.update_status(token, status);
     }
-
     pub fn remove_queued_download_by_file(
         &mut self,
         username: &str,
         filename: &str,
     ) -> bool {
-        let Some(index) = self.downloads.iter().position(|download| {
-            download.username == username
-                && download.filename == filename
-                && matches!(download.status, DownloadStatus::Queued)
-        }) else {
-            return false;
-        };
-
-        self.downloads.remove(index);
-        true
+        self.downloads.remove_queued_by_file(username, filename)
     }
 }
 #[test]
@@ -300,7 +288,7 @@ impl ClientContext {
             sender: None,
             server_sender: None,
             searches: HashMap::new(),
-            downloads: Vec::new(),
+            downloads: DownloadStore::new(),
             actor_system,
         }
     }
@@ -527,67 +515,23 @@ impl Client {
     }
 
     pub fn pause_download(&self, username: &str, filename: &str) -> bool {
-        let mut context = match self.context.write_safe() {
-            Ok(c) => c,
+        match self.context.write_safe() {
+            Ok(mut ctx) => ctx.downloads.pause_by_file(username, filename),
             Err(e) => {
                 error!("[client] pause_download: {}", e);
-                return false;
+                false
             }
-        };
-        let Some(download) =
-            context.get_download_by_file_mut(username, filename)
-        else {
-            return false;
-        };
-
-        let paused_status = match &download.status {
-            DownloadStatus::InProgress {
-                bytes_downloaded,
-                total_bytes,
-                ..
-            } => DownloadStatus::Paused {
-                bytes_downloaded: *bytes_downloaded,
-                total_bytes: *total_bytes,
-            },
-            DownloadStatus::Paused { .. } => return true,
-            _ => return false,
-        };
-
-        download.status = paused_status.clone();
-        let _ = download.sender.send(paused_status);
-        true
+        }
     }
 
     pub fn resume_download(&self, username: &str, filename: &str) -> bool {
-        let mut context = match self.context.write_safe() {
-            Ok(c) => c,
+        match self.context.write_safe() {
+            Ok(mut ctx) => ctx.downloads.resume_by_file(username, filename),
             Err(e) => {
                 error!("[client] resume_download: {}", e);
-                return false;
+                false
             }
-        };
-        let Some(download) =
-            context.get_download_by_file_mut(username, filename)
-        else {
-            return false;
-        };
-
-        let resumed_status = match &download.status {
-            DownloadStatus::Paused {
-                bytes_downloaded,
-                total_bytes,
-            } => DownloadStatus::InProgress {
-                bytes_downloaded: *bytes_downloaded,
-                total_bytes: *total_bytes,
-                speed_bytes_per_sec: 0.0,
-            },
-            DownloadStatus::InProgress { .. } => return true,
-            _ => return false,
-        };
-
-        download.status = resumed_status.clone();
-        let _ = download.sender.send(resumed_status);
-        true
+        }
     }
 
     pub fn remove_queued_download(
@@ -597,7 +541,7 @@ impl Client {
     ) -> bool {
         match self.context.write_safe() {
             Ok(mut ctx) => {
-                ctx.remove_queued_download_by_file(username, filename)
+                ctx.downloads.remove_queued_by_file(username, filename)
             }
             Err(e) => {
                 error!("[client] remove_queued_download: {}", e);
@@ -662,39 +606,33 @@ impl Client {
         username: &str,
         filename: Option<&str>,
     ) {
-        let failed_downloads: Vec<_> = match client_context.read_safe() {
-            Ok(context) => context
-                .get_downloads()
-                .iter()
-                .filter(|download| {
-                    download.username == username
-                        && (filename.is_none_or(|f| download.filename == *f))
-                })
-                .map(|download| {
-                    let _ = download.sender.send(DownloadStatus::Failed);
-                    download.token
-                })
-                .collect(),
+        let failed_tokens = match client_context.read_safe() {
+            Ok(context) => {
+                collect_failed_tokens(&context.downloads, username, filename)
+            }
             Err(e) => {
                 error!("[client] process_failed_uploads read: {}", e);
                 return;
             }
         };
 
-        failed_downloads.iter().for_each(|token| {
-            match client_context.write_safe() {
-                Ok(mut context) => {
-                    context.update_download_with_status(
-                        *token,
-                        DownloadStatus::Failed,
-                    );
-                    context.remove_download(*token);
-                }
-                Err(e) => {
-                    error!("[client] process_failed_uploads write: {}", e);
+        if failed_tokens.is_empty() {
+            return;
+        }
+
+        match client_context.write_safe() {
+            Ok(mut context) => {
+                for token in failed_tokens {
+                    context
+                        .downloads
+                        .update_status(token, DownloadStatus::Failed);
+                    context.downloads.remove(token);
                 }
             }
-        });
+            Err(e) => {
+                error!("[client] process_failed_uploads write: {}", e);
+            }
+        }
     }
 
     fn listen_to_client_operations(
