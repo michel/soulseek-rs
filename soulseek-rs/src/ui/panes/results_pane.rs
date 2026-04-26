@@ -57,7 +57,7 @@ pub fn render_results_pane(
         } else {
             format!(
                 "soulseek-rs 🦀 v{}
-Michel de Graaf 2025\n
+Michel de Graaf 2026\n
 No results. Select a search from the Searches pane [1]. Or start new search [s → search] \n",
                 VERSION
             )
