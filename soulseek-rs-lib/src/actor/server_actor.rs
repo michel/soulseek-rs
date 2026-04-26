@@ -129,7 +129,7 @@ pub enum ServerMessage {
 pub struct ServerActor {
     address: PeerAddress,
     context: Arc<RwLock<Context>>,
-    listen_port: u32,
+    listen_port: u16,
     enable_listen: bool,
     stream: Option<TcpStream>,
     connection_state: ConnectionState,
@@ -146,7 +146,7 @@ impl ServerActor {
     pub fn new(
         address: PeerAddress,
         client_channel: Sender<ClientOperation>,
-        listen_port: u32,
+        listen_port: u16,
         enable_listen: bool,
     ) -> Self {
         Self {
