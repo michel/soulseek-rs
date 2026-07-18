@@ -117,6 +117,30 @@ To run the formatter:
 cargo fmt
 ```
 
+### End-to-end tests
+
+The `soulseek-rs-lib/tests/e2e.rs` suite exercises the client against a real
+Soulseek server using [soulfind](https://github.com/soulfind-dev/soulfind), a
+local server implementation. The tests are **server-optional**: they run when a
+server is available and otherwise skip (so `cargo test` stays green everywhere).
+
+They locate a server in this order:
+
+1. `SOULSEEK_TEST_SERVER=host:port` — connect to an already-running server, or
+2. `SOULFIND_BIN=/path/to/soulfind` (or a `soulfind/bin/soulfind` checkout in a
+   parent directory) — spawn soulfind on an ephemeral port with a throwaway
+   database.
+
+```bash
+# Build soulfind once (see its BUILDING.md), then:
+SOULFIND_BIN=/path/to/soulfind/bin/soulfind \
+  cargo test -p soulseek-rs-lib --test e2e -- --nocapture
+```
+
+> On macOS, soulfind's `SQLITE_CONFIG_SINGLETHREAD` optimization is rejected by
+> the system SQLite; building soulfind with that call made non-fatal lets it run
+> locally. It is only a mutex optimization and does not affect the server.
+
 ## License
 
 This project is licensed under the MIT License — see the [LICENSE](./LICENSE)
