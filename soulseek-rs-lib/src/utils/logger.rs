@@ -64,6 +64,31 @@ pub fn init() {
     });
 }
 
+/// Where a single log line should be written. Each line goes to exactly one
+/// sink; routing a line to more than one is what caused file lines to be
+/// duplicated (written once eagerly and again when the buffer was flushed).
+#[derive(Debug, PartialEq, Eq)]
+enum LogSink {
+    File,
+    Buffer,
+    Stderr,
+}
+
+fn choose_sink(buffering: bool, has_file: bool) -> LogSink {
+    match (buffering, has_file) {
+        // A configured file always takes the line directly and bypasses
+        // buffering, so the flush step never re-writes it.
+        (_, true) => LogSink::File,
+        // No file: while the TUI holds the screen we defer stderr writes.
+        (true, false) => LogSink::Buffer,
+        (false, false) => LogSink::Stderr,
+    }
+}
+
+fn has_log_file() -> bool {
+    LOG_FILE.lock().map(|f| f.is_some()).unwrap_or(false)
+}
+
 pub fn log(level: LogLevel, message: &str) {
     unsafe {
         if level <= LOG_LEVEL {
@@ -161,29 +186,23 @@ pub fn log(level: LogLevel, message: &str) {
                 message
             );
 
-            if BUFFERING.load(Ordering::Relaxed) {
-                // When buffering is enabled, add to buffer for stderr
-                if let Ok(mut buffer) = BUFFER.lock() {
-                    buffer.push(formatted_message.clone());
-                }
-                // But ALSO write to file if configured (file logging bypasses buffering)
-                if let Ok(mut log_file) = LOG_FILE.lock()
-                    && let Some(file) = log_file.as_mut()
-                {
-                    let _ = writeln!(file, "{}", formatted_message_plain);
-                    let _ = file.flush();
-                }
-            } else {
-                // Write to file if configured, otherwise to stderr
-                if let Ok(mut log_file) = LOG_FILE.lock() {
-                    if let Some(file) = log_file.as_mut() {
-                        let _ = writeln!(file, "{}", formatted_message_plain);
+            match choose_sink(BUFFERING.load(Ordering::Relaxed), has_log_file())
+            {
+                LogSink::File => {
+                    if let Ok(mut log_file) = LOG_FILE.lock()
+                        && let Some(file) = log_file.as_mut()
+                    {
+                        let _ =
+                            writeln!(file, "{}", formatted_message_plain);
                         let _ = file.flush();
-                    } else {
-                        eprintln!("{}", formatted_message);
                     }
-                } else {
-                    // If lock fails, fall back to stderr
+                }
+                LogSink::Buffer => {
+                    if let Ok(mut buffer) = BUFFER.lock() {
+                        buffer.push(formatted_message.clone());
+                    }
+                }
+                LogSink::Stderr => {
                     eprintln!("{}", formatted_message);
                 }
             }
@@ -249,6 +268,26 @@ fn strip_ansi_codes(s: &str) -> String {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LogSink, choose_sink};
+
+    #[test]
+    fn a_configured_file_bypasses_buffering_so_lines_are_not_duplicated() {
+        // With a file configured, the line goes straight to the file whether or
+        // not buffering is on, so it is never also queued for a flush that would
+        // write it a second time.
+        assert_eq!(choose_sink(true, true), LogSink::File);
+        assert_eq!(choose_sink(false, true), LogSink::File);
+    }
+
+    #[test]
+    fn without_a_file_buffering_routes_to_the_buffer_else_stderr() {
+        assert_eq!(choose_sink(true, false), LogSink::Buffer);
+        assert_eq!(choose_sink(false, false), LogSink::Stderr);
+    }
 }
 
 #[macro_export]
