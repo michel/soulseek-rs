@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+#[must_use]
 pub fn expand_tilde(path: &str) -> PathBuf {
     if let Some(stripped) = path.strip_prefix('~')
         && let Ok(home) = std::env::var("HOME")

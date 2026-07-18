@@ -35,7 +35,7 @@ fn main() -> Result<()> {
     if let Some(log_file) = &cli.log_file {
         // SAFETY: Called before any threads are spawned
         unsafe {
-            env::set_var("LOG_FILE", log_file.to_string_lossy().to_string())
+            env::set_var("LOG_FILE", log_file.to_string_lossy().to_string());
         };
     }
 
@@ -76,17 +76,20 @@ fn main() -> Result<()> {
             search_and_download(config)
         }
         None => {
+            use ratatui::crossterm::{
+                event::EnableMouseCapture,
+                execute,
+                terminal::{Clear, ClearType},
+            };
+
             // Launch main TUI
             // Enable logger buffering BEFORE connection to prevent log artifacts
             soulseek_rs::utils::logger::enable_buffering();
 
             let settings = ClientSettings {
-                username: username.clone(),
-                password: password.clone(),
-                server_address: PeerAddress::new(
-                    server_host.clone(),
-                    server_port,
-                ),
+                username,
+                password,
+                server_address: PeerAddress::new(server_host, server_port),
                 enable_listen: !cli.disable_listener,
                 listen_port: cli.listener_port,
             };
@@ -102,11 +105,6 @@ fn main() -> Result<()> {
             let client = Arc::new(client);
 
             // Clear screen and enable mouse capture before initializing TUI
-            use ratatui::crossterm::{
-                event::EnableMouseCapture,
-                execute,
-                terminal::{Clear, ClearType},
-            };
             let _ = execute!(
                 std::io::stdout(),
                 Clear(ClearType::All),

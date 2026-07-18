@@ -83,7 +83,7 @@ fn build_info_lines(
     lines.push(label_value("Save to", &save_path));
 
     if let Some(bitrate) = download.metadata.bitrate {
-        lines.push(label_value("Bitrate", &format!("{} kbps", bitrate)));
+        lines.push(label_value("Bitrate", &format!("{bitrate} kbps")));
     }
     if let Some(length) = download.metadata.length_seconds {
         lines.push(label_value("Length", &format_duration(length)));
@@ -93,14 +93,14 @@ fn build_info_lines(
         DownloadStatus::Queued => {
             lines.push(Line::from(""));
             let position_text = match download.queue_position {
-                Some(p) => format!("#{}", p),
+                Some(p) => format!("#{p}"),
                 None => "unknown".to_string(),
             };
             lines.push(label_value("Queue position", &position_text));
 
             if let Some(slots) = download.metadata.peer_free_slots {
                 let slot_text = if slots > 0 {
-                    format!("{} available", slots)
+                    format!("{slots} available")
                 } else {
                     "all busy".to_string()
                 };
@@ -110,7 +110,7 @@ fn build_info_lines(
             if let Some(speed) = download.metadata.peer_upload_speed {
                 lines.push(label_value(
                     "Peer upload speed",
-                    &format_speed(speed as f64),
+                    &format_speed(f64::from(speed)),
                 ));
             }
         }
@@ -149,10 +149,7 @@ fn build_info_lines(
 
 fn label_value(label: &str, value: &str) -> Line<'static> {
     Line::from(vec![
-        Span::styled(
-            format!("{:<width$}", label, width = LABEL_WIDTH),
-            dimmed_style(),
-        ),
+        Span::styled(format!("{label:<LABEL_WIDTH$}"), dimmed_style()),
         Span::styled(value.to_string(), primary_style()),
     ])
 }
@@ -163,10 +160,7 @@ fn label_value_styled(
     value_style: Style,
 ) -> Line<'static> {
     Line::from(vec![
-        Span::styled(
-            format!("{:<width$}", label, width = LABEL_WIDTH),
-            dimmed_style(),
-        ),
+        Span::styled(format!("{label:<LABEL_WIDTH$}"), dimmed_style()),
         Span::styled(value, value_style),
     ])
 }
@@ -211,11 +205,11 @@ fn format_duration(seconds: u32) -> String {
     let minutes = (seconds % 3600) / 60;
     let secs = seconds % 60;
     if hours > 0 {
-        format!("{}h {:02}m {:02}s", hours, minutes, secs)
+        format!("{hours}h {minutes:02}m {secs:02}s")
     } else if minutes > 0 {
-        format!("{}m {:02}s", minutes, secs)
+        format!("{minutes}m {secs:02}s")
     } else {
-        format!("{}s", secs)
+        format!("{secs}s")
     }
 }
 

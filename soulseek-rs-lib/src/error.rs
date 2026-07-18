@@ -25,23 +25,23 @@ pub enum SoulseekRs {
 impl fmt::Display for SoulseekRs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SoulseekRs::NetworkError(err) => {
-                write!(f, "Network error: {}", err)
+            Self::NetworkError(err) => {
+                write!(f, "Network error: {err}")
             }
-            SoulseekRs::AuthenticationFailed => {
+            Self::AuthenticationFailed => {
                 write!(f, "Authentication failed")
             }
-            SoulseekRs::ParseError(msg) => write!(f, "Parse error: {}", msg),
-            SoulseekRs::Timeout => write!(f, "Operation timed out"),
-            SoulseekRs::ConnectionClosed => write!(f, "Connection closed"),
-            SoulseekRs::InvalidMessage(msg) => {
-                write!(f, "Invalid message: {}", msg)
+            Self::ParseError(msg) => write!(f, "Parse error: {msg}"),
+            Self::Timeout => write!(f, "Operation timed out"),
+            Self::ConnectionClosed => write!(f, "Connection closed"),
+            Self::InvalidMessage(msg) => {
+                write!(f, "Invalid message: {msg}")
             }
-            SoulseekRs::NotConnected => write!(f, "Not connected to server"),
-            SoulseekRs::CompressionError(msg) => {
-                write!(f, "Compression error: {}", msg)
+            Self::NotConnected => write!(f, "Not connected to server"),
+            Self::CompressionError(msg) => {
+                write!(f, "Compression error: {msg}")
             }
-            SoulseekRs::LockPoisoned => {
+            Self::LockPoisoned => {
                 write!(f, "Lock poisoned by panicking thread")
             }
         }
@@ -51,7 +51,7 @@ impl fmt::Display for SoulseekRs {
 impl Error for SoulseekRs {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            SoulseekRs::NetworkError(err) => Some(err),
+            Self::NetworkError(err) => Some(err),
             _ => None,
         }
     }
@@ -59,19 +59,19 @@ impl Error for SoulseekRs {
 
 impl From<std::io::Error> for SoulseekRs {
     fn from(err: std::io::Error) -> Self {
-        SoulseekRs::NetworkError(err)
+        Self::NetworkError(err)
     }
 }
 
 impl From<std::num::ParseIntError> for SoulseekRs {
     fn from(err: std::num::ParseIntError) -> Self {
-        SoulseekRs::ParseError(format!("Integer parse error: {}", err))
+        Self::ParseError(format!("Integer parse error: {err}"))
     }
 }
 
 impl From<String> for SoulseekRs {
     fn from(err: String) -> Self {
-        SoulseekRs::CompressionError(err)
+        Self::CompressionError(err)
     }
 }
 

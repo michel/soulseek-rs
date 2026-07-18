@@ -16,7 +16,8 @@ pub struct ThreadPool {
 }
 
 impl ThreadPool {
-    pub fn new(size: usize) -> ThreadPool {
+    #[must_use]
+    pub fn new(size: usize) -> Self {
         assert!(size > 0);
 
         let (sender, receiver) = mpsc::channel();
@@ -27,7 +28,7 @@ impl ThreadPool {
             workers.push(Worker::new(Arc::clone(&receiver)));
         }
 
-        ThreadPool {
+        Self {
             workers,
             sender: Some(sender),
         }
@@ -62,6 +63,39 @@ impl Drop for ThreadPool {
     }
 }
 
+struct Worker {
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl Worker {
+    fn new(receiver: Arc<Mutex<mpsc::Receiver<Message>>>) -> Self {
+        let thread = thread::spawn(move || {
+            loop {
+                let message = match receiver.lock_safe() {
+                    Ok(rx) => rx.recv(),
+                    Err(_) => break,
+                };
+                match message {
+                    // Contain a panicking job so it kills only that job, not the
+                    // worker: the pool has a fixed number of workers and a lost
+                    // one is never replaced. The lock is already released here,
+                    // so a panic cannot poison the shared receiver.
+                    Ok(Message::NewJob(job)) => {
+                        let _ = std::panic::catch_unwind(
+                            std::panic::AssertUnwindSafe(job),
+                        );
+                    }
+                    Ok(Message::Terminate) | Err(_) => break,
+                }
+            }
+        });
+
+        Self {
+            thread: Some(thread),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::ThreadPool;
@@ -86,38 +120,5 @@ mod tests {
             Some(42),
             "worker died after a panicking job"
         );
-    }
-}
-
-struct Worker {
-    thread: Option<thread::JoinHandle<()>>,
-}
-
-impl Worker {
-    fn new(receiver: Arc<Mutex<mpsc::Receiver<Message>>>) -> Worker {
-        let thread = thread::spawn(move || {
-            loop {
-                let message = match receiver.lock_safe() {
-                    Ok(rx) => rx.recv(),
-                    Err(_) => break,
-                };
-                match message {
-                    // Contain a panicking job so it kills only that job, not the
-                    // worker: the pool has a fixed number of workers and a lost
-                    // one is never replaced. The lock is already released here,
-                    // so a panic cannot poison the shared receiver.
-                    Ok(Message::NewJob(job)) => {
-                        let _ = std::panic::catch_unwind(
-                            std::panic::AssertUnwindSafe(job),
-                        );
-                    }
-                    Ok(Message::Terminate) | Err(_) => break,
-                }
-            }
-        });
-
-        Worker {
-            thread: Some(thread),
-        }
     }
 }

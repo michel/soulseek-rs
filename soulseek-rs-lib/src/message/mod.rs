@@ -10,7 +10,7 @@ pub use message_reader::MessageReader;
 
 use std::str;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum MessageType {
     Server,
@@ -30,7 +30,7 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Message {
     data: Vec<u8>,
     pointer: usize,
@@ -43,7 +43,8 @@ impl Default for Message {
 }
 
 impl Message {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             data: Vec::new(),
             pointer: 0,
@@ -51,8 +52,8 @@ impl Message {
     }
 
     pub fn print_hex(&self) {
-        let data = &self.data;
         const BYTES_PER_LINE: usize = 16;
+        let data = &self.data;
 
         let chunks = data.chunks(BYTES_PER_LINE);
         for (i, chunk) in chunks.enumerate() {
@@ -95,6 +96,7 @@ impl Message {
     }
 
     #[allow(dead_code)]
+    #[must_use]
     pub fn get_message_code_u32(&self) -> u32 {
         if self.data.len() < 8 {
             return 0;
@@ -102,6 +104,7 @@ impl Message {
         u32::from_le_bytes(self.data[4..8].try_into().unwrap())
     }
 
+    #[must_use]
     pub fn get_message_code(&self) -> u8 {
         if self.data.len() <= 4 {
             return 0;
@@ -109,6 +112,7 @@ impl Message {
         self.data[4]
     }
 
+    #[must_use]
     pub fn get_message_code_send(&self) -> u8 {
         if self.data.is_empty() {
             return 0;
@@ -116,34 +120,38 @@ impl Message {
         self.data[0]
     }
 
-    pub fn new_with_data(data: Vec<u8>) -> Self {
+    #[must_use]
+    pub const fn new_with_data(data: Vec<u8>) -> Self {
         Self { data, pointer: 0 }
     }
     #[allow(dead_code)]
-    pub fn reset_pointer(&mut self) {
+    pub const fn reset_pointer(&mut self) {
         self.pointer = 0;
     }
-    pub fn set_pointer(&mut self, pointer: usize) {
+    pub const fn set_pointer(&mut self, pointer: usize) {
         self.pointer = pointer;
     }
 
-    pub fn get_pointer(&mut self) -> usize {
+    pub const fn get_pointer(&mut self) -> usize {
         self.pointer
     }
 
-    pub fn get_size(&mut self) -> usize {
+    pub const fn get_size(&mut self) -> usize {
         self.data.len()
     }
 
+    #[must_use]
     pub fn get_data(&self) -> Vec<u8> {
         self.data.clone()
     }
 
+    #[must_use]
     pub fn get_slice(&self, from: usize, to: usize) -> Vec<u8> {
         self.data[from..to].to_vec()
     }
 
     /// gets buffer with the message length prepended
+    #[must_use]
     pub fn get_buffer(&self) -> Vec<u8> {
         let mut b = vec![0u8; 4];
         let length = self.data.len() as u32;
@@ -277,7 +285,7 @@ impl Message {
     }
 
     pub fn write_bool(&mut self, value: bool) -> &mut Self {
-        self.data.push(if value { 1 } else { 0 });
+        self.data.push(u8::from(value));
         self
     }
 
@@ -333,16 +341,13 @@ impl Message {
                 104 => Ok("WishlistInterval"),
                 160 => Ok("ExcludedSearchPhrases"),
                 1001 => Ok("CantConnectToPeer"),
-                _ => {
-                    Err(Error(format!("Unknown server message code: {}", code)))
-                }
+                _ => Err(Error(format!("Unknown server message code: {code}"))),
             },
             MessageType::PeerInit => match code {
                 0 => Ok("PierceFireWall"),
                 1 => Ok("PeerInit"),
                 _ => Err(Error(format!(
-                    "Unknown peer init message code: {}",
-                    code
+                    "Unknown peer init message code: {code}"
                 ))),
             },
             MessageType::Peer => match code {
@@ -361,7 +366,7 @@ impl Message {
                 46 => Ok("UploadFailed"),
                 50 => Ok("UploadDenied"),
                 51 => Ok("PlaceInQueueRequest"),
-                _ => Err(Error(format!("Unknown peer message code: {}", code))),
+                _ => Err(Error(format!("Unknown peer message code: {code}"))),
             },
             MessageType::Distributed => match code {
                 3 => Ok("SearchRequest"),
@@ -369,8 +374,7 @@ impl Message {
                 5 => Ok("BranchRoot"),
                 93 => Ok("EmbeddedMessage"),
                 _ => Err(Error(format!(
-                    "Unknown distributed message code: {}",
-                    code
+                    "Unknown distributed message code: {code}"
                 ))),
             },
         }

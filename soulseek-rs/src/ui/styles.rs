@@ -71,11 +71,11 @@ pub fn unfocused_border_style() -> Style {
     Style::default()
 }
 
-pub fn focused_border_type() -> BorderType {
+pub const fn focused_border_type() -> BorderType {
     BorderType::Rounded
 }
 
-pub fn unfocused_border_type() -> BorderType {
+pub const fn unfocused_border_type() -> BorderType {
     BorderType::Rounded
 }
 
@@ -88,7 +88,7 @@ pub fn border_style(focused: bool) -> Style {
     }
 }
 
-pub fn border_type(focused: bool) -> BorderType {
+pub const fn border_type(focused: bool) -> BorderType {
     if focused {
         focused_border_type()
     } else {
@@ -100,9 +100,7 @@ pub fn border_type(focused: bool) -> BorderType {
 pub fn format_shortcuts(shortcuts: &[(&str, &str)]) -> String {
     shortcuts
         .iter()
-        .map(|(key, action)| {
-            format!("[{} {} {}]", key, HIGHLIGHT_SYMBOL, action)
-        })
+        .map(|(key, action)| format!("[{key} {HIGHLIGHT_SYMBOL} {action}]"))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -124,7 +122,7 @@ pub fn format_shortcuts_styled(shortcuts: &[(&str, &str)]) -> Line<'static> {
                 .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(
-            format!(" {} ", HIGHLIGHT_SYMBOL),
+            format!(" {HIGHLIGHT_SYMBOL} "),
             dimmed_style(),
         ));
         spans.push(Span::raw(action.to_string()));
@@ -165,7 +163,7 @@ pub fn format_progress_bar(
         Span::raw("]"),
         Span::raw(" "),
         Span::styled(
-            format!("{}%", percentage),
+            format!("{percentage}%"),
             primary_style()
                 .add_modifier(Modifier::BOLD)
                 .fg(Color::default()),

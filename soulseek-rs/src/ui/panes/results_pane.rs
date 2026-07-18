@@ -63,7 +63,7 @@ pub fn render_results_pane(
     } = params;
     if items.is_empty() {
         let title = if let Some(query) = active_search_query {
-            format!("[2] Results: {}", query)
+            format!("[2] Results: {query}")
         } else {
             "[2] Results".to_string()
         };
@@ -75,13 +75,12 @@ pub fn render_results_pane(
             .title(title);
 
         let message = if is_filtering {
-            format!("No results match filter: '{}'", filter_query)
+            format!("No results match filter: '{filter_query}'")
         } else {
             format!(
-                "soulseek-rs 🦀 v{}
+                "soulseek-rs 🦀 v{VERSION}
 Michel de Graaf 2026\n
-No results. Select a search from the Searches pane [1]. Or start new search [s → search] \n",
-                VERSION
+No results. Select a search from the Searches pane [1]. Or start new search [s → search] \n"
             )
         };
 
@@ -114,13 +113,13 @@ No results. Select a search from the Searches pane [1]. Or start new search [s �
 
             let bitrate_str = file
                 .bitrate
-                .map(|br| format!("{} kbps", br))
-                .unwrap_or_else(|| "-".to_string());
+                .map_or_else(|| "-".to_string(), |br| format!("{br} kbps"));
 
             let speed_str = if file.speed > 0 {
-                let speed_mb =
-                    (file.speed as f64 / BYTES_PER_MB * 100.0).round() / 100.0;
-                format!("{} MB/s", speed_mb)
+                let speed_mb = (f64::from(file.speed) / BYTES_PER_MB * 100.0)
+                    .round()
+                    / 100.0;
+                format!("{speed_mb} MB/s")
             } else {
                 "-".to_string()
             };
@@ -148,9 +147,9 @@ No results. Select a search from the Searches pane [1]. Or start new search [s �
     ];
 
     let title = if is_filtering {
-        format!("[2] Results - Filter: '{}'", filter_query)
+        format!("[2] Results - Filter: '{filter_query}'")
     } else if let Some(query) = active_search_query {
-        format!("[2] Results: {}", query)
+        format!("[2] Results: {query}")
     } else {
         "[2] Results".to_string()
     };
@@ -178,7 +177,7 @@ mod tests {
 
     #[test]
     fn identity_mapping_used_when_no_filter() {
-        let selected: HashSet<usize> = [1].into_iter().collect();
+        let selected: HashSet<usize> = std::iter::once(1).collect();
         assert!(row_is_selected(1, None, &selected));
         assert!(!row_is_selected(0, None, &selected));
     }
@@ -188,7 +187,7 @@ mod tests {
         // Filter shows original rows 2, 5, 7 as display rows 0, 1, 2.
         // The user selected original row 5.
         let original_indices = [2usize, 5, 7];
-        let selected: HashSet<usize> = [5].into_iter().collect();
+        let selected: HashSet<usize> = std::iter::once(5).collect();
         assert!(!row_is_selected(0, Some(&original_indices), &selected));
         assert!(row_is_selected(1, Some(&original_indices), &selected));
         assert!(!row_is_selected(2, Some(&original_indices), &selected));

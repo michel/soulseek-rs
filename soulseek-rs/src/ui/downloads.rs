@@ -155,7 +155,7 @@ impl MultiDownloadProgress {
         }
     }
 
-    fn select_previous(&mut self) {
+    const fn select_previous(&mut self) {
         let i = match self.list_state.selected() {
             Some(i) if i > 0 => i - 1,
             _ => self.downloads.len().saturating_sub(1),
@@ -163,7 +163,7 @@ impl MultiDownloadProgress {
         self.list_state.select(Some(i));
     }
 
-    fn select_next(&mut self) {
+    const fn select_next(&mut self) {
         let i = match self.list_state.selected() {
             Some(i) if i < self.downloads.len().saturating_sub(1) => i + 1,
             _ => 0,
@@ -171,11 +171,11 @@ impl MultiDownloadProgress {
         self.list_state.select(Some(i));
     }
 
-    fn select_first(&mut self) {
+    const fn select_first(&mut self) {
         self.list_state.select(Some(0));
     }
 
-    fn select_last(&mut self) {
+    const fn select_last(&mut self) {
         if !self.downloads.is_empty() {
             self.list_state.select(Some(self.downloads.len() - 1));
         }
@@ -198,7 +198,7 @@ impl MultiDownloadProgress {
         self.render_downloads_list(frame, chunks[1]);
 
         // Bottom: Controls
-        self.render_controls(frame, chunks[2]);
+        Self::render_controls(frame, chunks[2]);
     }
 
     fn render_stats(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
@@ -312,7 +312,7 @@ impl MultiDownloadProgress {
         );
     }
 
-    fn render_controls(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
+    fn render_controls(frame: &mut Frame, area: ratatui::layout::Rect) {
         let controls_line = format_shortcuts_styled(&[
             ("↑↓/jk", "scroll"),
             ("Home/End", "jump"),
@@ -402,7 +402,7 @@ pub fn render_download_stats(
     let stats_line = Line::from(vec![
         Span::raw("soulseek-rs 🦀 "),
         Span::styled(
-            format!("v{} ", VERSION),
+            format!("v{VERSION} "),
             Style::default()
                 .fg(COLOR_PRIMARY)
                 .add_modifier(Modifier::BOLD),
@@ -460,7 +460,7 @@ pub fn render_download_stats(
     spans.extend(data_str.spans);
     spans.push(Span::raw(" • "));
     spans.push(Span::styled(
-        format!("{}", speed_mb),
+        format!("{speed_mb}"),
         Style::default()
             .fg(COLOR_PRIMARY)
             .add_modifier(Modifier::BOLD),
@@ -487,9 +487,9 @@ pub fn show_multi_download_progress(
     let (tx, rx) = mpsc::channel();
 
     // Spawn background thread to initialize downloads
-    let init_client = client.clone();
+    let init_client = client;
     thread::spawn(move || {
-        for (filename, username, size) in selected_files.into_iter() {
+        for (filename, username, size) in selected_files {
             // Initiate download
             match init_client.download(
                 filename.clone(),
@@ -501,10 +501,7 @@ pub fn show_multi_download_progress(
                     let _ = tx.send((download, receiver));
                 }
                 Err(e) => {
-                    eprintln!(
-                        "Failed to start download for {}: {}",
-                        filename, e
-                    );
+                    eprintln!("Failed to start download for {filename}: {e}");
                 }
             }
         }
