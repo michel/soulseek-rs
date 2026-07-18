@@ -162,12 +162,18 @@ impl MainTui {
         self.state.results_pane_area = Some(right_chunks[0]);
         self.state.downloads_pane_area = Some(downloads_chunks[0]);
 
-        // Render Results pane
-        let results_items = if self.state.results_filter_query.is_empty() {
-            &self.state.results_items
-        } else {
-            &self.state.results_filtered_items
-        };
+        // Render Results pane. When a filter is active the rendered rows are a
+        // subset, so the pane also needs the mapping back to unfiltered indices
+        // to render the selection checkboxes correctly.
+        let (results_items, results_original_indices) =
+            if self.state.results_filter_query.is_empty() {
+                (&self.state.results_items, None)
+            } else {
+                (
+                    &self.state.results_filtered_items,
+                    Some(self.state.results_filtered_indices.as_slice()),
+                )
+            };
 
         let active_search_query = self
             .state
@@ -182,6 +188,7 @@ impl MainTui {
                 items: results_items,
                 table_state: &mut self.state.results_table_state,
                 selected_indices: &self.state.results_selected_indices,
+                original_indices: results_original_indices,
                 filter_query: &self.state.results_filter_query,
                 is_filtering: self.state.results_is_filtering,
                 focused: self.state.focused_pane == FocusedPane::Results,
@@ -815,27 +822,17 @@ impl MainTui {
         self.state.results_is_filtering = false;
     }
 
+    fn recompute_results_filter(&mut self) {
+        let (items, indices) = filter_results(
+            &self.state.results_items,
+            &self.state.results_filter_query,
+        );
+        self.state.results_filtered_items = items;
+        self.state.results_filtered_indices = indices;
+    }
+
     fn apply_filter(&mut self) {
-        let query = self.state.results_filter_query.to_lowercase();
-        if query.is_empty() {
-            self.state.results_filtered_items =
-                self.state.results_items.clone();
-            self.state.results_filtered_indices =
-                (0..self.state.results_items.len()).collect();
-        } else {
-            self.state.results_filtered_items.clear();
-            self.state.results_filtered_indices.clear();
-
-            for (idx, item) in self.state.results_items.iter().enumerate() {
-                if item.filename.to_lowercase().contains(&query)
-                    || item.username.to_lowercase().contains(&query)
-                {
-                    self.state.results_filtered_items.push(item.clone());
-                    self.state.results_filtered_indices.push(idx);
-                }
-            }
-        }
-
+        self.recompute_results_filter();
         if !self.state.results_filtered_items.is_empty() {
             self.state.results_table_state.select(Some(0));
         }
@@ -931,15 +928,20 @@ impl MainTui {
                         }
                     }
 
-                    // Update selected search if this is the active one
+                    // Update selected search if this is the active one. Re-derive
+                    // the filtered view from the current query so an active
+                    // filter is preserved as new results stream in, rather than
+                    // being clobbered by the full unfiltered list.
                     if let Some(selected_idx) = selected_search_index
                         && selected_idx == idx
                     {
                         self.state.results_items = search.results.clone();
-                        self.state.results_filtered_items =
-                            search.results.clone();
-                        self.state.results_filtered_indices =
-                            (0..search.results.len()).collect();
+                        let (items, indices) = filter_results(
+                            &self.state.results_items,
+                            &self.state.results_filter_query,
+                        );
+                        self.state.results_filtered_items = items;
+                        self.state.results_filtered_indices = indices;
                     }
                 }
 
@@ -1116,4 +1118,75 @@ fn visible_input_at_cursor(
         .min(max_cursor_column);
 
     (visible_input, cursor_column as u16)
+}
+
+/// Filter `items` by a case-insensitive substring match on filename or
+/// username. Returns the matching items alongside their indices in the original
+/// list, so callers can translate a filtered display index back to the
+/// unfiltered results. An empty query returns everything (identity mapping).
+fn filter_results(
+    items: &[FileDisplayData],
+    query: &str,
+) -> (Vec<FileDisplayData>, Vec<usize>) {
+    let query = query.to_lowercase();
+    if query.is_empty() {
+        return (items.to_vec(), (0..items.len()).collect());
+    }
+
+    let mut filtered_items = Vec::new();
+    let mut filtered_indices = Vec::new();
+    for (idx, item) in items.iter().enumerate() {
+        if item.filename.to_lowercase().contains(&query)
+            || item.username.to_lowercase().contains(&query)
+        {
+            filtered_items.push(item.clone());
+            filtered_indices.push(idx);
+        }
+    }
+    (filtered_items, filtered_indices)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::filter_results;
+    use crate::models::FileDisplayData;
+
+    fn file(filename: &str, username: &str) -> FileDisplayData {
+        FileDisplayData {
+            filename: filename.to_string(),
+            username: username.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn empty_query_returns_identity_mapping() {
+        let items = vec![file("a.mp3", "bob"), file("b.flac", "amy")];
+        let (filtered, indices) = filter_results(&items, "");
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(indices, vec![0, 1]);
+    }
+
+    #[test]
+    fn query_matches_filename_and_username_and_maps_indices() {
+        let items = vec![
+            file("track.mp3", "bob"),
+            file("song.flac", "alice"),
+            file("alice_demo.mp3", "carol"),
+        ];
+        // "alice" matches item 1 (username) and item 2 (filename).
+        let (filtered, indices) = filter_results(&items, "alice");
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(indices, vec![1, 2]);
+        assert_eq!(filtered[0].filename, "song.flac");
+        assert_eq!(filtered[1].filename, "alice_demo.mp3");
+    }
+
+    #[test]
+    fn query_is_case_insensitive() {
+        let items = vec![file("The Weeknd.mp3", "dj")];
+        let (filtered, indices) = filter_results(&items, "WEEKND");
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(indices, vec![0]);
+    }
 }

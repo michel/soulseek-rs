@@ -254,28 +254,44 @@ impl FileSelector {
         }
     }
 
-    fn select_previous(&mut self) {
-        let i = match self.state.selected() {
+    /// Previous index with wrap-around, or None when the list is empty.
+    fn wrapping_prev(selected: Option<usize>, len: usize) -> Option<usize> {
+        if len == 0 {
+            return None;
+        }
+        Some(match selected {
             Some(i) if i > 0 => i - 1,
-            _ => self.items.len() - 1,
-        };
-        self.state.select(Some(i));
+            _ => len - 1,
+        })
+    }
+
+    /// Next index with wrap-around, or None when the list is empty.
+    fn wrapping_next(selected: Option<usize>, len: usize) -> Option<usize> {
+        if len == 0 {
+            return None;
+        }
+        Some(match selected {
+            Some(i) if i < len - 1 => i + 1,
+            _ => 0,
+        })
+    }
+
+    fn select_previous(&mut self) {
+        let i = Self::wrapping_prev(self.state.selected(), self.items.len());
+        self.state.select(i);
     }
 
     fn select_next(&mut self) {
-        let i = match self.state.selected() {
-            Some(i) if i < self.items.len() - 1 => i + 1,
-            _ => 0,
-        };
-        self.state.select(Some(i));
+        let i = Self::wrapping_next(self.state.selected(), self.items.len());
+        self.state.select(i);
     }
 
     fn select_first(&mut self) {
-        self.state.select(Some(0));
+        self.state.select((!self.items.is_empty()).then_some(0));
     }
 
     fn select_last(&mut self) {
-        self.state.select(Some(self.items.len() - 1));
+        self.state.select(self.items.len().checked_sub(1));
     }
 
     fn apply_filter(&mut self) {
@@ -583,5 +599,32 @@ impl FileSelector {
         );
 
         frame.render_widget(controls_widget, area);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FileSelector;
+
+    // Navigating an empty list (e.g. a filter that matched nothing) must not
+    // underflow `len - 1`; it should yield no selection.
+    #[test]
+    fn wrapping_prev_on_empty_list_is_none() {
+        assert_eq!(FileSelector::wrapping_prev(None, 0), None);
+        assert_eq!(FileSelector::wrapping_prev(Some(0), 0), None);
+    }
+
+    #[test]
+    fn wrapping_next_on_empty_list_is_none() {
+        assert_eq!(FileSelector::wrapping_next(None, 0), None);
+        assert_eq!(FileSelector::wrapping_next(Some(0), 0), None);
+    }
+
+    #[test]
+    fn wrapping_navigation_wraps_around() {
+        assert_eq!(FileSelector::wrapping_prev(Some(0), 3), Some(2));
+        assert_eq!(FileSelector::wrapping_prev(Some(2), 3), Some(1));
+        assert_eq!(FileSelector::wrapping_next(Some(2), 3), Some(0));
+        assert_eq!(FileSelector::wrapping_next(Some(1), 3), Some(2));
     }
 }
