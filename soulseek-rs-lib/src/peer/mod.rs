@@ -23,17 +23,17 @@ impl NewPeer {
     pub fn new_from_message(
         message: &mut Message,
         tcp_stream: TcpStream,
-    ) -> Self {
+    ) -> Option<Self> {
         let username = message.read_string();
-        let connection_type = message.read_string().parse().unwrap();
+        let connection_type = message.read_string().parse().ok()?;
         let token = message.read_int32();
 
-        Self {
+        Some(Self {
             username,
             connection_type,
             token,
             tcp_stream,
-        }
+        })
     }
 }
 
@@ -115,9 +115,11 @@ impl Peer {
         }
     }
     #[allow(dead_code)]
-    pub fn new_from_message(message: &mut Message) -> Self {
+    pub fn new_from_message(message: &mut Message) -> Option<Self> {
         let username = message.read_string();
-        let connection_type = message.read_string().parse().unwrap();
+        // The connection type is an untrusted string; an unknown value must not
+        // panic the actor that parses it.
+        let connection_type = message.read_string().parse().ok()?;
 
         let ip = [
             message.read_int8(),
@@ -135,7 +137,7 @@ impl Peer {
             message.read_int8(),
         );
 
-        Self {
+        Some(Self {
             username,
             connection_type,
             host,
@@ -144,9 +146,25 @@ impl Peer {
             privileged: Some(privileged),
             unknown: Some(unknown),
             obfuscated_port: Some(obfuscated_port),
-        }
+        })
     }
 }
+#[test]
+fn new_from_message_returns_none_on_invalid_connection_type() {
+    // username "ab", connection_type "X" (not P/F/D) from an untrusted server.
+    let mut data: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 0];
+    data.extend([2, 0, 0, 0, 97, 98]); // username = "ab"
+    data.extend([1, 0, 0, 0, 88]); // connection_type = "X"
+    data.extend([1, 2, 3, 4]); // ip
+    data.extend([0, 0, 0, 0]); // port
+    data.extend([0, 0, 0, 0]); // token
+    data.extend([0, 0, 0]); // privileged, unknown, obfuscated_port
+    let mut message = Message::new_with_data(data);
+    message.set_pointer(8);
+
+    assert!(Peer::new_from_message(&mut message).is_none());
+}
+
 #[test]
 fn test_new_from_message() {
     let data: Vec<u8> = [
@@ -157,7 +175,7 @@ fn test_new_from_message() {
     let mut message = Message::new_with_data(data);
     message.set_pointer(8);
 
-    let peer = Peer::new_from_message(&mut message);
+    let peer = Peer::new_from_message(&mut message).unwrap();
 
     assert_eq!(peer.username, "dp");
     assert!(matches!(peer.connection_type, ConnectionType::P));
@@ -182,7 +200,7 @@ fn test_new_from_message2() {
 
     println!("code: {}", message.get_message_code_u32());
 
-    let peer = Peer::new_from_message(&mut message);
+    let peer = Peer::new_from_message(&mut message).unwrap();
 
     assert_eq!(peer.username, "grandpag");
     assert!(matches!(peer.connection_type, ConnectionType::P));

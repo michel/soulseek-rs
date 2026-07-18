@@ -49,9 +49,13 @@ fn parse_peer_init_message(mut message: Message) -> Option<PeerInitData> {
         return None;
     }
 
+    let username = message.read_string();
+    // An untrusted peer can send any connection-type string; an unknown value
+    // must be rejected, not panic the listener accept loop.
+    let connection_type = message.read_string().parse().ok()?;
     Some(PeerInitData {
-        username: message.read_string(),
-        connection_type: message.read_string().parse().unwrap(),
+        username,
+        connection_type,
         token: message.read_int32(),
     })
 }
