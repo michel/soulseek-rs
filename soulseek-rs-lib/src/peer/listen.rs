@@ -158,6 +158,7 @@ fn handle_file_connection(
         peer_ip,
         peer_port,
     );
+    let failure_token = download.as_ref().map(|d| d.token);
 
     let download_peer = DownloadPeer::new(
         format!("{}:direct", peer.username),
@@ -194,6 +195,19 @@ fn handle_file_connection(
                 "Failed to download file from {}:{} (token: {}) - Error: {}",
                 peer.host, peer.port, token, e
             );
+            // A failed incoming transfer (e.g. a truncated/incomplete download)
+            // must not leave the download stuck as Queued/InProgress forever.
+            if let Some(failure_token) = failure_token {
+                match context.client_context.write_safe() {
+                    Ok(mut ctx) => ctx.update_download_with_status(
+                        failure_token,
+                        DownloadStatus::Failed,
+                    ),
+                    Err(e) => {
+                        error!("[listener] handle_file_connection fail write: {}", e)
+                    }
+                }
+            }
         }
     }
 }
