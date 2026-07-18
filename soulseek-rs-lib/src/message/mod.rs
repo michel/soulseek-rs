@@ -96,14 +96,23 @@ impl Message {
 
     #[allow(dead_code)]
     pub fn get_message_code_u32(&self) -> u32 {
+        if self.data.len() < 8 {
+            return 0;
+        }
         u32::from_le_bytes(self.data[4..8].try_into().unwrap())
     }
 
     pub fn get_message_code(&self) -> u8 {
+        if self.data.len() <= 4 {
+            return 0;
+        }
         self.data[4]
     }
 
     pub fn get_message_code_send(&self) -> u8 {
+        if self.data.is_empty() {
+            return 0;
+        }
         self.data[0]
     }
 
@@ -145,6 +154,10 @@ impl Message {
     }
 
     pub fn read_string(&mut self) -> String {
+        if self.pointer + 4 > self.data.len() {
+            self.pointer = self.data.len();
+            return String::new();
+        }
         let size = u32::from_le_bytes([
             self.data[self.pointer],
             self.data[self.pointer + 1],
@@ -153,6 +166,13 @@ impl Message {
         ]) as usize;
 
         self.pointer += 4;
+        // A truncated / malformed length field from an untrusted peer must not
+        // slice past the buffer end; treat it as an empty string and consume
+        // the rest of the message.
+        if self.pointer + size > self.data.len() {
+            self.pointer = self.data.len();
+            return String::new();
+        }
         let data = &self.data[self.pointer..self.pointer + size];
         self.pointer += size;
 
@@ -163,6 +183,9 @@ impl Message {
     }
 
     pub fn read_int8(&mut self) -> u8 {
+        if self.pointer >= self.data.len() {
+            return 0;
+        }
         let val = self.data[self.pointer];
         self.pointer += 1;
         val
@@ -170,6 +193,9 @@ impl Message {
 
     #[allow(dead_code)]
     pub fn read_int64(&mut self) -> u64 {
+        if self.pointer + 8 > self.data.len() {
+            return 0;
+        }
         let val = u64::from_le_bytes([
             self.data[self.pointer],
             self.data[self.pointer + 1],
@@ -215,6 +241,9 @@ impl Message {
     }
 
     pub fn read_bool(&mut self) -> bool {
+        if self.pointer >= self.data.len() {
+            return false;
+        }
         let val = self.data[self.pointer] == 1;
         self.pointer += 1;
         val
@@ -398,6 +427,51 @@ fn test_read_string() {
     ];
     let mut test_data = Message::new_with_data(data);
     assert_eq!(test_data.read_string(), "Hello");
+}
+
+// Robustness against malformed / truncated network input. A remote server or
+// peer is untrusted and can send a message whose declared field lengths exceed
+// the bytes actually present; parsing must not panic (which would unwind out of
+// the actor job and permanently kill a thread-pool worker).
+#[test]
+fn read_string_with_oversized_length_does_not_panic() {
+    // size = 0xFFFFFFFF but no payload bytes follow.
+    let mut msg = Message::new_with_data(vec![255, 255, 255, 255]);
+    assert_eq!(msg.read_string(), "");
+}
+
+#[test]
+fn read_string_with_truncated_payload_does_not_panic() {
+    // size = 10 but only 2 payload bytes present.
+    let mut msg = Message::new_with_data(vec![10, 0, 0, 0, 65, 66]);
+    assert_eq!(msg.read_string(), "");
+}
+
+#[test]
+fn read_string_with_missing_length_prefix_does_not_panic() {
+    // Only 2 bytes: not even a full 4-byte length prefix.
+    let mut msg = Message::new_with_data(vec![1, 2]);
+    assert_eq!(msg.read_string(), "");
+}
+
+#[test]
+fn get_message_code_on_short_message_does_not_panic() {
+    // A zero-length frame drains to exactly the 4-byte length prefix, leaving
+    // no room for a message code at data[4].
+    let msg = Message::new_with_data(vec![0, 0, 0, 0]);
+    assert_eq!(msg.get_message_code(), 0);
+    assert_eq!(msg.get_message_code_u32(), 0);
+    let empty = Message::new_with_data(vec![]);
+    assert_eq!(empty.get_message_code_send(), 0);
+}
+
+#[test]
+fn read_int_primitives_are_bounds_checked() {
+    let mut msg = Message::new_with_data(vec![1, 2]);
+    assert_eq!(msg.read_int64(), 0);
+    let mut msg = Message::new_with_data(vec![]);
+    assert_eq!(msg.read_int8(), 0);
+    assert!(!msg.read_bool());
 }
 
 #[test]
