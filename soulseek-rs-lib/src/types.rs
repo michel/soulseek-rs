@@ -174,3 +174,20 @@ impl Transfer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A truncated TransferRequest from an untrusted peer must parse to defaults
+    // rather than panic (the read_* primitives are bounds-checked).
+    #[test]
+    fn transfer_new_from_truncated_message_does_not_panic() {
+        let mut message = Message::new_with_data(vec![1, 0, 0]);
+        let transfer = Transfer::new_from_message(&mut message);
+        assert_eq!(transfer.direction, 0);
+        assert_eq!(transfer.token, 0);
+        assert_eq!(transfer.filename, "");
+        assert_eq!(transfer.size, 0);
+    }
+}
