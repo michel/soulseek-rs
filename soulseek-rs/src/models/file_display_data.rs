@@ -1,4 +1,4 @@
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct FileDisplayData {
     pub filename: String,
     pub size: u64,
