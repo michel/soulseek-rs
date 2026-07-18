@@ -61,6 +61,24 @@ impl MainTui {
     }
 
     pub fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
+        // Run the event loop, then restore the terminal unconditionally: if the
+        // loop returns early with an error the terminal must still be taken out
+        // of raw mode / the alternate screen and mouse capture disabled, or the
+        // user is left with a corrupted terminal.
+        let result = self.run_event_loop(&mut terminal);
+
+        use ratatui::crossterm::{event::DisableMouseCapture, execute};
+        let _ = execute!(std::io::stdout(), DisableMouseCapture);
+        ratatui::restore();
+        soulseek_rs::utils::logger::disable_buffering();
+
+        result
+    }
+
+    fn run_event_loop(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+    ) -> Result<()> {
         while !self.state.should_exit {
             terminal.draw(|frame| self.render(frame))?;
 
@@ -87,14 +105,6 @@ impl MainTui {
             }
         }
 
-        // Disable mouse capture before exiting
-        use ratatui::crossterm::{event::DisableMouseCapture, execute};
-        let _ = execute!(std::io::stdout(), DisableMouseCapture);
-
-        // Restore terminal state
-        ratatui::restore();
-
-        soulseek_rs::utils::logger::disable_buffering();
         Ok(())
     }
 
