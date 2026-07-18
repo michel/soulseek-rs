@@ -49,7 +49,17 @@ impl PeerRegistry {
             .peers
             .lock_safe()
             .map_err(|e| format!("peer registry lock poisoned: {}", e))?;
-        peers.insert(username.clone(), handle.clone());
+        // Stop any actor already registered under this username so it does not
+        // become an orphan pinning a pool worker forever (and so its later
+        // shutdown cannot remove this new connection from the registry).
+        if let Some(old_handle) = peers.insert(username.clone(), handle.clone())
+        {
+            let _ = old_handle.stop();
+            debug!(
+                "[peer_registry] Replaced existing peer actor for {}",
+                username
+            );
+        }
 
         Ok(handle)
     }
