@@ -52,6 +52,7 @@ pub struct PeerActor {
 }
 
 impl PeerActor {
+    #[must_use]
     pub fn new(
         peer: Peer,
         stream: Option<TcpStream>,
@@ -135,9 +136,9 @@ impl PeerActor {
                 msgs
             });
 
-        messages
-            .iter()
-            .for_each(|msg| self.handle_message(msg.clone()));
+        for msg in &messages {
+            self.handle_message(msg.clone());
+        }
     }
 
     fn handle_message(&mut self, msg: PeerMessage) {
@@ -210,14 +211,7 @@ impl PeerActor {
                     username, token, allowed
                 );
 
-                if !allowed {
-                    if let Some(reason_text) = reason {
-                        debug!(
-                            "[peer:{}] Transfer rejected: {} - token {}, waiting for TransferRequest...",
-                            username, reason_text, token
-                        );
-                    }
-                } else {
+                if allowed {
                     debug!(
                         "[peer:{}] Transfer allowed, ready to connect with token {:}",
                         username, token
@@ -237,6 +231,11 @@ impl PeerActor {
                             username, e
                         );
                     }
+                } else if let Some(reason_text) = reason {
+                    debug!(
+                        "[peer:{}] Transfer rejected: {} - token {}, waiting for TransferRequest...",
+                        username, reason_text, token
+                    );
                 }
             }
             PeerMessage::PlaceInQueueResponse { filename, place } => {
@@ -267,7 +266,7 @@ impl PeerActor {
                 match self.peer.write_safe() {
                     Ok(mut p) => p.username = username,
                     Err(e) => {
-                        error!("[peer_actor] SetUsername write: {}", e)
+                        error!("[peer_actor] SetUsername write: {}", e);
                     }
                 }
             }
@@ -306,9 +305,8 @@ impl PeerActor {
         }
 
         {
-            let stream = match self.stream.as_mut() {
-                Some(s) => s,
-                None => return,
+            let Some(stream) = self.stream.as_mut() else {
+                return;
             };
 
             match self.reader.read_from_socket(stream) {
@@ -352,7 +350,7 @@ impl PeerActor {
                         message
                             .get_message_name(
                                 MessageType::Peer,
-                                message.get_message_code() as u32
+                                u32::from(message.get_message_code())
                             )
                             .map_err(|e| e.to_string())
                     );
@@ -381,12 +379,9 @@ impl PeerActor {
 
     fn send_message(&mut self, message: Message) {
         let username = self.peer_username();
-        let stream = match self.stream.as_mut() {
-            Some(s) => s,
-            None => {
-                error!("Cannot send message: stream is None");
-                return;
-            }
+        let Some(stream) = self.stream.as_mut() else {
+            error!("Cannot send message: stream is None");
+            return;
         };
 
         trace!(
@@ -456,7 +451,7 @@ impl PeerActor {
         };
 
         let socket_addr =
-            format!("{}:{}", host, port).parse::<std::net::SocketAddr>();
+            format!("{host}:{port}").parse::<std::net::SocketAddr>();
 
         match socket_addr {
             Ok(addr) => {

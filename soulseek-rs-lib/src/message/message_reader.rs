@@ -18,13 +18,15 @@ impl Default for MessageReader {
 }
 
 impl MessageReader {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             buffer: VecDeque::new(),
         }
     }
 
     #[cfg(test)]
+    #[must_use]
     pub fn new_with_buffer(buffer: Vec<u8>) -> Self {
         Self {
             buffer: buffer.into(),
@@ -47,6 +49,7 @@ impl MessageReader {
         Ok(())
     }
 
+    #[must_use]
     pub fn buffer_len(&self) -> usize {
         self.buffer.len()
     }

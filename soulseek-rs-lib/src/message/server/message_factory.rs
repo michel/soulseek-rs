@@ -4,6 +4,7 @@ use crate::{
 
 pub struct MessageFactory;
 impl MessageFactory {
+    #[must_use]
     pub fn build_get_peer_address(username: &str) -> Message {
         let mut message = Message::new();
 
@@ -11,6 +12,7 @@ impl MessageFactory {
         message.write_string(username);
         message
     }
+    #[must_use]
     pub fn build_login_message(username: &str, password: &str) -> Message {
         // Message::new_with_data(
         //     [
@@ -42,6 +44,7 @@ impl MessageFactory {
             .clone()
     }
 
+    #[must_use]
     pub fn build_shared_folders_message(
         folder_count: u32,
         file_count: u32,
@@ -52,6 +55,7 @@ impl MessageFactory {
             .write_int32(file_count)
             .clone()
     }
+    #[must_use]
     pub fn build_file_search_message(token: u32, query: &str) -> Message {
         Message::new()
             .write_int32(26)
@@ -59,21 +63,25 @@ impl MessageFactory {
             .write_string(query)
             .clone()
     }
+    #[must_use]
     pub fn build_set_status_message(status_code: u32) -> Message {
         Message::new()
             .write_int32(28)
             .write_int32(status_code)
             .clone()
     }
+    #[must_use]
     pub fn build_no_parent_message() -> Message {
         Message::new().write_int32(71).write_bool(true).clone()
     }
+    #[must_use]
     pub fn build_set_wait_port_message(port: u16) -> Message {
         Message::new()
             .write_int32(2)
             .write_int32(port.into())
             .clone()
     }
+    #[must_use]
     pub fn build_watch_user(token: u32) -> Message {
         Message::new()
             .write_raw_bytes([5, 0, 0, 0, 0].to_vec())
@@ -81,6 +89,7 @@ impl MessageFactory {
             .clone()
     }
 
+    #[must_use]
     pub fn build_queue_upload_message(filename: &str) -> Message {
         Message::new()
             .write_int32(43)
@@ -88,6 +97,7 @@ impl MessageFactory {
             .clone()
     }
 
+    #[must_use]
     pub fn build_transfer_request_message(
         filename: &str,
         token: u32,
@@ -99,6 +109,7 @@ impl MessageFactory {
             .write_string(filename)
             .clone()
     }
+    #[must_use]
     pub fn build_transfer_response_message(transfer: Transfer) -> Message {
         Message::new()
             .write_int32(41)
@@ -106,6 +117,7 @@ impl MessageFactory {
             .write_bool(true)
             .clone()
     }
+    #[must_use]
     pub fn build_pierce_firewall_message(token: u32) -> Message {
         Message::new()
             .write_int8(0) // PierceFirewall message code
@@ -114,6 +126,7 @@ impl MessageFactory {
     }
 
     #[allow(dead_code)]
+    #[must_use]
     pub fn build_peer_init_message(
         own_username: &str,
         connection_type: ConnectionType,
@@ -134,7 +147,7 @@ fn test_build_watch_user() {
     let message = MessageFactory::build_watch_user(token);
     let expect: Vec<u8> = [5, 0, 0, 0, 0, 223, 0, 0, 0].to_vec();
 
-    assert_eq!(expect, message.get_data())
+    assert_eq!(expect, message.get_data());
 }
 
 #[test]
@@ -151,7 +164,7 @@ fn test_build_login_message() {
     ]
     .to_vec();
 
-    assert_eq!(expect, message.get_data())
+    assert_eq!(expect, message.get_data());
 }
 
 #[test]
@@ -162,5 +175,5 @@ fn test_build_file_search_message() {
         119, 97, 120,
     ]
     .to_vec();
-    assert_eq!(expect, message.get_data())
+    assert_eq!(expect, message.get_data());
 }

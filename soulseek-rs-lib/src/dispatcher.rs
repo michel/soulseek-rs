@@ -10,12 +10,13 @@ pub struct MessageDispatcher<Op> {
 }
 
 impl<Op> MessageDispatcher<Op> {
-    pub fn new(
+    #[must_use]
+    pub const fn new(
         owner_name: String,
         sender: Sender<Op>,
         handlers: Handlers<Op>,
     ) -> Self {
-        MessageDispatcher {
+        Self {
             owner_name,
             sender,
             handlers,

@@ -61,13 +61,14 @@ impl MainTui {
     }
 
     pub fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
+        use ratatui::crossterm::{event::DisableMouseCapture, execute};
+
         // Run the event loop, then restore the terminal unconditionally: if the
         // loop returns early with an error the terminal must still be taken out
         // of raw mode / the alternate screen and mouse capture disabled, or the
         // user is left with a corrupted terminal.
         let result = self.run_event_loop(&mut terminal);
 
-        use ratatui::crossterm::{event::DisableMouseCapture, execute};
         let _ = execute!(std::io::stdout(), DisableMouseCapture);
         ratatui::restore();
         soulseek_rs::utils::logger::disable_buffering();
@@ -75,10 +76,7 @@ impl MainTui {
         result
     }
 
-    fn run_event_loop(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-    ) -> Result<()> {
+    fn run_event_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         while !self.state.should_exit {
             terminal.draw(|frame| self.render(frame))?;
 
@@ -95,10 +93,10 @@ impl MainTui {
             if poll(Duration::from_millis(100))? {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        self.handle_key_event(key)?;
+                        self.handle_key_event(key);
                     }
                     Event::Mouse(mouse) => {
-                        self.handle_mouse_event(mouse)?;
+                        self.handle_mouse_event(mouse);
                     }
                     _ => {}
                 }
@@ -328,7 +326,7 @@ impl MainTui {
         }
     }
 
-    fn handle_key_event(&mut self, key: KeyEvent) -> Result<()> {
+    fn handle_key_event(&mut self, key: KeyEvent) {
         // Command bar takes priority
         if self.state.command_bar_active {
             return self.handle_command_bar_input(key);
@@ -345,25 +343,25 @@ impl MainTui {
         match key.code {
             KeyCode::Char('q') => {
                 self.state.should_exit = true;
-                return Ok(());
+                return;
             }
             KeyCode::Char('1') => {
                 self.state.focused_pane = FocusedPane::Searches;
-                return Ok(());
+                return;
             }
             KeyCode::Char('2') => {
                 self.state.focused_pane = FocusedPane::Results;
-                return Ok(());
+                return;
             }
             KeyCode::Char('3') => {
                 self.state.focused_pane = FocusedPane::Downloads;
-                return Ok(());
+                return;
             }
             KeyCode::Char('s') => {
                 self.state.command_bar_active = true;
                 self.state.command_bar_input.clear();
                 self.state.command_bar_cursor_position = 0;
-                return Ok(());
+                return;
             }
             _ => {}
         }
@@ -376,7 +374,7 @@ impl MainTui {
         }
     }
 
-    fn handle_command_bar_input(&mut self, key: KeyEvent) -> Result<()> {
+    fn handle_command_bar_input(&mut self, key: KeyEvent) {
         self.state.command_bar_cursor_position = clamp_cursor_to_char_boundary(
             &self.state.command_bar_input,
             self.state.command_bar_cursor_position,
@@ -474,10 +472,9 @@ impl MainTui {
             }
             _ => {}
         }
-        Ok(())
     }
 
-    fn handle_filter_input(&mut self, key: KeyEvent) -> Result<()> {
+    fn handle_filter_input(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Esc => {
                 self.state.results_is_filtering = false;
@@ -497,10 +494,9 @@ impl MainTui {
             }
             _ => {}
         }
-        Ok(())
     }
 
-    fn handle_searches_input(&mut self, key: KeyEvent) -> Result<()> {
+    fn handle_searches_input(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Up | KeyCode::Char('k')
                 if !self.state.searches.is_empty() =>
@@ -551,10 +547,9 @@ impl MainTui {
             }
             _ => {}
         }
-        Ok(())
     }
 
-    fn handle_results_input(&mut self, key: KeyEvent) -> Result<()> {
+    fn handle_results_input(&mut self, key: KeyEvent) {
         let items_count = if self.state.results_filter_query.is_empty() {
             self.state.results_items.len()
         } else {
@@ -624,10 +619,9 @@ impl MainTui {
             }
             _ => {}
         }
-        Ok(())
     }
 
-    fn handle_downloads_input(&mut self, key: KeyEvent) -> Result<()> {
+    fn handle_downloads_input(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Up | KeyCode::Char('k')
                 if !self.state.downloads.is_empty() =>
@@ -657,10 +651,9 @@ impl MainTui {
             }
             _ => {}
         }
-        Ok(())
     }
 
-    fn toggle_selected_download_pause(&mut self) {
+    fn toggle_selected_download_pause(&self) {
         let Some(index) = self.state.downloads_table_state.selected() else {
             return;
         };
@@ -671,11 +664,13 @@ impl MainTui {
         let download = &download_entry.download;
         match download.status {
             DownloadStatus::InProgress { .. } => {
-                self.client
+                let _ = self
+                    .client
                     .pause_download(&download.username, &download.filename);
             }
             DownloadStatus::Paused { .. } => {
-                self.client
+                let _ = self
+                    .client
                     .resume_download(&download.username, &download.filename);
             }
             _ => {}
@@ -716,8 +711,8 @@ impl MainTui {
         self.state.downloads_table_state.select(Some(next_index));
     }
 
-    fn handle_mouse_event(&mut self, mouse: MouseEvent) -> Result<()> {
-        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+    fn handle_mouse_event(&mut self, mouse: MouseEvent) {
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
             let (col, row) = (mouse.column, mouse.row);
 
             // Check if click is within searches pane
@@ -728,7 +723,7 @@ impl MainTui {
                 && row < area.y + area.height
             {
                 self.state.focused_pane = FocusedPane::Searches;
-                return Ok(());
+                return;
             }
 
             // Check if click is within results pane
@@ -739,7 +734,7 @@ impl MainTui {
                 && row < area.y + area.height
             {
                 self.state.focused_pane = FocusedPane::Results;
-                return Ok(());
+                return;
             }
 
             // Check if click is within downloads pane
@@ -750,11 +745,8 @@ impl MainTui {
                 && row < area.y + area.height
             {
                 self.state.focused_pane = FocusedPane::Downloads;
-                return Ok(());
             }
         }
-
-        Ok(())
     }
 
     fn remove_search_at_index(&mut self, index: usize) {
@@ -889,7 +881,7 @@ impl MainTui {
                     // Results will be polled in update_search_results
                 }
                 Err(e) => {
-                    eprintln!("Search failed: {}", e);
+                    eprintln!("Search failed: {e}");
                 }
             }
         });
@@ -899,19 +891,14 @@ impl MainTui {
         let timeout = self.search_timeout;
         let selected_search_index = self.state.selected_search_index;
 
-        // Collect all queries first
-        let queries: Vec<(usize, String)> = self
+        // Fetch all results in one go (single lock acquisition per query)
+        // Use try_get_search_results to avoid blocking the UI thread
+        let all_results: Vec<(usize, Vec<_>)> = self
             .state
             .searches
             .iter()
             .enumerate()
             .map(|(idx, s)| (idx, s.query.clone()))
-            .collect();
-
-        // Fetch all results in one go (single lock acquisition per query)
-        // Use try_get_search_results to avoid blocking the UI thread
-        let all_results: Vec<(usize, Vec<_>)> = queries
-            .into_iter()
             .filter_map(|(idx, query)| {
                 self.client
                     .try_get_search_results(&query)
@@ -989,7 +976,7 @@ impl MainTui {
         let sender = self.state.downloads_sender_channel.clone().unwrap();
 
         thread::spawn(move || {
-            for file in selected_files.into_iter() {
+            for file in selected_files {
                 let metadata = soulseek_rs::types::DownloadMetadata {
                     bitrate: file.bitrate,
                     length_seconds: file.length_seconds,
@@ -1066,7 +1053,10 @@ pub fn launch_main_tui(
     tui.run(terminal)
 }
 
-fn clamp_cursor_to_char_boundary(input: &str, cursor_position: usize) -> usize {
+const fn clamp_cursor_to_char_boundary(
+    input: &str,
+    cursor_position: usize,
+) -> usize {
     if cursor_position >= input.len() {
         return input.len();
     }
@@ -1084,8 +1074,7 @@ fn previous_char_boundary(input: &str, cursor_position: usize) -> usize {
     input[..cursor_position]
         .char_indices()
         .last()
-        .map(|(index, _)| index)
-        .unwrap_or(0)
+        .map_or(0, |(index, _)| index)
 }
 
 fn next_char_boundary(input: &str, cursor_position: usize) -> usize {
@@ -1099,8 +1088,7 @@ fn next_char_boundary(input: &str, cursor_position: usize) -> usize {
         + input[cursor_position..]
             .chars()
             .next()
-            .map(char::len_utf8)
-            .unwrap_or(0)
+            .map_or(0, char::len_utf8)
 }
 
 fn visible_input_at_cursor(

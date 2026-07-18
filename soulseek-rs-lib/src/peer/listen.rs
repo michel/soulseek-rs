@@ -65,7 +65,7 @@ fn parse_token_from_buffer(buffer: &[u8], username: &str) -> Option<u32> {
     let token = u32::from_le_bytes(
         token_bytes
             .try_into()
-            .unwrap_or_else(|_| panic!("[listener:{}] slice with incorrect length, can't extract transfer_token", username)),
+            .unwrap_or_else(|_| panic!("[listener:{username}] slice with incorrect length, can't extract transfer_token")),
     );
     Some(token)
 }
@@ -182,7 +182,7 @@ fn handle_file_connection(
                     DownloadStatus::Completed,
                 ),
                 Err(e) => {
-                    error!("[listener] handle_file_connection write: {}", e)
+                    error!("[listener] handle_file_connection write: {}", e);
                 }
             }
             info!(
@@ -204,7 +204,10 @@ fn handle_file_connection(
                         DownloadStatus::Failed,
                     ),
                     Err(e) => {
-                        error!("[listener] handle_file_connection fail write: {}", e)
+                        error!(
+                            "[listener] handle_file_connection fail write: {}",
+                            e
+                        );
                     }
                 }
             }
@@ -272,7 +275,7 @@ fn handle_incoming_connection(stream: TcpStream, context: ConnectionContext) {
                     &context,
                     &peer_ip,
                     peer_port,
-                )
+                );
             });
         }
         ConnectionType::D => {

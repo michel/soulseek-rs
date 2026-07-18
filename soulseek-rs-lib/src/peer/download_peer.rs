@@ -37,22 +37,22 @@ pub enum DownloadError {
 impl std::fmt::Display for DownloadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ConnectionFailed(e) => write!(f, "Connection failed: {}", e),
+            Self::ConnectionFailed(e) => write!(f, "Connection failed: {e}"),
             Self::InvalidAddress(addr) => {
-                write!(f, "Invalid address: {}", addr)
+                write!(f, "Invalid address: {addr}")
             }
-            Self::HandshakeFailed(e) => write!(f, "Handshake failed: {}", e),
-            Self::StreamReadError(e) => write!(f, "Stream read error: {}", e),
-            Self::StreamWriteError(e) => write!(f, "Stream write error: {}", e),
+            Self::HandshakeFailed(e) => write!(f, "Handshake failed: {e}"),
+            Self::StreamReadError(e) => write!(f, "Stream read error: {e}"),
+            Self::StreamWriteError(e) => write!(f, "Stream write error: {e}"),
             Self::TokenNotFound(token) => {
-                write!(f, "Token not found: {}", token)
+                write!(f, "Token not found: {token}")
             }
             Self::DownloadInfoMissing(token) => {
-                write!(f, "Download info missing for token: {}", token)
+                write!(f, "Download info missing for token: {token}")
             }
-            Self::FileWriteError(e) => write!(f, "File write error: {}", e),
+            Self::FileWriteError(e) => write!(f, "File write error: {e}"),
             Self::PathResolutionError(msg) => {
-                write!(f, "Path resolution error: {}", msg)
+                write!(f, "Path resolution error: {msg}")
             }
             Self::InvalidTokenBytes => {
                 write!(f, "Invalid token bytes received")
@@ -100,7 +100,7 @@ struct StreamProcessor {
 }
 
 impl StreamProcessor {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             total_bytes: 0,
             received: false,
@@ -113,7 +113,7 @@ impl StreamProcessor {
         self.total_bytes += data.len();
     }
 
-    fn should_continue(&self, expected_size: Option<usize>) -> bool {
+    const fn should_continue(&self, expected_size: Option<usize>) -> bool {
         if let Some(size) = expected_size {
             self.total_bytes < size
         } else {
@@ -134,7 +134,7 @@ pub struct DownloadPeer {
 
 impl DownloadPeer {
     #[must_use]
-    pub fn new(
+    pub const fn new(
         username: String,
         host: String,
         port: u32,
@@ -277,7 +277,7 @@ impl DownloadPeer {
 
         loop {
             if let Some(ref dl) = download {
-                self.wait_while_paused(client_context, dl)?;
+                Self::wait_while_paused(client_context, dl)?;
             }
 
             match stream.read(&mut read_buffer) {
@@ -387,7 +387,6 @@ impl DownloadPeer {
     }
 
     fn wait_while_paused(
-        &self,
         client_context: &Arc<RwLock<ClientContext>>,
         download: &Download,
     ) -> Result<(), DownloadError> {
@@ -408,7 +407,6 @@ impl DownloadPeer {
     }
 
     fn resolve_download_path(
-        &self,
         download: &Download,
     ) -> Result<String, DownloadError> {
         let download_directory = &download.download_directory;
@@ -462,7 +460,6 @@ impl DownloadPeer {
     }
 
     fn save_downloaded_file(
-        &self,
         path: &str,
         data: &[u8],
     ) -> Result<(), DownloadError> {
@@ -511,8 +508,8 @@ impl DownloadPeer {
         let (buffer, download) =
             self.read_download_stream(&mut stream, &client_context, download)?;
 
-        let final_path = self.resolve_download_path(&download)?;
-        self.save_downloaded_file(&final_path, &buffer)?;
+        let final_path = Self::resolve_download_path(&download)?;
+        Self::save_downloaded_file(&final_path, &buffer)?;
 
         trace!(
             "[download_peer:{}] download completed successfully: {} bytes, saved to: {}",
@@ -533,7 +530,8 @@ mod tests {
     fn finalize_rejects_truncated_download() {
         // Peer closed early: 5 of 10 promised bytes. Must be a failure so the
         // partial file is never reported as Completed.
-        let result = DownloadPeer::finalize_download_buffer(vec![1, 2, 3, 4, 5], 10);
+        let result =
+            DownloadPeer::finalize_download_buffer(vec![1, 2, 3, 4, 5], 10);
         assert!(matches!(
             result,
             Err(DownloadError::IncompleteDownload {

@@ -41,7 +41,7 @@ pub fn render_searches_pane(
             {
                 "Searching...".to_string()
             } else {
-                format!("{}", results_count)
+                format!("{results_count}")
             };
 
             Row::new(vec![

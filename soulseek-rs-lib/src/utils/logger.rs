@@ -32,12 +32,10 @@ pub fn init() {
         unsafe {
             LOG_LEVEL = match level.as_str() {
                 "ERROR" => LogLevel::Error,
-                "WARN" => LogLevel::Warn,
                 "INFO" => LogLevel::Info,
-                "DEBUG" => LogLevel::Debug,
+                "DEBUG" | "VERBOSE" => LogLevel::Debug, // Map VERBOSE to DEBUG
                 "TRACE" => LogLevel::Trace,
-                "VERBOSE" => LogLevel::Debug, // Map VERBOSE to DEBUG
-                _ => LogLevel::Warn,          // Default to WARN
+                _ => LogLevel::Warn, // "WARN" or default
             };
         }
 
@@ -54,10 +52,7 @@ pub fn init() {
                     }
                 }
                 Err(e) => {
-                    eprintln!(
-                        "Failed to open log file '{}': {}",
-                        log_file_path, e
-                    );
+                    eprintln!("Failed to open log file '{log_file_path}': {e}");
                 }
             }
         }
@@ -74,7 +69,7 @@ enum LogSink {
     Stderr,
 }
 
-fn choose_sink(buffering: bool, has_file: bool) -> LogSink {
+const fn choose_sink(buffering: bool, has_file: bool) -> LogSink {
     match (buffering, has_file) {
         // A configured file always takes the line directly and bypasses
         // buffering, so the flush step never re-writes it.
@@ -86,7 +81,7 @@ fn choose_sink(buffering: bool, has_file: bool) -> LogSink {
 }
 
 fn has_log_file() -> bool {
-    LOG_FILE.lock().map(|f| f.is_some()).unwrap_or(false)
+    LOG_FILE.lock().is_ok_and(|f| f.is_some())
 }
 
 pub fn log(level: LogLevel, message: &str) {
@@ -161,29 +156,11 @@ pub fn log(level: LogLevel, message: &str) {
             };
 
             let formatted_message = format!(
-                "[{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}] [{}] {}",
-                year,
-                month,
-                day,
-                hours,
-                minutes,
-                seconds,
-                subsec_millis,
-                level_str,
-                message
+                "[{year:04}-{month:02}-{day:02} {hours:02}:{minutes:02}:{seconds:02}.{subsec_millis:03}] [{level_str}] {message}"
             );
 
             let formatted_message_plain = format!(
-                "[{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}] [{}] {}",
-                year,
-                month,
-                day,
-                hours,
-                minutes,
-                seconds,
-                subsec_millis,
-                level_str_plain,
-                message
+                "[{year:04}-{month:02}-{day:02} {hours:02}:{minutes:02}:{seconds:02}.{subsec_millis:03}] [{level_str_plain}] {message}"
             );
 
             match choose_sink(BUFFERING.load(Ordering::Relaxed), has_log_file())
@@ -192,18 +169,17 @@ pub fn log(level: LogLevel, message: &str) {
                     if let Ok(mut log_file) = LOG_FILE.lock()
                         && let Some(file) = log_file.as_mut()
                     {
-                        let _ =
-                            writeln!(file, "{}", formatted_message_plain);
+                        let _ = writeln!(file, "{formatted_message_plain}");
                         let _ = file.flush();
                     }
                 }
                 LogSink::Buffer => {
                     if let Ok(mut buffer) = BUFFER.lock() {
-                        buffer.push(formatted_message.clone());
+                        buffer.push(formatted_message);
                     }
                 }
                 LogSink::Stderr => {
-                    eprintln!("{}", formatted_message);
+                    eprintln!("{formatted_message}");
                 }
             }
         }
@@ -228,18 +204,18 @@ pub fn flush_buffered_logs() {
                 for message in buffer.iter() {
                     // Strip ANSI codes for file output
                     let plain_message = strip_ansi_codes(message);
-                    let _ = writeln!(file, "{}", plain_message);
+                    let _ = writeln!(file, "{plain_message}");
                 }
                 let _ = file.flush();
             } else {
                 for message in buffer.iter() {
-                    eprintln!("{}", message);
+                    eprintln!("{message}");
                 }
             }
         } else {
             // If lock fails, fall back to stderr
             for message in buffer.iter() {
-                eprintln!("{}", message);
+                eprintln!("{message}");
             }
         }
         buffer.clear();
@@ -268,26 +244,6 @@ fn strip_ansi_codes(s: &str) -> String {
     }
 
     result
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{LogSink, choose_sink};
-
-    #[test]
-    fn a_configured_file_bypasses_buffering_so_lines_are_not_duplicated() {
-        // With a file configured, the line goes straight to the file whether or
-        // not buffering is on, so it is never also queued for a flush that would
-        // write it a second time.
-        assert_eq!(choose_sink(true, true), LogSink::File);
-        assert_eq!(choose_sink(false, true), LogSink::File);
-    }
-
-    #[test]
-    fn without_a_file_buffering_routes_to_the_buffer_else_stderr() {
-        assert_eq!(choose_sink(true, false), LogSink::Buffer);
-        assert_eq!(choose_sink(false, false), LogSink::Stderr);
-    }
 }
 
 #[macro_export]
@@ -323,4 +279,24 @@ macro_rules! trace {
     ($($arg:tt)*) => {
         $crate::utils::logger::log($crate::utils::logger::LogLevel::Trace, &format!($($arg)*))
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LogSink, choose_sink};
+
+    #[test]
+    fn a_configured_file_bypasses_buffering_so_lines_are_not_duplicated() {
+        // With a file configured, the line goes straight to the file whether or
+        // not buffering is on, so it is never also queued for a flush that would
+        // write it a second time.
+        assert_eq!(choose_sink(true, true), LogSink::File);
+        assert_eq!(choose_sink(false, true), LogSink::File);
+    }
+
+    #[test]
+    fn without_a_file_buffering_routes_to_the_buffer_else_stderr() {
+        assert_eq!(choose_sink(true, false), LogSink::Buffer);
+        assert_eq!(choose_sink(false, false), LogSink::Stderr);
+    }
 }

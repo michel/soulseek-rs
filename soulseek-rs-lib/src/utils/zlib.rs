@@ -8,7 +8,7 @@ struct BitReader {
 }
 
 impl BitReader {
-    fn new(mem: Vec<u8>) -> Self {
+    const fn new(mem: Vec<u8>) -> Self {
         Self {
             mem,
             pos: 0,
@@ -42,7 +42,7 @@ impl BitReader {
     fn read_bits(&mut self, n: usize) -> std::result::Result<u32, String> {
         let mut o = 0u32;
         for i in 0..n {
-            o |= (self.read_bit()? as u32) << i;
+            o |= u32::from(self.read_bit()?) << i;
         }
         Ok(o)
     }
@@ -51,7 +51,7 @@ impl BitReader {
         // read bytes as an integer in little-endian
         let mut o = 0u32;
         for i in 0..n {
-            o |= (self.read_byte()? as u32) << (8 * i);
+            o |= u32::from(self.read_byte()?) << (8 * i);
         }
         Ok(o)
     }
@@ -72,7 +72,7 @@ pub fn deflate(input: &[u8]) -> Result<Vec<u8>> {
         return Err(SoulseekRs::CompressionError("invalid CINFO".to_string()));
     }
     let flg = r.read_byte()?;
-    if !((cmf as u32) * 256 + (flg as u32)).is_multiple_of(31) {
+    if !(u32::from(cmf) * 256 + u32::from(flg)).is_multiple_of(31) {
         return Err(SoulseekRs::CompressionError(
             "CMF+FLG checksum failed".to_string(),
         ));
@@ -119,12 +119,12 @@ fn inflate_block_no_compression(
 #[derive(Clone)]
 struct Node {
     symbol: Option<u32>,
-    left: Option<Box<Node>>,
-    right: Option<Box<Node>>,
+    left: Option<Box<Self>>,
+    right: Option<Box<Self>>,
 }
 
 impl Node {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             symbol: None,
             left: None,
@@ -138,7 +138,7 @@ struct HuffmanTree {
 }
 
 impl HuffmanTree {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self { root: Node::new() }
     }
 
@@ -175,9 +175,9 @@ fn decode_symbol(
         // at a missing child; error out instead of unwrap-panicking.
         node = next
             .as_ref()
-            .ok_or("Invalid Huffman code".to_string())?;
+            .ok_or_else(|| "Invalid Huffman code".to_string())?;
     }
-    node.symbol.ok_or("No symbol found".to_string())
+    node.symbol.ok_or_else(|| "No symbol found".to_string())
 }
 
 const LENGTH_EXTRA_BITS: [usize; 29] = [
@@ -397,7 +397,7 @@ mod tests {
 
     #[test]
     fn test_extract_header_success() {
-        let _data = [120, 156]; // Valid zlib header
+        // [120, 156] is a valid zlib header
         let result = deflate(&[120, 156, 3, 0, 0, 0, 0, 1]); // Minimal valid zlib stream
         assert!(result.is_ok());
     }

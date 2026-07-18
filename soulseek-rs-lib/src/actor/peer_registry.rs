@@ -18,6 +18,7 @@ pub struct PeerRegistry {
 }
 
 impl PeerRegistry {
+    #[must_use]
     pub fn new(
         actor_system: Arc<ActorSystem>,
         client_channel: Sender<ClientOperation>,
@@ -48,7 +49,7 @@ impl PeerRegistry {
         let mut peers = self
             .peers
             .lock_safe()
-            .map_err(|e| format!("peer registry lock poisoned: {}", e))?;
+            .map_err(|e| format!("peer registry lock poisoned: {e}"))?;
         // Stop any actor already registered under this username so it does not
         // become an orphan pinning a pool worker forever (and so its later
         // shutdown cannot remove this new connection from the registry).
@@ -64,6 +65,7 @@ impl PeerRegistry {
         Ok(handle)
     }
 
+    #[must_use]
     pub fn get_peer(&self, username: &str) -> Option<ActorHandle<PeerMessage>> {
         match self.peers.lock_safe() {
             Ok(peers) => peers.get(username).cloned(),
@@ -74,6 +76,7 @@ impl PeerRegistry {
         }
     }
 
+    #[must_use]
     pub fn remove_peer(
         &self,
         username: &str,
@@ -94,6 +97,7 @@ impl PeerRegistry {
         handle
     }
 
+    #[must_use]
     pub fn get_all_usernames(&self) -> Vec<String> {
         match self.peers.lock_safe() {
             Ok(peers) => peers.keys().cloned().collect(),
@@ -104,6 +108,7 @@ impl PeerRegistry {
         }
     }
 
+    #[must_use]
     pub fn count(&self) -> usize {
         match self.peers.lock_safe() {
             Ok(peers) => peers.len(),
@@ -114,6 +119,7 @@ impl PeerRegistry {
         }
     }
 
+    #[must_use]
     pub fn contains(&self, username: &str) -> bool {
         match self.peers.lock_safe() {
             Ok(peers) => peers.contains_key(username),
@@ -129,9 +135,9 @@ impl PeerRegistry {
         username: &str,
         message: PeerMessage,
     ) -> Result<(), String> {
-        let handle = self.get_peer(username).ok_or_else(|| {
-            format!("Peer {} not found in registry", username)
-        })?;
+        let handle = self
+            .get_peer(username)
+            .ok_or_else(|| format!("Peer {username} not found in registry"))?;
 
         handle.send(message)
     }

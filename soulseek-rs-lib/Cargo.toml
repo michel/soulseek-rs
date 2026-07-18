@@ -13,4 +13,7 @@ categories = ["network-programming"]
 name = "soulseek_rs"
 path = "src/lib.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
