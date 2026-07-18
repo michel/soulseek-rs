@@ -170,11 +170,12 @@ fn decode_symbol(
     let mut node = &t.root;
     while node.left.is_some() || node.right.is_some() {
         let b = r.read_bit()?;
-        node = if b != 0 {
-            node.right.as_ref().unwrap()
-        } else {
-            node.left.as_ref().unwrap()
-        };
+        let next = if b != 0 { &node.right } else { &node.left };
+        // A degenerate/incomplete Huffman code (attacker-controlled) can point
+        // at a missing child; error out instead of unwrap-panicking.
+        node = next
+            .as_ref()
+            .ok_or("Invalid Huffman code".to_string())?;
     }
     node.symbol.ok_or("No symbol found".to_string())
 }
@@ -363,6 +364,18 @@ fn inflate_block_fixed(
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn decode_symbol_on_degenerate_tree_errors_instead_of_panicking() {
+        // A malformed Huffman table from an untrusted peer can produce a node
+        // with only one child. Inserting codeword "0" gives the root a left
+        // child but no right child; decoding a '1' bit must error rather than
+        // unwrap-panic.
+        let mut tree = HuffmanTree::new();
+        tree.insert(0, 1, 42);
+        let mut reader = BitReader::new(vec![0b0000_0001]); // first bit = 1
+        assert!(decode_symbol(&mut reader, &tree).is_err());
+    }
 
     #[test]
     fn test_bitreader_read_bits() {
