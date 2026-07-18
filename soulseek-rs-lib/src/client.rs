@@ -722,22 +722,30 @@ impl Client {
                                 username,
                                 error,
                             ) => {
-                                let context = match client_context.read_safe() {
-                                    Ok(c) => c,
-                                    Err(e) => {
-                                        error!(
-                                            "[client] PeerDisconnected read: {}",
-                                            e
-                                        );
-                                        continue;
-                                    }
-                                };
-                                if let Some(ref registry) =
-                                    context.peer_registry
-                                    && let Some(handle) =
-                                        registry.remove_peer(&username)
+                                // Scope the read guard: process_failed_uploads
+                                // below acquires a write lock on the same
+                                // RwLock, which would self-deadlock the entire
+                                // client ops loop if this read guard were still
+                                // held on this thread.
                                 {
-                                    let _ = handle.stop();
+                                    let context =
+                                        match client_context.read_safe() {
+                                            Ok(c) => c,
+                                            Err(e) => {
+                                                error!(
+                                                    "[client] PeerDisconnected read: {}",
+                                                    e
+                                                );
+                                                continue;
+                                            }
+                                        };
+                                    if let Some(ref registry) =
+                                        context.peer_registry
+                                        && let Some(handle) =
+                                            registry.remove_peer(&username)
+                                    {
+                                        let _ = handle.stop();
+                                    }
                                 }
                                 if let Some(error) = error {
                                     warn!(
