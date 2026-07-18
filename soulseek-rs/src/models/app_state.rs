@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, mpsc::Receiver, mpsc::Sender};
 use std::time::Instant;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SearchStatus {
     Active,
     Completed,
@@ -25,7 +25,7 @@ pub struct DownloadEntry {
     pub receiver: Option<Receiver<DownloadStatus>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusedPane {
     Searches,
     Results,

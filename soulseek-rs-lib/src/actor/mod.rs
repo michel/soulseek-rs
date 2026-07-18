@@ -41,14 +41,14 @@ impl<M: Send> ActorHandle<M> {
     pub fn send(&self, msg: M) -> Result<(), String> {
         self.sender
             .send(ActorMessage::UserMessage(msg))
-            .map_err(|e| format!("Failed to send message: {}", e))
+            .map_err(|e| format!("Failed to send message: {e}"))
     }
 
     /// Request actor to stop gracefully
     pub fn stop(&self) -> Result<(), String> {
         self.sender
             .send(ActorMessage::Stop)
-            .map_err(|e| format!("Failed to send stop signal: {}", e))
+            .map_err(|e| format!("Failed to send stop signal: {e}"))
     }
 }
 
@@ -64,16 +64,15 @@ pub struct ActorSystem {
 }
 
 impl ActorSystem {
-    pub fn new(thread_pool: Arc<ThreadPool>) -> Self {
-        ActorSystem { thread_pool }
+    #[must_use]
+    pub const fn new(thread_pool: Arc<ThreadPool>) -> Self {
+        Self { thread_pool }
     }
 
     /// Spawn a new actor and return its handle
     pub fn spawn<A: Actor>(&self, mut actor: A) -> ActorHandle<A::Message> {
         let (sender, receiver) = channel::<ActorMessage<A::Message>>();
-        let handle = ActorHandle {
-            sender: sender.clone(),
-        };
+        let handle = ActorHandle { sender };
 
         // Start the actor event loop on the thread pool
         self.thread_pool.execute(move || {
@@ -86,7 +85,7 @@ impl ActorSystem {
     }
 
     /// Spawn a new actor with initialization callback and return its handle
-    /// The callback receives the actor handle before on_start is called
+    /// The callback receives the actor handle before `on_start` is called
     pub fn spawn_with_handle<A: Actor, F>(
         &self,
         mut actor: A,
@@ -96,9 +95,7 @@ impl ActorSystem {
         F: FnOnce(&mut A, ActorHandle<A::Message>) + Send + 'static,
     {
         let (sender, receiver) = channel::<ActorMessage<A::Message>>();
-        let handle = ActorHandle {
-            sender: sender.clone(),
-        };
+        let handle = ActorHandle { sender };
         let handle_for_init = handle.clone();
 
         self.thread_pool.execute(move || {

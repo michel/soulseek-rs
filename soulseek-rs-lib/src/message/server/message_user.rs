@@ -20,12 +20,12 @@ impl MessageHandler<ServerMessage> for MessageUser {
         let user_message = UserMessage::new(
             id,
             timestamp,
-            username.clone(),
+            username,
             message_content,
             new_message,
         );
 
         info!("[MessageUser] User message received:{:?}", user_message);
-        user_message.print()
+        user_message.print();
     }
 }

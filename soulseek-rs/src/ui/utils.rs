@@ -39,6 +39,6 @@ pub fn get_bitrate(
 const SPINNER_CHARS: [&str; 10] =
     ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-pub fn get_spinner_char(state: usize) -> &'static str {
+pub const fn get_spinner_char(state: usize) -> &'static str {
     SPINNER_CHARS[state % SPINNER_CHARS.len()]
 }

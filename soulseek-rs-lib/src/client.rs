@@ -114,6 +114,7 @@ impl ClientContext {
     pub fn remove_download(&mut self, token: u32) {
         self.downloads.remove(token);
     }
+    #[must_use]
     pub fn get_download_by_token(&self, token: u32) -> Option<&Download> {
         self.downloads.get_by_token(token)
     }
@@ -130,10 +131,12 @@ impl ClientContext {
     ) -> Option<&mut Download> {
         self.downloads.get_by_file_mut(username, filename)
     }
+    #[must_use]
     pub fn get_download_tokens(&self) -> Vec<u32> {
         self.downloads.tokens()
     }
-    pub fn get_downloads(&self) -> &Vec<Download> {
+    #[must_use]
+    pub const fn get_downloads(&self) -> &Vec<Download> {
         self.downloads.list()
     }
     pub fn update_download_with_status(
@@ -165,7 +168,7 @@ fn test_client_context_downloads() {
         status: DownloadStatus::Queued,
         sender: mpsc::channel().0,
         queue_position: None,
-        metadata: Default::default(),
+        metadata: DownloadMetadata::default(),
     };
     context.add_download(download);
     assert!(context.get_download_by_token(123).is_some());
@@ -173,7 +176,7 @@ fn test_client_context_downloads() {
     assert_eq!(context.get_downloads().len(), 1);
     if let Some(download) = context.get_download_by_token_mut(token) {
         assert_eq!(download.token, token);
-        download.token = new_token
+        download.token = new_token;
     }
     assert!(context.get_download_by_token(new_token).is_some());
     assert_eq!(context.get_download_tokens(), vec![new_token]);
@@ -199,7 +202,7 @@ fn test_client_pause_and_resume_download() {
         },
         sender: download_sender,
         queue_position: None,
-        metadata: Default::default(),
+        metadata: DownloadMetadata::default(),
     };
 
     client.context.write().unwrap().add_download(download);
@@ -255,7 +258,7 @@ fn test_client_removes_only_queued_downloads() {
         status: DownloadStatus::Queued,
         sender: mpsc::channel().0,
         queue_position: None,
-        metadata: Default::default(),
+        metadata: DownloadMetadata::default(),
     };
     let active_download = Download {
         username: "peer".to_string(),
@@ -270,7 +273,7 @@ fn test_client_removes_only_queued_downloads() {
         },
         sender: mpsc::channel().0,
         queue_position: None,
-        metadata: Default::default(),
+        metadata: DownloadMetadata::default(),
     };
 
     {
@@ -289,12 +292,11 @@ fn test_client_removes_only_queued_downloads() {
 impl ClientContext {
     #[must_use]
     pub fn new() -> Self {
-        let max_threads = thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(8);
+        let max_threads =
+            thread::available_parallelism().map_or(8, std::num::NonZero::get);
 
         let thread_pool = Arc::new(ThreadPool::new(max_threads));
-        let actor_system = Arc::new(ActorSystem::new(thread_pool.clone()));
+        let actor_system = Arc::new(ActorSystem::new(thread_pool));
 
         Self {
             peer_registry: None,
@@ -324,6 +326,7 @@ impl Client {
         Self::with_settings(ClientSettings::new(username, password))
     }
 
+    #[must_use]
     pub fn with_settings(settings: ClientSettings) -> Self {
         logger::init();
         Self {
@@ -483,6 +486,7 @@ impl Client {
         Ok(self.get_search_results(query))
     }
 
+    #[must_use]
     pub fn get_search_results_count(&self, search_key: &str) -> usize {
         self.context
             .read_safe()
@@ -493,6 +497,7 @@ impl Client {
             .unwrap_or(0)
     }
 
+    #[must_use]
     pub fn get_search_results(&self, search_key: &str) -> Vec<SearchResult> {
         self.context
             .read_safe()
@@ -504,6 +509,7 @@ impl Client {
     }
 
     /// Non-blocking variant that returns None if the lock is unavailable
+    #[must_use]
     pub fn try_get_search_results(
         &self,
         search_key: &str,
@@ -513,6 +519,7 @@ impl Client {
         })
     }
 
+    #[must_use]
     pub fn get_all_searches(&self) -> HashMap<String, Search> {
         self.context
             .read_safe()
@@ -520,6 +527,7 @@ impl Client {
             .unwrap_or_default()
     }
 
+    #[must_use]
     pub fn get_all_downloads(&self) -> Vec<Download> {
         self.context
             .read_safe()
@@ -527,6 +535,7 @@ impl Client {
             .unwrap_or_default()
     }
 
+    #[must_use]
     pub fn pause_download(&self, username: &str, filename: &str) -> bool {
         match self.context.write_safe() {
             Ok(mut ctx) => ctx.downloads.pause_by_file(username, filename),
@@ -537,6 +546,7 @@ impl Client {
         }
     }
 
+    #[must_use]
     pub fn resume_download(&self, username: &str, filename: &str) -> bool {
         match self.context.write_safe() {
             Ok(mut ctx) => ctx.downloads.resume_by_file(username, filename),
@@ -547,6 +557,7 @@ impl Client {
         }
     }
 
+    #[must_use]
     pub fn remove_queued_download(
         &self,
         username: &str,
@@ -599,7 +610,7 @@ impl Client {
 
         let download = Download {
             username: username.clone(),
-            filename: filename.clone(),
+            filename,
             token,
             size,
             download_directory,
@@ -728,17 +739,18 @@ impl Client {
                                 // client ops loop if this read guard were still
                                 // held on this thread.
                                 {
-                                    let context =
-                                        match client_context.read_safe() {
-                                            Ok(c) => c,
-                                            Err(e) => {
-                                                error!(
-                                                    "[client] PeerDisconnected read: {}",
-                                                    e
-                                                );
-                                                continue;
-                                            }
-                                        };
+                                    let context = match client_context
+                                        .read_safe()
+                                    {
+                                        Ok(c) => c,
+                                        Err(e) => {
+                                            error!(
+                                                "[client] PeerDisconnected read: {}",
+                                                e
+                                            );
+                                            continue;
+                                        }
+                                    };
                                     if let Some(ref registry) =
                                         context.peer_registry
                                         && let Some(handle) =
@@ -864,17 +876,17 @@ impl Client {
                                             token
                                         );
                                     }
-                                };
+                                }
                             }
                             ClientOperation::NewPeer(new_peer) => {
                                 let peer_exists = match client_context
                                     .read_safe()
                                 {
-                                    Ok(ctx) => ctx
-                                        .peer_registry
-                                        .as_ref()
-                                        .map(|r| r.contains(&new_peer.username))
-                                        .unwrap_or(false),
+                                    Ok(ctx) => {
+                                        ctx.peer_registry.as_ref().is_some_and(
+                                            |r| r.contains(&new_peer.username),
+                                        )
+                                    }
                                     Err(e) => {
                                         error!("[client] NewPeer read: {}", e);
                                         continue;
@@ -965,8 +977,7 @@ impl Client {
                                     Ok(ctx) => ctx
                                         .peer_registry
                                         .as_ref()
-                                        .map(|r| r.contains(&username))
-                                        .unwrap_or(false),
+                                        .is_some_and(|r| r.contains(&username)),
                                     Err(e) => {
                                         error!(
                                             "[client] GetPeerAddressResponse read: {}",
@@ -1121,7 +1132,7 @@ impl Client {
         own_username: String,
         stream: Option<TcpStream>,
     ) {
-        let client_context = client_context.clone();
+        let client_context = client_context;
 
         let peer_clone = peer.clone();
         trace!(
@@ -1130,7 +1141,7 @@ impl Client {
         );
         match peer.connection_type {
             ConnectionType::P => {
-                let username = peer.username.clone();
+                let username = peer.username;
 
                 let context = match client_context.read_safe() {
                     Ok(c) => c,
@@ -1165,7 +1176,7 @@ impl Client {
                     peer.port,
                     peer.token.unwrap(),
                     false,
-                    own_username.clone(),
+                    own_username,
                 );
 
                 match download_peer.download_file(
@@ -1196,7 +1207,7 @@ impl Client {
                 }
             }
             ConnectionType::D => {
-                error!("ConnectionType::D not implemented")
+                error!("ConnectionType::D not implemented");
             }
         }
     }
@@ -1217,9 +1228,9 @@ impl Client {
         if let Some(server_sender) = &context.server_sender {
             if let Some(token) = peer.token {
                 match server_sender.send(ServerMessage::PierceFirewall(token)) {
-                    Ok(_) => (),
+                    Ok(()) => (),
                     Err(e) => {
-                        error!("Failed to send PierceFirewall message: {}", e)
+                        error!("Failed to send PierceFirewall message: {}", e);
                     }
                 }
             } else {

@@ -34,15 +34,18 @@ pub struct PeerAddress {
 }
 
 impl PeerAddress {
-    pub fn new(host: String, port: u16) -> Self {
+    #[must_use]
+    pub const fn new(host: String, port: u16) -> Self {
         Self { host, port }
     }
 
+    #[must_use]
     pub fn get_host(&self) -> &str {
         &self.host
     }
 
-    pub fn get_port(&self) -> u16 {
+    #[must_use]
+    pub const fn get_port(&self) -> u16 {
         self.port
     }
 }
@@ -59,6 +62,7 @@ pub struct Context {
 }
 
 impl Context {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -72,7 +76,8 @@ pub struct UserMessage {
     new_message: bool,
 }
 impl UserMessage {
-    pub fn new(
+    #[must_use]
+    pub const fn new(
         id: u32,
         timestamp: u32,
         username: String,
@@ -143,6 +148,7 @@ pub struct ServerActor {
 }
 
 impl ServerActor {
+    #[must_use]
     pub fn new(
         address: PeerAddress,
         client_channel: Sender<ClientOperation>,
@@ -166,11 +172,13 @@ impl ServerActor {
         }
     }
 
-    pub fn get_address(&self) -> &PeerAddress {
+    #[must_use]
+    pub const fn get_address(&self) -> &PeerAddress {
         &self.address
     }
 
-    pub fn get_sender(&self) -> Option<&Sender<ServerMessage>> {
+    #[must_use]
+    pub const fn get_sender(&self) -> Option<&Sender<ServerMessage>> {
         self.dispatcher_sender.as_ref()
     }
 
@@ -178,7 +186,7 @@ impl ServerActor {
         let host = self.address.host.clone();
         let port = self.address.port;
 
-        let addr_str = format!("{}:{}", host, port);
+        let addr_str = format!("{host}:{port}");
 
         let mut socket_addrs = match addr_str.to_socket_addrs() {
             Ok(addrs) => addrs,
@@ -197,7 +205,7 @@ impl ServerActor {
 
         let Some(addr) = socket_addr else {
             let error_msg =
-                format!("No socket addresses found for {}:{}", host, port);
+                format!("No socket addresses found for {host}:{port}");
             error!("[server] {}", error_msg);
             self.disconnect_with_error(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -280,9 +288,9 @@ impl ServerActor {
                 msgs
             });
 
-        messages
-            .iter()
-            .for_each(|msg| self.handle_message(msg.clone()));
+        for msg in &messages {
+            self.handle_message(msg.clone());
+        }
     }
 
     pub fn login(
@@ -305,7 +313,7 @@ impl ServerActor {
             }
 
             {
-                logged_in = context.read_safe()?.logged_in
+                logged_in = context.read_safe()?.logged_in;
             }
 
             if logged_in.is_some() {
@@ -341,15 +349,12 @@ impl ServerActor {
 
     fn handle_message(&mut self, msg: ServerMessage) {
         if !matches!(self.connection_state, ConnectionState::Connected) {
-            match &msg {
-                ServerMessage::ProcessRead => {
-                    // Always process read operations
-                }
-                _ => {
-                    // Queue all other messages when not connected
-                    self.queued_messages.push(msg);
-                    return;
-                }
+            if matches!(&msg, ServerMessage::ProcessRead) {
+                // Always process read operations
+            } else {
+                // Queue all other messages when not connected
+                self.queued_messages.push(msg);
+                return;
             }
         }
 
@@ -357,7 +362,7 @@ impl ServerActor {
             ServerMessage::ConnectToPeer(peer) => {
                 if let Some(op) = match peer.connection_type {
                     ConnectionType::P | ConnectionType::F => {
-                        Some(ClientOperation::ConnectToPeer(peer.clone()))
+                        Some(ClientOperation::ConnectToPeer(peer))
                     }
                     ConnectionType::D => None,
                 } && let Err(e) = self.client_channel.send(op)
@@ -369,7 +374,7 @@ impl ServerActor {
                 match self.context.write_safe() {
                     Ok(mut ctx) => ctx.logged_in = Some(message),
                     Err(e) => {
-                        error!("[server] LoginStatus write: {}", e)
+                        error!("[server] LoginStatus write: {}", e);
                     }
                 }
             }
@@ -469,9 +474,8 @@ impl ServerActor {
         }
 
         {
-            let stream = match self.stream.as_mut() {
-                Some(s) => s,
-                None => return,
+            let Some(stream) = self.stream.as_mut() else {
+                return;
             };
 
             match self.reader.read_from_socket(stream) {
@@ -506,7 +510,7 @@ impl ServerActor {
                         message
                             .get_message_name(
                                 MessageType::Server,
-                                message.get_message_code() as u32
+                                u32::from(message.get_message_code())
                             )
                             .map_err(|e| e.to_string())
                     );
@@ -536,7 +540,7 @@ impl ServerActor {
     fn queue_message(&mut self, message: Message) {
         if let Some(sender) = &self.dispatcher_sender {
             match sender.send(ServerMessage::SendMessage(message)) {
-                Ok(_) => {}
+                Ok(()) => {}
                 Err(e) => error!("Failed to send: {}", e),
             }
         } else {
@@ -546,12 +550,9 @@ impl ServerActor {
     }
 
     fn send_message(&mut self, message: Message) {
-        let stream = match self.stream.as_mut() {
-            Some(s) => s,
-            None => {
-                error!("[server] Cannot send message: stream is None");
-                return;
-            }
+        let Some(stream) = self.stream.as_mut() else {
+            error!("[server] Cannot send message: stream is None");
+            return;
         };
 
         trace!(

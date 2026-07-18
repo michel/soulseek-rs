@@ -6,6 +6,7 @@ pub struct DownloadStore {
 }
 
 impl DownloadStore {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -18,6 +19,7 @@ impl DownloadStore {
         self.downloads.retain(|d| d.token != token);
     }
 
+    #[must_use]
     pub fn get_by_token(&self, token: u32) -> Option<&Download> {
         self.downloads.iter().find(|d| d.token == token)
     }
@@ -36,11 +38,13 @@ impl DownloadStore {
             .find(|d| d.username == username && d.filename == filename)
     }
 
+    #[must_use]
     pub fn tokens(&self) -> Vec<u32> {
         self.downloads.iter().map(|d| d.token).collect()
     }
 
-    pub fn list(&self) -> &Vec<Download> {
+    #[must_use]
+    pub const fn list(&self) -> &Vec<Download> {
         &self.downloads
     }
 
@@ -128,9 +132,11 @@ impl DownloadStore {
 }
 
 /// Returns the tokens of downloads matching `username` (and optionally a
-/// `filename`) after notifying their senders of `Failed`. Caller is
-/// responsible for then calling `update_status` and `remove` for each token,
-/// typically under a write lock.
+/// `filename`) after notifying their senders of `Failed`.
+///
+/// Caller is responsible for then calling `update_status` and `remove` for
+/// each token, typically under a write lock.
+#[must_use]
 pub fn collect_failed_tokens(
     store: &DownloadStore,
     username: &str,
@@ -152,19 +158,20 @@ pub fn collect_failed_tokens(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::DownloadMetadata;
     use std::sync::mpsc;
 
     fn make_download(token: u32, status: DownloadStatus) -> Download {
         Download {
             username: "peer".to_string(),
-            filename: format!("file-{}.mp3", token),
+            filename: format!("file-{token}.mp3"),
             token,
             size: 100,
             download_directory: "test".to_string(),
             status,
             sender: mpsc::channel().0,
             queue_position: None,
-            metadata: Default::default(),
+            metadata: DownloadMetadata::default(),
         }
     }
 

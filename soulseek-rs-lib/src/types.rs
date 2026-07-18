@@ -109,7 +109,8 @@ pub struct Download {
 }
 
 impl Download {
-    pub fn is_finished(&self) -> bool {
+    #[must_use]
+    pub const fn is_finished(&self) -> bool {
         matches!(
             self.status,
             DownloadStatus::Completed
@@ -118,7 +119,8 @@ impl Download {
         )
     }
 
-    pub fn bytes_downloaded(&self) -> u64 {
+    #[must_use]
+    pub const fn bytes_downloaded(&self) -> u64 {
         match &self.status {
             DownloadStatus::InProgress {
                 bytes_downloaded, ..
@@ -131,7 +133,8 @@ impl Download {
         }
     }
 
-    pub fn speed_bytes_per_sec(&self) -> f64 {
+    #[must_use]
+    pub const fn speed_bytes_per_sec(&self) -> f64 {
         match &self.status {
             DownloadStatus::InProgress {
                 speed_bytes_per_sec,

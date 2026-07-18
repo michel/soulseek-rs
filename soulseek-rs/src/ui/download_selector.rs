@@ -255,7 +255,10 @@ impl FileSelector {
     }
 
     /// Previous index with wrap-around, or None when the list is empty.
-    fn wrapping_prev(selected: Option<usize>, len: usize) -> Option<usize> {
+    const fn wrapping_prev(
+        selected: Option<usize>,
+        len: usize,
+    ) -> Option<usize> {
         if len == 0 {
             return None;
         }
@@ -266,7 +269,10 @@ impl FileSelector {
     }
 
     /// Next index with wrap-around, or None when the list is empty.
-    fn wrapping_next(selected: Option<usize>, len: usize) -> Option<usize> {
+    const fn wrapping_next(
+        selected: Option<usize>,
+        len: usize,
+    ) -> Option<usize> {
         if len == 0 {
             return None;
         }
@@ -276,12 +282,12 @@ impl FileSelector {
         })
     }
 
-    fn select_previous(&mut self) {
+    const fn select_previous(&mut self) {
         let i = Self::wrapping_prev(self.state.selected(), self.items.len());
         self.state.select(i);
     }
 
-    fn select_next(&mut self) {
+    const fn select_next(&mut self) {
         let i = Self::wrapping_next(self.state.selected(), self.items.len());
         self.state.select(i);
     }
@@ -290,7 +296,7 @@ impl FileSelector {
         self.state.select((!self.items.is_empty()).then_some(0));
     }
 
-    fn select_last(&mut self) {
+    const fn select_last(&mut self) {
         self.state.select(self.items.len().checked_sub(1));
     }
 
@@ -395,9 +401,9 @@ impl FileSelector {
                 let is_selected = self.selected_indices.contains(&original_idx);
                 let checkbox = if is_selected { "[✓]" } else { "[ ]" };
 
-                let speed_mb = item.speed as f64 / BYTES_PER_MB;
+                let speed_mb = f64::from(item.speed) / BYTES_PER_MB;
                 let speed_str = if speed_mb > 0.0 {
-                    format!("{:.1} MB/s", speed_mb)
+                    format!("{speed_mb:.1} MB/s")
                 } else {
                     "-".to_string()
                 };
@@ -405,7 +411,7 @@ impl FileSelector {
                 let slots_str = format!("{}", item.slots);
 
                 let bitrate_str = match item.bitrate {
-                    Some(br) => format!("{} kbps", br),
+                    Some(br) => format!("{br} kbps"),
                     None => "-".to_string(),
                 };
 
@@ -474,7 +480,7 @@ impl FileSelector {
                         self.search_start_time.elapsed().as_secs(),
                         self.search_timeout.as_secs()
                     )),
-                ])
+                ]);
             } else {
                 loading_message.extend(vec![
                     Span::raw(spinner),
@@ -482,7 +488,7 @@ impl FileSelector {
                     Span::styled(self.soulseek_query.clone(), primary_style()),
                     Span::raw("'; No results yet"),
                 ]);
-            };
+            }
 
             // Center the loading message
             let vertical = Layout::vertical([

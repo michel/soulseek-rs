@@ -18,6 +18,7 @@ impl<Op> Default for Handlers<Op> {
 }
 
 impl<Op> Handlers<Op> {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             handlers: HashMap::new(),
@@ -31,6 +32,7 @@ impl<Op> Handlers<Op> {
         self.handlers.insert(handler.get_code(), Box::new(handler));
         self
     }
+    #[must_use]
     pub fn get_handler(
         &self,
         code: u8,

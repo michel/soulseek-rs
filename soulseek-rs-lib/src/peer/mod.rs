@@ -60,9 +60,9 @@ impl FromStr for ConnectionType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "P" => Ok(ConnectionType::P),
-            "F" => Ok(ConnectionType::F),
-            "D" => Ok(ConnectionType::D),
+            "P" => Ok(Self::P),
+            "F" => Ok(Self::F),
+            "D" => Ok(Self::D),
             _ => Err(ParseConnectionTypeError),
         }
     }
@@ -71,11 +71,11 @@ impl FromStr for ConnectionType {
 impl fmt::Display for ConnectionType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let s = match self {
-            ConnectionType::P => "P",
-            ConnectionType::F => "F",
-            ConnectionType::D => "D",
+            Self::P => "P",
+            Self::F => "F",
+            Self::D => "D",
         };
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 
@@ -93,7 +93,8 @@ pub struct Peer {
 }
 impl Peer {
     #[allow(clippy::too_many_arguments, dead_code)]
-    pub fn new(
+    #[must_use]
+    pub const fn new(
         username: String,
         connection_type: ConnectionType,
         host: String,

@@ -8,3 +8,42 @@ authors = ["Michel de Graaf"]
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/michel/soulseek-rs"
+
+[workspace.lints.rust]
+unused_lifetimes = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+
+# Lints are cranked to the maximum practical level: the full clippy `all`,
+# `pedantic`, and `nursery` groups are enabled as warnings. The allow-list below
+# opts out of the pedantic/nursery lints that this project intentionally does
+# not follow (documentation-style requirements, deliberate numeric casts in the
+# protocol/UI layers, and a few noisy nursery lints), so that `cargo clippy`
+# stays clean without churning code for no real benefit.
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+# Documentation-style pedantic lints — not tracked in rustdoc for this project.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+doc_markdown = "allow"
+# Numeric casts in the protocol framing and TUI layout are intentional and
+# reviewed (the one real width-truncation bug was fixed separately).
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+# Message/handler APIs take ownership by design.
+needless_pass_by_value = "allow"
+# Long event loops and protocol parsers are clearer kept whole.
+too_many_lines = "allow"
+# Protocol test fixtures are raw byte/number arrays.
+unreadable_literal = "allow"
+# Nursery lint that fights RAII lock guards with frequent false positives.
+significant_drop_tightening = "allow"
+# Subjective nursery lint: the suggested map_or/map_or_else rewrites read worse
+# than the explicit if let/match they replace.
+option_if_let_else = "allow"
+# The MD5 round functions use the conventional a/b/c/d register names from the
+# RFC 1321 reference implementation.
+many_single_char_names = "allow"

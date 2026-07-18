@@ -9,9 +9,9 @@ impl MessageHandler<PeerMessage> for FileSearchResponse {
         9
     }
     fn handle(&self, message: &mut Message, sender: Sender<PeerMessage>) {
-        let file_search = match SearchResult::new_from_message(message) {
-            Ok(result) => result,
-            Err(_) => return, // Skip malformed search results
+        // Skip malformed search results
+        let Ok(file_search) = SearchResult::new_from_message(message) else {
+            return;
         };
 
         sender
