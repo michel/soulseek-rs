@@ -31,6 +31,7 @@ pub enum DownloadError {
     PathResolutionError(String),
     InvalidTokenBytes,
     LockPoisoned,
+    IncompleteDownload { received: usize, expected: usize },
 }
 
 impl std::fmt::Display for DownloadError {
@@ -57,6 +58,10 @@ impl std::fmt::Display for DownloadError {
                 write!(f, "Invalid token bytes received")
             }
             Self::LockPoisoned => write!(f, "Lock poisoned"),
+            Self::IncompleteDownload { received, expected } => write!(
+                f,
+                "Incomplete download: received {received} of {expected} bytes"
+            ),
         }
     }
 }
@@ -361,7 +366,12 @@ impl DownloadPeer {
         let download =
             download.ok_or(DownloadError::DownloadInfoMissing(self.token))?;
 
-        Ok((processor.buffer, download))
+        let buffer = Self::finalize_download_buffer(
+            processor.buffer,
+            download.size as usize,
+        )?;
+
+        Ok((buffer, download))
     }
 
     fn send_download_status(
@@ -432,6 +442,25 @@ impl DownloadPeer {
             .map(String::from)
     }
 
+    /// Validate and normalize a fully-read download buffer against the size the
+    /// peer promised in the transfer request. A peer that closes the connection
+    /// early yields fewer bytes than expected — that must be reported as a
+    /// failure, not silently saved as a truncated "completed" file. A peer that
+    /// sends trailing bytes past the expected size has them trimmed off.
+    fn finalize_download_buffer(
+        mut buffer: Vec<u8>,
+        expected_size: usize,
+    ) -> Result<Vec<u8>, DownloadError> {
+        if buffer.len() < expected_size {
+            return Err(DownloadError::IncompleteDownload {
+                received: buffer.len(),
+                expected: expected_size,
+            });
+        }
+        buffer.truncate(expected_size);
+        Ok(buffer)
+    }
+
     fn save_downloaded_file(
         &self,
         path: &str,
@@ -498,7 +527,36 @@ impl DownloadPeer {
 
 #[cfg(test)]
 mod tests {
-    use super::{DownloadPeer, FileManager};
+    use super::{DownloadError, DownloadPeer, FileManager};
+
+    #[test]
+    fn finalize_rejects_truncated_download() {
+        // Peer closed early: 5 of 10 promised bytes. Must be a failure so the
+        // partial file is never reported as Completed.
+        let result = DownloadPeer::finalize_download_buffer(vec![1, 2, 3, 4, 5], 10);
+        assert!(matches!(
+            result,
+            Err(DownloadError::IncompleteDownload {
+                received: 5,
+                expected: 10
+            })
+        ));
+    }
+
+    #[test]
+    fn finalize_trims_overshoot_to_expected_size() {
+        // Peer sent 12 bytes for a 10-byte file (trailing bytes coalesced in).
+        let result =
+            DownloadPeer::finalize_download_buffer((0..12).collect(), 10);
+        assert_eq!(result.unwrap(), (0..10).collect::<Vec<u8>>());
+    }
+
+    #[test]
+    fn finalize_accepts_exact_size() {
+        let result =
+            DownloadPeer::finalize_download_buffer((0..10).collect(), 10);
+        assert_eq!(result.unwrap(), (0..10).collect::<Vec<u8>>());
+    }
 
     #[test]
     fn test_establish_connection_invalid_address() {
