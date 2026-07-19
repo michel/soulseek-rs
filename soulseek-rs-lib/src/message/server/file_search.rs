@@ -1,4 +1,4 @@
-use crate::{debug, info};
+use crate::trace;
 use std::sync::mpsc::Sender;
 
 use crate::{
@@ -12,14 +12,16 @@ impl MessageHandler<ServerMessage> for FileSearchHandler {
     fn get_code(&self) -> u8 {
         26
     }
-    fn handle(&self, message: &mut Message, _sender: Sender<ServerMessage>) {
-        debug!("Handling file search message");
+    fn handle(&self, message: &mut Message, sender: Sender<ServerMessage>) {
+        // The server distributes another user's search to us: [user][token][query].
         let username = message.read_string();
         let token = message.read_int32();
         let query = message.read_string();
-        info!(
-            "Message search username:{}, token: {}, query: {}",
-            username, token, query
-        );
+        trace!("[server] search from {}: {} ({})", username, query, token);
+        let _ = sender.send(ServerMessage::FileSearchRequest {
+            username,
+            token,
+            query,
+        });
     }
 }
