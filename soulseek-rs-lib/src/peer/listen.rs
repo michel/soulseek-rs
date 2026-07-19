@@ -16,7 +16,6 @@ const PEER_INIT_MESSAGE_CODE: u8 = 1;
 
 #[derive(Clone)]
 struct ConnectionContext {
-    #[allow(dead_code)]
     client_sender: Sender<ClientOperation>,
     client_context: Arc<RwLock<ClientContext>>,
     own_username: String,
@@ -227,6 +226,54 @@ fn handle_file_connection(
     }
 }
 
+/// Handle a `PierceFirewall` (peer init code 0): a peer we asked the server to
+/// broker (because a direct connection failed) connecting back to us. It quotes
+/// the correlation token we registered; we register the stream as its P control
+/// connection and tell the client the connection is live.
+fn handle_pierce_firewall(
+    mut message: Message,
+    stream: TcpStream,
+    reader: MessageReader,
+    context: &ConnectionContext,
+    peer_ip: &str,
+    peer_port: u16,
+) {
+    message.set_pointer(5); // skip length prefix (4) + int8 code (1)
+    let token = message.read_int32();
+
+    let username = match context.client_context.write_safe() {
+        Ok(mut ctx) => ctx.take_pending_connect(token),
+        Err(e) => {
+            error!("[listener] pierce firewall lock: {}", e);
+            return;
+        }
+    };
+    let Some(username) = username else {
+        debug!(
+            "[listener:{peer_ip}:{peer_port}] PierceFirewall token {token} is not pending; ignoring"
+        );
+        return;
+    };
+
+    let peer = Peer::new(
+        username.clone(),
+        ConnectionType::P,
+        peer_ip.to_string(),
+        peer_port.into(),
+        None,
+        0,
+        0,
+        0,
+    );
+    handle_peer_connection(peer, stream, reader, context, peer_ip, peer_port);
+
+    // Inbound peers don't self-announce, so nudge the client to flush any
+    // downloads queued for this now-connected peer.
+    let _ = context
+        .client_sender
+        .send(ClientOperation::PeerConnected(username));
+}
+
 fn handle_incoming_connection(stream: TcpStream, context: ConnectionContext) {
     let Ok(peer_addr) = stream.peer_addr() else {
         error!("[listener] failed to get peer address");
@@ -244,6 +291,15 @@ fn handle_incoming_connection(stream: TcpStream, context: ConnectionContext) {
         );
         return;
     };
+
+    // A firewalled peer brokered through the server connects back with a
+    // PierceFirewall (code 0) instead of a PeerInit (code 1).
+    if message.get_message_code() == 0 {
+        handle_pierce_firewall(
+            message, stream, reader, &context, &peer_ip, peer_port,
+        );
+        return;
+    }
 
     let Some(init_data) = parse_peer_init_message(message) else {
         error!(

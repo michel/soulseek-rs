@@ -53,6 +53,14 @@ pub struct PeerActor {
     /// True when we initiated this connection (no stream supplied at
     /// construction), so we must send a `PeerInit` once connected.
     outbound: bool,
+    /// Set once the connection is up. A pre-established failure on an outbound
+    /// connection means the peer is unreachable (likely firewalled).
+    established: bool,
+    /// Set once this actor has reported a terminal outcome (disconnect or
+    /// connect-failure). Guards against a second notification — e.g. when a
+    /// replaced actor is later stopped — which would otherwise alias and evict
+    /// a newer actor registered under the same username.
+    disconnect_reported: bool,
 }
 
 impl PeerActor {
@@ -83,6 +91,8 @@ impl PeerActor {
             queued_messages: Vec::new(),
             own_username,
             outbound,
+            established: false,
+            disconnect_reported: false,
         }
     }
 
@@ -429,9 +439,22 @@ impl PeerActor {
 
         self.stream.take();
 
-        if let Err(e) = self.client_channel.send(
-            ClientOperation::PeerDisconnected(username, Some(error.into())),
-        ) {
+        if self.disconnect_reported {
+            return;
+        }
+        self.disconnect_reported = true;
+
+        // A direct outbound connection that never established means the peer is
+        // unreachable (likely firewalled): signal a connect failure so the
+        // client can fall back to server-brokered connect. Anything else is a
+        // normal disconnect.
+        let op = if self.outbound && !self.established {
+            ClientOperation::PeerConnectFailed(username)
+        } else {
+            ClientOperation::PeerDisconnected(username, Some(error.into()))
+        };
+
+        if let Err(e) = self.client_channel.send(op) {
             error!("Failed to send disconnect notification: {}", e);
         }
     }
@@ -440,6 +463,11 @@ impl PeerActor {
         debug!("[peer:{}] disconnect", username);
 
         self.stream.take();
+
+        if self.disconnect_reported {
+            return;
+        }
+        self.disconnect_reported = true;
 
         if let Err(e) = self
             .client_channel
@@ -551,6 +579,8 @@ impl PeerActor {
                 return;
             }
         };
+
+        self.established = true;
 
         let Some(ref mut stream) = self.stream else {
             return;

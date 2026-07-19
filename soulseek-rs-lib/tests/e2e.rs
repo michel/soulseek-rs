@@ -27,6 +27,7 @@ use std::time::{Duration, Instant};
 
 use soulseek_rs::message::Message;
 use soulseek_rs::message::server::MessageFactory;
+use soulseek_rs::peer::ConnectionType;
 use soulseek_rs::{Client, ClientSettings, DownloadStatus, PeerAddress};
 
 /// A Soulseek server to test against: either a child soulfind process we
@@ -487,6 +488,60 @@ fn serve_file_over_f(
     Ok(())
 }
 
+/// Log a raw socket in to the server and drain up to the login response,
+/// returning the still-open stream (the user stays online while it lives).
+fn login_raw(
+    server_addr: &str,
+    username: &str,
+    password: &str,
+) -> std::io::Result<TcpStream> {
+    let mut srv = connect_retry(server_addr, Duration::from_secs(5))?;
+    srv.set_read_timeout(Some(Duration::from_secs(10)))?;
+    srv.write_all(
+        &MessageFactory::build_login_message(username, password).get_buffer(),
+    )?;
+    srv.flush()?;
+    loop {
+        let msg = read_framed(&mut srv)?;
+        if msg.get_message_code() == 1 {
+            break;
+        }
+    }
+    Ok(srv)
+}
+
+/// Read framed messages from `stream` until one has `code`, or the deadline
+/// passes. Returns the matching message.
+fn read_until_code(
+    stream: &mut TcpStream,
+    code: u8,
+    timeout: Duration,
+) -> Option<Message> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        match read_framed(stream) {
+            Ok(msg) if msg.get_message_code() == code => return Some(msg),
+            Ok(_) => {}
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
+/// Like [`read_until_code`] but turns a miss into an `io::Error` for `?`.
+fn expect_code(
+    stream: &mut TcpStream,
+    code: u8,
+    timeout: Duration,
+) -> std::io::Result<Message> {
+    read_until_code(stream, code, timeout).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!("timed out waiting for message code {code}"),
+        )
+    })
+}
+
 fn unique_download_dir() -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "soulseek-e2e-dl-{}-{:?}",
@@ -582,6 +637,52 @@ fn a_file_downloads_from_a_peer_over_p_and_f_connections() {
     assert_eq!(written, content, "downloaded bytes should match the source");
 
     let _ = std::fs::remove_dir_all(&download_dir);
+}
+
+#[test]
+fn soulfind_brokers_connect_to_peer_between_users() {
+    // The firewalled download mode relies on the server forwarding a
+    // ConnectToPeer request to the target user. Confirm soulfind does this: a
+    // requester (with a wait port so the server knows its address) asks the
+    // server to broker a connection to an online target, and the target must
+    // receive a forwarded ConnectToPeer (server code 18) naming the requester.
+    let server = server_or_skip!();
+    let addr = format!("{}:{}", server.host, server.port);
+
+    let mut target =
+        login_raw(&addr, "e2e_broker_target", "pw").expect("target login");
+
+    let mut requester =
+        login_raw(&addr, "e2e_broker_req", "pw").expect("requester login");
+    let req_port = free_port().expect("free port");
+    requester
+        .write_all(
+            &MessageFactory::build_set_wait_port_message(req_port).get_buffer(),
+        )
+        .expect("set wait port");
+    requester.flush().expect("flush wait port");
+
+    let token = 987_654_u32;
+    requester
+        .write_all(
+            &MessageFactory::build_connect_to_peer(
+                token,
+                "e2e_broker_target",
+                ConnectionType::P,
+            )
+            .get_buffer(),
+        )
+        .expect("send ConnectToPeer");
+    requester.flush().expect("flush ConnectToPeer");
+
+    let mut brokered = read_until_code(&mut target, 18, Duration::from_secs(5))
+        .expect("target should receive a brokered ConnectToPeer");
+    brokered.set_pointer(8);
+    assert_eq!(
+        brokered.read_string(),
+        "e2e_broker_req",
+        "the brokered message should name the requester"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -776,6 +877,165 @@ fn a_file_downloads_from_a_peer_via_direct_connection() {
     let _ = uploader.join();
 
     assert!(completed, "the direct download should reach Completed");
+
+    let written = std::fs::read(download_dir.join(filename))
+        .expect("downloaded file should exist");
+    assert_eq!(written, content, "downloaded bytes should match the source");
+
+    let _ = std::fs::remove_dir_all(&download_dir);
+}
+
+// ---------------------------------------------------------------------------
+// Firewalled download: the peer is unreachable directly, so the connection is
+// brokered through the server.
+//
+// The mock advertises a port nobody listens on, so the downloader's direct
+// connection fails. The client then asks the server to broker the connection
+// (ConnectToPeer); the mock, reading its server stream, sees the forwarded
+// request and connects back to the downloader with a PierceFirewall. That
+// pierced connection becomes the P control channel, and the file is served.
+// ---------------------------------------------------------------------------
+
+struct MockFirewalledUpload {
+    server_addr: String,
+    username: String,
+    password: String,
+    bogus_port: u16,
+    downloader_listen_addr: String,
+    filename: String,
+    content: Vec<u8>,
+    token: u32,
+    ready: Sender<()>,
+}
+
+fn run_mock_firewalled_peer(cfg: &MockFirewalledUpload) -> std::io::Result<()> {
+    // 1. Log in and advertise a port that nobody listens on, so the downloader's
+    //    direct connection is refused and it falls back to server brokering.
+    let mut srv = login_raw(&cfg.server_addr, &cfg.username, &cfg.password)?;
+    srv.write_all(
+        &MessageFactory::build_set_wait_port_message(cfg.bogus_port)
+            .get_buffer(),
+    )?;
+    srv.flush()?;
+    let _ = cfg.ready.send(());
+
+    // 2. Wait for the server-brokered ConnectToPeer (server code 18) and read
+    //    the correlation token (after username, type, ip and port).
+    let mut ctp = expect_code(&mut srv, 18, Duration::from_secs(15))?;
+    ctp.set_pointer(8);
+    let _who = ctp.read_string();
+    let _conn_type = ctp.read_string();
+    let _ip = ctp.read_int32();
+    let _port = ctp.read_int32();
+    let connect_token = ctp.read_int32();
+
+    // 3. Connect back to the downloader with a PierceFirewall (peer code 0);
+    //    this becomes the P control connection.
+    let mut p =
+        connect_retry(&cfg.downloader_listen_addr, Duration::from_secs(5))?;
+    p.set_read_timeout(Some(Duration::from_secs(10)))?;
+    p.write_all(
+        &MessageFactory::build_pierce_firewall_message(connect_token)
+            .get_buffer(),
+    )?;
+    p.flush()?;
+
+    // 4. Negotiate the transfer over the pierced connection.
+    let _queue = expect_code(&mut p, 43, Duration::from_secs(10))?;
+    let mut tr = Message::new();
+    tr.write_int32(40)
+        .write_int32(1)
+        .write_int32(cfg.token)
+        .write_string(&cfg.filename)
+        .write_int64(cfg.content.len() as u64);
+    p.write_all(&tr.get_buffer())?;
+    p.flush()?;
+    let _response = expect_code(&mut p, 41, Duration::from_secs(10))?;
+
+    // 5. Serve the bytes over an F connection to the downloader's listener.
+    serve_file_over_f(
+        &cfg.downloader_listen_addr,
+        &cfg.username,
+        cfg.token,
+        &cfg.content,
+    )
+}
+
+#[test]
+fn a_file_downloads_from_a_firewalled_peer_via_server_broker() {
+    let server = server_or_skip!();
+
+    let client_port = free_port().expect("free client listen port");
+    let mut client = Client::with_settings(server.listening_settings(
+        "e2e_fw_dl",
+        "pw",
+        client_port,
+    ));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login"));
+
+    let bogus_port = free_port().expect("bogus port"); // advertised, unlistened
+    let filename = "firewalled_song.mp3";
+    let content: Vec<u8> = (0..2000u32).map(|i| (i % 251) as u8).collect();
+    let size = content.len() as u64;
+    let token = 606_060_u32;
+    let download_dir = unique_download_dir();
+
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let cfg = MockFirewalledUpload {
+        server_addr: format!("{}:{}", server.host, server.port),
+        username: "e2e_fw_peer".to_string(),
+        password: "pw".to_string(),
+        bogus_port,
+        downloader_listen_addr: format!("127.0.0.1:{client_port}"),
+        filename: filename.to_string(),
+        content: content.clone(),
+        token,
+        ready: ready_tx,
+    };
+    let uploader = std::thread::spawn(move || {
+        if let Err(e) = run_mock_firewalled_peer(&cfg) {
+            eprintln!("[mock firewalled peer] {e}");
+        }
+    });
+
+    ready_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("mock firewalled peer ready");
+    std::thread::sleep(Duration::from_millis(1000));
+
+    let (_download, status_rx) = client
+        .download(
+            filename.to_string(),
+            "e2e_fw_peer".to_string(),
+            size,
+            download_dir.display().to_string(),
+        )
+        .expect("start download");
+
+    let mut completed = false;
+    let deadline = Instant::now() + Duration::from_secs(25);
+    while Instant::now() < deadline {
+        match status_rx.recv_timeout(Duration::from_millis(500)) {
+            Ok(DownloadStatus::Completed) => {
+                completed = true;
+                break;
+            }
+            Ok(DownloadStatus::Failed | DownloadStatus::TimedOut) => break,
+            _ => {}
+        }
+        if client
+            .get_all_downloads()
+            .iter()
+            .any(|d| matches!(d.status, DownloadStatus::Completed))
+        {
+            completed = true;
+            break;
+        }
+    }
+    let _ = uploader.join();
+
+    assert!(completed, "the firewalled download should reach Completed");
 
     let written = std::fs::read(download_dir.join(filename))
         .expect("downloaded file should exist");

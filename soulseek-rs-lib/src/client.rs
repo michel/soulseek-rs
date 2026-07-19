@@ -18,7 +18,7 @@ use std::{
     net::TcpStream,
     sync::{
         RwLock,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
         mpsc::{Receiver, Sender},
     },
     thread::{self, sleep},
@@ -30,6 +30,13 @@ use std::{
 
 use crate::{debug, error, info, trace, warn};
 const DEFAULT_LISTEN_PORT: u16 = 2234;
+
+/// Source of non-zero correlation tokens for server-brokered connections.
+static NEXT_CONNECT_TOKEN: AtomicU32 = AtomicU32::new(1);
+
+fn next_connect_token() -> u32 {
+    NEXT_CONNECT_TOKEN.fetch_add(1, Ordering::Relaxed).max(1)
+}
 
 #[derive(Debug, Clone)]
 pub struct ClientSettings {
@@ -98,6 +105,10 @@ pub enum ClientOperation {
     SetServerSender(Sender<ServerMessage>),
     PrivateMessageReceived(UserMessage),
     PeerConnected(String),
+    /// A direct outbound connection to this peer failed before it was
+    /// established — the peer is likely firewalled, so fall back to asking the
+    /// server to broker the connection.
+    PeerConnectFailed(String),
 }
 pub struct ClientContext {
     pub peer_registry: Option<PeerRegistry>,
@@ -106,6 +117,9 @@ pub struct ClientContext {
     server_sender: Option<Sender<ServerMessage>>,
     searches: HashMap<String, Search>,
     private_messages: Vec<UserMessage>,
+    /// Correlation tokens for server-brokered (firewalled) connections, mapping
+    /// a token we sent in a ConnectToPeer to the peer we expect back.
+    pending_connect_tokens: HashMap<u32, String>,
     actor_system: Arc<ActorSystem>,
 }
 impl Default for ClientContext {
@@ -333,9 +347,21 @@ impl ClientContext {
             server_sender: None,
             searches: HashMap::new(),
             private_messages: Vec::new(),
+            pending_connect_tokens: HashMap::new(),
             downloads: DownloadStore::new(),
             actor_system,
         }
+    }
+
+    /// Remember that a server-brokered connection to `username` is pending under
+    /// `token`; the peer will quote it back in a PierceFirewall.
+    pub fn add_pending_connect(&mut self, token: u32, username: String) {
+        self.pending_connect_tokens.insert(token, username);
+    }
+
+    /// Resolve and consume the peer expected for a brokered connection `token`.
+    pub fn take_pending_connect(&mut self, token: u32) -> Option<String> {
+        self.pending_connect_tokens.remove(&token)
     }
 
     /// Record a private message received from another user.
@@ -1275,6 +1301,40 @@ impl Client {
                                         let _ = registry
                                             .queue_upload(&username, filename);
                                     }
+                                }
+                            }
+                            ClientOperation::PeerConnectFailed(username) => {
+                                // Direct connect failed: ask the server to
+                                // broker it. Register a correlation token, then
+                                // send ConnectToPeer so the (firewalled) peer
+                                // connects back to our listener quoting it.
+                                let token = next_connect_token();
+                                let server_sender = match client_context
+                                    .write_safe()
+                                {
+                                    Ok(mut ctx) => {
+                                        ctx.add_pending_connect(
+                                            token,
+                                            username.clone(),
+                                        );
+                                        ctx.server_sender.clone()
+                                    }
+                                    Err(e) => {
+                                        error!(
+                                            "[client] PeerConnectFailed write: {}",
+                                            e
+                                        );
+                                        continue;
+                                    }
+                                };
+                                if let Some(sender) = server_sender {
+                                    let msg = crate::message::server::MessageFactory::build_connect_to_peer(
+                                        token,
+                                        &username,
+                                        ConnectionType::P,
+                                    );
+                                    let _ = sender
+                                        .send(ServerMessage::SendMessage(msg));
                                 }
                             }
                         }
