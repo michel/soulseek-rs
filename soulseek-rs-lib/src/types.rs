@@ -163,6 +163,36 @@ pub enum DownloadStatus {
     Failed(Option<String>),
     TimedOut,
 }
+
+/// A public chat room advertised by the server (`RoomList`, code 64).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoomInfo {
+    pub name: String,
+    pub user_count: u32,
+}
+
+/// Something that happened in the chat-room subsystem, surfaced to the client
+/// so a UI can react to it. Drained via `Client::take_room_events`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RoomEvent {
+    /// The full list of public rooms (supersedes any previous snapshot).
+    List(Vec<RoomInfo>),
+    /// We successfully joined `room`; carries the current member list.
+    Joined { room: String, users: Vec<String> },
+    /// We left `room`.
+    Left { room: String },
+    /// `username` said `message` in `room`.
+    Message {
+        room: String,
+        username: String,
+        message: String,
+    },
+    /// `username` joined `room`.
+    UserJoined { room: String, username: String },
+    /// `username` left `room`.
+    UserLeft { room: String, username: String },
+}
+
 impl Transfer {
     pub fn new_from_message(message: &mut Message) -> Self {
         let direction = message.read_int32();

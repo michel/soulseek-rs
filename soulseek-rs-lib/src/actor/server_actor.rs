@@ -5,6 +5,8 @@ use crate::message::server::ConnectToPeerHandler;
 use crate::message::server::ExcludedSearchPhrasesHandler;
 use crate::message::server::FileSearchHandler;
 use crate::message::server::GetPeerAddressHandler;
+use crate::message::server::JoinRoomHandler;
+use crate::message::server::LeaveRoomHandler;
 use crate::message::server::LoginHandler;
 use crate::message::server::MessageFactory;
 use crate::message::server::MessageUser;
@@ -12,11 +14,15 @@ use crate::message::server::ParentMinSpeedHandler;
 use crate::message::server::ParentSpeedRatioHandler;
 use crate::message::server::PrivilegedUsersHandler;
 use crate::message::server::RoomListHandler;
+use crate::message::server::SayChatroomHandler;
+use crate::message::server::UserJoinedRoomHandler;
+use crate::message::server::UserLeftRoomHandler;
 use crate::message::server::WishListIntervalHandler;
 use crate::message::{Handlers, MessageType};
 use crate::message::{Message, MessageReader};
 use crate::peer::ConnectionType;
 use crate::peer::Peer;
+use crate::types::{RoomEvent, RoomInfo};
 use crate::utils::lock::RwLockExt;
 
 use std::io::{self, Error, Write};
@@ -168,6 +174,27 @@ pub enum ServerMessage {
         obfuscated_port: u16,
     },
     PrivateMessageReceived(UserMessage),
+    RoomListReceived(Vec<RoomInfo>),
+    RoomJoined {
+        room: String,
+        users: Vec<String>,
+    },
+    RoomLeft {
+        room: String,
+    },
+    RoomMessageReceived {
+        room: String,
+        username: String,
+        message: String,
+    },
+    RoomUserJoined {
+        room: String,
+        username: String,
+    },
+    RoomUserLeft {
+        room: String,
+        username: String,
+    },
 }
 
 pub struct ServerActor {
@@ -327,6 +354,11 @@ impl ServerActor {
 
         handlers.register_handler(LoginHandler);
         handlers.register_handler(RoomListHandler);
+        handlers.register_handler(JoinRoomHandler);
+        handlers.register_handler(LeaveRoomHandler);
+        handlers.register_handler(SayChatroomHandler);
+        handlers.register_handler(UserJoinedRoomHandler);
+        handlers.register_handler(UserLeftRoomHandler);
         handlers.register_handler(ExcludedSearchPhrasesHandler);
         handlers.register_handler(PrivilegedUsersHandler);
         handlers.register_handler(MessageUser);
@@ -468,6 +500,35 @@ impl ServerActor {
                     );
                 }
             }
+            ServerMessage::RoomListReceived(rooms) => {
+                self.forward_room_event(RoomEvent::List(rooms));
+            }
+            ServerMessage::RoomJoined { room, users } => {
+                self.forward_room_event(RoomEvent::Joined { room, users });
+            }
+            ServerMessage::RoomLeft { room } => {
+                self.forward_room_event(RoomEvent::Left { room });
+            }
+            ServerMessage::RoomMessageReceived {
+                room,
+                username,
+                message,
+            } => {
+                self.forward_room_event(RoomEvent::Message {
+                    room,
+                    username,
+                    message,
+                });
+            }
+            ServerMessage::RoomUserJoined { room, username } => {
+                self.forward_room_event(RoomEvent::UserJoined {
+                    room,
+                    username,
+                });
+            }
+            ServerMessage::RoomUserLeft { room, username } => {
+                self.forward_room_event(RoomEvent::UserLeft { room, username });
+            }
             ServerMessage::ProcessRead => {
                 self.process_read();
             }
@@ -600,6 +661,15 @@ impl ServerActor {
         }
 
         self.process_dispatcher_messages();
+    }
+
+    /// Forward a chat-room event to the client operations loop.
+    fn forward_room_event(&self, event: RoomEvent) {
+        if let Err(e) =
+            self.client_channel.send(ClientOperation::RoomEvent(event))
+        {
+            error!("[server] Error forwarding room event to client: {}", e);
+        }
     }
 
     fn queue_message(&mut self, message: Message) {
