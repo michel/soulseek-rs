@@ -150,7 +150,7 @@ pub fn collect_failed_tokens(
         })
         .map(|d| {
             let _ = d.sender.send(DownloadStatus::Failed(Some(
-                "Peer reported the upload failed".to_string(),
+                "The upload failed on the other side".to_string(),
             )));
             d.token
         })

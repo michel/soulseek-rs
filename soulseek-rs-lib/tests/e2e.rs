@@ -1274,3 +1274,64 @@ fn browse_a_peers_shared_files() {
 
     let _ = std::fs::remove_dir_all(share_dir);
 }
+
+// Browsing a peer that is NOT listening exercises the server-brokered
+// (firewalled) path: the direct dial fails, the client asks the server to
+// broker, and the peer connects back to our listener. This is the path that
+// matters on the real network, where most peers are firewalled. The browser
+// MUST be listening so the peer can connect back.
+#[test]
+fn browse_a_firewalled_peer_via_broker() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    std::fs::create_dir_all(share_dir.join("album")).unwrap();
+    std::fs::write(share_dir.join("album").join("hidden.flac"), b"xxxx")
+        .unwrap();
+
+    // Sharer does NOT listen (firewalled): the browser's direct dial will fail,
+    // forcing the server-brokered connect-back.
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directory: Some(share_dir.display().to_string()),
+        ..server.settings("e2e_fw_sharer", "pw")
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+
+    // Browser listens so the firewalled peer can connect back to it.
+    let browser_port = free_port().expect("browser port");
+    let mut browser = Client::with_settings(server.listening_settings(
+        "e2e_fw_browser",
+        "pw",
+        browser_port,
+    ));
+    browser.connect().expect("browser connect");
+    assert!(browser.login().expect("browser login"));
+
+    std::thread::sleep(Duration::from_secs(1));
+
+    browser
+        .browse_user("e2e_fw_sharer")
+        .expect("browse request");
+
+    // The brokered round-trip has more hops; give it a generous deadline.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut listing = None;
+    while Instant::now() < deadline {
+        if let Some(result) = browser.take_browse_result("e2e_fw_sharer") {
+            listing = Some(result);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let directories =
+        listing.expect("browser should receive the firewalled peer's listing");
+    assert!(
+        directories
+            .iter()
+            .any(|d| d.files.iter().any(|(name, _)| name == "hidden.flac")),
+        "the brokered listing should include the shared file"
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
