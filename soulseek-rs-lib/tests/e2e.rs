@@ -94,6 +94,21 @@ impl TestServer {
             shared_directory: None,
         }
     }
+
+    /// Settings with the peer listener enabled on `port`, exercising the
+    /// `SetWaitPort` step of the post-login handshake.
+    fn listening_settings(
+        &self,
+        username: &str,
+        password: &str,
+        port: u16,
+    ) -> ClientSettings {
+        ClientSettings {
+            enable_listen: true,
+            listen_port: port,
+            ..self.settings(username, password)
+        }
+    }
 }
 
 impl Drop for TestServer {
@@ -201,6 +216,58 @@ fn search_round_trips_without_error() {
     let query = "nonexistent query xyzzy";
     let _ = client.search(query, Duration::from_secs(2));
     assert!(client.get_search_results(query).is_empty());
+
+    // The search must also be tracked in client state under its key, proving
+    // the request was actually registered and not silently dropped.
+    assert!(
+        client.get_all_searches().contains_key(query),
+        "the issued search should be registered under its query key"
+    );
+}
+
+#[test]
+fn a_search_is_forwarded_to_a_connected_peer() {
+    let server = server_or_skip!();
+
+    // The server distributes each search to other connected users, so a second
+    // client exercises the *incoming* FileSearch handler. We can't observe that
+    // handler's state directly, but if it mishandled the forwarded bytes it
+    // would take the receiver's session down — so we prove the receiver is
+    // still alive afterwards by round-tripping its own search.
+    let mut searcher =
+        Client::with_settings(server.settings("e2e_searcher", "pw"));
+    let mut receiver =
+        Client::with_settings(server.settings("e2e_receiver", "pw"));
+    searcher.connect().expect("searcher connect");
+    receiver.connect().expect("receiver connect");
+    assert!(searcher.login().expect("searcher login"));
+    assert!(receiver.login().expect("receiver login"));
+
+    let _ = searcher.search("some shared song", Duration::from_secs(2));
+
+    // Receiver stays functional after handling the forwarded search.
+    let probe = "receiver still alive";
+    let _ = receiver.search(probe, Duration::from_secs(2));
+    assert!(receiver.get_all_searches().contains_key(probe));
+}
+
+#[test]
+fn login_succeeds_with_listener_enabled() {
+    let server = server_or_skip!();
+
+    // With the listener enabled the client also sends SetWaitPort during the
+    // post-login handshake; the server must accept it and keep the session.
+    let port = free_port().expect("free listener port");
+    let mut client = Client::with_settings(server.listening_settings(
+        "e2e_listener",
+        "pw",
+        port,
+    ));
+    client.connect().expect("connect with listener");
+    assert!(
+        client.login().expect("login with listener enabled"),
+        "the handshake including SetWaitPort should still log in"
+    );
 }
 
 #[test]
