@@ -114,7 +114,7 @@ impl Download {
         matches!(
             self.status,
             DownloadStatus::Completed
-                | DownloadStatus::Failed
+                | DownloadStatus::Failed(_)
                 | DownloadStatus::TimedOut
         )
     }
@@ -159,7 +159,8 @@ pub enum DownloadStatus {
         total_bytes: u64,
     },
     Completed,
-    Failed,
+    /// Failed, optionally with a human-readable reason.
+    Failed(Option<String>),
     TimedOut,
 }
 impl Transfer {

@@ -54,7 +54,7 @@ pub fn render_downloads_pane(
                 DownloadStatus::InProgress { .. } => ("⧗", warning_style()),
                 DownloadStatus::Paused { .. } => ("⏸", info_style()),
                 DownloadStatus::Completed => ("✓", success_style()),
-                DownloadStatus::Failed => ("✗", error_style()),
+                DownloadStatus::Failed(_) => ("✗", error_style()),
                 DownloadStatus::TimedOut => ("⏱", error_style()),
             };
 
@@ -91,7 +91,7 @@ pub fn render_downloads_pane(
                     )
                 }
                 DownloadStatus::Completed => "Completed".to_string(),
-                DownloadStatus::Failed => "Failed".to_string(),
+                DownloadStatus::Failed(_) => "Failed".to_string(),
                 DownloadStatus::TimedOut => "Timed out".to_string(),
             };
 
