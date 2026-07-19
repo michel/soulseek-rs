@@ -319,6 +319,82 @@ impl BrowseState {
     }
 }
 
+/// A set of open browse views (tabs), one per user, like the chat-room tabs.
+#[derive(Default)]
+pub struct BrowseTabs {
+    pub tabs: Vec<BrowseState>,
+    pub active: usize,
+}
+
+impl BrowseTabs {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            tabs: Vec::new(),
+            active: 0,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.tabs.is_empty()
+    }
+
+    #[must_use]
+    pub fn active_tab(&self) -> Option<&BrowseState> {
+        self.tabs.get(self.active)
+    }
+
+    #[must_use]
+    pub fn active_tab_mut(&mut self) -> Option<&mut BrowseState> {
+        self.tabs.get_mut(self.active)
+    }
+
+    /// Focus the tab for `username`, or open a fresh loading one. Returns
+    /// `true` if the caller should (re)issue a browse request — i.e. the tab is
+    /// new or was retried after a timeout.
+    pub fn open(&mut self, username: &str) -> bool {
+        if let Some(idx) = self.tabs.iter().position(|t| t.username == username)
+        {
+            self.active = idx;
+            // Re-request only if the previous attempt gave up.
+            if self.tabs[idx].status == BrowseStatus::TimedOut {
+                self.tabs[idx] = BrowseState::loading(username.to_string());
+                true
+            } else {
+                false
+            }
+        } else {
+            self.tabs.push(BrowseState::loading(username.to_string()));
+            self.active = self.tabs.len() - 1;
+            true
+        }
+    }
+
+    /// Close the active tab, returning `false` when no tabs remain.
+    pub fn close_active(&mut self) -> bool {
+        if self.active < self.tabs.len() {
+            self.tabs.remove(self.active);
+        }
+        if self.active >= self.tabs.len() {
+            self.active = self.tabs.len().saturating_sub(1);
+        }
+        !self.tabs.is_empty()
+    }
+
+    pub const fn next_tab(&mut self) {
+        if !self.tabs.is_empty() {
+            self.active = (self.active + 1) % self.tabs.len();
+        }
+    }
+
+    pub const fn prev_tab(&mut self) {
+        if !self.tabs.is_empty() {
+            self.active = (self.active + self.tabs.len() - 1) % self.tabs.len();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -425,6 +501,48 @@ mod tests {
         ]);
         let all = files_under(&tree.nodes[0]); // folder "a"
         assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn browse_tabs_open_focus_close_and_cycle() {
+        let mut tabs = BrowseTabs::new();
+        assert!(tabs.is_empty());
+
+        // New users open new tabs and request a browse.
+        assert!(tabs.open("alice"));
+        assert!(tabs.open("bob"));
+        assert_eq!(tabs.tabs.len(), 2);
+        assert_eq!(tabs.active, 1);
+        assert_eq!(tabs.active_tab().unwrap().username, "bob");
+
+        // Re-opening a live tab just focuses it (no new request).
+        assert!(!tabs.open("alice"));
+        assert_eq!(tabs.active, 0);
+        assert_eq!(tabs.tabs.len(), 2);
+
+        // Cycling wraps.
+        tabs.next_tab();
+        assert_eq!(tabs.active, 1);
+        tabs.next_tab();
+        assert_eq!(tabs.active, 0);
+        tabs.prev_tab();
+        assert_eq!(tabs.active, 1);
+
+        // Closing the active tab returns whether any remain.
+        assert!(tabs.close_active());
+        assert_eq!(tabs.tabs.len(), 1);
+        assert!(!tabs.close_active());
+        assert!(tabs.is_empty());
+    }
+
+    #[test]
+    fn browse_tabs_reopen_after_timeout_requests_again() {
+        let mut tabs = BrowseTabs::new();
+        tabs.open("alice");
+        tabs.active_tab_mut().unwrap().status = BrowseStatus::TimedOut;
+        // Re-opening a timed-out tab retries (returns true) and resets it.
+        assert!(tabs.open("alice"));
+        assert_eq!(tabs.active_tab().unwrap().status, BrowseStatus::Loading);
     }
 
     #[test]

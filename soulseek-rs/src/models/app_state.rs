@@ -1,4 +1,4 @@
-use crate::models::{BrowseState, FileDisplayData, RoomsState};
+use crate::models::{BrowseTabs, FileDisplayData, RoomsState};
 use ratatui::{layout::Rect, widgets::TableState};
 use soulseek_rs::{DownloadStatus, types::Download};
 use std::sync::atomic::AtomicBool;
@@ -94,8 +94,8 @@ pub struct AppState {
     /// Incoming private messages received while the inbox was closed.
     pub unread_messages: usize,
 
-    // Browse a user's shared files
-    pub browse: Option<BrowseState>,
+    // Browse users' shared files (one tab per user)
+    pub browse: BrowseTabs,
     pub show_browse: bool,
     pub browse_table_state: TableState,
 
@@ -151,7 +151,7 @@ impl AppState {
             show_messages: false,
             unread_messages: 0,
 
-            browse: None,
+            browse: BrowseTabs::new(),
             show_browse: false,
             browse_table_state: TableState::default(),
 
