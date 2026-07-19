@@ -35,7 +35,7 @@ experience. For me, this is a good balance between learning and practicality.
 - [x] Configure credentials
 - [x] TUI for searching and downloading files
 - [x] Configure download & upload directories
-- [ ] Share files
+- [x] Share files
 - [ ] Browse user(s) files
 - [ ] Chat in chatrooms
 - [x] Private messaging
