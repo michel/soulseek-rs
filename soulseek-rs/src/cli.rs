@@ -89,6 +89,15 @@ pub enum Commands {
         )]
         max_concurrent_downloads: usize,
     },
+
+    /// Send a private message to another user
+    Message {
+        /// Username of the recipient
+        username: String,
+
+        /// Message text to send
+        message: String,
+    },
 }
 
 pub fn parse_server_address(server: &str) -> color_eyre::Result<(String, u16)> {
