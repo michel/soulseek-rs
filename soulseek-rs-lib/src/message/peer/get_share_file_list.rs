@@ -1,17 +1,17 @@
 use crate::{
-    message::{Message, MessageHandler, server::MessageFactory},
+    message::{Message, MessageHandler},
     peer::PeerMessage,
 };
 use std::sync::mpsc::Sender;
 
+/// A peer asking to browse our shared files (peer code 4). The client (which
+/// owns the shares) builds the real SharedFileListResponse in reply.
 pub struct GetShareFileList;
 impl MessageHandler<PeerMessage> for GetShareFileList {
     fn get_code(&self) -> u8 {
         4
     }
     fn handle(&self, _message: &mut Message, sender: Sender<PeerMessage>) {
-        let message = MessageFactory::build_shared_folders_message(100, 800);
-
-        sender.send(PeerMessage::SendMessage(message)).unwrap();
+        let _ = sender.send(PeerMessage::ShareListRequested);
     }
 }

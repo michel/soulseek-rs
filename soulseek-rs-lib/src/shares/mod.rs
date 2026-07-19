@@ -128,6 +128,26 @@ impl Shares {
         &self.files
     }
 
+    /// Files grouped by their virtual directory (everything before the final
+    /// backslash), as `(directory, [(basename, size)])`. Used to build a
+    /// SharedFileListResponse.
+    #[must_use]
+    pub fn directories(&self) -> Vec<(String, Vec<(String, u64)>)> {
+        let mut by_dir: std::collections::BTreeMap<String, Vec<(String, u64)>> =
+            std::collections::BTreeMap::new();
+        for file in &self.files {
+            let (dir, base) = file
+                .virtual_path
+                .rsplit_once('\\')
+                .unwrap_or(("", file.virtual_path.as_str()));
+            by_dir
+                .entry(dir.to_string())
+                .or_default()
+                .push((base.to_string(), file.size));
+        }
+        by_dir.into_iter().collect()
+    }
+
     #[must_use]
     pub const fn file_count(&self) -> u32 {
         self.files.len() as u32
