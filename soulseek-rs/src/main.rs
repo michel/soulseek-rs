@@ -115,6 +115,31 @@ fn main() -> Result<()> {
             },
             &target,
         ),
+        Some(Commands::Rooms) => list_rooms(&ClientSettings {
+            username,
+            password,
+            server_address: PeerAddress::new(server_host, server_port),
+            enable_listen: !cli.disable_listener,
+            listen_port: cli.listener_port,
+            shared_directory,
+        }),
+        Some(Commands::Chat {
+            room,
+            message,
+            listen_secs,
+        }) => chat_room(
+            &ClientSettings {
+                username,
+                password,
+                server_address: PeerAddress::new(server_host, server_port),
+                enable_listen: !cli.disable_listener,
+                listen_port: cli.listener_port,
+                shared_directory,
+            },
+            &room,
+            message.as_deref(),
+            listen_secs,
+        ),
         None => {
             use ratatui::crossterm::{
                 event::EnableMouseCapture,
@@ -203,6 +228,104 @@ fn browse_user(settings: &ClientSettings, target: &str) -> Result<()> {
     Err(color_eyre::eyre::eyre!(
         "Timed out waiting for {target}'s file list"
     ))
+}
+
+/// Connect and log in, returning the ready client or a descriptive error.
+fn connect_and_login(settings: &ClientSettings) -> Result<Client> {
+    let mut client = Client::with_settings(settings.clone());
+    client
+        .connect()
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to connect: {}", e))?;
+    if !client
+        .login()
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to login: {}", e))?
+    {
+        return Err(color_eyre::eyre::eyre!("Login rejected by server"));
+    }
+    Ok(client)
+}
+
+fn list_rooms(settings: &ClientSettings) -> Result<()> {
+    use std::time::Instant;
+
+    let client = connect_and_login(settings)?;
+    client
+        .request_room_list()
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to list rooms: {}", e))?;
+
+    println!("📋 Fetching room list...");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut rooms = client.room_list();
+    while rooms.is_empty() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(200));
+        rooms = client.room_list();
+    }
+
+    rooms.sort_by(|a, b| {
+        b.user_count
+            .cmp(&a.user_count)
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    if rooms.is_empty() {
+        println!("(no public rooms reported)");
+    } else {
+        println!("{:>6}  room", "users");
+        for room in rooms {
+            println!("{:>6}  {}", room.user_count, room.name);
+        }
+    }
+    Ok(())
+}
+
+fn chat_room(
+    settings: &ClientSettings,
+    room: &str,
+    message: Option<&str>,
+    listen_secs: u64,
+) -> Result<()> {
+    use soulseek_rs::types::RoomEvent;
+    use std::time::Instant;
+
+    let client = connect_and_login(settings)?;
+    client
+        .join_room(room)
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to join room: {}", e))?;
+
+    if let Some(text) = message {
+        client
+            .say_in_room(room, text)
+            .map_err(|e| color_eyre::eyre::eyre!("Failed to say: {}", e))?;
+        // Let the server actor flush before we drop the client.
+        std::thread::sleep(Duration::from_millis(500));
+        println!("💬 {room}: {text}");
+        return Ok(());
+    }
+
+    println!(
+        "💬 Joined {room}. Listening for {listen_secs}s (Ctrl-C to quit)..."
+    );
+    let deadline = Instant::now() + Duration::from_secs(listen_secs);
+    while Instant::now() < deadline {
+        for event in client.take_room_events() {
+            match event {
+                RoomEvent::Message {
+                    room: r,
+                    username,
+                    message,
+                } if r == room => println!("<{username}> {message}"),
+                RoomEvent::UserJoined { room: r, username } if r == room => {
+                    println!("→ {username} joined");
+                }
+                RoomEvent::UserLeft { room: r, username } if r == room => {
+                    println!("← {username} left");
+                }
+                _ => {}
+            }
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let _ = client.leave_room(room);
+    Ok(())
 }
 
 fn send_private_message(

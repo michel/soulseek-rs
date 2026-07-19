@@ -104,6 +104,22 @@ pub enum Commands {
         /// Username whose shares to list
         username: String,
     },
+
+    /// List the public chat rooms and their user counts
+    Rooms,
+
+    /// Join a chat room: print messages, or send one and exit
+    Chat {
+        /// Name of the room to join
+        room: String,
+
+        /// Optional message to say in the room (omit to just listen)
+        message: Option<String>,
+
+        /// Seconds to stay and print incoming messages when only listening
+        #[arg(short, long, default_value = "30")]
+        listen_secs: u64,
+    },
 }
 
 pub fn parse_server_address(server: &str) -> color_eyre::Result<(String, u16)> {
