@@ -1,4 +1,4 @@
-use crate::models::FileDisplayData;
+use crate::models::{BrowseState, FileDisplayData};
 use ratatui::{layout::Rect, widgets::TableState};
 use soulseek_rs::{DownloadStatus, types::Download};
 use std::sync::atomic::AtomicBool;
@@ -37,6 +37,7 @@ pub enum FocusedPane {
 pub enum CommandBarMode {
     Search,
     Message,
+    Browse,
 }
 
 /// Direction of a private message relative to the local user.
@@ -91,6 +92,11 @@ pub struct AppState {
     pub messages: Vec<ChatMessage>,
     pub show_messages: bool,
 
+    // Browse a user's shared files
+    pub browse: Option<BrowseState>,
+    pub show_browse: bool,
+    pub browse_table_state: TableState,
+
     // Pane areas for mouse interaction
     pub searches_pane_area: Option<Rect>,
     pub results_pane_area: Option<Rect>,
@@ -136,6 +142,10 @@ impl AppState {
 
             messages: Vec::new(),
             show_messages: false,
+
+            browse: None,
+            show_browse: false,
+            browse_table_state: TableState::default(),
 
             searches_pane_area: None,
             results_pane_area: None,
