@@ -142,6 +142,23 @@ impl MessageFactory {
             .write_string(filename)
             .clone()
     }
+    /// A TransferRequest (peer code 40) initiating an *upload*: we offer a file
+    /// to a peer who queued it, quoting our transfer token and its size.
+    #[must_use]
+    pub fn build_upload_transfer_request(
+        filename: &str,
+        token: u32,
+        size: u64,
+    ) -> Message {
+        Message::new()
+            .write_int32(40)
+            .write_int32(1) // direction: upload
+            .write_int32(token)
+            .write_string(filename)
+            .write_int64(size)
+            .clone()
+    }
+
     #[must_use]
     pub fn build_transfer_response_message(transfer: Transfer) -> Message {
         Message::new()
@@ -197,6 +214,21 @@ fn test_build_login_message() {
     .to_vec();
 
     assert_eq!(expect, message.get_data());
+}
+
+#[test]
+fn test_build_upload_transfer_request() {
+    use crate::types::Transfer;
+    let message =
+        MessageFactory::build_upload_transfer_request("song.mp3", 555, 4096);
+    // Decode via the production Transfer parser (dispatcher starts at offset 8).
+    let mut decoded = Message::new_with_data(message.get_buffer());
+    decoded.set_pointer(8);
+    let transfer = Transfer::new_from_message(&mut decoded);
+    assert_eq!(transfer.direction, 1); // upload
+    assert_eq!(transfer.token, 555);
+    assert_eq!(transfer.filename, "song.mp3");
+    assert_eq!(transfer.size, 4096);
 }
 
 #[test]

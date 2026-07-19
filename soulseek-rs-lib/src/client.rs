@@ -47,6 +47,20 @@ fn next_connect_token() -> u32 {
     NEXT_CONNECT_TOKEN.fetch_add(1, Ordering::Relaxed).max(1)
 }
 
+/// Upload tokens are minted in the high half of the space so they never collide
+/// with download tokens (md5-derived, always < 2^20).
+static NEXT_UPLOAD_TOKEN: AtomicU32 = AtomicU32::new(0x8000_0000);
+
+fn next_upload_token() -> u32 {
+    NEXT_UPLOAD_TOKEN.fetch_add(1, Ordering::Relaxed)
+}
+
+/// A file we have agreed to serve to a peer, awaiting their TransferResponse.
+struct UploadJob {
+    downloader: String,
+    real_path: std::path::PathBuf,
+}
+
 /// Build a `FileSearchResponse` for `query` against `shares`, or `None` if
 /// nothing matches. `own_username` is the name the searcher will download from.
 fn build_search_response(
@@ -149,6 +163,16 @@ pub enum ClientOperation {
         token: u32,
         query: String,
     },
+    /// A peer queued one of our shared files; `requester_key` is the registry
+    /// key of the peer actor (may carry a `:direct` suffix).
+    QueueUpload {
+        requester_key: String,
+        filename: String,
+    },
+    /// The peer accepted our upload offer for `token`; start streaming.
+    StartUpload {
+        token: u32,
+    },
     /// A direct outbound connection to this peer failed before it was
     /// established — the peer is likely firewalled, so fall back to asking the
     /// server to broker the connection. Carries the reporting actor's id.
@@ -170,6 +194,10 @@ pub struct ClientContext {
     peer_addresses: HashMap<String, (String, u32)>,
     /// Peer messages waiting for a control connection to that peer.
     pending_peer_messages: HashMap<String, Vec<crate::message::Message>>,
+    /// Uploads we have offered, keyed by our transfer token.
+    uploads: HashMap<u32, UploadJob>,
+    /// Upload tokens waiting for the downloader's address to be resolved.
+    pending_serves: HashMap<String, Vec<u32>>,
     actor_system: Arc<ActorSystem>,
 }
 impl Default for ClientContext {
@@ -457,6 +485,8 @@ impl ClientContext {
             shares: Arc::new(Shares::empty()),
             peer_addresses: HashMap::new(),
             pending_peer_messages: HashMap::new(),
+            uploads: HashMap::new(),
+            pending_serves: HashMap::new(),
             downloads: DownloadStore::new(),
             actor_system,
         }
@@ -987,6 +1017,33 @@ impl Client {
         }
     }
 
+    /// Consume the upload job for `token` and stream the file to `host:port`
+    /// on a background thread.
+    fn spawn_serve(
+        client_context: &Arc<RwLock<ClientContext>>,
+        own_username: &str,
+        token: u32,
+        host: String,
+        port: u32,
+    ) {
+        let Ok(mut ctx) = client_context.write_safe() else {
+            return;
+        };
+        let Some(job) = ctx.uploads.remove(&token) else {
+            return;
+        };
+        drop(ctx);
+        let own = own_username.to_string();
+        let real_path = job.real_path;
+        thread::spawn(move || {
+            if let Err(e) = crate::peer::upload_peer::serve_file(
+                &host, port, &own, token, &real_path,
+            ) {
+                error!("[client] serve {}: {}", real_path.display(), e);
+            }
+        });
+    }
+
     fn process_failed_uploads(
         client_context: Arc<RwLock<ClientContext>>,
         username: &str,
@@ -1317,11 +1374,27 @@ impl Client {
                                     obfuscated_port
                                 );
 
-                                // Cache the address for the serve/search paths.
-                                if let Ok(mut ctx) = client_context.write_safe()
-                                {
-                                    ctx.cache_peer_address(
-                                        &username,
+                                // Cache the address for the serve/search paths,
+                                // and collect any uploads waiting on it.
+                                let waiting_serves =
+                                    match client_context.write_safe() {
+                                        Ok(mut ctx) => {
+                                            ctx.cache_peer_address(
+                                                &username,
+                                                host.clone(),
+                                                port,
+                                            );
+                                            ctx.pending_serves
+                                                .remove(&username)
+                                                .unwrap_or_default()
+                                        }
+                                        Err(_) => Vec::new(),
+                                    };
+                                for token in waiting_serves {
+                                    Self::spawn_serve(
+                                        &client_context,
+                                        &own_username,
+                                        token,
                                         host.clone(),
                                         port,
                                     );
@@ -1602,6 +1675,110 @@ impl Client {
                                         let _ = sender.send(
                                             ServerMessage::GetPeerAddress(
                                                 username,
+                                            ),
+                                        );
+                                    }
+                                }
+                            }
+                            ClientOperation::QueueUpload {
+                                requester_key,
+                                filename,
+                            } => {
+                                // A peer queued one of our shared files. Look it
+                                // up, mint an upload token, and offer it.
+                                let downloader = requester_key
+                                    .strip_suffix(":direct")
+                                    .unwrap_or(&requester_key)
+                                    .to_string();
+                                let token = next_upload_token();
+                                let (registry, size) = match client_context
+                                    .write_safe()
+                                {
+                                    Ok(mut ctx) => {
+                                        let Some(file) =
+                                            ctx.shares.get(&filename)
+                                        else {
+                                            debug!(
+                                                "[client] QueueUpload for unknown file {}",
+                                                filename
+                                            );
+                                            continue;
+                                        };
+                                        let size = file.size;
+                                        let real_path = file.real_path.clone();
+                                        ctx.uploads.insert(
+                                            token,
+                                            UploadJob {
+                                                downloader: downloader.clone(),
+                                                real_path,
+                                            },
+                                        );
+                                        (ctx.peer_registry.clone(), size)
+                                    }
+                                    Err(e) => {
+                                        error!(
+                                            "[client] QueueUpload write: {}",
+                                            e
+                                        );
+                                        continue;
+                                    }
+                                };
+                                if let Some(registry) = registry {
+                                    let _ = registry.send_to_peer(
+                                        &requester_key,
+                                        PeerMessage::ServeUpload {
+                                            token,
+                                            filename,
+                                            size,
+                                        },
+                                    );
+                                }
+                            }
+                            ClientOperation::StartUpload { token } => {
+                                // The peer accepted our offer: resolve their
+                                // address (from the code-9 GetPeerAddress) and
+                                // stream the file, or queue until it resolves.
+                                let (job_addr, downloader) =
+                                    match client_context.read_safe() {
+                                        Ok(ctx) => {
+                                            let Some(job) =
+                                                ctx.uploads.get(&token)
+                                            else {
+                                                continue;
+                                            };
+                                            (
+                                                ctx.peer_address(
+                                                    &job.downloader,
+                                                ),
+                                                job.downloader.clone(),
+                                            )
+                                        }
+                                        Err(_) => continue,
+                                    };
+                                if let Some((host, port)) = job_addr {
+                                    Self::spawn_serve(
+                                        &client_context,
+                                        &own_username,
+                                        token,
+                                        host,
+                                        port,
+                                    );
+                                } else {
+                                    if let Ok(mut ctx) =
+                                        client_context.write_safe()
+                                    {
+                                        ctx.pending_serves
+                                            .entry(downloader.clone())
+                                            .or_default()
+                                            .push(token);
+                                    }
+                                    if let Ok(ctx) = client_context.read_safe()
+                                        && let Some(sender) =
+                                            ctx.server_sender.clone()
+                                    {
+                                        let _ = sender.send(
+                                            ServerMessage::GetPeerAddress(
+                                                downloader,
                                             ),
                                         );
                                     }

@@ -4,19 +4,16 @@ use crate::{
 };
 use std::sync::mpsc::Sender;
 
-pub struct PlaceInQueueResponse;
+/// A peer asking to download one of our shared files (peer code 43).
+pub struct QueueUploadHandler;
 
-impl MessageHandler<PeerMessage> for PlaceInQueueResponse {
+impl MessageHandler<PeerMessage> for QueueUploadHandler {
     fn get_code(&self) -> u8 {
-        44
+        43
     }
 
     fn handle(&self, message: &mut Message, sender: Sender<PeerMessage>) {
         let filename = message.read_string();
-        let place = message.read_int32();
-
-        sender
-            .send(PeerMessage::PlaceInQueueResponse { filename, place })
-            .unwrap();
+        let _ = sender.send(PeerMessage::IncomingQueueUpload(filename));
     }
 }

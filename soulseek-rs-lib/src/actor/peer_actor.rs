@@ -3,7 +3,7 @@ use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
 use crate::message::peer::{
     FileSearchResponse, GetShareFileList, PeerInit, PlaceInQueueResponse,
-    TransferRequest, TransferResponse, UploadFailedHandler,
+    QueueUploadHandler, TransferRequest, TransferResponse, UploadFailedHandler,
 };
 use crate::message::server::MessageFactory;
 use crate::message::{Handlers, Message, MessageReader, MessageType};
@@ -36,6 +36,14 @@ pub enum PeerMessage {
     SetUsername(String),
     QueueUpload(String),
     RequestTransfer(Download),
+    /// A peer queued one of our shared files for download (they sent us code 43).
+    IncomingQueueUpload(String),
+    /// Offer the queued file to that peer: send an upload TransferRequest.
+    ServeUpload {
+        token: u32,
+        filename: String,
+        size: u64,
+    },
     ProcessRead,
 }
 
@@ -64,6 +72,9 @@ pub struct PeerActor {
     /// Registry-assigned unique id, echoed in terminal notifications so the
     /// client evicts only this actor and never a newer namesake.
     id: u64,
+    /// Transfer tokens for uploads we are serving to this peer. A TransferResponse
+    /// for one of these is our upload being accepted, not a download offer.
+    serving_tokens: std::collections::HashSet<u32>,
 }
 
 impl PeerActor {
@@ -98,6 +109,7 @@ impl PeerActor {
             established: false,
             disconnect_reported: false,
             id,
+            serving_tokens: std::collections::HashSet::new(),
         }
     }
 
@@ -138,6 +150,7 @@ impl PeerActor {
         handlers.register_handler(GetShareFileList);
         handlers.register_handler(UploadFailedHandler);
         handlers.register_handler(PlaceInQueueResponse);
+        handlers.register_handler(QueueUploadHandler);
         handlers.register_handler(PeerInit);
 
         self.dispatcher = Some(MessageDispatcher::new(
@@ -234,6 +247,18 @@ impl PeerActor {
                     username, token, allowed
                 );
 
+                // If this token is one of our uploads, the peer just accepted
+                // our offer — start streaming. This leaves the download path
+                // (every other token) byte-for-byte unchanged.
+                if self.serving_tokens.remove(&token) {
+                    if allowed {
+                        let _ = self
+                            .client_channel
+                            .send(ClientOperation::StartUpload { token });
+                    }
+                    return;
+                }
+
                 if allowed {
                     debug!(
                         "[peer:{}] Transfer allowed, ready to connect with token {:}",
@@ -296,6 +321,30 @@ impl PeerActor {
             PeerMessage::QueueUpload(filename) => {
                 let message =
                     MessageFactory::build_queue_upload_message(&filename);
+                self.send_message(message);
+            }
+            PeerMessage::IncomingQueueUpload(filename) => {
+                // A peer wants to download one of our shared files. Ask the
+                // client (which owns the shares) to prepare the upload.
+                let requester_key = self.peer_username();
+                if let Err(e) =
+                    self.client_channel.send(ClientOperation::QueueUpload {
+                        requester_key,
+                        filename,
+                    })
+                {
+                    error!("[peer_actor] forward IncomingQueueUpload: {}", e);
+                }
+            }
+            PeerMessage::ServeUpload {
+                token,
+                filename,
+                size,
+            } => {
+                self.serving_tokens.insert(token);
+                let message = MessageFactory::build_upload_transfer_request(
+                    &filename, token, size,
+                );
                 self.send_message(message);
             }
             PeerMessage::RequestTransfer(download) => {
