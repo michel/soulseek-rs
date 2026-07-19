@@ -1,6 +1,7 @@
 mod app_state;
 mod browse;
 mod file_display_data;
+mod rooms;
 
 pub use app_state::{
     AppState, ChatMessage, CommandBarMode, DownloadEntry, FocusedPane,
@@ -8,3 +9,4 @@ pub use app_state::{
 };
 pub use browse::{BrowseState, BrowseStatus, files_under, find_node};
 pub use file_display_data::FileDisplayData;
+pub use rooms::{RoomLine, RoomsState, RoomsView};

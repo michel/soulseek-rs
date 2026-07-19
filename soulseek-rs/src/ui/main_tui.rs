@@ -1,11 +1,12 @@
 use crate::models::{
     AppState, BrowseState, BrowseStatus, ChatMessage, CommandBarMode,
-    DownloadEntry, FileDisplayData, FocusedPane, MessageDirection, SearchEntry,
-    SearchStatus, files_under, find_node,
+    DownloadEntry, FileDisplayData, FocusedPane, MessageDirection, RoomsView,
+    SearchEntry, SearchStatus, files_under, find_node,
 };
 use crate::ui::panes::{
     ResultsPaneParams, render_browse_pane, render_download_info_pane,
-    render_downloads_pane, render_results_pane, render_searches_pane,
+    render_downloads_pane, render_results_pane, render_rooms_pane,
+    render_searches_pane,
 };
 use crate::ui::{
     border_style, border_type, format_shortcuts_styled, render_download_stats,
@@ -105,6 +106,9 @@ impl MainTui {
 
             // Poll for a browse (shared-file listing) response
             self.poll_browse_result();
+
+            // Poll for chat-room events
+            self.poll_room_events();
 
             // Update spinner
             self.spinner_state = (self.spinner_state + 1) % 10;
@@ -273,6 +277,18 @@ impl MainTui {
                 self.spinner_state,
             );
         }
+
+        // Chat rooms overlay everything when open.
+        if self.state.show_rooms {
+            let area = centered_rect(85, 80, frame.area());
+            frame.render_widget(ratatui::widgets::Clear, area);
+            render_rooms_pane(
+                frame,
+                area,
+                &self.state.rooms,
+                &mut self.state.rooms_list_table_state,
+            );
+        }
     }
 
     fn render_messages_popup(&self, frame: &mut Frame) {
@@ -312,8 +328,60 @@ impl MainTui {
         frame.render_widget(popup, area);
     }
 
+    /// Context shortcuts for the chat-rooms popup.
+    fn rooms_shortcuts(&self) -> Vec<(&'static str, &'static str)> {
+        if self.state.rooms.composing {
+            return vec![
+                ("Type", "message"),
+                ("Enter", "send"),
+                ("Esc", "cancel"),
+            ];
+        }
+        match self.state.rooms.view {
+            RoomsView::List => {
+                if self.state.rooms.list_is_filtering {
+                    vec![
+                        ("Type", "filter"),
+                        ("Enter", "join match"),
+                        ("Esc", "clear filter"),
+                    ]
+                } else {
+                    vec![
+                        ("↑↓", "move"),
+                        ("Enter", "join"),
+                        ("/", "filter"),
+                        ("Tab", "open rooms"),
+                        ("Esc", "close"),
+                    ]
+                }
+            }
+            RoomsView::Chat => vec![
+                ("Enter", "type message"),
+                ("Tab", "switch room"),
+                ("l", "room list"),
+                ("x", "leave"),
+                ("q", "close"),
+            ],
+        }
+    }
+
     fn render_shortcuts(&self, frame: &mut Frame, area: Rect) {
-        let shortcuts = if self.state.show_browse {
+        // Unread badges for the inbox and chat shortcuts.
+        let inbox_label = if self.state.unread_messages > 0 {
+            format!("inbox ({})", self.state.unread_messages)
+        } else {
+            "inbox".to_string()
+        };
+        let chat_unread = self.state.rooms.total_unread();
+        let chat_label = if chat_unread > 0 {
+            format!("chat ({chat_unread})")
+        } else {
+            "chat".to_string()
+        };
+
+        let shortcuts = if self.state.show_rooms {
+            self.rooms_shortcuts()
+        } else if self.state.show_browse {
             vec![
                 ("↑↓", "move"),
                 ("→←", "expand/collapse"),
@@ -346,11 +414,12 @@ impl MainTui {
                 FocusedPane::Searches => vec![
                     ("s", "search"),
                     ("m", "message"),
-                    ("i", "inbox"),
+                    ("i", inbox_label.as_str()),
+                    ("c", chat_label.as_str()),
                     ("b", "browse user"),
                     ("1-3", "focus pane"),
                     ("↑↓", "navigate"),
-                    ("Enter", "view results"),
+                    ("Enter", "results"),
                     ("q", "quit"),
                 ],
                 FocusedPane::Results if self.state.results_is_filtering => {
@@ -365,6 +434,7 @@ impl MainTui {
                     ("Space", "select"),
                     ("Enter", "download"),
                     ("b", "browse owner"),
+                    ("c", chat_label.as_str()),
                     ("/", "filter"),
                     ("a/A", "select all/none"),
                     ("1-3", "focus pane"),
@@ -451,6 +521,11 @@ impl MainTui {
             return self.handle_browse_input(key);
         }
 
+        // Rooms popup takes over navigation while open.
+        if self.state.show_rooms {
+            return self.handle_rooms_input(key);
+        }
+
         // Filter mode in Results pane
         if self.state.results_is_filtering
             && self.state.focused_pane == FocusedPane::Results
@@ -492,6 +567,15 @@ impl MainTui {
             }
             KeyCode::Char('i') => {
                 self.state.show_messages = true;
+                self.state.unread_messages = 0;
+                return;
+            }
+            // Chat rooms. In the Downloads pane `c` clears finished downloads,
+            // so only open chat from the other panes (like `b` is contextual).
+            KeyCode::Char('c')
+                if self.state.focused_pane != FocusedPane::Downloads =>
+            {
+                self.start_rooms();
                 return;
             }
             KeyCode::Char('b') => {
@@ -655,6 +739,194 @@ impl MainTui {
                 }
             }
         });
+    }
+
+    /// Open the chat-rooms popup and refresh the room list. If rooms are
+    /// already open, jump straight to the chat view; otherwise show the list.
+    fn start_rooms(&mut self) {
+        let _ = self.client.request_room_list();
+        self.state.show_rooms = true;
+        if self.state.rooms.open.is_empty() {
+            self.state.rooms.view = RoomsView::List;
+        } else {
+            self.state.rooms.view = RoomsView::Chat;
+            self.state.rooms.mark_active_read();
+        }
+    }
+
+    fn handle_rooms_input(&mut self, key: KeyEvent) {
+        // Composing a message captures typing.
+        if self.state.rooms.composing {
+            self.handle_room_compose_input(key);
+            return;
+        }
+        // Filtering the room list captures typing.
+        if self.state.rooms.view == RoomsView::List
+            && self.state.rooms.list_is_filtering
+        {
+            self.handle_room_filter_input(key);
+            return;
+        }
+
+        match self.state.rooms.view {
+            RoomsView::List => self.handle_rooms_list_input(key),
+            RoomsView::Chat => self.handle_rooms_chat_input(key),
+        }
+    }
+
+    fn handle_rooms_list_input(&mut self, key: KeyEvent) {
+        let len = self.state.rooms.filtered_rooms().len();
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.state.show_rooms = false;
+            }
+            KeyCode::Char('/') => {
+                self.state.rooms.list_is_filtering = true;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.state.rooms.list_selected =
+                    self.state.rooms.list_selected.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if len > 0 {
+                    self.state.rooms.list_selected =
+                        (self.state.rooms.list_selected + 1).min(len - 1);
+                }
+            }
+            KeyCode::Enter => self.join_selected_room(),
+            KeyCode::Tab if !self.state.rooms.open.is_empty() => {
+                self.state.rooms.view = RoomsView::Chat;
+                self.state.rooms.mark_active_read();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_room_filter_input(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.state.rooms.list_is_filtering = false;
+                self.state.rooms.list_filter.clear();
+                self.state.rooms.list_selected = 0;
+            }
+            KeyCode::Enter => {
+                self.state.rooms.list_is_filtering = false;
+                self.join_selected_room();
+            }
+            KeyCode::Char(c) => {
+                self.state.rooms.list_filter.push(c);
+                self.state.rooms.list_selected = 0;
+            }
+            KeyCode::Backspace => {
+                self.state.rooms.list_filter.pop();
+                self.state.rooms.list_selected = 0;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_rooms_chat_input(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('q') => self.state.show_rooms = false,
+            KeyCode::Esc | KeyCode::Char('l') => {
+                self.state.rooms.view = RoomsView::List;
+            }
+            KeyCode::Tab => self.state.rooms.next_tab(),
+            KeyCode::BackTab => self.state.rooms.prev_tab(),
+            KeyCode::Char('x') => self.leave_active_room(),
+            KeyCode::Enter if self.state.rooms.active_room().is_some() => {
+                self.state.rooms.composing = true;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_room_compose_input(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter => self.send_room_message(),
+            KeyCode::Esc => {
+                self.state.rooms.composing = false;
+                if let Some(room) =
+                    self.state.rooms.open.get_mut(self.state.rooms.active)
+                {
+                    room.input.clear();
+                }
+            }
+            KeyCode::Backspace => {
+                if let Some(room) =
+                    self.state.rooms.open.get_mut(self.state.rooms.active)
+                {
+                    room.input.pop();
+                }
+            }
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                if let Some(room) =
+                    self.state.rooms.open.get_mut(self.state.rooms.active)
+                {
+                    room.input.push(c);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Join (or focus) the room highlighted in the list view.
+    fn join_selected_room(&mut self) {
+        if let Some(name) = self.state.rooms.selected_room_name() {
+            let newly_opened = self.state.rooms.focus_or_open(&name);
+            if newly_opened && let Err(e) = self.client.join_room(&name) {
+                eprintln!("Failed to join {name}: {e}");
+            }
+        }
+    }
+
+    /// Leave the active room and close its tab.
+    fn leave_active_room(&mut self) {
+        if let Some(name) = self.state.rooms.close_active()
+            && let Err(e) = self.client.leave_room(&name)
+        {
+            eprintln!("Failed to leave {name}: {e}");
+        }
+    }
+
+    /// Send the active room's compose buffer. The server echoes the message
+    /// back as a RoomEvent, which is what actually renders it in the log.
+    fn send_room_message(&mut self) {
+        let active = self.state.rooms.active;
+        let (room, text) = match self.state.rooms.open.get(active) {
+            Some(room) if !room.input.trim().is_empty() => {
+                (room.name.clone(), room.input.trim().to_string())
+            }
+            _ => {
+                self.state.rooms.composing = false;
+                return;
+            }
+        };
+        if let Err(e) = self.client.say_in_room(&room, &text) {
+            eprintln!("Failed to say in {room}: {e}");
+        }
+        if let Some(room) = self.state.rooms.open.get_mut(active) {
+            room.input.clear();
+        }
+        self.state.rooms.composing = false;
+    }
+
+    /// Drain chat-room events into the rooms state, tracking unread badges.
+    fn poll_room_events(&mut self) {
+        let viewing = if self.state.show_rooms
+            && self.state.rooms.view == RoomsView::Chat
+        {
+            self.state.rooms.active_room().map(|r| r.name.clone())
+        } else {
+            None
+        };
+        for event in self.client.take_room_events() {
+            self.state.rooms.apply_event(event, viewing.as_deref());
+        }
     }
 
     fn handle_command_bar_input(&mut self, key: KeyEvent) {
@@ -1208,6 +1480,10 @@ impl MainTui {
                 peer: msg.username().to_string(),
                 text: msg.message().to_string(),
             });
+            // Badge the inbox when it isn't currently open.
+            if !self.state.show_messages {
+                self.state.unread_messages += 1;
+            }
         }
     }
 
