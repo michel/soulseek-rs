@@ -56,14 +56,15 @@ fn main() -> Result<()> {
 
     // Resolve the optional shared/upload directory up front; a misconfigured
     // one is a warning, not a fatal error (the client just shares nothing).
-    let shared_directory =
-        match directories::resolve_shared_directory(cli.shared_dir.as_deref()) {
-            Ok(dir) => dir.map(|path| path.display().to_string()),
-            Err(e) => {
-                eprintln!("⚠️  Ignoring shared directory: {e}");
-                None
-            }
-        };
+    let shared_directory = match directories::resolve_shared_directory(
+        cli.shared_dir.as_deref(),
+    ) {
+        Ok(dir) => dir.map(|path| path.display().to_string()),
+        Err(e) => {
+            eprintln!("⚠️  Ignoring shared directory: {e}");
+            None
+        }
+    };
 
     match cli.command {
         Some(Commands::Search {
