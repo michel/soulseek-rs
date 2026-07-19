@@ -6,6 +6,7 @@ pub mod download_store;
 pub mod error;
 pub mod message;
 pub mod peer;
+pub mod shares;
 pub mod types;
 #[macro_use]
 pub mod utils;
