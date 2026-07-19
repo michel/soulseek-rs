@@ -149,6 +149,13 @@ pub enum ServerMessage {
         token: u32,
         query: String,
     },
+    /// A search the server distributed to us from another user; if it matches
+    /// our shares we reply with a FileSearchResponse.
+    FileSearchRequest {
+        username: String,
+        token: u32,
+        query: String,
+    },
     #[allow(dead_code)]
     ConnectToPeer(Peer),
     PierceFirewall(u32),
@@ -507,6 +514,21 @@ impl ServerActor {
             }
             ServerMessage::FileSearch { token, query } => {
                 self.file_search(token, &query);
+            }
+            ServerMessage::FileSearchRequest {
+                username,
+                token,
+                query,
+            } => {
+                if let Err(e) =
+                    self.client_channel.send(ClientOperation::IncomingSearch {
+                        username,
+                        token,
+                        query,
+                    })
+                {
+                    error!("[server] forward IncomingSearch: {}", e);
+                }
             }
         }
     }

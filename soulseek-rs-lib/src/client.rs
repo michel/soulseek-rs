@@ -9,7 +9,11 @@ use crate::{
     Transfer,
     actor::{ActorSystem, peer_registry::PeerRegistry},
     error::{Result, SoulseekRs},
-    peer::{ConnectionType, DownloadPeer, NewPeer, Peer, listen::Listen},
+    message::peer::{FileEntry, build_file_search_response},
+    peer::{
+        ConnectionType, DownloadPeer, NewPeer, Peer, PeerMessage,
+        listen::Listen,
+    },
     shares::Shares,
     types::{Download, Search, SearchResult},
     utils::{lock::RwLockExt, md5, thread_pool::ThreadPool},
@@ -41,6 +45,35 @@ static NEXT_CONNECT_TOKEN: AtomicU32 = AtomicU32::new(1);
 
 fn next_connect_token() -> u32 {
     NEXT_CONNECT_TOKEN.fetch_add(1, Ordering::Relaxed).max(1)
+}
+
+/// Build a `FileSearchResponse` for `query` against `shares`, or `None` if
+/// nothing matches. `own_username` is the name the searcher will download from.
+fn build_search_response(
+    shares: &Shares,
+    own_username: &str,
+    token: u32,
+    query: &str,
+) -> Option<crate::message::Message> {
+    let matches = shares.search(query);
+    if matches.is_empty() {
+        return None;
+    }
+    let entries: Vec<FileEntry> = matches
+        .iter()
+        .map(|f| FileEntry {
+            name: &f.virtual_path,
+            size: f.size,
+            attribs: &f.attributes,
+        })
+        .collect();
+    Some(build_file_search_response(
+        own_username,
+        token,
+        &entries,
+        1,
+        0,
+    ))
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +143,12 @@ pub enum ClientOperation {
     SetServerSender(Sender<ServerMessage>),
     PrivateMessageReceived(UserMessage),
     PeerConnected(String),
+    /// A search distributed to us by the server; reply if our shares match.
+    IncomingSearch {
+        username: String,
+        token: u32,
+        query: String,
+    },
     /// A direct outbound connection to this peer failed before it was
     /// established — the peer is likely firewalled, so fall back to asking the
     /// server to broker the connection. Carries the reporting actor's id.
@@ -127,6 +166,10 @@ pub struct ClientContext {
     pending_connect_tokens: HashMap<u32, String>,
     /// Files we share with peers (read-only after connect).
     pub shares: Arc<Shares>,
+    /// Peer listen addresses learned from GetPeerAddress responses.
+    peer_addresses: HashMap<String, (String, u32)>,
+    /// Peer messages waiting for a control connection to that peer.
+    pending_peer_messages: HashMap<String, Vec<crate::message::Message>>,
     actor_system: Arc<ActorSystem>,
 }
 impl Default for ClientContext {
@@ -330,6 +373,29 @@ fn fail_queued_downloads_notifies_receiver_and_store() {
 }
 
 #[test]
+fn build_search_response_matches_shares_and_echoes_token() {
+    let dir = std::env::temp_dir()
+        .join(format!("soulseek-searchresp-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("probe_xyzzy.bin"), b"data").unwrap();
+    let shares = Shares::scan(&dir).unwrap();
+
+    let response = build_search_response(&shares, "me", 99, "xyzzy")
+        .expect("a matching share yields a response");
+    let mut decoded =
+        crate::message::Message::new_with_data(response.get_buffer());
+    decoded.set_pointer(8);
+    let result = SearchResult::new_from_message(&mut decoded).unwrap();
+    assert_eq!(result.username, "me");
+    assert_eq!(result.token, 99);
+    assert!(result.files.iter().any(|f| f.name.contains("probe_xyzzy")));
+
+    assert!(build_search_response(&shares, "me", 1, "nomatch").is_none());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn test_client_removes_only_queued_downloads() {
     let client = Client::new("test-user", "test-password");
     let queued_download = Download {
@@ -389,9 +455,50 @@ impl ClientContext {
             private_messages: Vec::new(),
             pending_connect_tokens: HashMap::new(),
             shares: Arc::new(Shares::empty()),
+            peer_addresses: HashMap::new(),
+            pending_peer_messages: HashMap::new(),
             downloads: DownloadStore::new(),
             actor_system,
         }
+    }
+
+    /// Cache a peer's listen address learned from a GetPeerAddress response.
+    pub fn cache_peer_address(
+        &mut self,
+        username: &str,
+        host: String,
+        port: u32,
+    ) {
+        self.peer_addresses
+            .insert(username.to_string(), (host, port));
+    }
+
+    /// The cached listen address for `username`, if known.
+    #[must_use]
+    pub fn peer_address(&self, username: &str) -> Option<(String, u32)> {
+        self.peer_addresses.get(username).cloned()
+    }
+
+    /// Queue a peer message to send once a control connection to `username` is up.
+    pub fn queue_peer_message(
+        &mut self,
+        username: &str,
+        message: crate::message::Message,
+    ) {
+        self.pending_peer_messages
+            .entry(username.to_string())
+            .or_default()
+            .push(message);
+    }
+
+    /// Remove and return the messages queued for `username`.
+    pub fn take_peer_messages(
+        &mut self,
+        username: &str,
+    ) -> Vec<crate::message::Message> {
+        self.pending_peer_messages
+            .remove(username)
+            .unwrap_or_default()
     }
 
     /// Remember that a server-brokered connection to `username` is pending under
@@ -1210,6 +1317,16 @@ impl Client {
                                     obfuscated_port
                                 );
 
+                                // Cache the address for the serve/search paths.
+                                if let Ok(mut ctx) = client_context.write_safe()
+                                {
+                                    ctx.cache_peer_address(
+                                        &username,
+                                        host.clone(),
+                                        port,
+                                    );
+                                }
+
                                 let peer_exists = match client_context
                                     .read_safe()
                                 {
@@ -1401,10 +1518,92 @@ impl Client {
                                         continue;
                                     }
                                 };
+                                // Also flush any peer messages (e.g. search
+                                // responses) queued while connecting.
+                                let queued_messages = client_context
+                                    .write_safe()
+                                    .map(|mut ctx| {
+                                        ctx.take_peer_messages(&username)
+                                    })
+                                    .unwrap_or_default();
                                 if let Some(registry) = registry {
                                     for filename in files {
                                         let _ = registry
                                             .queue_upload(&username, filename);
+                                    }
+                                    for message in queued_messages {
+                                        let _ = registry.send_to_peer(
+                                            &username,
+                                            PeerMessage::SendMessage(message),
+                                        );
+                                    }
+                                }
+                            }
+                            ClientOperation::IncomingSearch {
+                                username,
+                                token,
+                                query,
+                            } => {
+                                // Don't answer our own distributed search.
+                                if username == own_username {
+                                    continue;
+                                }
+                                let response = match client_context.read_safe()
+                                {
+                                    Ok(ctx) => build_search_response(
+                                        &ctx.shares,
+                                        &own_username,
+                                        token,
+                                        &query,
+                                    ),
+                                    Err(e) => {
+                                        error!(
+                                            "[client] IncomingSearch read: {}",
+                                            e
+                                        );
+                                        continue;
+                                    }
+                                };
+                                let Some(message) = response else {
+                                    continue; // no matching shares
+                                };
+
+                                // Deliver to the searcher: send now if we have a
+                                // control connection, else open one and queue.
+                                let (connected, registry, server_sender) =
+                                    match client_context.read_safe() {
+                                        Ok(ctx) => (
+                                            ctx.peer_registry
+                                                .as_ref()
+                                                .is_some_and(|r| {
+                                                    r.contains(&username)
+                                                }),
+                                            ctx.peer_registry.clone(),
+                                            ctx.server_sender.clone(),
+                                        ),
+                                        Err(_) => continue,
+                                    };
+                                if connected {
+                                    if let Some(registry) = registry {
+                                        let _ = registry.send_to_peer(
+                                            &username,
+                                            PeerMessage::SendMessage(message),
+                                        );
+                                    }
+                                } else {
+                                    if let Ok(mut ctx) =
+                                        client_context.write_safe()
+                                    {
+                                        ctx.queue_peer_message(
+                                            &username, message,
+                                        );
+                                    }
+                                    if let Some(sender) = server_sender {
+                                        let _ = sender.send(
+                                            ServerMessage::GetPeerAddress(
+                                                username,
+                                            ),
+                                        );
                                     }
                                 }
                             }
