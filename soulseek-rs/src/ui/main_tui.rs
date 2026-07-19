@@ -388,6 +388,7 @@ impl MainTui {
                 ("Enter", "open/download"),
                 ("d", "download folder"),
                 ("Tab", "switch user"),
+                ("r", "retry"),
                 ("w", "close tab"),
                 ("Esc", "hide"),
             ]
@@ -629,6 +630,13 @@ impl MainTui {
                     self.state.show_browse = false;
                 }
                 self.sync_browse_selection();
+                return;
+            }
+            KeyCode::Char('r') => {
+                // Retry a timed-out browse.
+                if let Some(username) = self.state.browse.retry_active() {
+                    let _ = self.client.browse_user(&username);
+                }
                 return;
             }
             _ => {}
