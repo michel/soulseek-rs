@@ -98,6 +98,12 @@ pub enum Commands {
         /// Message text to send
         message: String,
     },
+
+    /// Browse another user's shared files
+    Browse {
+        /// Username whose shares to list
+        username: String,
+    },
 }
 
 pub fn parse_server_address(server: &str) -> color_eyre::Result<(String, u16)> {

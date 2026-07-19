@@ -104,6 +104,17 @@ fn main() -> Result<()> {
             &recipient,
             &message,
         ),
+        Some(Commands::Browse { username: target }) => browse_user(
+            &ClientSettings {
+                username,
+                password,
+                server_address: PeerAddress::new(server_host, server_port),
+                enable_listen: !cli.disable_listener,
+                listen_port: cli.listener_port,
+                shared_directory,
+            },
+            &target,
+        ),
         None => {
             use ratatui::crossterm::{
                 event::EnableMouseCapture,
@@ -152,6 +163,46 @@ fn main() -> Result<()> {
             )
         }
     }
+}
+
+fn browse_user(settings: &ClientSettings, target: &str) -> Result<()> {
+    use std::time::Instant;
+
+    let mut client = Client::with_settings(settings.clone());
+    client
+        .connect()
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to connect: {}", e))?;
+    if !client
+        .login()
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to login: {}", e))?
+    {
+        return Err(color_eyre::eyre::eyre!("Login rejected by server"));
+    }
+
+    client
+        .browse_user(target)
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to browse: {}", e))?;
+
+    println!("📂 Requesting shared files from {target}...");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline {
+        if let Some(directories) = client.take_browse_result(target) {
+            if directories.is_empty() {
+                println!("({target} shares nothing)");
+            }
+            for directory in directories {
+                println!("\n{}/", directory.name);
+                for (name, size) in directory.files {
+                    println!("  {name}  ({size} bytes)");
+                }
+            }
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    Err(color_eyre::eyre::eyre!(
+        "Timed out waiting for {target}'s file list"
+    ))
 }
 
 fn send_private_message(
