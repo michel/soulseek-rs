@@ -371,6 +371,20 @@ impl BrowseTabs {
         }
     }
 
+    /// Retry the active tab if it timed out: reset it to loading and return the
+    /// username so the caller can re-issue the request. Returns `None` if the
+    /// active tab isn't in a retryable (timed-out) state.
+    pub fn retry_active(&mut self) -> Option<String> {
+        let tab = self.tabs.get_mut(self.active)?;
+        if tab.status == BrowseStatus::TimedOut {
+            let username = tab.username.clone();
+            *tab = BrowseState::loading(username.clone());
+            Some(username)
+        } else {
+            None
+        }
+    }
+
     /// Close the active tab, returning `false` when no tabs remain.
     pub fn close_active(&mut self) -> bool {
         if self.active < self.tabs.len() {
@@ -543,6 +557,20 @@ mod tests {
         // Re-opening a timed-out tab retries (returns true) and resets it.
         assert!(tabs.open("alice"));
         assert_eq!(tabs.active_tab().unwrap().status, BrowseStatus::Loading);
+    }
+
+    #[test]
+    fn browse_tabs_retry_active_only_when_timed_out() {
+        let mut tabs = BrowseTabs::new();
+        tabs.open("alice");
+        // Loading tab isn't retryable.
+        assert_eq!(tabs.retry_active(), None);
+        tabs.active_tab_mut().unwrap().status = BrowseStatus::TimedOut;
+        // Timed-out tab retries and resets to loading.
+        assert_eq!(tabs.retry_active().as_deref(), Some("alice"));
+        assert_eq!(tabs.active_tab().unwrap().status, BrowseStatus::Loading);
+        // Now loading again, no further retry.
+        assert_eq!(tabs.retry_active(), None);
     }
 
     #[test]
