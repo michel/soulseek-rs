@@ -24,4 +24,5 @@ pub mod prelude {
 pub use actor::server_actor::{PeerAddress, UserMessage};
 pub use client::{Client, ClientSettings};
 pub use error::{Result, SoulseekRs};
+pub use message::peer::SharedDirectory;
 pub use types::{DownloadStatus, File, Search, SearchResult, Transfer};

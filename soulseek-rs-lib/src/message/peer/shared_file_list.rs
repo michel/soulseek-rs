@@ -2,14 +2,28 @@
 //! sent in reply to `GetShareFileList` (code 4). The payload is zlib-compressed
 //! and groups files by their virtual directory.
 
-use crate::message::Message;
+use crate::message::{Message, MessageHandler};
+use crate::peer::PeerMessage;
 use crate::utils::zlib::{compress_stored, deflate};
+use std::sync::mpsc::Sender;
 
 /// One shared directory and the files directly in it (basename + size).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SharedDirectory {
     pub name: String,
     pub files: Vec<(String, u64)>,
+}
+
+/// Receives a peer's `SharedFileListResponse` (peer code 5) when browsing them.
+pub struct SharedFileListResponseHandler;
+impl MessageHandler<PeerMessage> for SharedFileListResponseHandler {
+    fn get_code(&self) -> u8 {
+        5
+    }
+    fn handle(&self, message: &mut Message, sender: Sender<PeerMessage>) {
+        let directories = parse_shared_file_list(message);
+        let _ = sender.send(PeerMessage::ShareListReceived(directories));
+    }
 }
 
 /// Build a `SharedFileListResponse` (peer code 5) from the directory listing.
