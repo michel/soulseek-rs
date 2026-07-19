@@ -1,7 +1,7 @@
 use crate::models::{
-    AppState, BrowseState, BrowseStatus, ChatMessage, CommandBarMode,
-    DownloadEntry, FileDisplayData, FocusedPane, MessageDirection, RoomsView,
-    SearchEntry, SearchStatus, files_under, find_node,
+    AppState, BrowseStatus, ChatMessage, CommandBarMode, DownloadEntry,
+    FileDisplayData, FocusedPane, MessageDirection, RoomsView, SearchEntry,
+    SearchStatus, files_under, find_node,
 };
 use crate::ui::panes::{
     ResultsPaneParams, render_browse_pane, render_download_info_pane,
@@ -264,15 +264,13 @@ impl MainTui {
         }
 
         // Browse tree overlays everything when open.
-        if self.state.show_browse
-            && let Some(browse) = self.state.browse.as_ref()
-        {
+        if self.state.show_browse && !self.state.browse.is_empty() {
             let area = centered_rect(80, 80, frame.area());
             frame.render_widget(ratatui::widgets::Clear, area);
             render_browse_pane(
                 frame,
                 area,
-                browse,
+                &self.state.browse,
                 &mut self.state.browse_table_state,
                 self.spinner_state,
             );
@@ -389,7 +387,9 @@ impl MainTui {
                 ("→←", "expand/collapse"),
                 ("Enter", "open/download"),
                 ("d", "download folder"),
-                ("Esc", "close"),
+                ("Tab", "switch user"),
+                ("w", "close tab"),
+                ("Esc", "hide"),
             ]
         } else if self.state.command_bar_active {
             match self.state.command_bar_mode {
@@ -612,9 +612,31 @@ impl MainTui {
             return;
         }
 
+        // Tab management: switch between browsed users or close the active tab.
+        match key.code {
+            KeyCode::Tab => {
+                self.state.browse.next_tab();
+                self.sync_browse_selection();
+                return;
+            }
+            KeyCode::BackTab => {
+                self.state.browse.prev_tab();
+                self.sync_browse_selection();
+                return;
+            }
+            KeyCode::Char('w') => {
+                if !self.state.browse.close_active() {
+                    self.state.show_browse = false;
+                }
+                self.sync_browse_selection();
+                return;
+            }
+            _ => {}
+        }
+
         // Snapshot the flattened rows + current selection, then drop the borrow.
         let (rows, sel, row) = {
-            let Some(browse) = self.state.browse.as_ref() else {
+            let Some(browse) = self.state.browse.active_tab() else {
                 self.state.show_browse = false;
                 return;
             };
@@ -652,7 +674,7 @@ impl MainTui {
         }
 
         // Navigation and expand/collapse mutate the browse state.
-        if let Some(browse) = self.state.browse.as_mut() {
+        if let Some(browse) = self.state.browse.active_tab_mut() {
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
                     browse.selected_row = sel.saturating_sub(1);
@@ -692,24 +714,29 @@ impl MainTui {
                 browse.selected_row.min(new_len.saturating_sub(1));
         }
 
-        let selected = self.state.browse.as_ref().map(|b| b.selected_row);
+        self.sync_browse_selection();
+    }
+
+    /// Point the browse table cursor at the active tab's selected row.
+    fn sync_browse_selection(&mut self) {
+        let selected = self.state.browse.active_tab().map(|b| b.selected_row);
         self.state.browse_table_state.select(selected);
     }
 
-    /// Files (`path`, `size`) under the browse-tree folder at `path`.
+    /// Files (`path`, `size`) under the active browse tab's folder at `path`.
     fn browse_folder_files(&self, path: &str) -> Vec<(String, u64)> {
         self.state
             .browse
-            .as_ref()
+            .active_tab()
             .and_then(|b| find_node(&b.tree, path))
             .map(files_under)
             .unwrap_or_default()
     }
 
-    /// Queue downloads of `files` (path, size) from the currently-browsed user.
+    /// Queue downloads of `files` (path, size) from the active browse tab's user.
     fn queue_browse_files(&mut self, files: Vec<(String, u64)>) {
         let Some(username) =
-            self.state.browse.as_ref().map(|b| b.username.clone())
+            self.state.browse.active_tab().map(|b| b.username.clone())
         else {
             return;
         };
@@ -1527,16 +1554,19 @@ impl MainTui {
         }
     }
 
-    /// Request a user's shared files and open the browse popup.
+    /// Request a user's shared files and open (or focus) their browse tab.
     fn start_browse(&mut self, username: String) {
         let username = username.trim().to_string();
         if username.is_empty() {
             return;
         }
-        let _ = self.client.browse_user(&username);
-        self.state.browse = Some(BrowseState::loading(username));
+        // Open/focus the tab; only (re)issue the request when it's new or a
+        // previous attempt timed out.
+        if self.state.browse.open(&username) {
+            let _ = self.client.browse_user(&username);
+        }
         self.state.show_browse = true;
-        self.state.browse_table_state.select(Some(0));
+        self.sync_browse_selection();
     }
 
     /// The username of the highlighted search result (filter-aware).
@@ -1550,28 +1580,33 @@ impl MainTui {
         items.get(selected).map(|f| f.username.clone())
     }
 
-    /// Drain a browse response into the browse state, or time it out.
+    /// Drain browse responses into any loading tabs, or time them out.
     fn poll_browse_result(&mut self) {
-        let Some((username, status, requested_at)) = self
+        // Which loading tabs are waiting, and for whom.
+        let loading: Vec<(usize, String, std::time::Instant)> = self
             .state
             .browse
-            .as_ref()
-            .map(|b| (b.username.clone(), b.status, b.requested_at))
-        else {
-            return;
-        };
-        if status != BrowseStatus::Loading {
-            return;
-        }
-        if let Some(directories) = self.client.take_browse_result(&username) {
-            if let Some(browse) = self.state.browse.as_mut() {
-                browse.load(&directories);
+            .tabs
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.status == BrowseStatus::Loading)
+            .map(|(i, b)| (i, b.username.clone(), b.requested_at))
+            .collect();
+
+        for (idx, username, requested_at) in loading {
+            if let Some(directories) = self.client.take_browse_result(&username)
+            {
+                if let Some(browse) = self.state.browse.tabs.get_mut(idx) {
+                    browse.load(&directories);
+                }
+                if idx == self.state.browse.active {
+                    self.state.browse_table_state.select(Some(0));
+                }
+            } else if requested_at.elapsed() > BROWSE_TIMEOUT
+                && let Some(browse) = self.state.browse.tabs.get_mut(idx)
+            {
+                browse.status = BrowseStatus::TimedOut;
             }
-            self.state.browse_table_state.select(Some(0));
-        } else if requested_at.elapsed() > BROWSE_TIMEOUT
-            && let Some(browse) = self.state.browse.as_mut()
-        {
-            browse.status = BrowseStatus::TimedOut;
         }
     }
 
