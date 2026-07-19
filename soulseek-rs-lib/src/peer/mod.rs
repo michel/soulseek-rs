@@ -1,5 +1,6 @@
 mod download_peer;
 pub mod listen;
+pub mod upload_peer;
 
 // Export actor types
 pub use crate::actor::peer_actor::{PeerActor, PeerMessage};
