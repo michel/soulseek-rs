@@ -142,7 +142,6 @@ impl MessageFactory {
             .clone()
     }
 
-    #[allow(dead_code)]
     #[must_use]
     pub fn build_peer_init_message(
         own_username: &str,
@@ -181,6 +180,22 @@ fn test_build_login_message() {
     ]
     .to_vec();
 
+    assert_eq!(expect, message.get_data());
+}
+
+#[test]
+fn test_build_peer_init_message() {
+    use crate::peer::ConnectionType;
+    let message =
+        MessageFactory::build_peer_init_message("bob", ConnectionType::P, 7);
+    // [1][len=3]"bob"[len=1]"P"[token=7] — no length prefix in get_data()
+    let expect: Vec<u8> = [
+        1, // PeerInit code (int8)
+        3, 0, 0, 0, 98, 111, 98, // username "bob"
+        1, 0, 0, 0, 80, // connection type "P"
+        7, 0, 0, 0, // token
+    ]
+    .to_vec();
     assert_eq!(expect, message.get_data());
 }
 

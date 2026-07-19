@@ -97,6 +97,7 @@ pub enum ClientOperation {
     },
     SetServerSender(Sender<ServerMessage>),
     PrivateMessageReceived(UserMessage),
+    PeerConnected(String),
 }
 pub struct ClientContext {
     pub peer_registry: Option<PeerRegistry>,
@@ -255,6 +256,26 @@ fn test_client_pause_and_resume_download() {
 }
 
 #[test]
+fn download_without_a_connection_resolves_failed() {
+    // A client that never connected has no server handle and no peer registry,
+    // so it cannot open a connection to the peer: the download must resolve to
+    // Failed rather than hang Queued forever.
+    let client = Client::new("test-user", "test-password");
+    let (_download, receiver) = client
+        .download(
+            "song.mp3".to_string(),
+            "peer".to_string(),
+            100,
+            "test".to_string(),
+        )
+        .expect("download() should return a handle");
+    assert!(matches!(
+        receiver.recv_timeout(Duration::from_secs(1)),
+        Ok(DownloadStatus::Failed)
+    ));
+}
+
+#[test]
 fn test_client_removes_only_queued_downloads() {
     let client = Client::new("test-user", "test-password");
     let queued_download = Download {
@@ -375,8 +396,11 @@ impl Client {
 
         let mut ctx = self.context.write_safe()?;
         ctx.sender = Some(sender.clone());
-        let peer_registry =
-            PeerRegistry::new(ctx.actor_system.clone(), sender.clone());
+        let peer_registry = PeerRegistry::new(
+            ctx.actor_system.clone(),
+            sender.clone(),
+            self.username.clone(),
+        );
         ctx.peer_registry = Some(peer_registry);
 
         let listen_sender = sender.clone();
@@ -457,6 +481,23 @@ impl Client {
         );
         handle
             .send(ServerMessage::SendMessage(msg))
+            .map_err(|_| SoulseekRs::NotConnected)?;
+        Ok(())
+    }
+
+    /// Ask the server for a peer's address and open a direct control
+    /// connection to it. Downloads queued for that peer are sent automatically
+    /// once the connection is established.
+    ///
+    /// # Errors
+    /// Returns [`SoulseekRs::NotConnected`] if the client is not connected.
+    pub fn connect_peer(&self, username: &str) -> Result<()> {
+        let handle = self
+            .server_handle
+            .as_ref()
+            .ok_or(SoulseekRs::NotConnected)?;
+        handle
+            .send(ServerMessage::GetPeerAddress(username.to_string()))
             .map_err(|_| SoulseekRs::NotConnected)?;
         Ok(())
     }
@@ -684,18 +725,29 @@ impl Client {
         let mut context = self.context.write_safe()?;
         context.add_download(download.clone());
 
-        let download_initiated =
-            if let Some(ref registry) = context.peer_registry {
-                registry
-                    .queue_upload(&username, download.filename.clone())
-                    .is_ok()
-            } else {
-                false
-            };
+        // If we already have a control connection to this peer, queue the
+        // upload immediately. Otherwise open one directly (server GetPeerAddress
+        // → outbound PeerInit → PeerConnected → the queued upload is flushed).
+        let peer_registered = context
+            .peer_registry
+            .as_ref()
+            .is_some_and(|r| r.contains(&username));
+        let queued_now = peer_registered
+            && context.peer_registry.as_ref().is_some_and(|r| {
+                r.queue_upload(&username, download.filename.clone()).is_ok()
+            });
 
         drop(context);
 
-        if !download_initiated {
+        let failed = if peer_registered {
+            !queued_now
+        } else {
+            // No existing connection: initiate one. Only a genuinely
+            // unconnected client (no server handle) fails outright here.
+            self.connect_peer(&username).is_err()
+        };
+
+        if failed {
             let _ = download.sender.send(DownloadStatus::Failed);
             self.context
                 .write_safe()?
@@ -1187,6 +1239,44 @@ impl Client {
                                     e
                                 ),
                             },
+                            ClientOperation::PeerConnected(username) => {
+                                // An outbound control connection just handshook.
+                                // Flush any downloads that were queued for this
+                                // peer while we were still connecting. Collect
+                                // under a read guard, then act without it held.
+                                let (registry, files): (
+                                    Option<PeerRegistry>,
+                                    Vec<String>,
+                                ) = match client_context.read_safe() {
+                                    Ok(ctx) => (
+                                        ctx.peer_registry.clone(),
+                                        ctx.get_downloads()
+                                            .iter()
+                                            .filter(|d| {
+                                                d.username == username
+                                                    && matches!(
+                                                        d.status,
+                                                        DownloadStatus::Queued
+                                                    )
+                                            })
+                                            .map(|d| d.filename.clone())
+                                            .collect(),
+                                    ),
+                                    Err(e) => {
+                                        error!(
+                                            "[client] PeerConnected read: {}",
+                                            e
+                                        );
+                                        continue;
+                                    }
+                                };
+                                if let Some(registry) = registry {
+                                    for filename in files {
+                                        let _ = registry
+                                            .queue_upload(&username, filename);
+                                    }
+                                }
+                            }
                         }
                     }
                     Err(e) => {
