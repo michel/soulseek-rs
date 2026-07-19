@@ -89,6 +89,20 @@ soulseek-rs-lib = "0.1.0"
 ./target/release/soulseek-rs "the weeknd Blinding Lights"
 ```
 
+### Private messages
+
+Send a private message to another user from the command line:
+
+```bash
+soulseek-rs message <username> "hello there"
+```
+
+In the interactive TUI:
+
+- press `m` to compose — type `<recipient> <message>` and `Enter` to send;
+- press `i` to open the inbox popup listing sent and received messages
+  (incoming messages arrive automatically while the TUI is open).
+
 ## Development
 
 To run the project in development mode with debug output and trace output:
