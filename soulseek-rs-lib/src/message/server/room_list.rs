@@ -27,11 +27,20 @@ pub fn parse_room_list(message: &mut Message) -> Vec<RoomInfo> {
     let name_count = message.read_int32();
     let mut names = Vec::new();
     for _ in 0..name_count {
+        // Stop once the payload can't hold another field: a bogus (possibly
+        // hostile) count must not spin us into an OOM allocation loop. A
+        // 4-byte floor also avoids read_int32 stalling on a 1-3 byte tail.
+        if message.get_pointer() + 4 > message.get_size() {
+            break;
+        }
         names.push(message.read_string());
     }
     let count_count = message.read_int32();
     let mut counts = Vec::new();
     for _ in 0..count_count {
+        if message.get_pointer() + 4 > message.get_size() {
+            break;
+        }
         counts.push(message.read_int32());
     }
     names
@@ -88,6 +97,17 @@ mod tests {
             m.write_int32(0);
         });
         assert!(parse_room_list(&mut message).is_empty());
+    }
+
+    #[test]
+    fn hostile_counts_do_not_hang_or_overallocate() {
+        // A tiny frame claiming ~4 billion names/counts must return promptly
+        // (bounded by the payload) rather than looping into an OOM.
+        let mut message = framed(|m| {
+            m.write_int32(u32::MAX);
+        });
+        let rooms = parse_room_list(&mut message);
+        assert!(rooms.is_empty());
     }
 
     #[test]

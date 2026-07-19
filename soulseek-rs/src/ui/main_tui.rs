@@ -777,6 +777,12 @@ impl MainTui {
     fn handle_rooms_list_input(&mut self, key: KeyEvent) {
         let len = self.state.rooms.filtered_rooms().len();
         match key.code {
+            // Esc peels back one level: clear a lingering filter first (as the
+            // title's "Esc: clear" promises), otherwise close the popup.
+            KeyCode::Esc if !self.state.rooms.list_filter.is_empty() => {
+                self.state.rooms.list_filter.clear();
+                self.state.rooms.list_selected = 0;
+            }
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.state.show_rooms = false;
             }

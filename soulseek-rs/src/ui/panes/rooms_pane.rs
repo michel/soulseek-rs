@@ -10,7 +10,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{
         Block, Borders, Cell, HighlightSpacing, Paragraph, Row, Table,
-        TableState, Wrap,
+        TableState,
     },
 };
 
@@ -181,7 +181,10 @@ fn render_messages(
     area: Rect,
     lines: &[crate::models::RoomLine],
 ) {
-    // Auto-scroll: keep the most recent lines that fit the height.
+    // Auto-scroll: show the most recent lines. Each RoomLine renders as exactly
+    // one row (no wrapping) so the tail count is exact and the newest message
+    // is always visible; over-long lines are clipped at the right edge rather
+    // than wrapping and pushing newer lines off the bottom.
     let height = area.height as usize;
     let start = lines.len().saturating_sub(height.max(1));
     let rendered: Vec<Line> = lines[start..]
@@ -194,10 +197,7 @@ fn render_messages(
             None => Line::from(Span::styled(l.text.clone(), dimmed_style())),
         })
         .collect();
-    frame.render_widget(
-        Paragraph::new(rendered).wrap(Wrap { trim: false }),
-        area,
-    );
+    frame.render_widget(Paragraph::new(rendered), area);
 }
 
 fn render_users(frame: &mut Frame, area: Rect, users: &[String]) {

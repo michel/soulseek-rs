@@ -155,6 +155,9 @@ impl RoomsState {
         }
         if self.open.is_empty() {
             self.view = RoomsView::List;
+        } else {
+            // The tab we land on is now being viewed; clear its stale badge.
+            self.mark_active_read();
         }
         Some(room.name)
     }
@@ -192,9 +195,18 @@ impl RoomsState {
     pub fn apply_event(&mut self, event: RoomEvent, viewing: Option<&str>) {
         match event {
             RoomEvent::List(rooms) => {
+                // Keep the highlight on the same room across a re-sort, since
+                // list_selected is a positional index into the sorted list.
+                let selected_name = self.selected_room_name();
                 self.available = rooms;
-                let max = self.filtered_rooms().len().saturating_sub(1);
-                self.list_selected = self.list_selected.min(max);
+                let filtered = self.filtered_rooms();
+                self.list_selected = selected_name
+                    .and_then(|name| {
+                        filtered.iter().position(|r| r.name == name)
+                    })
+                    .unwrap_or_else(|| {
+                        self.list_selected.min(filtered.len().saturating_sub(1))
+                    });
             }
             RoomEvent::Joined { room, users } => {
                 let idx = self.ensure_open(&room);
@@ -215,10 +227,15 @@ impl RoomsState {
                 username,
                 message,
             } => {
-                let idx = self.ensure_open(&room);
-                self.open[idx].lines.push(RoomLine::chat(username, message));
-                if viewing != Some(room.as_str()) {
-                    self.open[idx].unread += 1;
+                // Only record messages for rooms we currently have open; a
+                // message for a room we just left must not resurrect its tab.
+                if let Some(idx) = self.open_index(&room) {
+                    self.open[idx]
+                        .lines
+                        .push(RoomLine::chat(username, message));
+                    if viewing != Some(room.as_str()) {
+                        self.open[idx].unread += 1;
+                    }
                 }
             }
             RoomEvent::UserJoined { room, username } => {
@@ -375,6 +392,81 @@ mod tests {
         assert_eq!(state.open[0].unread, 0);
         state.prev_tab(); // 0 -> 1
         assert_eq!(state.active, 1);
+    }
+
+    #[test]
+    fn message_for_unopened_room_is_dropped() {
+        let mut state = RoomsState::new();
+        state.apply_event(
+            RoomEvent::Message {
+                room: "jazz".to_string(),
+                username: "bob".to_string(),
+                message: "hi".to_string(),
+            },
+            None,
+        );
+        assert!(
+            state.open.is_empty(),
+            "a message must not fabricate a tab for an unjoined room"
+        );
+    }
+
+    #[test]
+    fn message_does_not_resurrect_a_closed_room() {
+        let mut state = RoomsState::new();
+        state.focus_or_open("jazz");
+        assert_eq!(state.close_active().as_deref(), Some("jazz"));
+        // A straggler message arrives after we left.
+        state.apply_event(
+            RoomEvent::Message {
+                room: "jazz".to_string(),
+                username: "bob".to_string(),
+                message: "bye".to_string(),
+            },
+            None,
+        );
+        assert!(state.open.is_empty(), "left room must stay closed");
+    }
+
+    #[test]
+    fn list_refresh_keeps_highlight_on_the_same_room() {
+        let mut state = RoomsState::new();
+        state.apply_event(
+            RoomEvent::List(vec![
+                room("jazz", 5),
+                room("blues", 3),
+                room("ambient", 1),
+            ]),
+            None,
+        );
+        // Highlight "ambient" (index 2 in busiest-first order).
+        state.list_selected = 2;
+        assert_eq!(state.selected_room_name().as_deref(), Some("ambient"));
+        // A refresh reorders ambient to the top; the highlight should follow.
+        state.apply_event(
+            RoomEvent::List(vec![
+                room("jazz", 5),
+                room("blues", 3),
+                room("ambient", 50),
+            ]),
+            None,
+        );
+        assert_eq!(state.selected_room_name().as_deref(), Some("ambient"));
+    }
+
+    #[test]
+    fn closing_a_tab_clears_unread_on_the_newly_active_room() {
+        let mut state = RoomsState::new();
+        state.focus_or_open("a");
+        state.focus_or_open("b"); // active = 1
+        state.open[0].unread = 3; // unread accrued on "a" while viewing "b"
+        assert_eq!(state.close_active().as_deref(), Some("b"));
+        assert_eq!(state.active, 0);
+        assert_eq!(
+            state.open[0].unread, 0,
+            "landing on room a should clear its badge"
+        );
+        assert_eq!(state.total_unread(), 0);
     }
 
     #[test]
