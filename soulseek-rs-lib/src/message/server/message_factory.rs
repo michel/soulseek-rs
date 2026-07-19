@@ -80,6 +80,22 @@ impl MessageFactory {
         Message::new().write_int32(23).write_int32(id).clone()
     }
 
+    /// Ask the server (code 18) to broker a connection to a firewalled peer:
+    /// the server tells that peer to connect back to us, quoting `token`.
+    #[must_use]
+    pub fn build_connect_to_peer(
+        token: u32,
+        username: &str,
+        connection_type: ConnectionType,
+    ) -> Message {
+        Message::new()
+            .write_int32(18)
+            .write_int32(token)
+            .write_string(username)
+            .write_string(&connection_type.to_string())
+            .clone()
+    }
+
     #[must_use]
     pub fn build_set_status_message(status_code: u32) -> Message {
         Message::new()
