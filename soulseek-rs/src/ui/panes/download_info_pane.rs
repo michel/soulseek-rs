@@ -104,12 +104,12 @@ fn build_info_lines(
                 } else {
                     "all busy".to_string()
                 };
-                lines.push(label_value("Peer slots", &slot_text));
+                lines.push(label_value("Free slots", &slot_text));
             }
 
             if let Some(speed) = download.metadata.peer_upload_speed {
                 lines.push(label_value(
-                    "Peer upload speed",
+                    "Upload speed",
                     &format_speed(f64::from(speed)),
                 ));
             }

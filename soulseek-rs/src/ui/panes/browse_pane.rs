@@ -90,10 +90,18 @@ fn render_browse_one(
             frame.render_widget(Paragraph::new(text).block(block), area);
         }
         BrowseStatus::TimedOut => {
-            let text = Line::styled(
-                "Timed out waiting for the file list. Press b to retry.",
-                error_style(),
-            );
+            let text = vec![
+                Line::styled(
+                    format!("Couldn't reach {}.", browse.username),
+                    error_style(),
+                ),
+                Line::raw(""),
+                Line::raw(
+                    "They may be offline, or their connection can't be \
+                     reached (both of you may be behind a router/firewall).",
+                ),
+                Line::raw("Press r to try again."),
+            ];
             frame.render_widget(Paragraph::new(text).block(block), area);
         }
         BrowseStatus::Loaded => {
