@@ -1043,3 +1043,105 @@ fn a_file_downloads_from_a_firewalled_peer_via_server_broker() {
 
     let _ = std::fs::remove_dir_all(&download_dir);
 }
+
+// ---------------------------------------------------------------------------
+// Two real clients: one shares a file, the other searches for it and downloads
+// it — the entire search + connect + upload/download stack, no mock peer.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn two_real_clients_search_and_download() {
+    let server = server_or_skip!();
+
+    // Sharer with one distinctively named file.
+    let share_dir = unique_download_dir();
+    let content: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+    let filename = "e2e_probe_xyzzy.bin";
+    std::fs::write(share_dir.join(filename), &content).unwrap();
+
+    let sharer_port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directory: Some(share_dir.display().to_string()),
+        ..server.listening_settings("e2e_sharer", "pw", sharer_port)
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+
+    let leecher_port = free_port().expect("leecher port");
+    let mut leecher = Client::with_settings(server.listening_settings(
+        "e2e_leecher",
+        "pw",
+        leecher_port,
+    ));
+    leecher.connect().expect("leecher connect");
+    assert!(leecher.login().expect("leecher login"));
+
+    // Let soulfind register both SetWaitPorts before the search resolves peers.
+    std::thread::sleep(Duration::from_secs(1));
+
+    let query = "xyzzy";
+    let _ = leecher.search(query, Duration::from_secs(3));
+
+    // Poll until the sharer's response for our file arrives.
+    let mut hit: Option<(String, u64)> = None;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline && hit.is_none() {
+        for result in leecher.get_search_results(query) {
+            if result.username == "e2e_sharer" {
+                for file in &result.files {
+                    if file.name.contains("e2e_probe_xyzzy") {
+                        hit = Some((file.name.clone(), file.size));
+                    }
+                }
+            }
+        }
+        if hit.is_none() {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+    let (result_path, size) =
+        hit.expect("leecher should find the sharer's file");
+    assert_eq!(size, content.len() as u64);
+
+    // Download it from the sharer.
+    let download_dir = unique_download_dir();
+    let (_download, status_rx) = leecher
+        .download(
+            result_path.clone(),
+            "e2e_sharer".to_string(),
+            size,
+            download_dir.display().to_string(),
+        )
+        .expect("start download");
+
+    let mut completed = false;
+    let deadline = Instant::now() + Duration::from_secs(25);
+    while Instant::now() < deadline {
+        match status_rx.recv_timeout(Duration::from_millis(500)) {
+            Ok(DownloadStatus::Completed) => {
+                completed = true;
+                break;
+            }
+            Ok(DownloadStatus::Failed | DownloadStatus::TimedOut) => break,
+            _ => {}
+        }
+        if leecher
+            .get_all_downloads()
+            .iter()
+            .any(|d| matches!(d.status, DownloadStatus::Completed))
+        {
+            completed = true;
+            break;
+        }
+    }
+    assert!(completed, "the download should complete");
+
+    // The virtual path is backslash-separated; the saved file uses the basename.
+    let basename = result_path.rsplit(['\\', '/']).next().unwrap();
+    let written = std::fs::read(download_dir.join(basename))
+        .expect("downloaded file should exist");
+    assert_eq!(written, content, "downloaded bytes should match the source");
+
+    let _ = std::fs::remove_dir_all(share_dir);
+    let _ = std::fs::remove_dir_all(download_dir);
+}
