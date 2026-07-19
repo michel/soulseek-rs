@@ -1137,8 +1137,13 @@ impl Client {
                                         port,
                                         None,
                                         0,
-                                        obfuscation_type.try_into().unwrap(),
-                                        obfuscated_port.try_into().unwrap(),
+                                        // obfuscation_type is a small enum; a
+                                        // real obfuscated_port is a full u16 and
+                                        // must not be truncated into a u8 (which
+                                        // panicked and took down the ops thread).
+                                        u8::try_from(obfuscation_type)
+                                            .unwrap_or(0),
+                                        obfuscated_port,
                                     );
                                     let client_context_clone =
                                         client_context.clone();

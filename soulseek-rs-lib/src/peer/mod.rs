@@ -89,7 +89,7 @@ pub struct Peer {
     pub token: Option<u32>,
     pub privileged: Option<u8>,
     pub unknown: Option<u8>,
-    pub obfuscated_port: Option<u8>,
+    pub obfuscated_port: Option<u16>,
 }
 impl Peer {
     #[allow(clippy::too_many_arguments, dead_code)]
@@ -102,7 +102,7 @@ impl Peer {
         token: Option<u32>,
         privileged: u8,
         unknown: u8,
-        obfuscated_port: u8,
+        obfuscated_port: u16,
     ) -> Self {
         Self {
             username,
@@ -146,10 +146,28 @@ impl Peer {
             token: Some(token),
             privileged: Some(privileged),
             unknown: Some(unknown),
-            obfuscated_port: Some(obfuscated_port),
+            obfuscated_port: Some(u16::from(obfuscated_port)),
         })
     }
 }
+#[test]
+fn new_accepts_a_full_range_obfuscated_port() {
+    // A real obfuscated port is a u16; it must be stored without truncation.
+    // (The GetPeerAddressResponse path previously narrowed it to u8 and
+    // panicked for any value > 255, crashing the client's ops thread.)
+    let peer = Peer::new(
+        "u".to_string(),
+        ConnectionType::P,
+        "1.2.3.4".to_string(),
+        1,
+        None,
+        0,
+        0,
+        51770,
+    );
+    assert_eq!(peer.obfuscated_port, Some(51770));
+}
+
 #[test]
 fn new_from_message_returns_none_on_invalid_connection_type() {
     // username "ab", connection_type "X" (not P/F/D) from an untrusted server.
