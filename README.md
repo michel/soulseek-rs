@@ -38,7 +38,7 @@ experience. For me, this is a good balance between learning and practicality.
 - [ ] Share files
 - [ ] Browse user(s) files
 - [ ] Chat in chatrooms
-- [ ] Private messaging
+- [x] Private messaging
 - [ ] Headless mode daemon mode with remote control
 
 ## Project Structure

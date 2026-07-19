@@ -1,6 +1,6 @@
 use crate::models::{
-    AppState, DownloadEntry, FileDisplayData, FocusedPane, SearchEntry,
-    SearchStatus,
+    AppState, ChatMessage, CommandBarMode, DownloadEntry, FileDisplayData,
+    FocusedPane, MessageDirection, SearchEntry, SearchStatus,
 };
 use crate::ui::panes::{
     ResultsPaneParams, render_download_info_pane, render_downloads_pane,
@@ -31,6 +31,14 @@ use std::{
 };
 
 const COMMAND_BAR_PREFIX: &str = "search: ";
+const MESSAGE_BAR_PREFIX: &str = "message (to: recipient text): ";
+
+const fn command_bar_prefix(mode: CommandBarMode) -> &'static str {
+    match mode {
+        CommandBarMode::Search => COMMAND_BAR_PREFIX,
+        CommandBarMode::Message => MESSAGE_BAR_PREFIX,
+    }
+}
 
 pub struct MainTui {
     client: Arc<Client>,
@@ -85,6 +93,9 @@ impl MainTui {
 
             // Poll for download updates
             self.update_downloads();
+
+            // Poll for incoming private messages
+            self.poll_private_messages();
 
             // Update spinner
             self.spinner_state = (self.spinner_state + 1) % 10;
@@ -233,26 +244,76 @@ impl MainTui {
         } else {
             self.render_shortcuts(frame, main_chunks[2]);
         }
+
+        // Messages inbox overlays everything when open.
+        if self.state.show_messages {
+            self.render_messages_popup(frame);
+        }
+    }
+
+    fn render_messages_popup(&self, frame: &mut Frame) {
+        let area = centered_rect(70, 60, frame.area());
+
+        let lines: Vec<ratatui::text::Line> = if self.state.messages.is_empty()
+        {
+            vec![ratatui::text::Line::from(
+                "No messages yet. Press 'm' to send one.",
+            )]
+        } else {
+            self.state
+                .messages
+                .iter()
+                .map(|m| {
+                    let (arrow, who) = match m.direction {
+                        MessageDirection::Incoming => ("⇦ from", &m.peer),
+                        MessageDirection::Outgoing => ("⇨ to  ", &m.peer),
+                    };
+                    ratatui::text::Line::from(format!(
+                        "{arrow} {who}: {}",
+                        m.text
+                    ))
+                })
+                .collect()
+        };
+
+        let popup = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(border_style(true))
+                .border_type(border_type(true))
+                .title(" Messages  (m: compose, i/Esc: close) "),
+        );
+
+        frame.render_widget(ratatui::widgets::Clear, area);
+        frame.render_widget(popup, area);
     }
 
     fn render_shortcuts(&self, frame: &mut Frame, area: Rect) {
         let shortcuts = if self.state.command_bar_active {
-            vec![
-                ("Type", "search term"),
-                ("←→", "move cursor"),
-                ("Backspace/Del", "edit"),
-                ("Enter", "search"),
-                ("Esc", "cancel"),
-            ]
+            match self.state.command_bar_mode {
+                CommandBarMode::Search => vec![
+                    ("Type", "search term"),
+                    ("←→", "move cursor"),
+                    ("Backspace/Del", "edit"),
+                    ("Enter", "search"),
+                    ("Esc", "cancel"),
+                ],
+                CommandBarMode::Message => vec![
+                    ("Type", "recipient then message"),
+                    ("Enter", "send"),
+                    ("Esc", "cancel"),
+                ],
+            }
         } else {
             match self.state.focused_pane {
                 FocusedPane::Searches => vec![
                     ("s", "search"),
+                    ("m", "message"),
+                    ("i", "inbox"),
                     ("1-3", "focus pane"),
                     ("↑↓", "navigate"),
                     ("Enter", "view results"),
                     ("d", "remove search"),
-                    ("C", "clear all"),
                     ("q", "quit"),
                 ],
                 FocusedPane::Results if self.state.results_is_filtering => {
@@ -296,15 +357,16 @@ impl MainTui {
     }
 
     fn render_command_bar(&self, frame: &mut Frame, area: Rect) {
+        let prefix = command_bar_prefix(self.state.command_bar_mode);
         let content_width = area.width.saturating_sub(2);
-        let prefix_width = COMMAND_BAR_PREFIX.chars().count() as u16;
+        let prefix_width = prefix.chars().count() as u16;
         let input_width = content_width.saturating_sub(prefix_width);
         let (visible_input, cursor_column) = visible_input_at_cursor(
             &self.state.command_bar_input,
             self.state.command_bar_cursor_position,
             input_width,
         );
-        let command_text = format!("{COMMAND_BAR_PREFIX}{visible_input}");
+        let command_text = format!("{prefix}{visible_input}");
 
         let paragraph = Paragraph::new(command_text).block(
             Block::default()
@@ -330,6 +392,14 @@ impl MainTui {
         // Command bar takes priority
         if self.state.command_bar_active {
             return self.handle_command_bar_input(key);
+        }
+
+        // Messages popup: any of i/Esc/q closes it.
+        if self.state.show_messages {
+            if matches!(key.code, KeyCode::Char('i' | 'q') | KeyCode::Esc) {
+                self.state.show_messages = false;
+            }
+            return;
         }
 
         // Filter mode in Results pane
@@ -359,8 +429,20 @@ impl MainTui {
             }
             KeyCode::Char('s') => {
                 self.state.command_bar_active = true;
+                self.state.command_bar_mode = CommandBarMode::Search;
                 self.state.command_bar_input.clear();
                 self.state.command_bar_cursor_position = 0;
+                return;
+            }
+            KeyCode::Char('m') => {
+                self.state.command_bar_active = true;
+                self.state.command_bar_mode = CommandBarMode::Message;
+                self.state.command_bar_input.clear();
+                self.state.command_bar_cursor_position = 0;
+                return;
+            }
+            KeyCode::Char('i') => {
+                self.state.show_messages = true;
                 return;
             }
             _ => {}
@@ -382,9 +464,14 @@ impl MainTui {
 
         match key.code {
             KeyCode::Enter => {
-                let query = self.state.command_bar_input.trim().to_string();
-                if !query.is_empty() {
-                    self.start_search(query);
+                let input = self.state.command_bar_input.trim().to_string();
+                if !input.is_empty() {
+                    match self.state.command_bar_mode {
+                        CommandBarMode::Search => self.start_search(input),
+                        CommandBarMode::Message => {
+                            self.send_message_from_input(&input);
+                        }
+                    }
                 }
                 self.state.command_bar_active = false;
                 self.state.command_bar_input.clear();
@@ -840,6 +927,39 @@ impl MainTui {
         }
     }
 
+    /// Drain any private messages received since the last tick into the inbox.
+    fn poll_private_messages(&mut self) {
+        for msg in self.client.take_private_messages() {
+            self.state.messages.push(ChatMessage {
+                direction: MessageDirection::Incoming,
+                peer: msg.username().to_string(),
+                text: msg.message().to_string(),
+            });
+        }
+    }
+
+    /// Parse a `<recipient> <text>` compose line and send it.
+    fn send_message_from_input(&mut self, input: &str) {
+        let Some((recipient, text)) = input.split_once(char::is_whitespace)
+        else {
+            return;
+        };
+        let recipient = recipient.trim();
+        let text = text.trim();
+        if recipient.is_empty() || text.is_empty() {
+            return;
+        }
+
+        match self.client.send_private_message(recipient, text) {
+            Ok(()) => self.state.messages.push(ChatMessage {
+                direction: MessageDirection::Outgoing,
+                peer: recipient.to_string(),
+                text: text.to_string(),
+            }),
+            Err(e) => eprintln!("Failed to send message: {e}"),
+        }
+    }
+
     fn start_search(&mut self, query: String) {
         let cancel_flag = Arc::new(AtomicBool::new(false));
         let search_entry = SearchEntry {
@@ -1051,6 +1171,22 @@ pub fn launch_main_tui(
         search_timeout,
     );
     tui.run(terminal)
+}
+
+/// A `Rect` centered within `area`, sized to the given percentages.
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let vertical = Layout::vertical([
+        Constraint::Percentage((100 - percent_y) / 2),
+        Constraint::Percentage(percent_y),
+        Constraint::Percentage((100 - percent_y) / 2),
+    ])
+    .split(area);
+    Layout::horizontal([
+        Constraint::Percentage((100 - percent_x) / 2),
+        Constraint::Percentage(percent_x),
+        Constraint::Percentage((100 - percent_x) / 2),
+    ])
+    .split(vertical[1])[1]
 }
 
 const fn clamp_cursor_to_char_boundary(
