@@ -89,7 +89,7 @@ pub enum ClientOperation {
     NewPeer(NewPeer),
     ConnectToPeer(Peer),
     SearchResult(SearchResult),
-    PeerDisconnected(String, Option<SoulseekRs>),
+    PeerDisconnected(u64, String, Option<SoulseekRs>),
     PierceFireWall(Peer),
     DownloadFromPeer(u32, Peer, bool),
     UpdateDownloadTokens(Transfer, String),
@@ -111,8 +111,8 @@ pub enum ClientOperation {
     PeerConnected(String),
     /// A direct outbound connection to this peer failed before it was
     /// established — the peer is likely firewalled, so fall back to asking the
-    /// server to broker the connection.
-    PeerConnectFailed(String),
+    /// server to broker the connection. Carries the reporting actor's id.
+    PeerConnectFailed(u64, String),
 }
 pub struct ClientContext {
     pub peer_registry: Option<PeerRegistry>,
@@ -934,6 +934,7 @@ impl Client {
                                 }
                             }
                             ClientOperation::PeerDisconnected(
+                                id,
                                 username,
                                 error,
                             ) => {
@@ -941,7 +942,9 @@ impl Client {
                                 // below acquires a write lock on the same
                                 // RwLock, which would self-deadlock the entire
                                 // client ops loop if this read guard were still
-                                // held on this thread.
+                                // held on this thread. Evict only if this exact
+                                // actor still occupies the slot, so a replaced
+                                // actor's shutdown can't remove its successor.
                                 {
                                     let context = match client_context
                                         .read_safe()
@@ -957,8 +960,8 @@ impl Client {
                                     };
                                     if let Some(ref registry) =
                                         context.peer_registry
-                                        && let Some(handle) =
-                                            registry.remove_peer(&username)
+                                        && let Some(handle) = registry
+                                            .remove_peer_if(&username, id)
                                     {
                                         let _ = handle.stop();
                                     }
@@ -1373,7 +1376,10 @@ impl Client {
                                     }
                                 }
                             }
-                            ClientOperation::PeerConnectFailed(username) => {
+                            ClientOperation::PeerConnectFailed(
+                                id,
+                                username,
+                            ) => {
                                 // Direct connect failed: ask the server to
                                 // broker it. Register a correlation token, then
                                 // send ConnectToPeer so the (firewalled) peer
@@ -1388,11 +1394,14 @@ impl Client {
                                         // longer shadows the brokered reconnect
                                         // (a stale registry entry would make
                                         // later downloads queue into a dead,
-                                        // streamless actor and hang).
-                                        if let Some(handle) =
-                                            ctx.peer_registry.as_ref().and_then(
-                                                |r| r.remove_peer(&username),
-                                            )
+                                        // streamless actor and hang). Identity-
+                                        // aware so a newer namesake is untouched.
+                                        if let Some(handle) = ctx
+                                            .peer_registry
+                                            .as_ref()
+                                            .and_then(|r| {
+                                                r.remove_peer_if(&username, id)
+                                            })
                                         {
                                             let _ = handle.stop();
                                         }
@@ -1422,10 +1431,10 @@ impl Client {
                                     .send(ServerMessage::SendMessage(msg));
 
                                 // Bound the brokered attempt: if no PierceFirewall
-                                // arrives, fail the peer's queued downloads (so
-                                // the caller's Receiver unblocks) and reclaim the
-                                // token. A successful pierce consumes the token
-                                // first, making this a no-op.
+                                // consumes the token, fail the peer's queued
+                                // downloads (so the caller's Receiver unblocks)
+                                // and reclaim the token. A successful pierce
+                                // takes the token first, making this a no-op.
                                 let timeout_ctx = client_context.clone();
                                 let timeout_user = username.clone();
                                 thread::spawn(move || {
@@ -1437,21 +1446,6 @@ impl Client {
                                                 .is_some()
                                         });
                                     if still_pending {
-                                        if let Some(handle) = timeout_ctx
-                                            .read_safe()
-                                            .ok()
-                                            .and_then(|c| {
-                                                c.peer_registry
-                                                    .as_ref()
-                                                    .and_then(|r| {
-                                                        r.remove_peer(
-                                                            &timeout_user,
-                                                        )
-                                                    })
-                                            })
-                                        {
-                                            let _ = handle.stop();
-                                        }
                                         Self::fail_queued_downloads(
                                             &timeout_ctx,
                                             &timeout_user,

@@ -61,6 +61,9 @@ pub struct PeerActor {
     /// replaced actor is later stopped — which would otherwise alias and evict
     /// a newer actor registered under the same username.
     disconnect_reported: bool,
+    /// Registry-assigned unique id, echoed in terminal notifications so the
+    /// client evicts only this actor and never a newer namesake.
+    id: u64,
 }
 
 impl PeerActor {
@@ -71,6 +74,7 @@ impl PeerActor {
         reader: Option<MessageReader>,
         client_channel: Sender<ClientOperation>,
         own_username: String,
+        id: u64,
     ) -> Self {
         let outbound = stream.is_none();
         let connection_state = if stream.is_some() {
@@ -93,6 +97,7 @@ impl PeerActor {
             outbound,
             established: false,
             disconnect_reported: false,
+            id,
         }
     }
 
@@ -449,9 +454,13 @@ impl PeerActor {
         // client can fall back to server-brokered connect. Anything else is a
         // normal disconnect.
         let op = if self.outbound && !self.established {
-            ClientOperation::PeerConnectFailed(username)
+            ClientOperation::PeerConnectFailed(self.id, username)
         } else {
-            ClientOperation::PeerDisconnected(username, Some(error.into()))
+            ClientOperation::PeerDisconnected(
+                self.id,
+                username,
+                Some(error.into()),
+            )
         };
 
         if let Err(e) = self.client_channel.send(op) {
@@ -471,7 +480,7 @@ impl PeerActor {
 
         if let Err(e) = self
             .client_channel
-            .send(ClientOperation::PeerDisconnected(username, None))
+            .send(ClientOperation::PeerDisconnected(self.id, username, None))
         {
             error!("Failed to send disconnect notification: {}", e);
         }
