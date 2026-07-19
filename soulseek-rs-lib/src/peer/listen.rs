@@ -115,6 +115,18 @@ fn handle_peer_connection(
     _peer_ip: &str,
     _peer_port: u16,
 ) {
+    // The peer actor multiplexes socket reads with its mailbox on a single
+    // thread: `tick()` reads the socket, but outgoing messages (e.g. a queued
+    // QueueUpload for a download) are delivered through the mailbox between
+    // ticks. A blocking socket would park `tick()` inside `read` whenever the
+    // peer is idle, starving the mailbox and stalling downloads. Match the
+    // outbound path and drive this connection non-blocking.
+    if let Err(e) = stream.set_nonblocking(true) {
+        error!("[listener] failed to set peer stream non-blocking: {}", e);
+        return;
+    }
+    stream.set_nodelay(true).ok();
+
     let client_context = match context.client_context.read_safe() {
         Ok(c) => c,
         Err(e) => {
