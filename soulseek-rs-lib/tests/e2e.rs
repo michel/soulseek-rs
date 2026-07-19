@@ -252,6 +252,42 @@ fn a_search_is_forwarded_to_a_connected_peer() {
 }
 
 #[test]
+fn a_private_message_is_delivered_between_users() {
+    let server = server_or_skip!();
+
+    // Two logged-in users, one messages the other through the server.
+    let mut alice =
+        Client::with_settings(server.settings("e2e_alice_pm", "pw"));
+    let mut bob = Client::with_settings(server.settings("e2e_bob_pm", "pw"));
+    alice.connect().expect("alice connect");
+    bob.connect().expect("bob connect");
+    assert!(alice.login().expect("alice login"));
+    assert!(bob.login().expect("bob login"));
+
+    let body = "hello bob, this is alice";
+    alice
+        .send_private_message("e2e_bob_pm", body)
+        .expect("send private message");
+
+    // Delivery is asynchronous; poll Bob's inbox until the message arrives.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut received = Vec::new();
+    while Instant::now() < deadline {
+        received.extend(bob.take_private_messages());
+        if !received.is_empty() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    let message = received
+        .iter()
+        .find(|m| m.message() == body)
+        .expect("bob should receive alice's message");
+    assert_eq!(message.username(), "e2e_alice_pm");
+}
+
+#[test]
 fn login_succeeds_with_listener_enabled() {
     let server = server_or_skip!();
 
