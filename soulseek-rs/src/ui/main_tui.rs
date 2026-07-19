@@ -372,11 +372,12 @@ impl MainTui {
                 ],
                 FocusedPane::Downloads => {
                     vec![
+                        ("p", "pause/resume"),
+                        ("r", "retry failed"),
+                        ("d", "delete queued"),
+                        ("c", "clear finished"),
                         ("b", "browse user"),
                         ("1-3", "focus pane"),
-                        ("↑↓", "navigate"),
-                        ("p", "pause/resume"),
-                        ("d", "delete queued"),
                         ("q", "quit"),
                     ]
                 }
@@ -937,7 +938,78 @@ impl MainTui {
             KeyCode::Char('d') => {
                 self.remove_selected_queued_download();
             }
+            KeyCode::Char('r') => {
+                self.retry_selected_download();
+            }
+            KeyCode::Char('c') => {
+                self.clear_finished_downloads();
+            }
             _ => {}
+        }
+    }
+
+    /// Re-queue the selected download if it failed or timed out.
+    fn retry_selected_download(&mut self) {
+        let Some(index) = self.state.downloads_table_state.selected() else {
+            return;
+        };
+        let Some(entry) = self.state.downloads.get(index) else {
+            return;
+        };
+        if !matches!(
+            entry.download.status,
+            DownloadStatus::Failed | DownloadStatus::TimedOut
+        ) {
+            return;
+        }
+        let filename = entry.download.filename.clone();
+        let username = entry.download.username.clone();
+        let size = entry.download.size;
+        let directory = entry.download.download_directory.clone();
+
+        if self.state.downloads_receiver_channel.is_none() {
+            let (sender, receiver) = mpsc::channel();
+            self.state.downloads_receiver_channel = Some(receiver);
+            self.state.downloads_sender_channel = Some(sender);
+        }
+        let client = self.client.clone();
+        let sender = self.state.downloads_sender_channel.clone().unwrap();
+
+        // Drop the old failed entry; the retry pushes a fresh one.
+        self.state.downloads.remove(index);
+        self.select_download_after_removal(index);
+
+        thread::spawn(move || {
+            match client.download(filename.clone(), username, size, directory) {
+                Ok((download, rx)) => {
+                    let _ = sender.send((download, rx));
+                }
+                Err(e) => eprintln!("Failed to retry {filename}: {e}"),
+            }
+        });
+    }
+
+    /// Remove all completed / failed / timed-out downloads from the list.
+    fn clear_finished_downloads(&mut self) {
+        self.state.downloads.retain(|entry| {
+            !matches!(
+                entry.download.status,
+                DownloadStatus::Completed
+                    | DownloadStatus::Failed
+                    | DownloadStatus::TimedOut
+            )
+        });
+        let len = self.state.downloads.len();
+        if len == 0 {
+            self.state.downloads_table_state.select(None);
+        } else {
+            let selected = self
+                .state
+                .downloads_table_state
+                .selected()
+                .unwrap_or(0)
+                .min(len - 1);
+            self.state.downloads_table_state.select(Some(selected));
         }
     }
 
