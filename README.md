@@ -36,7 +36,7 @@ experience. For me, this is a good balance between learning and practicality.
 - [x] TUI for searching and downloading files
 - [x] Configure download & upload directories
 - [x] Share files
-- [ ] Browse user(s) files
+- [x] Browse user(s) files
 - [ ] Chat in chatrooms
 - [x] Private messaging
 - [ ] Headless mode daemon mode with remote control
