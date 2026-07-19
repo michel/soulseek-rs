@@ -1,7 +1,52 @@
 use crate::message::{Message, MessageHandler};
 use crate::peer::PeerMessage;
 use crate::types::SearchResult;
+use crate::utils::zlib::compress_stored;
 use std::sync::mpsc::Sender;
+
+/// A borrowed view of one file to advertise in a search response, kept
+/// independent of the shares module so the message layer stays decoupled.
+pub struct FileEntry<'a> {
+    pub name: &'a str,
+    pub size: u64,
+    pub attribs: &'a [(u32, u32)],
+}
+
+/// Build a `FileSearchResponse` (peer code 9): the zlib-compressed reply we send
+/// to a peer whose search matched our shared files. The payload is the exact
+/// inverse of [`SearchResult::new_from_message`].
+#[must_use]
+pub fn build_file_search_response(
+    own_username: &str,
+    token: u32,
+    files: &[FileEntry],
+    slots: u8,
+    speed: u32,
+) -> Message {
+    let mut payload = Message::new();
+    payload
+        .write_string(own_username)
+        .write_int32(token)
+        .write_int32(files.len() as u32);
+    for file in files {
+        payload
+            .write_int8(1)
+            .write_string(file.name)
+            .write_int64(file.size)
+            .write_string("") // extension (decoder reads and discards)
+            .write_int32(file.attribs.len() as u32);
+        for &(code, value) in file.attribs {
+            payload.write_int32(code).write_int32(value);
+        }
+    }
+    payload.write_int8(slots).write_int32(speed).write_int32(0); // free upload slots / queue length (well-formed trailer)
+
+    let compressed = compress_stored(&payload.get_data());
+    Message::new()
+        .write_int32(9)
+        .write_raw_bytes(compressed)
+        .clone()
+}
 
 pub struct FileSearchResponse;
 impl MessageHandler<PeerMessage> for FileSearchResponse {
@@ -53,4 +98,39 @@ fn test_new_from_message() {
     );
     assert_eq!(file.username, "dodigan");
     assert_eq!(file.size, 47184516);
+}
+
+#[test]
+fn build_file_search_response_roundtrips_through_the_decoder() {
+    let files = [
+        FileEntry {
+            name: "music\\album\\song.mp3",
+            size: 47_184_516,
+            attribs: &[(1, 320), (4, 44100), (5, 16)],
+        },
+        FileEntry {
+            name: "b.flac",
+            size: 456,
+            attribs: &[],
+        },
+    ];
+    let message = build_file_search_response("e2e_sharer", 42, &files, 1, 0);
+
+    // Decode via the exact production decoder used for real peer responses:
+    // the dispatcher positions the pointer at 8 (past length + code).
+    let mut decoded = Message::new_with_data(message.get_buffer());
+    decoded.set_pointer(8);
+    let result = SearchResult::new_from_message(&mut decoded).unwrap();
+
+    assert_eq!(result.username, "e2e_sharer");
+    assert_eq!(result.token, 42);
+    assert_eq!(result.files.len(), 2);
+    assert_eq!(result.files[0].name, "music\\album\\song.mp3");
+    assert_eq!(result.files[0].size, 47_184_516);
+    assert_eq!(result.files[0].attribs.get(&1), Some(&320));
+    assert_eq!(result.files[0].attribs.get(&4), Some(&44100));
+    assert_eq!(result.files[1].name, "b.flac");
+    assert_eq!(result.files[1].size, 456);
+    assert!(result.files[1].attribs.is_empty());
+    assert_eq!(result.slots, 1);
 }

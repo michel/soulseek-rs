@@ -7,7 +7,9 @@ mod transfer_response;
 mod upload_failed;
 
 // Re-export handlers
-pub use file_search_response::FileSearchResponse;
+pub use file_search_response::{
+    FileEntry, FileSearchResponse, build_file_search_response,
+};
 pub use get_share_file_list::GetShareFileList;
 pub use peer_init::PeerInit;
 pub use place_in_queue_response::PlaceInQueueResponse;
