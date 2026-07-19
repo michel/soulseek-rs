@@ -2,6 +2,7 @@ mod cli;
 mod config;
 mod directories;
 mod models;
+mod port_mapping;
 mod ui;
 
 use clap::Parser;
@@ -160,6 +161,12 @@ fn main() -> Result<()> {
                 shared_directory,
             };
 
+            // Best-effort: make ourselves reachable behind a home router so
+            // firewalled peers can connect back. Kept alive for the session.
+            let _port_mapper = settings
+                .enable_listen
+                .then(|| port_mapping::PortMapper::spawn(settings.listen_port));
+
             let mut client = Client::with_settings(settings);
             client.connect().map_err(|e| {
                 color_eyre::eyre::eyre!("Failed to connect: {}", e)
@@ -193,6 +200,9 @@ fn main() -> Result<()> {
 fn browse_user(settings: &ClientSettings, target: &str) -> Result<()> {
     use std::time::Instant;
 
+    let _port_mapper = settings
+        .enable_listen
+        .then(|| port_mapping::PortMapper::spawn(settings.listen_port));
     let mut client = Client::with_settings(settings.clone());
     client
         .connect()
@@ -377,6 +387,10 @@ fn search_and_download(config: SearchConfig) -> Result<()> {
         listen_port: config.listener_port,
         shared_directory: config.shared_directory.clone(),
     };
+
+    let _port_mapper = settings
+        .enable_listen
+        .then(|| port_mapping::PortMapper::spawn(settings.listen_port));
 
     let mut client = Client::with_settings(settings);
     client
