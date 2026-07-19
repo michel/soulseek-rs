@@ -172,7 +172,9 @@ fn send_private_message(
 
     client
         .send_private_message(recipient, message)
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to send message: {}", e))?;
+        .map_err(|e| {
+            color_eyre::eyre::eyre!("Failed to send message: {}", e)
+        })?;
 
     // The send is dispatched asynchronously; give the server actor a moment to
     // flush it to the socket before we drop the client and exit.
