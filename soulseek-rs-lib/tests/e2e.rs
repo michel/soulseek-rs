@@ -91,6 +91,7 @@ impl TestServer {
             server_address: PeerAddress::new(self.host.clone(), self.port),
             enable_listen: false,
             listen_port: 0,
+            shared_directory: None,
         }
     }
 }
