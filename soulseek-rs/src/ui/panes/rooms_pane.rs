@@ -132,7 +132,7 @@ fn render_chat(frame: &mut Frame, area: Rect, rooms: &RoomsState) {
             .split(chunks[1]);
 
     render_messages(frame, body[0], active.lines.as_slice());
-    render_users(frame, body[1], &active.users);
+    render_users(frame, body[1], &active.users, rooms.user_selected);
 
     // Compose line or hint.
     if rooms.composing {
@@ -200,7 +200,12 @@ fn render_messages(
     frame.render_widget(Paragraph::new(rendered), area);
 }
 
-fn render_users(frame: &mut Frame, area: Rect, users: &[String]) {
+fn render_users(
+    frame: &mut Frame,
+    area: Rect,
+    users: &[String],
+    selected: usize,
+) {
     let block = Block::default()
         .borders(Borders::LEFT)
         .border_style(dimmed_style())
@@ -209,10 +214,20 @@ fn render_users(frame: &mut Frame, area: Rect, users: &[String]) {
     frame.render_widget(block, area);
 
     let height = inner.height as usize;
+    // Keep the highlighted user in view by scrolling the window to it.
+    let start = selected.saturating_sub(height.saturating_sub(1));
     let shown: Vec<Line> = users
         .iter()
+        .enumerate()
+        .skip(start)
         .take(height)
-        .map(|u| Line::from(Span::styled(u.clone(), primary_style())))
+        .map(|(i, u)| {
+            if i == selected {
+                Line::from(Span::styled(format!("▸ {u}"), highlight_style()))
+            } else {
+                Line::from(Span::styled(format!("  {u}"), primary_style()))
+            }
+        })
         .collect();
     frame.render_widget(Paragraph::new(shown), inner);
 }

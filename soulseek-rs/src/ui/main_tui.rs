@@ -356,11 +356,13 @@ impl MainTui {
                 }
             }
             RoomsView::Chat => vec![
-                ("Enter", "type message"),
+                ("Enter", "say"),
+                ("↑↓", "pick user"),
+                ("b", "browse user"),
+                ("m", "message user"),
                 ("Tab", "switch room"),
-                ("l", "room list"),
+                ("l", "rooms"),
                 ("x", "leave"),
-                ("q", "close"),
             ],
         }
     }
@@ -840,10 +842,42 @@ impl MainTui {
             KeyCode::Tab => self.state.rooms.next_tab(),
             KeyCode::BackTab => self.state.rooms.prev_tab(),
             KeyCode::Char('x') => self.leave_active_room(),
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.state.rooms.select_user_up();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.state.rooms.select_user_down();
+            }
+            // Act on the highlighted member of the room.
+            KeyCode::Char('b') => self.browse_selected_room_user(),
+            KeyCode::Char('m') => self.message_selected_room_user(),
             KeyCode::Enter if self.state.rooms.active_room().is_some() => {
                 self.state.rooms.composing = true;
             }
             _ => {}
+        }
+    }
+
+    /// Browse the shares of the member highlighted in the active room. Closes
+    /// the rooms popup so the browse tree is the sole overlay.
+    fn browse_selected_room_user(&mut self) {
+        if let Some(user) = self.state.rooms.selected_user() {
+            self.state.show_rooms = false;
+            self.start_browse(user);
+        }
+    }
+
+    /// Compose a private message to the member highlighted in the active room.
+    /// Closes the rooms popup and opens the message command bar pre-filled with
+    /// the recipient.
+    fn message_selected_room_user(&mut self) {
+        if let Some(user) = self.state.rooms.selected_user() {
+            self.state.show_rooms = false;
+            self.state.command_bar_active = true;
+            self.state.command_bar_mode = CommandBarMode::Message;
+            self.state.command_bar_input = format!("{user} ");
+            self.state.command_bar_cursor_position =
+                self.state.command_bar_input.len();
         }
     }
 
