@@ -17,7 +17,8 @@ pub use peer_init::PeerInit;
 pub use place_in_queue_response::PlaceInQueueResponse;
 pub use queue_upload::QueueUploadHandler;
 pub use shared_file_list::{
-    SharedDirectory, build_shared_file_list, parse_shared_file_list,
+    SharedDirectory, SharedFileListResponseHandler, build_shared_file_list,
+    parse_shared_file_list,
 };
 pub use transfer_request::TransferRequest;
 pub use transfer_response::TransferResponse;

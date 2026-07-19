@@ -122,6 +122,12 @@ impl MessageFactory {
             .clone()
     }
 
+    /// Ask a peer for their shared-file listing (peer code 4, no body).
+    #[must_use]
+    pub fn build_get_share_file_list() -> Message {
+        Message::new().write_int32(4).clone()
+    }
+
     #[must_use]
     pub fn build_queue_upload_message(filename: &str) -> Message {
         Message::new()
