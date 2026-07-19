@@ -49,6 +49,11 @@ impl SearchResult {
         let n_files = message.read_int32();
         let mut files: Vec<File> = Vec::new();
         for _ in 0..n_files {
+            // Stop if a hostile n_files count outruns the payload, so a bogus
+            // length can't spin us into a huge allocation loop.
+            if message.get_pointer() >= message.get_size() {
+                break;
+            }
             message.read_int8();
             let name = message.read_string();
             let size = message.read_int64();
@@ -57,6 +62,11 @@ impl SearchResult {
             let mut attribs: HashMap<u32, u32> = HashMap::new();
 
             for _ in 0..n_attribs {
+                // Each attribute is two int32s (8 bytes); guard against a bogus
+                // count since read_int32 does not advance past the buffer end.
+                if message.get_pointer() + 8 > message.get_size() {
+                    break;
+                }
                 attribs.insert(message.read_int32(), message.read_int32());
             }
             files.push(File {
@@ -212,6 +222,22 @@ impl Transfer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A FileSearchResponse whose n_files claims ~4 billion entries with no
+    // file data must parse to an empty result promptly, not loop into an OOM.
+    #[test]
+    fn search_result_hostile_file_count_does_not_hang() {
+        let mut body = Vec::new();
+        body.extend_from_slice(&0u32.to_le_bytes()); // username "" (len 0)
+        body.extend_from_slice(&7u32.to_le_bytes()); // token
+        body.extend_from_slice(&u32::MAX.to_le_bytes()); // n_files (hostile)
+        let compressed = crate::utils::zlib::compress_stored(&body);
+        let mut message = Message::new_with_data(compressed);
+        let result = SearchResult::new_from_message(&mut message)
+            .expect("hostile count should parse, not error");
+        assert_eq!(result.token, 7);
+        assert!(result.files.is_empty());
+    }
 
     // A truncated TransferRequest from an untrusted peer must parse to defaults
     // rather than panic (the read_* primitives are bounds-checked).
