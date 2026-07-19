@@ -43,8 +43,20 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
 
-    #[arg(short, long, default_value = "~/Downloads")]
+    #[arg(
+        short,
+        long,
+        env = "SOULSEEK_DOWNLOAD_DIR",
+        default_value = "~/Downloads"
+    )]
     pub download_dir: String,
+
+    #[arg(
+        long,
+        env = "SOULSEEK_SHARED_DIR",
+        help = "Directory whose files are shared with (uploaded to) other peers"
+    )]
+    pub shared_dir: Option<String>,
 
     #[arg(
         short = 'c',

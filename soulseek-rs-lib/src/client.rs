@@ -36,6 +36,9 @@ pub struct ClientSettings {
     pub server_address: PeerAddress,
     pub enable_listen: bool,
     pub listen_port: u16,
+    /// Directory whose files are shared with (uploaded to) other peers.
+    /// `None` means nothing is shared.
+    pub shared_directory: Option<String>,
 }
 
 impl ClientSettings {
@@ -62,6 +65,7 @@ impl Default for ClientSettings {
             ),
             enable_listen: true,
             listen_port: DEFAULT_LISTEN_PORT,
+            shared_directory: None,
         }
     }
 }
@@ -314,6 +318,7 @@ pub struct Client {
     address: PeerAddress,
     username: String,
     password: String,
+    shared_directory: Option<String>,
     server_handle: Option<ActorHandle<ServerMessage>>,
     context: Arc<RwLock<ClientContext>>,
 }
@@ -335,9 +340,16 @@ impl Client {
             address: settings.server_address,
             username: settings.username,
             password: settings.password,
+            shared_directory: settings.shared_directory,
             context: Arc::new(RwLock::new(ClientContext::new())),
             server_handle: None,
         }
+    }
+
+    /// The directory whose files are shared with other peers, if configured.
+    #[must_use]
+    pub fn shared_directory(&self) -> Option<&str> {
+        self.shared_directory.as_deref()
     }
 
     pub fn connect(&mut self) -> Result<()> {

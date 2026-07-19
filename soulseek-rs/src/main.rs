@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod directories;
 mod models;
 mod ui;
 
@@ -53,6 +54,17 @@ fn main() -> Result<()> {
 
     let (server_host, server_port) = parse_server_address(&cli.server)?;
 
+    // Resolve the optional shared/upload directory up front; a misconfigured
+    // one is a warning, not a fatal error (the client just shares nothing).
+    let shared_directory =
+        match directories::resolve_shared_directory(cli.shared_dir.as_deref()) {
+            Ok(dir) => dir.map(|path| path.display().to_string()),
+            Err(e) => {
+                eprintln!("⚠️  Ignoring shared directory: {e}");
+                None
+            }
+        };
+
     match cli.command {
         Some(Commands::Search {
             query,
@@ -72,6 +84,7 @@ fn main() -> Result<()> {
                 download_dir,
                 verbose: cli.verbose,
                 max_concurrent_downloads,
+                shared_directory,
             };
             search_and_download(config)
         }
@@ -92,6 +105,7 @@ fn main() -> Result<()> {
                 server_address: PeerAddress::new(server_host, server_port),
                 enable_listen: !cli.disable_listener,
                 listen_port: cli.listener_port,
+                shared_directory,
             };
 
             let mut client = Client::with_settings(settings);
@@ -141,6 +155,7 @@ fn search_and_download(config: SearchConfig) -> Result<()> {
         ),
         enable_listen: config.enable_listener,
         listen_port: config.listener_port,
+        shared_directory: config.shared_directory.clone(),
     };
 
     let mut client = Client::with_settings(settings);
