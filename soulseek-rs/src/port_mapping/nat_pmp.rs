@@ -196,7 +196,12 @@ pub fn default_gateway() -> Option<Ipv4Addr> {
             let gateway = fields.next()?;
             if destination == "00000000" {
                 let raw = u32::from_str_radix(gateway, 16).ok()?;
-                return Some(Ipv4Addr::from(raw.to_le_bytes()));
+                // A 0.0.0.0 gateway is a directly-connected default route (no
+                // next hop): not a usable NAT-PMP gateway. Keep scanning for a
+                // real one rather than returning the unspecified address.
+                if raw != 0 {
+                    return Some(Ipv4Addr::from(raw.to_le_bytes()));
+                }
             }
         }
         None

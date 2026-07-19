@@ -13,7 +13,8 @@ mod nat_pmp;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread::{self, JoinHandle};
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use igd_next::{PortMappingProtocol, SearchOptions, search_gateway};
@@ -29,7 +30,7 @@ const NATPMP_ATTEMPTS: u32 = 4;
 /// removes the mapping (best-effort).
 pub struct PortMapper {
     stop: Arc<AtomicBool>,
-    handle: Option<JoinHandle<()>>,
+    done: Receiver<()>,
 }
 
 impl PortMapper {
@@ -39,20 +40,24 @@ impl PortMapper {
     pub fn spawn(port: u16) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = stop.clone();
-        let handle = thread::Builder::new()
-            .name("port-mapper".into())
-            .spawn(move || run(port, &thread_stop))
-            .ok();
-        Self { stop, handle }
+        let (done_tx, done) = mpsc::channel();
+        let _ = thread::Builder::new().name("port-mapper".into()).spawn(
+            move || {
+                run(port, &thread_stop);
+                let _ = done_tx.send(());
+            },
+        );
+        Self { stop, done }
     }
 }
 
 impl Drop for PortMapper {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
+        // Wait briefly for the thread to remove its mapping, but NEVER freeze
+        // shutdown: if it's still in a blocking discovery/mapping call (which
+        // doesn't observe `stop`), detach it and let the finite lease expire.
+        let _ = self.done.recv_timeout(Duration::from_secs(1));
     }
 }
 
@@ -63,6 +68,8 @@ enum Backend {
         gateway: Box<igd_next::Gateway>,
         local_addr: SocketAddr,
         external_port: u16,
+        /// The lease that the router accepted (0 == permanent).
+        lease: u32,
     },
     NatPmp {
         gateway: SocketAddr,
@@ -129,20 +136,33 @@ fn map_upnp(local_ip: IpAddr, port: u16) -> Option<(Backend, u32)> {
     // EXTERNAL port must equal it. If the exact port can't be mapped (e.g.
     // another LAN device already claimed it), a different external port would
     // be unreachable for our advertised address, so we give up rather than map
-    // a useless port.
-    if let Err(e) = gateway.add_port(
+    // a useless port. Some IGDs only accept permanent leases, so if the timed
+    // lease is refused, retry with lease 0 (permanent) before giving up.
+    let lease = match gateway.add_port(
         PortMappingProtocol::TCP,
         port,
         local_addr,
         LEASE_SECS,
         MAPPING_DESCRIPTION,
     ) {
-        warn(&format!(
-            "UPnP found a router but couldn't map port {port} ({e}); \
-             try a different --listener-port or forward it manually"
-        ));
-        return None;
-    }
+        Ok(()) => LEASE_SECS,
+        Err(_) => match gateway.add_port(
+            PortMappingProtocol::TCP,
+            port,
+            local_addr,
+            0,
+            MAPPING_DESCRIPTION,
+        ) {
+            Ok(()) => 0,
+            Err(e) => {
+                warn(&format!(
+                    "UPnP found a router but couldn't map port {port} ({e}); \
+                     try a different --listener-port or forward it manually"
+                ));
+                return None;
+            }
+        },
+    };
     let external = gateway
         .get_external_ip()
         .map_or_else(|_| "?".to_string(), |ip| ip.to_string());
@@ -154,8 +174,11 @@ fn map_upnp(local_ip: IpAddr, port: u16) -> Option<(Backend, u32)> {
             gateway: Box::new(gateway),
             local_addr,
             external_port: port,
+            lease,
         },
-        LEASE_SECS,
+        // A permanent (0) lease needs no renewal timer; use the requested lease
+        // for the renewal cadence otherwise.
+        if lease == 0 { LEASE_SECS } else { lease },
     ))
 }
 
@@ -194,12 +217,13 @@ fn renew(backend: &Backend, port: u16) -> bool {
             gateway,
             local_addr,
             external_port,
+            lease,
         } => gateway
             .add_port(
                 PortMappingProtocol::TCP,
                 *external_port,
                 *local_addr,
-                LEASE_SECS,
+                *lease,
                 MAPPING_DESCRIPTION,
             )
             .is_ok(),
@@ -280,7 +304,8 @@ impl PortMapper {
     fn spawn_natpmp_test(port: u16, gateway: SocketAddr) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = stop.clone();
-        let handle = thread::Builder::new()
+        let (done_tx, done) = mpsc::channel();
+        let _ = thread::Builder::new()
             .name("port-mapper-test".into())
             .spawn(move || {
                 if let Ok(response) = nat_pmp::map_tcp(
@@ -296,9 +321,9 @@ impl PortMapper {
                     };
                     manage(&backend, response.lifetime, port, &thread_stop);
                 }
-            })
-            .ok();
-        Self { stop, handle }
+                let _ = done_tx.send(());
+            });
+        Self { stop, done }
     }
 }
 
@@ -378,5 +403,26 @@ mod tests {
             0,
             "cleanup should request lifetime 0"
         );
+    }
+
+    #[test]
+    fn drop_does_not_hang_when_gateway_is_unresponsive() {
+        // A bound-but-silent gateway: the mapper thread blocks in the NAT-PMP
+        // retransmit budget (~3.75s). Dropping the mapper must NOT wait that
+        // long — it detaches after a bounded grace period.
+        let silent = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let addr = silent.local_addr().unwrap();
+        let mapper = PortMapper::spawn_natpmp_test(2234, addr);
+        // Ensure the thread is mid-transaction before we drop.
+        thread::sleep(StdDuration::from_millis(100));
+
+        let start = Instant::now();
+        drop(mapper);
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < StdDuration::from_millis(1500),
+            "drop blocked for {elapsed:?}; it should detach promptly"
+        );
+        drop(silent);
     }
 }
