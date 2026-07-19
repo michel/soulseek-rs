@@ -71,16 +71,29 @@ pub fn parse_shared_file_list(message: &mut Message) -> Vec<SharedDirectory> {
     let dir_count = body.read_int32();
     let mut dirs = Vec::new();
     for _ in 0..dir_count {
+        // Stop if a hostile count outruns the (decompressed) payload, so a
+        // bogus length can't spin us into a huge allocation loop.
+        if body.get_pointer() >= body.get_size() {
+            break;
+        }
         let name = body.read_string();
         let file_count = body.read_int32();
         let mut files = Vec::new();
         for _ in 0..file_count {
+            if body.get_pointer() >= body.get_size() {
+                break;
+            }
             body.read_int8(); // code
             let filename = body.read_string();
             let file_size = body.read_int64();
             body.read_string(); // extension
             let attr_count = body.read_int32();
             for _ in 0..attr_count {
+                // Each attribute is two int32s (8 bytes); read_int32 does not
+                // advance past the end, so bound the loop explicitly.
+                if body.get_pointer() + 8 > body.get_size() {
+                    break;
+                }
                 body.read_int32();
                 body.read_int32();
             }
@@ -89,6 +102,19 @@ pub fn parse_shared_file_list(message: &mut Message) -> Vec<SharedDirectory> {
         dirs.push(SharedDirectory { name, files });
     }
     dirs
+}
+
+#[test]
+fn hostile_dir_count_does_not_hang() {
+    // A compressed body claiming ~4 billion directories with no data must
+    // parse to empty promptly rather than looping into an OOM.
+    let compressed =
+        crate::utils::zlib::compress_stored(&u32::MAX.to_le_bytes());
+    let mut message = Message::new();
+    message.write_raw_bytes(vec![0u8; 8]);
+    message.write_raw_bytes(compressed);
+    message.set_pointer(8);
+    assert!(parse_shared_file_list(&mut message).is_empty());
 }
 
 #[test]
