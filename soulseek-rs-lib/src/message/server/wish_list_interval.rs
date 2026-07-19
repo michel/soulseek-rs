@@ -1,5 +1,4 @@
 use crate::debug;
-use std::sync::mpsc::Sender;
 
 use crate::{
     actor::server_actor::ServerMessage,
@@ -15,7 +14,7 @@ impl MessageHandler<ServerMessage> for WishListIntervalHandler {
         104
     }
 
-    fn handle(&self, message: &mut Message, _sender: Sender<ServerMessage>) {
+    fn handle(&self, message: &mut Message, _out: &mut Vec<ServerMessage>) {
         let number = message.read_int32();
         debug!("Wishlist search interval: {} in seconds", number);
     }

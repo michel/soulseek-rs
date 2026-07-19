@@ -1455,6 +1455,9 @@ dependencies = [
 [[package]]
 name = "soulseek-rs-lib"
 version = "0.3.0"
+dependencies = [
+ "mio",
+]
 
 [[package]]
 name = "static_assertions"

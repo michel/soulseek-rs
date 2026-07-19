@@ -3,7 +3,6 @@ use crate::{
     actor::server_actor::ServerMessage,
     message::{Message, MessageHandler},
 };
-use std::sync::mpsc::Sender;
 
 pub struct ExcludedSearchPhrasesHandler;
 
@@ -12,7 +11,7 @@ impl MessageHandler<ServerMessage> for ExcludedSearchPhrasesHandler {
         160
     }
 
-    fn handle(&self, message: &mut Message, _sender: Sender<ServerMessage>) {
+    fn handle(&self, message: &mut Message, _out: &mut Vec<ServerMessage>) {
         let item_count = message.read_int32();
 
         let mut exluded_phrases: Vec<String> = Vec::new();

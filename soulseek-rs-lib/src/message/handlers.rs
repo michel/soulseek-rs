@@ -1,11 +1,10 @@
 use std::collections::HashMap;
 
 use crate::message::Message;
-use std::sync::mpsc::Sender;
 
 pub trait MessageHandler<Op>: Send {
     fn get_code(&self) -> u8;
-    fn handle(&self, message: &mut Message, sender: Sender<Op>);
+    fn handle(&self, message: &mut Message, out: &mut Vec<Op>);
 }
 pub struct Handlers<Op> {
     handlers: HashMap<u8, Box<dyn MessageHandler<Op> + Send>>,

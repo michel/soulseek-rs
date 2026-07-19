@@ -1,5 +1,5 @@
+use std::collections::VecDeque;
 use std::io::{self, Read};
-use std::{collections::VecDeque, net::TcpStream};
 
 use crate::message::Message;
 
@@ -33,9 +33,9 @@ impl MessageReader {
         }
     }
 
-    pub fn read_from_socket(
+    pub fn read_from_socket<R: Read>(
         &mut self,
-        stream: &mut TcpStream,
+        stream: &mut R,
     ) -> io::Result<()> {
         let mut temp_buffer = [0; 1024]; // Temporary buffer for reading from the socket
         let bytes_read = stream.read(&mut temp_buffer)?;

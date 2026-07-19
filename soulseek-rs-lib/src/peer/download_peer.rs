@@ -7,7 +7,8 @@ use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::client::ClientContext;
+use crate::actor::ActorHandle;
+use crate::client::{ClientContext, ClientOperation};
 use crate::message::server::MessageFactory;
 use crate::trace;
 use crate::types::{Download, DownloadStatus};
@@ -245,6 +246,7 @@ impl DownloadPeer {
         &self,
         stream: &mut TcpStream,
         client_context: &Arc<RwLock<ClientContext>>,
+        client_channel: &ActorHandle<ClientOperation>,
         mut download: Option<Download>,
     ) -> Result<(Vec<u8>, Download), DownloadError> {
         let mut processor = StreamProcessor::new();
@@ -264,7 +266,7 @@ impl DownloadPeer {
                 .map_err(DownloadError::StreamWriteError)?;
             if let Some(ref dl) = download {
                 Self::send_download_status(
-                    client_context,
+                    client_channel,
                     dl,
                     DownloadStatus::InProgress {
                         bytes_downloaded: 0,
@@ -306,7 +308,7 @@ impl DownloadPeer {
                         processor.received = true;
                         if let Some(ref dl) = download {
                             Self::send_download_status(
-                                client_context,
+                                client_channel,
                                 dl,
                                 DownloadStatus::InProgress {
                                     bytes_downloaded: 0,
@@ -338,7 +340,7 @@ impl DownloadPeer {
                             total_bytes: dl.size,
                             speed_bytes_per_sec: speed,
                         };
-                        Self::send_download_status(client_context, dl, status);
+                        Self::send_download_status(client_channel, dl, status);
 
                         last_update_time = Instant::now();
                     }
@@ -375,15 +377,15 @@ impl DownloadPeer {
     }
 
     fn send_download_status(
-        client_context: &Arc<RwLock<ClientContext>>,
+        client_channel: &ActorHandle<ClientOperation>,
         download: &Download,
         status: DownloadStatus,
     ) {
-        let _ = download.sender.send(status.clone());
-        client_context
-            .write()
-            .unwrap()
-            .update_download_with_status(download.token, status);
+        let _ = client_channel.send(ClientOperation::DownloadStatusUpdate {
+            token: download.token,
+            status,
+            notify: true,
+        });
     }
 
     fn wait_while_paused(
@@ -476,6 +478,7 @@ impl DownloadPeer {
     pub fn download_file(
         self,
         client_context: Arc<RwLock<ClientContext>>,
+        client_channel: ActorHandle<ClientOperation>,
         download: Option<Download>,
         stream: Option<TcpStream>,
     ) -> Result<(Download, String), DownloadError> {
@@ -488,11 +491,11 @@ impl DownloadPeer {
         );
 
         if let Some(ref dl) = download {
-            let _ = dl.sender.send(DownloadStatus::Queued);
-            client_context
-                .write()
-                .unwrap()
-                .update_download_with_status(dl.token, DownloadStatus::Queued);
+            Self::send_download_status(
+                &client_channel,
+                dl,
+                DownloadStatus::Queued,
+            );
         }
 
         let mut stream = match stream {
@@ -505,8 +508,12 @@ impl DownloadPeer {
         self.perform_handshake(&mut stream)?;
         trace!("[download_peer:{}] handshake completed", self.username);
 
-        let (buffer, download) =
-            self.read_download_stream(&mut stream, &client_context, download)?;
+        let (buffer, download) = self.read_download_stream(
+            &mut stream,
+            &client_context,
+            &client_channel,
+            download,
+        )?;
 
         let final_path = Self::resolve_download_path(&download)?;
         Self::save_downloaded_file(&final_path, &buffer)?;

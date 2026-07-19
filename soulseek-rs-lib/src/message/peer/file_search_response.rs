@@ -1,22 +1,19 @@
 use crate::message::{Message, MessageHandler};
 use crate::peer::PeerMessage;
 use crate::types::SearchResult;
-use std::sync::mpsc::Sender;
 
 pub struct FileSearchResponse;
 impl MessageHandler<PeerMessage> for FileSearchResponse {
     fn get_code(&self) -> u8 {
         9
     }
-    fn handle(&self, message: &mut Message, sender: Sender<PeerMessage>) {
+    fn handle(&self, message: &mut Message, out: &mut Vec<PeerMessage>) {
         // Skip malformed search results
         let Ok(file_search) = SearchResult::new_from_message(message) else {
             return;
         };
 
-        sender
-            .send(PeerMessage::FileSearchResult(file_search))
-            .unwrap();
+        out.push(PeerMessage::FileSearchResult(file_search));
     }
 }
 

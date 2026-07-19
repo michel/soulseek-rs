@@ -2,7 +2,6 @@ use crate::{
     message::{Message, MessageHandler},
     peer::PeerMessage,
 };
-use std::sync::mpsc::Sender;
 
 pub struct PlaceInQueueResponse;
 
@@ -11,12 +10,10 @@ impl MessageHandler<PeerMessage> for PlaceInQueueResponse {
         43
     }
 
-    fn handle(&self, message: &mut Message, sender: Sender<PeerMessage>) {
+    fn handle(&self, message: &mut Message, out: &mut Vec<PeerMessage>) {
         let filename = message.read_string();
         let place = message.read_int32();
 
-        sender
-            .send(PeerMessage::PlaceInQueueResponse { filename, place })
-            .unwrap();
+        out.push(PeerMessage::PlaceInQueueResponse { filename, place });
     }
 }
