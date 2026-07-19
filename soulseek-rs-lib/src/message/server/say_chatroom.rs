@@ -2,7 +2,6 @@ use crate::{
     actor::server_actor::ServerMessage,
     message::{Message, MessageHandler},
 };
-use std::sync::mpsc::Sender;
 
 pub struct SayChatroomHandler;
 
@@ -11,11 +10,11 @@ impl MessageHandler<ServerMessage> for SayChatroomHandler {
         13
     }
 
-    fn handle(&self, message: &mut Message, sender: Sender<ServerMessage>) {
+    fn handle(&self, message: &mut Message, out: &mut Vec<ServerMessage>) {
         let room = message.read_string();
         let username = message.read_string();
         let message_text = message.read_string();
-        let _ = sender.send(ServerMessage::RoomMessageReceived {
+        out.push(ServerMessage::RoomMessageReceived {
             room,
             username,
             message: message_text,
@@ -29,7 +28,7 @@ mod tests {
 
     #[test]
     fn forwards_room_message() {
-        let (tx, rx) = std::sync::mpsc::channel();
+        let mut out = Vec::new();
         let mut message = Message::new();
         message.write_raw_bytes(vec![0u8; 8]);
         message.write_string("jazz");
@@ -37,9 +36,9 @@ mod tests {
         message.write_string("hello everyone");
         message.set_pointer(8);
 
-        SayChatroomHandler.handle(&mut message, tx);
-        match rx.try_recv() {
-            Ok(ServerMessage::RoomMessageReceived {
+        SayChatroomHandler.handle(&mut message, &mut out);
+        match out.pop() {
+            Some(ServerMessage::RoomMessageReceived {
                 room,
                 username,
                 message,

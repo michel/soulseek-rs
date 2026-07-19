@@ -1,7 +1,6 @@
 use crate::{
     actor::server_actor::ServerMessage, debug, info, message::Message,
 };
-use std::sync::mpsc::Sender;
 
 use crate::message::MessageHandler;
 
@@ -12,17 +11,18 @@ impl MessageHandler<ServerMessage> for LoginHandler {
         1
     }
 
-    fn handle(&self, message: &mut Message, sender: Sender<ServerMessage>) {
+    fn handle(&self, message: &mut Message, out: &mut Vec<ServerMessage>) {
         let response = message.read_int8();
 
         if response != 1 {
-            return sender.send(ServerMessage::LoginStatus(false)).unwrap();
+            out.push(ServerMessage::LoginStatus(false));
+            return;
         }
 
         info!("Login successful");
         let greeting = message.read_string();
         debug!("Server greeting: {:?}", greeting);
 
-        sender.send(ServerMessage::LoginStatus(true)).unwrap();
+        out.push(ServerMessage::LoginStatus(true));
     }
 }

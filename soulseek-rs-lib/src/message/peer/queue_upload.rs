@@ -2,7 +2,6 @@ use crate::{
     message::{Message, MessageHandler},
     peer::PeerMessage,
 };
-use std::sync::mpsc::Sender;
 
 /// A peer asking to download one of our shared files (peer code 43).
 pub struct QueueUploadHandler;
@@ -12,8 +11,8 @@ impl MessageHandler<PeerMessage> for QueueUploadHandler {
         43
     }
 
-    fn handle(&self, message: &mut Message, sender: Sender<PeerMessage>) {
+    fn handle(&self, message: &mut Message, out: &mut Vec<PeerMessage>) {
         let filename = message.read_string();
-        let _ = sender.send(PeerMessage::IncomingQueueUpload(filename));
+        out.push(PeerMessage::IncomingQueueUpload(filename));
     }
 }

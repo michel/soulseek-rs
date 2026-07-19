@@ -5,7 +5,6 @@
 use crate::message::{Message, MessageHandler};
 use crate::peer::PeerMessage;
 use crate::utils::zlib::{compress_stored, deflate};
-use std::sync::mpsc::Sender;
 
 /// One shared directory and the files directly in it (basename + size).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,9 +19,9 @@ impl MessageHandler<PeerMessage> for SharedFileListResponseHandler {
     fn get_code(&self) -> u8 {
         5
     }
-    fn handle(&self, message: &mut Message, sender: Sender<PeerMessage>) {
+    fn handle(&self, message: &mut Message, out: &mut Vec<PeerMessage>) {
         let directories = parse_shared_file_list(message);
-        let _ = sender.send(PeerMessage::ShareListReceived(directories));
+        out.push(PeerMessage::ShareListReceived(directories));
     }
 }
 

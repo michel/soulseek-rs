@@ -3,7 +3,6 @@ use crate::{
     message::{Message, MessageHandler},
     types::RoomInfo,
 };
-use std::sync::mpsc::Sender;
 
 pub struct RoomListHandler;
 
@@ -12,9 +11,9 @@ impl MessageHandler<ServerMessage> for RoomListHandler {
         64
     }
 
-    fn handle(&self, message: &mut Message, sender: Sender<ServerMessage>) {
+    fn handle(&self, message: &mut Message, out: &mut Vec<ServerMessage>) {
         let rooms = parse_room_list(message);
-        let _ = sender.send(ServerMessage::RoomListReceived(rooms));
+        out.push(ServerMessage::RoomListReceived(rooms));
     }
 }
 
@@ -112,16 +111,16 @@ mod tests {
 
     #[test]
     fn handler_forwards_parsed_rooms() {
-        let (tx, rx) = std::sync::mpsc::channel();
+        let mut out = Vec::new();
         let mut message = framed(|m| {
             m.write_int32(1);
             m.write_string("room");
             m.write_int32(1);
             m.write_int32(5);
         });
-        RoomListHandler.handle(&mut message, tx);
-        match rx.try_recv() {
-            Ok(ServerMessage::RoomListReceived(rooms)) => {
+        RoomListHandler.handle(&mut message, &mut out);
+        match out.as_slice() {
+            [ServerMessage::RoomListReceived(rooms)] => {
                 assert_eq!(rooms.len(), 1);
                 assert_eq!(rooms[0].name, "room");
                 assert_eq!(rooms[0].user_count, 5);

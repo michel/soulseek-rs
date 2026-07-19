@@ -2,7 +2,6 @@ use crate::{
     actor::server_actor::ServerMessage,
     message::{Message, MessageHandler},
 };
-use std::sync::mpsc::Sender;
 
 pub struct JoinRoomHandler;
 
@@ -11,7 +10,7 @@ impl MessageHandler<ServerMessage> for JoinRoomHandler {
         14
     }
 
-    fn handle(&self, message: &mut Message, sender: Sender<ServerMessage>) {
+    fn handle(&self, message: &mut Message, out: &mut Vec<ServerMessage>) {
         // JoinRoom (code 14): room name, then a vector of member usernames.
         // Per-user stat vectors follow but are not needed here, so we stop
         // after reading the names.
@@ -26,7 +25,7 @@ impl MessageHandler<ServerMessage> for JoinRoomHandler {
             }
             users.push(message.read_string());
         }
-        let _ = sender.send(ServerMessage::RoomJoined { room, users });
+        out.push(ServerMessage::RoomJoined { room, users });
     }
 }
 
@@ -38,16 +37,16 @@ mod tests {
     fn hostile_user_count_does_not_hang() {
         // room="" then user_count=u32::MAX with no usernames: must return
         // promptly instead of looping ~4 billion times.
-        let (tx, rx) = std::sync::mpsc::channel();
+        let mut out = Vec::new();
         let mut message = Message::new();
         message.write_raw_bytes(vec![0u8; 8]);
         message.write_string("");
         message.write_int32(u32::MAX);
         message.set_pointer(8);
 
-        JoinRoomHandler.handle(&mut message, tx);
-        match rx.try_recv() {
-            Ok(ServerMessage::RoomJoined { users, .. }) => {
+        JoinRoomHandler.handle(&mut message, &mut out);
+        match out.pop() {
+            Some(ServerMessage::RoomJoined { users, .. }) => {
                 assert!(users.is_empty());
             }
             other => panic!("unexpected: {other:?}"),
@@ -56,7 +55,7 @@ mod tests {
 
     #[test]
     fn forwards_room_and_member_list() {
-        let (tx, rx) = std::sync::mpsc::channel();
+        let mut out = Vec::new();
         let mut message = Message::new();
         message.write_raw_bytes(vec![0u8; 8]);
         message.write_string("nicotine");
@@ -65,9 +64,9 @@ mod tests {
         message.write_string("bob");
         message.set_pointer(8);
 
-        JoinRoomHandler.handle(&mut message, tx);
-        match rx.try_recv() {
-            Ok(ServerMessage::RoomJoined { room, users }) => {
+        JoinRoomHandler.handle(&mut message, &mut out);
+        match out.pop() {
+            Some(ServerMessage::RoomJoined { room, users }) => {
                 assert_eq!(room, "nicotine");
                 assert_eq!(users, vec!["alice", "bob"]);
             }
