@@ -501,7 +501,9 @@ pub fn show_multi_download_progress(
                     let _ = tx.send((download, receiver));
                 }
                 Err(e) => {
-                    eprintln!("Failed to start download for {filename}: {e}");
+                    soulseek_rs::warn!(
+                        "Failed to start download for {filename}: {e}"
+                    );
                 }
             }
         }
