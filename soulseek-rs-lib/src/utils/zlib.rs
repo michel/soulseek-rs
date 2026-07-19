@@ -88,6 +88,43 @@ pub fn deflate(input: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+/// Compress `data` into a valid zlib stream using only STORED blocks.
+///
+/// No real compressor is needed: standard zlib decoders (and [`deflate`] above)
+/// accept a `0x78 0x01` header, one or more uncompressed DEFLATE "stored" blocks
+/// of at most `0xFFFF` bytes, then a big-endian adler32 checksum.
+#[must_use]
+pub fn compress_stored(data: &[u8]) -> Vec<u8> {
+    let mut out = vec![0x78, 0x01];
+    if data.is_empty() {
+        // A single empty, final stored block: BFINAL=1, LEN=0, NLEN=0xFFFF.
+        out.extend_from_slice(&[0x01, 0x00, 0x00, 0xFF, 0xFF]);
+    } else {
+        let mut chunks = data.chunks(0xFFFF).peekable();
+        while let Some(chunk) = chunks.next() {
+            // BFINAL in bit 0, BTYPE=00 (stored) in bits 1-2.
+            out.push(u8::from(chunks.peek().is_none()));
+            let len = chunk.len() as u16;
+            out.extend_from_slice(&len.to_le_bytes());
+            out.extend_from_slice(&(!len).to_le_bytes());
+            out.extend_from_slice(chunk);
+        }
+    }
+    out.extend_from_slice(&adler32(data).to_be_bytes());
+    out
+}
+
+/// RFC 1950 adler32 checksum.
+fn adler32(data: &[u8]) -> u32 {
+    let mut a: u32 = 1;
+    let mut b: u32 = 0;
+    for &byte in data {
+        a = (a + u32::from(byte)) % 65521;
+        b = (b + a) % 65521;
+    }
+    (b << 16) | a
+}
+
 fn inflate(r: &mut BitReader) -> std::result::Result<Vec<u8>, String> {
     let mut bfinal = 0;
     let mut out = Vec::new();
@@ -375,6 +412,28 @@ mod tests {
         tree.insert(0, 1, 42);
         let mut reader = BitReader::new(vec![0b0000_0001]); // first bit = 1
         assert!(decode_symbol(&mut reader, &tree).is_err());
+    }
+
+    #[test]
+    fn compress_stored_roundtrips_through_the_decoder() {
+        // Cover the block boundaries: empty, tiny, exactly 0xFFFF, and multi-block.
+        for size in [0usize, 1, 11, 65_534, 65_535, 65_536, 131_072, 200_000] {
+            let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+            let compressed = compress_stored(&data);
+            assert_eq!(
+                deflate(&compressed).unwrap(),
+                data,
+                "roundtrip failed at size {size}"
+            );
+        }
+    }
+
+    #[test]
+    fn compress_stored_header_and_adler32_are_correct() {
+        assert_eq!(&compress_stored(b"")[0..2], &[120, 1]);
+        assert_eq!(adler32(b""), 1);
+        // a = 1+97+98+99 = 295 = 0x127; b = 98+294+589 = 981 = 0x24D.
+        assert_eq!(adler32(b"abc"), 0x024D_0127);
     }
 
     #[test]
