@@ -293,6 +293,85 @@ fn a_private_message_is_delivered_between_users() {
 }
 
 #[test]
+fn a_chat_room_message_is_delivered_between_users() {
+    use soulseek_rs::types::RoomEvent;
+    let server = server_or_skip!();
+
+    let room = "e2e_room_chat";
+    let mut alice =
+        Client::with_settings(server.settings("e2e_alice_room", "pw"));
+    let mut bob = Client::with_settings(server.settings("e2e_bob_room", "pw"));
+    alice.connect().expect("alice connect");
+    bob.connect().expect("bob connect");
+    assert!(alice.login().expect("alice login"));
+    assert!(bob.login().expect("bob login"));
+
+    alice.join_room(room).expect("alice joins room");
+    bob.join_room(room).expect("bob joins room");
+
+    // Give both joins time to register on the server before speaking.
+    std::thread::sleep(Duration::from_millis(500));
+    let _ = alice.take_room_events();
+    let _ = bob.take_room_events();
+
+    let body = "hello room, this is alice";
+    alice.say_in_room(room, body).expect("alice says in room");
+
+    // Delivery is asynchronous; poll Bob's room events until the message lands.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut got = None;
+    while Instant::now() < deadline {
+        for event in bob.take_room_events() {
+            if let RoomEvent::Message {
+                room: r,
+                username,
+                message,
+            } = event
+                && r == room
+                && message == body
+            {
+                got = Some(username);
+            }
+        }
+        if got.is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    assert_eq!(
+        got.as_deref(),
+        Some("e2e_alice_room"),
+        "bob should receive alice's room message"
+    );
+}
+
+#[test]
+fn the_room_list_includes_a_joined_room() {
+    let server = server_or_skip!();
+
+    let room = "e2e_room_listed";
+    let mut alice =
+        Client::with_settings(server.settings("e2e_alice_list", "pw"));
+    alice.connect().expect("alice connect");
+    assert!(alice.login().expect("alice login"));
+    alice.join_room(room).expect("alice joins room");
+
+    // Once a user is in the room the server should advertise it in RoomList.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut listed = false;
+    while Instant::now() < deadline {
+        alice.request_room_list().expect("request room list");
+        std::thread::sleep(Duration::from_millis(250));
+        if alice.room_list().iter().any(|r| r.name == room) {
+            listed = true;
+            break;
+        }
+    }
+    assert!(listed, "the joined room should appear in the room list");
+}
+
+#[test]
 fn login_succeeds_with_listener_enabled() {
     let server = server_or_skip!();
 
