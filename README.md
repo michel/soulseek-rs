@@ -126,6 +126,25 @@ In the interactive TUI, press `c` to open the chat-rooms popup:
 - **unread messages** bold a room's tab and add a `room (n)` badge, and the
   `c chat (n)` shortcut counts unread across all open rooms.
 
+### Connectivity (being reachable)
+
+Browsing and downloading are peer-to-peer, so at least one side must accept an
+incoming connection. When the listener is enabled (the default), the client
+**automatically tries to open its listen port** on your router via **UPnP-IGD**
+and **NAT-PMP**, so firewalled peers and the server can connect back to you.
+This is best-effort: if your router has UPnP/NAT-PMP disabled it's a no-op and
+you'll see a log line suggesting you forward the port manually.
+
+- The mapped/forwarded port is your `--listener-port` (env `LISTENER_PORT`,
+  default `2234`); it is renewed automatically and removed on exit.
+- If auto-mapping can't get that exact port, forward **TCP 2234** (or whatever
+  `--listener-port` you chose) to this machine on your router.
+- Pass `--disable-listener` to turn the listener (and port mapping) off.
+
+If both you and a peer are behind routers with no forwarded port, browsing that
+peer can't work — that's a fundamental Soulseek/peer-to-peer limitation, not a
+bug.
+
 ## Development
 
 To run the project in development mode with debug output and trace output:
