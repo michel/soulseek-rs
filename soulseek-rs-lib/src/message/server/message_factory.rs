@@ -122,6 +122,38 @@ impl MessageFactory {
             .clone()
     }
 
+    /// Ask the server (code 64) for the list of public chat rooms.
+    #[must_use]
+    pub fn build_room_list_request() -> Message {
+        Message::new().write_int32(64).clone()
+    }
+
+    /// Join a chat room (server code 14). `private` requests a private room.
+    #[must_use]
+    pub fn build_join_room(room: &str, private: bool) -> Message {
+        Message::new()
+            .write_int32(14)
+            .write_string(room)
+            .write_int32(u32::from(private))
+            .clone()
+    }
+
+    /// Leave a chat room (server code 15).
+    #[must_use]
+    pub fn build_leave_room(room: &str) -> Message {
+        Message::new().write_int32(15).write_string(room).clone()
+    }
+
+    /// Say `message` in chat room `room` (server code 13).
+    #[must_use]
+    pub fn build_say_chatroom(room: &str, message: &str) -> Message {
+        Message::new()
+            .write_int32(13)
+            .write_string(room)
+            .write_string(message)
+            .clone()
+    }
+
     /// Ask a peer for their shared-file listing (peer code 4, no body).
     #[must_use]
     pub fn build_get_share_file_list() -> Message {
@@ -270,6 +302,47 @@ fn test_build_message_acked() {
     let message = MessageFactory::build_message_acked(7);
     let expect: Vec<u8> = [23, 0, 0, 0, 7, 0, 0, 0].to_vec();
     assert_eq!(expect, message.get_data());
+}
+
+#[test]
+fn test_build_join_room() {
+    let message = MessageFactory::build_join_room("nicotine", false);
+    let expect: Vec<u8> = [
+        14, 0, 0, 0, // code
+        8, 0, 0, 0, 110, 105, 99, 111, 116, 105, 110, 101, // "nicotine"
+        0, 0, 0, 0, // private = 0
+    ]
+    .to_vec();
+    assert_eq!(expect, message.get_data());
+}
+
+#[test]
+fn test_build_leave_room() {
+    let message = MessageFactory::build_leave_room("nicotine");
+    let expect: Vec<u8> = [
+        15, 0, 0, 0, // code
+        8, 0, 0, 0, 110, 105, 99, 111, 116, 105, 110, 101, // "nicotine"
+    ]
+    .to_vec();
+    assert_eq!(expect, message.get_data());
+}
+
+#[test]
+fn test_build_say_chatroom() {
+    let message = MessageFactory::build_say_chatroom("room", "hi");
+    let expect: Vec<u8> = [
+        13, 0, 0, 0, // code
+        4, 0, 0, 0, 114, 111, 111, 109, // "room"
+        2, 0, 0, 0, 104, 105, // "hi"
+    ]
+    .to_vec();
+    assert_eq!(expect, message.get_data());
+}
+
+#[test]
+fn test_build_room_list_request() {
+    let message = MessageFactory::build_room_list_request();
+    assert_eq!(vec![64, 0, 0, 0], message.get_data());
 }
 
 #[test]

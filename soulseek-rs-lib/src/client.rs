@@ -3,7 +3,7 @@ use crate::actor::server_actor::{
     PeerAddress, ServerActor, ServerMessage, UserMessage,
 };
 use crate::download_store::{DownloadStore, collect_failed_tokens};
-use crate::types::{DownloadMetadata, DownloadStatus};
+use crate::types::{DownloadMetadata, DownloadStatus, RoomEvent, RoomInfo};
 use crate::utils::logger;
 use crate::{
     Transfer,
@@ -186,6 +186,9 @@ pub enum ClientOperation {
     /// established — the peer is likely firewalled, so fall back to asking the
     /// server to broker the connection. Carries the reporting actor's id.
     PeerConnectFailed(u64, String),
+    /// Something happened in the chat-room subsystem (list refreshed, a room
+    /// joined/left, a message said, a member joined/left).
+    RoomEvent(RoomEvent),
 }
 pub struct ClientContext {
     pub peer_registry: Option<PeerRegistry>,
@@ -209,6 +212,10 @@ pub struct ClientContext {
     pending_serves: HashMap<String, Vec<u32>>,
     /// Shared-file listings received from peers we browsed.
     browse_results: HashMap<String, Vec<SharedDirectory>>,
+    /// Latest snapshot of the public chat-room list (from `RoomList`, code 64).
+    room_list: Vec<RoomInfo>,
+    /// Chat-room events awaiting consumption by the client/UI.
+    room_events: Vec<RoomEvent>,
     actor_system: Arc<ActorSystem>,
 }
 impl Default for ClientContext {
@@ -499,9 +506,32 @@ impl ClientContext {
             uploads: HashMap::new(),
             pending_serves: HashMap::new(),
             browse_results: HashMap::new(),
+            room_list: Vec::new(),
+            room_events: Vec::new(),
             downloads: DownloadStore::new(),
             actor_system,
         }
+    }
+
+    /// Apply a chat-room event: keep the room-list snapshot current and queue
+    /// the event for the client/UI to drain.
+    pub fn apply_room_event(&mut self, event: RoomEvent) {
+        if let RoomEvent::List(rooms) = &event {
+            self.room_list.clone_from(rooms);
+        }
+        self.room_events.push(event);
+    }
+
+    /// The latest snapshot of the public chat-room list.
+    #[must_use]
+    pub fn room_list(&self) -> Vec<RoomInfo> {
+        self.room_list.clone()
+    }
+
+    /// Remove and return all chat-room events received since the last call.
+    #[must_use]
+    pub fn take_room_events(&mut self) -> Vec<RoomEvent> {
+        std::mem::take(&mut self.room_events)
     }
 
     /// Cache a peer's listen address learned from a GetPeerAddress response.
@@ -744,6 +774,93 @@ impl Client {
             .send(ServerMessage::SendMessage(msg))
             .map_err(|_| SoulseekRs::NotConnected)?;
         Ok(())
+    }
+
+    /// Send a raw server message via the server actor, mapping a dead channel
+    /// to [`SoulseekRs::NotConnected`].
+    fn send_server_message(
+        &self,
+        message: crate::message::Message,
+    ) -> Result<()> {
+        self.server_handle
+            .as_ref()
+            .ok_or(SoulseekRs::NotConnected)?
+            .send(ServerMessage::SendMessage(message))
+            .map_err(|_| SoulseekRs::NotConnected)?;
+        Ok(())
+    }
+
+    /// Ask the server for the list of public chat rooms. The response arrives
+    /// asynchronously; read it with [`Client::room_list`] or by draining
+    /// [`Client::take_room_events`] for a [`RoomEvent::List`].
+    ///
+    /// # Errors
+    /// Returns [`SoulseekRs::NotConnected`] if the client is not connected.
+    pub fn request_room_list(&self) -> Result<()> {
+        self.send_server_message(
+            crate::message::server::MessageFactory::build_room_list_request(),
+        )
+    }
+
+    /// Join a public chat room. The membership list and subsequent messages
+    /// arrive via [`Client::take_room_events`].
+    ///
+    /// # Errors
+    /// Returns [`SoulseekRs::NotConnected`] if the client is not connected.
+    pub fn join_room(&self, room: &str) -> Result<()> {
+        self.send_server_message(
+            crate::message::server::MessageFactory::build_join_room(
+                room, false,
+            ),
+        )
+    }
+
+    /// Leave a chat room previously joined with [`Client::join_room`].
+    ///
+    /// # Errors
+    /// Returns [`SoulseekRs::NotConnected`] if the client is not connected.
+    pub fn leave_room(&self, room: &str) -> Result<()> {
+        self.send_server_message(
+            crate::message::server::MessageFactory::build_leave_room(room),
+        )
+    }
+
+    /// Say `message` in chat room `room`. The server echoes it back as a
+    /// [`RoomEvent::Message`], so the UI should render from that echo rather
+    /// than optimistically.
+    ///
+    /// # Errors
+    /// Returns [`SoulseekRs::NotConnected`] if the client is not connected.
+    pub fn say_in_room(&self, room: &str, message: &str) -> Result<()> {
+        self.send_server_message(
+            crate::message::server::MessageFactory::build_say_chatroom(
+                room, message,
+            ),
+        )
+    }
+
+    /// The latest snapshot of the public chat-room list.
+    #[must_use]
+    pub fn room_list(&self) -> Vec<RoomInfo> {
+        match self.context.read_safe() {
+            Ok(ctx) => ctx.room_list(),
+            Err(e) => {
+                error!("[client] room_list: {}", e);
+                Vec::new()
+            }
+        }
+    }
+
+    /// Remove and return all chat-room events received since the last call.
+    #[must_use]
+    pub fn take_room_events(&self) -> Vec<RoomEvent> {
+        match self.context.write_safe() {
+            Ok(mut ctx) => ctx.take_room_events(),
+            Err(e) => {
+                error!("[client] take_room_events: {}", e);
+                Vec::new()
+            }
+        }
     }
 
     /// Request a peer's shared-file listing. When it arrives it can be
@@ -1654,6 +1771,15 @@ impl Client {
                                     e
                                 ),
                             },
+                            ClientOperation::RoomEvent(event) => {
+                                match client_context.write_safe() {
+                                    Ok(mut ctx) => ctx.apply_room_event(event),
+                                    Err(e) => error!(
+                                        "[client] RoomEvent write: {}",
+                                        e
+                                    ),
+                                }
+                            }
                             ClientOperation::PeerConnected(username) => {
                                 // An outbound control connection just handshook.
                                 // Flush any downloads that were queued for this
