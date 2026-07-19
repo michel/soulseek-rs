@@ -3,7 +3,8 @@ use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
 use crate::message::peer::{
     FileSearchResponse, GetShareFileList, PeerInit, PlaceInQueueResponse,
-    QueueUploadHandler, TransferRequest, TransferResponse, UploadFailedHandler,
+    QueueUploadHandler, SharedDirectory, SharedFileListResponseHandler,
+    TransferRequest, TransferResponse, UploadFailedHandler,
 };
 use crate::message::server::MessageFactory;
 use crate::message::{Handlers, Message, MessageReader, MessageType};
@@ -40,6 +41,8 @@ pub enum PeerMessage {
     IncomingQueueUpload(String),
     /// A peer asked to browse our shared files (they sent us code 4).
     ShareListRequested,
+    /// A peer we are browsing sent us their shared-file listing (code 5).
+    ShareListReceived(Vec<SharedDirectory>),
     /// Offer the queued file to that peer: send an upload TransferRequest.
     ServeUpload {
         token: u32,
@@ -153,6 +156,7 @@ impl PeerActor {
         handlers.register_handler(UploadFailedHandler);
         handlers.register_handler(PlaceInQueueResponse);
         handlers.register_handler(QueueUploadHandler);
+        handlers.register_handler(SharedFileListResponseHandler);
         handlers.register_handler(PeerInit);
 
         self.dispatcher = Some(MessageDispatcher::new(
@@ -356,6 +360,17 @@ impl PeerActor {
                     .send(ClientOperation::ShareListRequested { requester_key })
                 {
                     error!("[peer_actor] forward ShareListRequested: {}", e);
+                }
+            }
+            PeerMessage::ShareListReceived(directories) => {
+                let username = self.peer_username();
+                if let Err(e) =
+                    self.client_channel.send(ClientOperation::BrowseResult {
+                        username,
+                        directories,
+                    })
+                {
+                    error!("[peer_actor] forward BrowseResult: {}", e);
                 }
             }
             PeerMessage::RequestTransfer(download) => {

@@ -1145,3 +1145,53 @@ fn two_real_clients_search_and_download() {
     let _ = std::fs::remove_dir_all(share_dir);
     let _ = std::fs::remove_dir_all(download_dir);
 }
+
+#[test]
+fn browse_a_peers_shared_files() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    std::fs::create_dir_all(share_dir.join("album")).unwrap();
+    std::fs::write(share_dir.join("album").join("track.flac"), b"xxxx")
+        .unwrap();
+
+    let sharer_port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directory: Some(share_dir.display().to_string()),
+        ..server.listening_settings("e2e_browsee", "pw", sharer_port)
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+
+    let browser_port = free_port().expect("browser port");
+    let mut browser = Client::with_settings(server.listening_settings(
+        "e2e_browser",
+        "pw",
+        browser_port,
+    ));
+    browser.connect().expect("browser connect");
+    assert!(browser.login().expect("browser login"));
+
+    std::thread::sleep(Duration::from_secs(1));
+
+    browser.browse_user("e2e_browsee").expect("browse request");
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut listing = None;
+    while Instant::now() < deadline {
+        if let Some(result) = browser.take_browse_result("e2e_browsee") {
+            listing = Some(result);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let directories = listing.expect("browser should receive the listing");
+    assert!(
+        directories
+            .iter()
+            .any(|d| { d.files.iter().any(|(name, _)| name == "track.flac") }),
+        "the listing should include the shared file"
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}

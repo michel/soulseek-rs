@@ -9,7 +9,7 @@ use crate::{
     Transfer,
     actor::{ActorSystem, peer_registry::PeerRegistry},
     error::{Result, SoulseekRs},
-    message::peer::{FileEntry, build_file_search_response},
+    message::peer::{FileEntry, SharedDirectory, build_file_search_response},
     peer::{
         ConnectionType, DownloadPeer, NewPeer, Peer, PeerMessage,
         listen::Listen,
@@ -177,6 +177,11 @@ pub enum ClientOperation {
     ShareListRequested {
         requester_key: String,
     },
+    /// A peer we are browsing returned their shared-file listing.
+    BrowseResult {
+        username: String,
+        directories: Vec<SharedDirectory>,
+    },
     /// A direct outbound connection to this peer failed before it was
     /// established — the peer is likely firewalled, so fall back to asking the
     /// server to broker the connection. Carries the reporting actor's id.
@@ -202,6 +207,8 @@ pub struct ClientContext {
     uploads: HashMap<u32, UploadJob>,
     /// Upload tokens waiting for the downloader's address to be resolved.
     pending_serves: HashMap<String, Vec<u32>>,
+    /// Shared-file listings received from peers we browsed.
+    browse_results: HashMap<String, Vec<SharedDirectory>>,
     actor_system: Arc<ActorSystem>,
 }
 impl Default for ClientContext {
@@ -491,6 +498,7 @@ impl ClientContext {
             pending_peer_messages: HashMap::new(),
             uploads: HashMap::new(),
             pending_serves: HashMap::new(),
+            browse_results: HashMap::new(),
             downloads: DownloadStore::new(),
             actor_system,
         }
@@ -533,6 +541,23 @@ impl ClientContext {
         self.pending_peer_messages
             .remove(username)
             .unwrap_or_default()
+    }
+
+    /// Store a shared-file listing received from browsing `username`.
+    pub fn store_browse_result(
+        &mut self,
+        username: String,
+        directories: Vec<SharedDirectory>,
+    ) {
+        self.browse_results.insert(username, directories);
+    }
+
+    /// Remove and return the shared-file listing browsed from `username`.
+    pub fn take_browse_result(
+        &mut self,
+        username: &str,
+    ) -> Option<Vec<SharedDirectory>> {
+        self.browse_results.remove(username)
     }
 
     /// Remember that a server-brokered connection to `username` is pending under
@@ -719,6 +744,53 @@ impl Client {
             .send(ServerMessage::SendMessage(msg))
             .map_err(|_| SoulseekRs::NotConnected)?;
         Ok(())
+    }
+
+    /// Request a peer's shared-file listing. When it arrives it can be
+    /// retrieved with [`Client::take_browse_result`].
+    ///
+    /// # Errors
+    /// Returns an error if the client's context lock is poisoned.
+    pub fn browse_user(&self, username: &str) -> Result<()> {
+        let request =
+            crate::message::server::MessageFactory::build_get_share_file_list();
+        let (connected, registry) = {
+            let ctx = self.context.read_safe()?;
+            (
+                ctx.peer_registry
+                    .as_ref()
+                    .is_some_and(|r| r.contains(username)),
+                ctx.peer_registry.clone(),
+            )
+        };
+        if connected {
+            if let Some(registry) = registry {
+                let _ = registry
+                    .send_to_peer(username, PeerMessage::SendMessage(request));
+            }
+        } else {
+            self.context
+                .write_safe()?
+                .queue_peer_message(username, request);
+            if let Some(handle) = &self.server_handle {
+                let _ = handle
+                    .send(ServerMessage::GetPeerAddress(username.to_string()));
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove and return a peer's shared-file listing requested via
+    /// [`Client::browse_user`], if it has arrived.
+    #[must_use]
+    pub fn take_browse_result(
+        &self,
+        username: &str,
+    ) -> Option<Vec<SharedDirectory>> {
+        self.context
+            .write_safe()
+            .ok()
+            .and_then(|mut ctx| ctx.take_browse_result(username))
     }
 
     /// Ask the server for a peer's address and open a direct control
@@ -1818,6 +1890,18 @@ impl Client {
                                     let _ = registry.send_to_peer(
                                         &requester_key,
                                         PeerMessage::SendMessage(message),
+                                    );
+                                }
+                            }
+                            ClientOperation::BrowseResult {
+                                username,
+                                directories,
+                            } => {
+                                if let Ok(mut ctx) = client_context.write_safe()
+                                {
+                                    ctx.store_browse_result(
+                                        username,
+                                        directories,
                                     );
                                 }
                             }
