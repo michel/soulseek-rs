@@ -8,11 +8,20 @@ use crate::{debug, error};
 
 use std::collections::HashMap;
 use std::net::TcpStream;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
+/// Source of unique per-actor ids so terminal-outcome eviction can be made
+/// identity-aware (a replaced actor must not evict its replacement).
+static NEXT_PEER_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Registered peers keyed by username, each stored with the unique id of the
+/// actor currently occupying the slot.
+type PeerMap = HashMap<String, (u64, ActorHandle<PeerMessage>)>;
+
 pub struct PeerRegistry {
-    peers: Arc<Mutex<HashMap<String, ActorHandle<PeerMessage>>>>,
+    peers: Arc<Mutex<PeerMap>>,
     actor_system: Arc<ActorSystem>,
     client_channel: Sender<ClientOperation>,
     own_username: String,
@@ -40,6 +49,7 @@ impl PeerRegistry {
         reader: Option<MessageReader>,
     ) -> Result<ActorHandle<PeerMessage>, String> {
         let username = peer.username.clone();
+        let id = NEXT_PEER_ID.fetch_add(1, Ordering::Relaxed);
 
         let actor = PeerActor::new(
             peer,
@@ -47,6 +57,7 @@ impl PeerRegistry {
             reader,
             self.client_channel.clone(),
             self.own_username.clone(),
+            id,
         );
 
         let handle =
@@ -59,9 +70,11 @@ impl PeerRegistry {
             .lock_safe()
             .map_err(|e| format!("peer registry lock poisoned: {e}"))?;
         // Stop any actor already registered under this username so it does not
-        // become an orphan pinning a pool worker forever (and so its later
-        // shutdown cannot remove this new connection from the registry).
-        if let Some(old_handle) = peers.insert(username.clone(), handle.clone())
+        // become an orphan pinning a pool worker forever. Eviction on the
+        // replaced actor's later shutdown is identity-aware (keyed on its id),
+        // so stopping it here cannot evict this new connection.
+        if let Some((_, old_handle)) =
+            peers.insert(username.clone(), (id, handle.clone()))
         {
             let _ = old_handle.stop();
             debug!(
@@ -76,7 +89,7 @@ impl PeerRegistry {
     #[must_use]
     pub fn get_peer(&self, username: &str) -> Option<ActorHandle<PeerMessage>> {
         match self.peers.lock_safe() {
-            Ok(peers) => peers.get(username).cloned(),
+            Ok(peers) => peers.get(username).map(|(_, handle)| handle.clone()),
             Err(e) => {
                 error!("[peer_registry] get_peer: {}", e);
                 None
@@ -96,13 +109,40 @@ impl PeerRegistry {
                 return None;
             }
         };
-        let handle = peers.remove(username);
+        let removed = peers.remove(username);
 
-        if handle.is_some() {
+        if removed.is_some() {
             debug!("[peer_registry] Removed peer actor for {}", username);
         }
 
-        handle
+        removed.map(|(_, handle)| handle)
+    }
+
+    /// Remove and return the actor for `username` only if it is still the actor
+    /// with `id`. A stale (replaced) actor's terminal notification therefore
+    /// cannot evict the newer actor that now occupies the slot.
+    #[must_use]
+    pub fn remove_peer_if(
+        &self,
+        username: &str,
+        id: u64,
+    ) -> Option<ActorHandle<PeerMessage>> {
+        let mut peers = match self.peers.lock_safe() {
+            Ok(p) => p,
+            Err(e) => {
+                error!("[peer_registry] remove_peer_if: {}", e);
+                return None;
+            }
+        };
+        if peers.get(username).is_some_and(|(stored, _)| *stored == id) {
+            let removed = peers.remove(username).map(|(_, handle)| handle);
+            debug!(
+                "[peer_registry] Removed peer actor {} for {}",
+                id, username
+            );
+            return removed;
+        }
+        None
     }
 
     #[must_use]
@@ -167,5 +207,54 @@ impl Clone for PeerRegistry {
             client_channel: self.client_channel.clone(),
             own_username: self.own_username.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PeerRegistry;
+    use crate::actor::ActorSystem;
+    use crate::peer::{ConnectionType, Peer};
+    use crate::utils::thread_pool::ThreadPool;
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::Arc;
+
+    #[test]
+    fn remove_peer_if_respects_actor_identity() {
+        let pool = Arc::new(ThreadPool::new(2));
+        let system = Arc::new(ActorSystem::new(pool));
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let registry = PeerRegistry::new(system, tx, "me".to_string());
+
+        // A real loopback connection makes the actor inbound (no dial-out);
+        // non-blocking so it can process Stop promptly on teardown.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stream = TcpStream::connect(addr).unwrap();
+        stream.set_nonblocking(true).unwrap();
+        let _server_side = listener.accept().unwrap().0;
+
+        let peer = Peer::new(
+            "bob".to_string(),
+            ConnectionType::P,
+            "127.0.0.1".to_string(),
+            u32::from(addr.port()),
+            None,
+            0,
+            0,
+            0,
+        );
+        registry.register_peer(peer, Some(stream), None).unwrap();
+        assert!(registry.contains("bob"));
+
+        // A stale / wrong id must not evict the live actor.
+        assert!(registry.remove_peer_if("bob", u64::MAX).is_none());
+        assert!(registry.contains("bob"));
+
+        // Unconditional removal still works (and stops the actor).
+        let handle = registry.remove_peer("bob");
+        assert!(handle.is_some());
+        let _ = handle.unwrap().stop();
+        assert!(!registry.contains("bob"));
     }
 }
