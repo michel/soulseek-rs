@@ -37,7 +37,7 @@ experience. For me, this is a good balance between learning and practicality.
 - [x] Configure download & upload directories
 - [x] Share files
 - [x] Browse user(s) files
-- [ ] Chat in chatrooms
+- [x] Chat in chatrooms
 - [x] Private messaging
 - [ ] Headless mode daemon mode with remote control
 
@@ -101,7 +101,28 @@ In the interactive TUI:
 
 - press `m` to compose — type `<recipient> <message>` and `Enter` to send;
 - press `i` to open the inbox popup listing sent and received messages
-  (incoming messages arrive automatically while the TUI is open).
+  (incoming messages arrive automatically while the TUI is open). The `i`
+  shortcut shows an unread counter, e.g. `i inbox (3)`.
+
+### Chat rooms
+
+From the command line:
+
+```bash
+soulseek-rs rooms                       # list public rooms with user counts
+soulseek-rs chat <room>                 # join and print messages for a while
+soulseek-rs chat <room> "hello room"    # join, say one message, and exit
+```
+
+In the interactive TUI, press `c` to open the chat-rooms popup:
+
+- the **room list** is browsable and `/`-filterable and shows each room's
+  user count (busiest first); press `Enter` to join the highlighted room;
+- several rooms can be **open at once** as tabs — `Tab`/`Shift-Tab` switch
+  between them, `x` leaves the active room, `l` returns to the room list;
+- in a room, press `Enter` to type a message and `Enter` again to send;
+- **unread messages** bold a room's tab and add a `room (n)` badge, and the
+  `c chat (n)` shortcut counts unread across all open rooms.
 
 ## Development
 
