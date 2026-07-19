@@ -31,6 +31,10 @@ use std::{
 use crate::{debug, error, info, trace, warn};
 const DEFAULT_LISTEN_PORT: u16 = 2234;
 
+/// How long to wait for a server-brokered (firewalled) peer to connect back
+/// before giving up and failing the download. Matches the direct-dial timeout.
+const BROKER_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// Source of non-zero correlation tokens for server-brokered connections.
 static NEXT_CONNECT_TOKEN: AtomicU32 = AtomicU32::new(1);
 
@@ -286,6 +290,39 @@ fn download_without_a_connection_resolves_failed() {
     assert!(matches!(
         receiver.recv_timeout(Duration::from_secs(1)),
         Ok(DownloadStatus::Failed)
+    ));
+}
+
+#[test]
+fn fail_queued_downloads_notifies_receiver_and_store() {
+    // When a brokered connect times out, every Queued download for the peer
+    // must resolve to Failed both on its channel and in the store.
+    let client = Client::new("u", "p");
+    let (sender, receiver) = mpsc::channel();
+    client.context.write().unwrap().add_download(Download {
+        username: "peer".to_string(),
+        filename: "f.mp3".to_string(),
+        token: 7,
+        size: 10,
+        download_directory: "d".to_string(),
+        status: DownloadStatus::Queued,
+        sender,
+        queue_position: None,
+        metadata: DownloadMetadata::default(),
+    });
+
+    Client::fail_queued_downloads(&client.context, "peer");
+
+    assert!(matches!(receiver.try_recv(), Ok(DownloadStatus::Failed)));
+    assert!(matches!(
+        client
+            .context
+            .read()
+            .unwrap()
+            .get_download_by_token(7)
+            .unwrap()
+            .status,
+        DownloadStatus::Failed
     ));
 }
 
@@ -781,6 +818,34 @@ impl Client {
         }
 
         Ok((download, download_receiver))
+    }
+
+    /// Fail every still-`Queued` download for `username`, both on the caller's
+    /// status channel (so a blocked `Receiver` unblocks) and in the store.
+    fn fail_queued_downloads(
+        client_context: &Arc<RwLock<ClientContext>>,
+        username: &str,
+    ) {
+        let mut context = match client_context.write_safe() {
+            Ok(c) => c,
+            Err(e) => {
+                error!("[client] fail_queued_downloads write: {}", e);
+                return;
+            }
+        };
+        let doomed: Vec<(u32, Sender<DownloadStatus>)> = context
+            .get_downloads()
+            .iter()
+            .filter(|d| {
+                d.username == username
+                    && matches!(d.status, DownloadStatus::Queued)
+            })
+            .map(|d| (d.token, d.sender.clone()))
+            .collect();
+        for (token, sender) in doomed {
+            let _ = sender.send(DownloadStatus::Failed);
+            context.update_download_with_status(token, DownloadStatus::Failed);
+        }
     }
 
     fn process_failed_uploads(
@@ -1318,6 +1383,19 @@ impl Client {
                                     .write_safe()
                                 {
                                     Ok(mut ctx) => {
+                                        // Reap the dead outbound actor so it
+                                        // stops pinning a pool worker and no
+                                        // longer shadows the brokered reconnect
+                                        // (a stale registry entry would make
+                                        // later downloads queue into a dead,
+                                        // streamless actor and hang).
+                                        if let Some(handle) =
+                                            ctx.peer_registry.as_ref().and_then(
+                                                |r| r.remove_peer(&username),
+                                            )
+                                        {
+                                            let _ = handle.stop();
+                                        }
                                         ctx.add_pending_connect(
                                             token,
                                             username.clone(),
@@ -1332,15 +1410,54 @@ impl Client {
                                         continue;
                                     }
                                 };
-                                if let Some(sender) = server_sender {
-                                    let msg = crate::message::server::MessageFactory::build_connect_to_peer(
-                                        token,
-                                        &username,
-                                        ConnectionType::P,
-                                    );
-                                    let _ = sender
-                                        .send(ServerMessage::SendMessage(msg));
-                                }
+                                let Some(sender) = server_sender else {
+                                    continue;
+                                };
+                                let msg = crate::message::server::MessageFactory::build_connect_to_peer(
+                                    token,
+                                    &username,
+                                    ConnectionType::P,
+                                );
+                                let _ = sender
+                                    .send(ServerMessage::SendMessage(msg));
+
+                                // Bound the brokered attempt: if no PierceFirewall
+                                // arrives, fail the peer's queued downloads (so
+                                // the caller's Receiver unblocks) and reclaim the
+                                // token. A successful pierce consumes the token
+                                // first, making this a no-op.
+                                let timeout_ctx = client_context.clone();
+                                let timeout_user = username.clone();
+                                thread::spawn(move || {
+                                    sleep(BROKER_CONNECT_TIMEOUT);
+                                    let still_pending = timeout_ctx
+                                        .write_safe()
+                                        .is_ok_and(|mut c| {
+                                            c.take_pending_connect(token)
+                                                .is_some()
+                                        });
+                                    if still_pending {
+                                        if let Some(handle) = timeout_ctx
+                                            .read_safe()
+                                            .ok()
+                                            .and_then(|c| {
+                                                c.peer_registry
+                                                    .as_ref()
+                                                    .and_then(|r| {
+                                                        r.remove_peer(
+                                                            &timeout_user,
+                                                        )
+                                                    })
+                                            })
+                                        {
+                                            let _ = handle.stop();
+                                        }
+                                        Self::fail_queued_downloads(
+                                            &timeout_ctx,
+                                            &timeout_user,
+                                        );
+                                    }
+                                });
                             }
                         }
                     }
