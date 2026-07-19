@@ -41,6 +41,17 @@ fn main() -> Result<()> {
         };
     }
 
+    // `portmap` is a local network diagnostic; it needs no server credentials,
+    // so handle it before requiring a username/password.
+    if matches!(cli.command, Some(Commands::Portmap)) {
+        println!(
+            "Testing automatic port mapping for TCP {}…",
+            cli.listener_port
+        );
+        println!("{}", port_mapping::diagnose(cli.listener_port));
+        return Ok(());
+    }
+
     let username = cli.username.ok_or_else(|| {
         color_eyre::eyre::eyre!(
             "Username required: use --username or set SOULSEEK_USERNAME env var"
@@ -141,6 +152,8 @@ fn main() -> Result<()> {
             message.as_deref(),
             listen_secs,
         ),
+        // Handled before the credential check above.
+        Some(Commands::Portmap) => unreachable!(),
         None => {
             use ratatui::crossterm::{
                 event::EnableMouseCapture,

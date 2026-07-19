@@ -141,6 +141,16 @@ you'll see a log line suggesting you forward the port manually.
   `--listener-port` you chose) to this machine on your router.
 - Pass `--disable-listener` to turn the listener (and port mapping) off.
 
+Check whether it works on **your** network without launching the whole client:
+
+```bash
+soulseek-rs portmap
+```
+
+It tries to open the port via UPnP/NAT-PMP and prints whether your router
+allowed it (and your external address), then removes the test mapping. If it
+reports failure, enable UPnP on your router or forward the port manually.
+
 If both you and a peer are behind routers with no forwarded port, browsing that
 peer can't work — that's a fundamental Soulseek/peer-to-peer limitation, not a
 bug.
