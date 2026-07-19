@@ -32,6 +32,29 @@ pub enum FocusedPane {
     Downloads,
 }
 
+/// What the shared command bar is currently capturing input for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandBarMode {
+    Search,
+    Message,
+}
+
+/// Direction of a private message relative to the local user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageDirection {
+    Incoming,
+    Outgoing,
+}
+
+/// A private message shown in the inbox popup.
+pub struct ChatMessage {
+    pub direction: MessageDirection,
+    /// The other party: the sender for incoming, the recipient for outgoing.
+    pub peer: String,
+    pub text: String,
+}
+
+#[allow(clippy::struct_excessive_bools)]
 pub struct AppState {
     // Searches
     pub searches: Vec<SearchEntry>,
@@ -62,6 +85,11 @@ pub struct AppState {
     pub command_bar_active: bool,
     pub command_bar_input: String,
     pub command_bar_cursor_position: usize,
+    pub command_bar_mode: CommandBarMode,
+
+    // Private messages
+    pub messages: Vec<ChatMessage>,
+    pub show_messages: bool,
 
     // Pane areas for mouse interaction
     pub searches_pane_area: Option<Rect>,
@@ -104,6 +132,10 @@ impl AppState {
             command_bar_active: false,
             command_bar_input: String::new(),
             command_bar_cursor_position: 0,
+            command_bar_mode: CommandBarMode::Search,
+
+            messages: Vec::new(),
+            show_messages: false,
 
             searches_pane_area: None,
             results_pane_area: None,
