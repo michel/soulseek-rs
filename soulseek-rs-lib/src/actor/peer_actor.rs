@@ -586,19 +586,27 @@ impl PeerActor {
             return;
         };
 
-        // Connections we initiated must announce themselves with a PeerInit
-        // (peer code 1); inbound peers already sent us theirs, so we stay
-        // silent for them. `get_buffer` prepends the length prefix the peer's
-        // MessageReader expects.
+        // Connections we initiated must announce themselves; inbound peers
+        // already sent us theirs, so we stay silent for them. A direct dial
+        // (resolved via GetPeerAddress, token None) sends a PeerInit; a dial we
+        // make because the server asked us to (a brokered ConnectToPeer carries
+        // the server's token) must instead PierceFirewall with that token so
+        // the remote peer can correlate its own request. `get_buffer` prepends
+        // the length prefix the peer's MessageReader expects.
         if self.outbound {
-            let init = MessageFactory::build_peer_init_message(
-                &self.own_username,
-                connection_type,
-                token.unwrap_or(0),
-            );
-            if let Err(e) = stream.write_all(&init.get_buffer()) {
+            let handshake = match token {
+                Some(server_token) => {
+                    MessageFactory::build_pierce_firewall_message(server_token)
+                }
+                None => MessageFactory::build_peer_init_message(
+                    &self.own_username,
+                    connection_type,
+                    0,
+                ),
+            };
+            if let Err(e) = stream.write_all(&handshake.get_buffer()) {
                 error!(
-                    "[peer:{}] Failed to send PeerInit handshake: {}",
+                    "[peer:{}] Failed to send outbound handshake: {}",
                     username, e
                 );
                 self.disconnect_with_error(e);
