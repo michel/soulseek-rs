@@ -1,10 +1,11 @@
 use crate::models::{
-    AppState, ChatMessage, CommandBarMode, DownloadEntry, FileDisplayData,
-    FocusedPane, MessageDirection, SearchEntry, SearchStatus,
+    AppState, BrowseState, BrowseStatus, ChatMessage, CommandBarMode,
+    DownloadEntry, FileDisplayData, FocusedPane, MessageDirection, SearchEntry,
+    SearchStatus, files_under, find_node,
 };
 use crate::ui::panes::{
-    ResultsPaneParams, render_download_info_pane, render_downloads_pane,
-    render_results_pane, render_searches_pane,
+    ResultsPaneParams, render_browse_pane, render_download_info_pane,
+    render_downloads_pane, render_results_pane, render_searches_pane,
 };
 use crate::ui::{
     border_style, border_type, format_shortcuts_styled, render_download_stats,
@@ -32,11 +33,16 @@ use std::{
 
 const COMMAND_BAR_PREFIX: &str = "search: ";
 const MESSAGE_BAR_PREFIX: &str = "message (to: recipient text): ";
+const BROWSE_BAR_PREFIX: &str = "browse user: ";
+
+/// How long to wait for a browse response before showing a timeout notice.
+const BROWSE_TIMEOUT: Duration = Duration::from_secs(20);
 
 const fn command_bar_prefix(mode: CommandBarMode) -> &'static str {
     match mode {
         CommandBarMode::Search => COMMAND_BAR_PREFIX,
         CommandBarMode::Message => MESSAGE_BAR_PREFIX,
+        CommandBarMode::Browse => BROWSE_BAR_PREFIX,
     }
 }
 
@@ -96,6 +102,9 @@ impl MainTui {
 
             // Poll for incoming private messages
             self.poll_private_messages();
+
+            // Poll for a browse (shared-file listing) response
+            self.poll_browse_result();
 
             // Update spinner
             self.spinner_state = (self.spinner_state + 1) % 10;
@@ -249,6 +258,21 @@ impl MainTui {
         if self.state.show_messages {
             self.render_messages_popup(frame);
         }
+
+        // Browse tree overlays everything when open.
+        if self.state.show_browse
+            && let Some(browse) = self.state.browse.as_ref()
+        {
+            let area = centered_rect(80, 80, frame.area());
+            frame.render_widget(ratatui::widgets::Clear, area);
+            render_browse_pane(
+                frame,
+                area,
+                browse,
+                &mut self.state.browse_table_state,
+                self.spinner_state,
+            );
+        }
     }
 
     fn render_messages_popup(&self, frame: &mut Frame) {
@@ -289,7 +313,15 @@ impl MainTui {
     }
 
     fn render_shortcuts(&self, frame: &mut Frame, area: Rect) {
-        let shortcuts = if self.state.command_bar_active {
+        let shortcuts = if self.state.show_browse {
+            vec![
+                ("↑↓", "move"),
+                ("→←", "expand/collapse"),
+                ("Enter", "open/download"),
+                ("d", "download folder"),
+                ("Esc", "close"),
+            ]
+        } else if self.state.command_bar_active {
             match self.state.command_bar_mode {
                 CommandBarMode::Search => vec![
                     ("Type", "search term"),
@@ -303,6 +335,11 @@ impl MainTui {
                     ("Enter", "send"),
                     ("Esc", "cancel"),
                 ],
+                CommandBarMode::Browse => vec![
+                    ("Type", "username"),
+                    ("Enter", "browse"),
+                    ("Esc", "cancel"),
+                ],
             }
         } else {
             match self.state.focused_pane {
@@ -310,10 +347,10 @@ impl MainTui {
                     ("s", "search"),
                     ("m", "message"),
                     ("i", "inbox"),
+                    ("b", "browse user"),
                     ("1-3", "focus pane"),
                     ("↑↓", "navigate"),
                     ("Enter", "view results"),
-                    ("d", "remove search"),
                     ("q", "quit"),
                 ],
                 FocusedPane::Results if self.state.results_is_filtering => {
@@ -326,15 +363,16 @@ impl MainTui {
                 }
                 FocusedPane::Results => vec![
                     ("Space", "select"),
+                    ("Enter", "download"),
+                    ("b", "browse owner"),
                     ("/", "filter"),
                     ("a/A", "select all/none"),
-                    ("Enter", "download"),
                     ("1-3", "focus pane"),
-                    ("↑↓", "navigate"),
                     ("q", "quit"),
                 ],
                 FocusedPane::Downloads => {
                     vec![
+                        ("b", "browse user"),
                         ("1-3", "focus pane"),
                         ("↑↓", "navigate"),
                         ("p", "pause/resume"),
@@ -346,11 +384,16 @@ impl MainTui {
         };
 
         let shortcuts_line = format_shortcuts_styled(&shortcuts);
+        // Surface our own sharing status in the block title.
+        let title = format!(
+            "Shortcuts · Sharing: {}",
+            self.client.shared_directory().unwrap_or("off")
+        );
         let shortcuts_widget = Paragraph::new(shortcuts_line).block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(border_type(false))
-                .title("Shortcuts"),
+                .title(title),
         );
 
         frame.render_widget(shortcuts_widget, area);
@@ -402,6 +445,11 @@ impl MainTui {
             return;
         }
 
+        // Browse popup takes over navigation while open.
+        if self.state.show_browse {
+            return self.handle_browse_input(key);
+        }
+
         // Filter mode in Results pane
         if self.state.results_is_filtering
             && self.state.focused_pane == FocusedPane::Results
@@ -445,6 +493,21 @@ impl MainTui {
                 self.state.show_messages = true;
                 return;
             }
+            KeyCode::Char('b') => {
+                // From a highlighted search result, browse its owner directly;
+                // otherwise prompt for a username.
+                if self.state.focused_pane == FocusedPane::Results
+                    && let Some(owner) = self.highlighted_result_owner()
+                {
+                    self.start_browse(owner);
+                } else {
+                    self.state.command_bar_active = true;
+                    self.state.command_bar_mode = CommandBarMode::Browse;
+                    self.state.command_bar_input.clear();
+                    self.state.command_bar_cursor_position = 0;
+                }
+                return;
+            }
             _ => {}
         }
 
@@ -454,6 +517,143 @@ impl MainTui {
             FocusedPane::Results => self.handle_results_input(key),
             FocusedPane::Downloads => self.handle_downloads_input(key),
         }
+    }
+
+    fn handle_browse_input(&mut self, key: KeyEvent) {
+        if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
+            self.state.show_browse = false;
+            return;
+        }
+
+        // Snapshot the flattened rows + current selection, then drop the borrow.
+        let (rows, sel, row) = {
+            let Some(browse) = self.state.browse.as_ref() else {
+                self.state.show_browse = false;
+                return;
+            };
+            if browse.status != BrowseStatus::Loaded {
+                return;
+            }
+            let rows = browse.rows();
+            if rows.is_empty() {
+                return;
+            }
+            let sel = browse.selected_row.min(rows.len() - 1);
+            let row = rows[sel].clone();
+            (rows, sel, row)
+        };
+
+        // Downloads need `&self.client` free of the browse borrow.
+        match key.code {
+            KeyCode::Enter if !row.is_folder => {
+                self.queue_browse_files(vec![(
+                    row.path.clone(),
+                    row.size.unwrap_or(0),
+                )]);
+                return;
+            }
+            KeyCode::Char('d') => {
+                let files = if row.is_folder {
+                    self.browse_folder_files(&row.path)
+                } else {
+                    vec![(row.path.clone(), row.size.unwrap_or(0))]
+                };
+                self.queue_browse_files(files);
+                return;
+            }
+            _ => {}
+        }
+
+        // Navigation and expand/collapse mutate the browse state.
+        if let Some(browse) = self.state.browse.as_mut() {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    browse.selected_row = sel.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    browse.selected_row = (sel + 1).min(rows.len() - 1);
+                }
+                KeyCode::Right | KeyCode::Char('l') => {
+                    if row.is_folder && !row.expanded {
+                        browse.expanded.insert(row.path.clone());
+                    } else if row.is_folder {
+                        browse.selected_row = (sel + 1).min(rows.len() - 1);
+                    }
+                }
+                KeyCode::Left | KeyCode::Char('h') => {
+                    if row.is_folder && row.expanded {
+                        browse.expanded.remove(&row.path);
+                    } else if let Some(parent) =
+                        (0..sel).rev().find(|&i| rows[i].depth < row.depth)
+                    {
+                        browse.selected_row = parent;
+                    }
+                }
+                KeyCode::Enter => {
+                    // Folder toggle (files handled above).
+                    if row.expanded {
+                        browse.expanded.remove(&row.path);
+                    } else {
+                        browse.expanded.insert(row.path.clone());
+                    }
+                }
+                _ => {}
+            }
+            // Re-clamp against the new flattened length.
+            let new_len = browse.rows().len();
+            browse.selected_row =
+                browse.selected_row.min(new_len.saturating_sub(1));
+        }
+
+        let selected = self.state.browse.as_ref().map(|b| b.selected_row);
+        self.state.browse_table_state.select(selected);
+    }
+
+    /// Files (`path`, `size`) under the browse-tree folder at `path`.
+    fn browse_folder_files(&self, path: &str) -> Vec<(String, u64)> {
+        self.state
+            .browse
+            .as_ref()
+            .and_then(|b| find_node(&b.tree, path))
+            .map(files_under)
+            .unwrap_or_default()
+    }
+
+    /// Queue downloads of `files` (path, size) from the currently-browsed user.
+    fn queue_browse_files(&mut self, files: Vec<(String, u64)>) {
+        let Some(username) =
+            self.state.browse.as_ref().map(|b| b.username.clone())
+        else {
+            return;
+        };
+        if files.is_empty() {
+            return;
+        }
+        if self.state.downloads_receiver_channel.is_none() {
+            let (sender, receiver) = mpsc::channel();
+            self.state.downloads_receiver_channel = Some(receiver);
+            self.state.downloads_sender_channel = Some(sender);
+        }
+        let client = self.client.clone();
+        let download_dir = self.download_dir.clone();
+        let sender = self.state.downloads_sender_channel.clone().unwrap();
+        thread::spawn(move || {
+            for (path, size) in files {
+                match client.download(
+                    path.clone(),
+                    username.clone(),
+                    size,
+                    download_dir.clone(),
+                ) {
+                    Ok((download, rx)) => {
+                        let _ = sender.send((download, rx));
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to queue download {path}: {e}");
+                    }
+                }
+            }
+        });
     }
 
     fn handle_command_bar_input(&mut self, key: KeyEvent) {
@@ -471,6 +671,7 @@ impl MainTui {
                         CommandBarMode::Message => {
                             self.send_message_from_input(&input);
                         }
+                        CommandBarMode::Browse => self.start_browse(input),
                     }
                 }
                 self.state.command_bar_active = false;
@@ -935,6 +1136,54 @@ impl MainTui {
                 peer: msg.username().to_string(),
                 text: msg.message().to_string(),
             });
+        }
+    }
+
+    /// Request a user's shared files and open the browse popup.
+    fn start_browse(&mut self, username: String) {
+        let username = username.trim().to_string();
+        if username.is_empty() {
+            return;
+        }
+        let _ = self.client.browse_user(&username);
+        self.state.browse = Some(BrowseState::loading(username));
+        self.state.show_browse = true;
+        self.state.browse_table_state.select(Some(0));
+    }
+
+    /// The username of the highlighted search result (filter-aware).
+    fn highlighted_result_owner(&self) -> Option<String> {
+        let selected = self.state.results_table_state.selected()?;
+        let items = if self.state.results_filter_query.is_empty() {
+            &self.state.results_items
+        } else {
+            &self.state.results_filtered_items
+        };
+        items.get(selected).map(|f| f.username.clone())
+    }
+
+    /// Drain a browse response into the browse state, or time it out.
+    fn poll_browse_result(&mut self) {
+        let Some((username, status, requested_at)) = self
+            .state
+            .browse
+            .as_ref()
+            .map(|b| (b.username.clone(), b.status, b.requested_at))
+        else {
+            return;
+        };
+        if status != BrowseStatus::Loading {
+            return;
+        }
+        if let Some(directories) = self.client.take_browse_result(&username) {
+            if let Some(browse) = self.state.browse.as_mut() {
+                browse.load(&directories);
+            }
+            self.state.browse_table_state.select(Some(0));
+        } else if requested_at.elapsed() > BROWSE_TIMEOUT
+            && let Some(browse) = self.state.browse.as_mut()
+        {
+            browse.status = BrowseStatus::TimedOut;
         }
     }
 
