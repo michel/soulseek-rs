@@ -72,7 +72,7 @@ fn build_info_lines(
         }
         DownloadStatus::Paused { .. } => ("Paused".to_string(), info_style()),
         DownloadStatus::Completed => ("Completed".to_string(), success_style()),
-        DownloadStatus::Failed => ("Failed".to_string(), error_style()),
+        DownloadStatus::Failed(_) => ("Failed".to_string(), error_style()),
         DownloadStatus::TimedOut => ("Timed out".to_string(), error_style()),
     };
     lines.push(label_value_styled("Status", status_text, status_style));
@@ -139,9 +139,20 @@ fn build_info_lines(
             lines.push(Line::from(""));
             push_progress_lines(&mut lines, *bytes_downloaded, *total_bytes);
         }
-        DownloadStatus::Completed
-        | DownloadStatus::Failed
-        | DownloadStatus::TimedOut => {}
+        DownloadStatus::Failed(reason) => {
+            if let Some(reason) = reason {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    format!("{:<LABEL_WIDTH$}", "Error"),
+                    dimmed_style(),
+                )));
+                lines.push(Line::from(Span::styled(
+                    reason.clone(),
+                    error_style(),
+                )));
+            }
+        }
+        DownloadStatus::Completed | DownloadStatus::TimedOut => {}
     }
 
     lines
@@ -255,5 +266,53 @@ mod tests {
         let (basename, parent) = split_filename("track.mp3");
         assert_eq!(basename, "track.mp3");
         assert_eq!(parent, "");
+    }
+
+    fn download_with_status(
+        status: DownloadStatus,
+    ) -> soulseek_rs::types::Download {
+        let (sender, _rx) = std::sync::mpsc::channel();
+        soulseek_rs::types::Download {
+            username: "peer".to_string(),
+            filename: "song.mp3".to_string(),
+            token: 1,
+            size: 100,
+            download_directory: "~/dl".to_string(),
+            status,
+            sender,
+            queue_position: None,
+            metadata: soulseek_rs::types::DownloadMetadata::default(),
+        }
+    }
+
+    fn lines_to_text(lines: &[Line<'static>]) -> String {
+        lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn failed_download_renders_its_error_reason() {
+        let download = download_with_status(DownloadStatus::Failed(Some(
+            "Peer disconnected".to_string(),
+        )));
+        let text = lines_to_text(&build_info_lines(&download));
+        assert!(text.contains("Error"), "missing Error label: {text}");
+        assert!(text.contains("Peer disconnected"), "missing reason: {text}");
+    }
+
+    #[test]
+    fn failed_download_without_reason_shows_no_error_line() {
+        let download = download_with_status(DownloadStatus::Failed(None));
+        let text = lines_to_text(&build_info_lines(&download));
+        assert!(text.contains("Failed"), "status should still show Failed");
+        assert!(!text.contains("Error"), "unexpected Error line: {text}");
     }
 }

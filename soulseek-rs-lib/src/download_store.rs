@@ -149,7 +149,9 @@ pub fn collect_failed_tokens(
             d.username == username && filename.is_none_or(|f| d.filename == *f)
         })
         .map(|d| {
-            let _ = d.sender.send(DownloadStatus::Failed);
+            let _ = d.sender.send(DownloadStatus::Failed(Some(
+                "Peer reported the upload failed".to_string(),
+            )));
             d.token
         })
         .collect()
@@ -301,7 +303,7 @@ mod tests {
         assert_eq!(tokens, vec![1]);
         assert!(matches!(
             rx_match.try_recv().unwrap(),
-            DownloadStatus::Failed
+            DownloadStatus::Failed(_)
         ));
     }
 }

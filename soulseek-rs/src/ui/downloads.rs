@@ -231,7 +231,7 @@ impl MultiDownloadProgress {
                     DownloadStatus::InProgress { .. } => "⧗",
                     DownloadStatus::Paused { .. } => "⏸",
                     DownloadStatus::Completed => "✓",
-                    DownloadStatus::Failed => "✗",
+                    DownloadStatus::Failed(_) => "✗",
                     DownloadStatus::TimedOut => "⏱",
                 };
 
@@ -272,7 +272,7 @@ impl MultiDownloadProgress {
                     DownloadStatus::InProgress { .. } => warning_style(),
                     DownloadStatus::Paused { .. } => info_style(),
                     DownloadStatus::Completed => primary_style(),
-                    DownloadStatus::Failed | DownloadStatus::TimedOut => {
+                    DownloadStatus::Failed(_) | DownloadStatus::TimedOut => {
                         error_style()
                     }
                 };
@@ -346,7 +346,7 @@ pub fn render_download_stats(
         .filter(|d| {
             matches!(
                 d.download.status,
-                DownloadStatus::Failed | DownloadStatus::TimedOut
+                DownloadStatus::Failed(_) | DownloadStatus::TimedOut
             )
         })
         .count();
