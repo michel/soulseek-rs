@@ -102,6 +102,37 @@ impl UserMessage {
             self.message
         );
     }
+
+    /// The server-assigned id of this message (used to acknowledge it).
+    #[must_use]
+    pub const fn id(&self) -> u32 {
+        self.id
+    }
+
+    /// Unix timestamp the server recorded for this message.
+    #[must_use]
+    pub const fn timestamp(&self) -> u32 {
+        self.timestamp
+    }
+
+    /// The username of the sender.
+    #[must_use]
+    pub fn username(&self) -> &str {
+        &self.username
+    }
+
+    /// The message body.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// Whether the server flagged this as freshly delivered (as opposed to a
+    /// message replayed because it was queued while the recipient was offline).
+    #[must_use]
+    pub const fn is_new(&self) -> bool {
+        self.new_message
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -129,6 +160,7 @@ pub enum ServerMessage {
         obfuscation_type: u32,
         obfuscated_port: u16,
     },
+    PrivateMessageReceived(UserMessage),
 }
 
 pub struct ServerActor {
@@ -414,6 +446,21 @@ impl ServerActor {
                 ) {
                     error!(
                         "[server] Error forwarding GetPeerAddress response to client: {}",
+                        e
+                    );
+                }
+            }
+            ServerMessage::PrivateMessageReceived(user_message) => {
+                debug!(
+                    "[server] Private message from {}",
+                    user_message.username()
+                );
+                if let Err(e) = self
+                    .client_channel
+                    .send(ClientOperation::PrivateMessageReceived(user_message))
+                {
+                    error!(
+                        "[server] Error forwarding private message to client: {}",
                         e
                     );
                 }

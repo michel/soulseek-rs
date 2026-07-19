@@ -1,5 +1,7 @@
 use crate::actor::ActorHandle;
-use crate::actor::server_actor::{PeerAddress, ServerActor, ServerMessage};
+use crate::actor::server_actor::{
+    PeerAddress, ServerActor, ServerMessage, UserMessage,
+};
 use crate::download_store::{DownloadStore, collect_failed_tokens};
 use crate::types::{DownloadMetadata, DownloadStatus};
 use crate::utils::logger;
@@ -94,6 +96,7 @@ pub enum ClientOperation {
         place: u32,
     },
     SetServerSender(Sender<ServerMessage>),
+    PrivateMessageReceived(UserMessage),
 }
 pub struct ClientContext {
     pub peer_registry: Option<PeerRegistry>,
@@ -101,6 +104,7 @@ pub struct ClientContext {
     sender: Option<Sender<ClientOperation>>,
     server_sender: Option<Sender<ServerMessage>>,
     searches: HashMap<String, Search>,
+    private_messages: Vec<UserMessage>,
     actor_system: Arc<ActorSystem>,
 }
 impl Default for ClientContext {
@@ -307,9 +311,20 @@ impl ClientContext {
             sender: None,
             server_sender: None,
             searches: HashMap::new(),
+            private_messages: Vec::new(),
             downloads: DownloadStore::new(),
             actor_system,
         }
+    }
+
+    /// Record a private message received from another user.
+    pub fn push_private_message(&mut self, message: UserMessage) {
+        self.private_messages.push(message);
+    }
+
+    /// Remove and return all buffered private messages.
+    pub fn take_private_messages(&mut self) -> Vec<UserMessage> {
+        std::mem::take(&mut self.private_messages)
     }
 }
 pub struct Client {
@@ -421,6 +436,40 @@ impl Client {
             }
         } else {
             Err(SoulseekRs::NotConnected)
+        }
+    }
+
+    /// Send a private message to another user via the server.
+    ///
+    /// # Errors
+    /// Returns [`SoulseekRs::NotConnected`] if the client is not connected.
+    pub fn send_private_message(
+        &self,
+        username: &str,
+        message: &str,
+    ) -> Result<()> {
+        let handle = self
+            .server_handle
+            .as_ref()
+            .ok_or(SoulseekRs::NotConnected)?;
+        let msg = crate::message::server::MessageFactory::build_message_user(
+            username, message,
+        );
+        handle
+            .send(ServerMessage::SendMessage(msg))
+            .map_err(|_| SoulseekRs::NotConnected)?;
+        Ok(())
+    }
+
+    /// Remove and return all private messages received since the last call.
+    #[must_use]
+    pub fn take_private_messages(&self) -> Vec<UserMessage> {
+        match self.context.write_safe() {
+            Ok(mut ctx) => ctx.take_private_messages(),
+            Err(e) => {
+                error!("[client] take_private_messages: {}", e);
+                Vec::new()
+            }
         }
     }
 
@@ -1127,6 +1176,17 @@ impl Client {
                                     ),
                                 }
                             }
+                            ClientOperation::PrivateMessageReceived(
+                                user_message,
+                            ) => match client_context.write_safe() {
+                                Ok(mut ctx) => {
+                                    ctx.push_private_message(user_message);
+                                }
+                                Err(e) => error!(
+                                    "[client] PrivateMessageReceived write: {}",
+                                    e
+                                ),
+                            },
                         }
                     }
                     Err(e) => {

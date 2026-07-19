@@ -63,6 +63,23 @@ impl MessageFactory {
             .write_string(query)
             .clone()
     }
+    /// Build a private message (server code 22) to send to another user.
+    #[must_use]
+    pub fn build_message_user(username: &str, message: &str) -> Message {
+        Message::new()
+            .write_int32(22)
+            .write_string(username)
+            .write_string(message)
+            .clone()
+    }
+
+    /// Acknowledge a received private message (server code 23) so the server
+    /// stops re-delivering it.
+    #[must_use]
+    pub fn build_message_acked(id: u32) -> Message {
+        Message::new().write_int32(23).write_int32(id).clone()
+    }
+
     #[must_use]
     pub fn build_set_status_message(status_code: u32) -> Message {
         Message::new()
@@ -164,6 +181,25 @@ fn test_build_login_message() {
     ]
     .to_vec();
 
+    assert_eq!(expect, message.get_data());
+}
+
+#[test]
+fn test_build_message_user() {
+    let message = MessageFactory::build_message_user("bob", "hi");
+    let expect: Vec<u8> = [
+        22, 0, 0, 0, // code
+        3, 0, 0, 0, 98, 111, 98, // username "bob"
+        2, 0, 0, 0, 104, 105, // message "hi"
+    ]
+    .to_vec();
+    assert_eq!(expect, message.get_data());
+}
+
+#[test]
+fn test_build_message_acked() {
+    let message = MessageFactory::build_message_acked(7);
+    let expect: Vec<u8> = [23, 0, 0, 0, 7, 0, 0, 0].to_vec();
     assert_eq!(expect, message.get_data());
 }
 
