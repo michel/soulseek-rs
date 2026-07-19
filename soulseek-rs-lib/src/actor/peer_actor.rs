@@ -38,6 +38,8 @@ pub enum PeerMessage {
     RequestTransfer(Download),
     /// A peer queued one of our shared files for download (they sent us code 43).
     IncomingQueueUpload(String),
+    /// A peer asked to browse our shared files (they sent us code 4).
+    ShareListRequested,
     /// Offer the queued file to that peer: send an upload TransferRequest.
     ServeUpload {
         token: u32,
@@ -346,6 +348,15 @@ impl PeerActor {
                     &filename, token, size,
                 );
                 self.send_message(message);
+            }
+            PeerMessage::ShareListRequested => {
+                let requester_key = self.peer_username();
+                if let Err(e) = self
+                    .client_channel
+                    .send(ClientOperation::ShareListRequested { requester_key })
+                {
+                    error!("[peer_actor] forward ShareListRequested: {}", e);
+                }
             }
             PeerMessage::RequestTransfer(download) => {
                 let message = MessageFactory::build_transfer_request_message(

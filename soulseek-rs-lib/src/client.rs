@@ -173,6 +173,10 @@ pub enum ClientOperation {
     StartUpload {
         token: u32,
     },
+    /// A peer asked to browse our shared files; send our SharedFileListResponse.
+    ShareListRequested {
+        requester_key: String,
+    },
     /// A direct outbound connection to this peer failed before it was
     /// established — the peer is likely firewalled, so fall back to asking the
     /// server to broker the connection. Carries the reporting actor's id.
@@ -1782,6 +1786,39 @@ impl Client {
                                             ),
                                         );
                                     }
+                                }
+                            }
+                            ClientOperation::ShareListRequested {
+                                requester_key,
+                            } => {
+                                // Reply with our full shared-file listing.
+                                let (registry, message) = match client_context
+                                    .read_safe()
+                                {
+                                    Ok(ctx) => {
+                                        let dirs = ctx
+                                            .shares
+                                            .directories()
+                                            .into_iter()
+                                            .map(|(name, files)| {
+                                                crate::message::peer::SharedDirectory {
+                                                    name,
+                                                    files,
+                                                }
+                                            })
+                                            .collect::<Vec<_>>();
+                                        (
+                                            ctx.peer_registry.clone(),
+                                            crate::message::peer::build_shared_file_list(&dirs),
+                                        )
+                                    }
+                                    Err(_) => continue,
+                                };
+                                if let Some(registry) = registry {
+                                    let _ = registry.send_to_peer(
+                                        &requester_key,
+                                        PeerMessage::SendMessage(message),
+                                    );
                                 }
                             }
                             ClientOperation::PeerConnectFailed(
