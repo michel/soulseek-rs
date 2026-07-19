@@ -771,7 +771,9 @@ impl MainTui {
                         let _ = sender.send((download, rx));
                     }
                     Err(e) => {
-                        eprintln!("Failed to queue download {path}: {e}");
+                        soulseek_rs::warn!(
+                            "Failed to queue download {path}: {e}"
+                        );
                     }
                 }
             }
@@ -954,7 +956,7 @@ impl MainTui {
         if let Some(name) = self.state.rooms.selected_room_name() {
             let newly_opened = self.state.rooms.focus_or_open(&name);
             if newly_opened && let Err(e) = self.client.join_room(&name) {
-                eprintln!("Failed to join {name}: {e}");
+                soulseek_rs::warn!("Failed to join {name}: {e}");
             }
         }
     }
@@ -964,7 +966,7 @@ impl MainTui {
         if let Some(name) = self.state.rooms.close_active()
             && let Err(e) = self.client.leave_room(&name)
         {
-            eprintln!("Failed to leave {name}: {e}");
+            soulseek_rs::warn!("Failed to leave {name}: {e}");
         }
     }
 
@@ -982,7 +984,7 @@ impl MainTui {
             }
         };
         if let Err(e) = self.client.say_in_room(&room, &text) {
-            eprintln!("Failed to say in {room}: {e}");
+            soulseek_rs::warn!("Failed to say in {room}: {e}");
         }
         if let Some(room) = self.state.rooms.open.get_mut(active) {
             room.input.clear();
@@ -1331,7 +1333,7 @@ impl MainTui {
                 Ok((download, rx)) => {
                     let _ = sender.send((download, rx));
                 }
-                Err(e) => eprintln!("Failed to retry {filename}: {e}"),
+                Err(e) => soulseek_rs::warn!("Failed to retry {filename}: {e}"),
             }
         });
     }
@@ -1636,7 +1638,7 @@ impl MainTui {
                 peer: recipient.to_string(),
                 text: text.to_string(),
             }),
-            Err(e) => eprintln!("Failed to send message: {e}"),
+            Err(e) => soulseek_rs::warn!("Failed to send message: {e}"),
         }
     }
 
@@ -1681,7 +1683,7 @@ impl MainTui {
                     // Results will be polled in update_search_results
                 }
                 Err(e) => {
-                    eprintln!("Search failed: {e}");
+                    soulseek_rs::warn!("Search failed: {e}");
                 }
             }
         });
@@ -1794,9 +1796,10 @@ impl MainTui {
                         let _ = sender.send((download, rx));
                     }
                     Err(e) => {
-                        eprintln!(
+                        soulseek_rs::warn!(
                             "Failed to start download for {}: {}",
-                            file.filename, e
+                            file.filename,
+                            e
                         );
                     }
                 }
