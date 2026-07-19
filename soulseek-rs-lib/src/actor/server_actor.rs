@@ -25,7 +25,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use crate::{SoulseekRs, debug, error, info, trace, warn};
+use crate::{SoulseekRs, debug, error, trace, warn};
 
 #[derive(Debug, Clone)]
 pub struct PeerAddress {
@@ -177,6 +177,32 @@ pub struct ServerActor {
     dispatcher_receiver: Option<Receiver<ServerMessage>>,
     dispatcher_sender: Option<Sender<ServerMessage>>,
     queued_messages: Vec<ServerMessage>,
+    shared_folder_count: u32,
+    shared_file_count: u32,
+}
+
+/// The messages a client sends right after a successful login: its shared-file
+/// counts, distributed-network opt-out, online status, and (when listening) the
+/// port peers should connect to. Kept as a free function so it can be tested
+/// without a live connection.
+fn post_login_messages(
+    enable_listen: bool,
+    listen_port: u16,
+    shared_folders: u32,
+    shared_files: u32,
+) -> Vec<Message> {
+    let mut messages = vec![
+        MessageFactory::build_shared_folders_message(
+            shared_folders,
+            shared_files,
+        ),
+        MessageFactory::build_no_parent_message(),
+        MessageFactory::build_set_status_message(2),
+    ];
+    if enable_listen {
+        messages.push(MessageFactory::build_set_wait_port_message(listen_port));
+    }
+    messages
 }
 
 impl ServerActor {
@@ -186,6 +212,8 @@ impl ServerActor {
         client_channel: Sender<ClientOperation>,
         listen_port: u16,
         enable_listen: bool,
+        shared_folder_count: u32,
+        shared_file_count: u32,
     ) -> Self {
         Self {
             address,
@@ -201,6 +229,8 @@ impl ServerActor {
             client_channel,
             self_handle: None,
             queued_messages: Vec::new(),
+            shared_folder_count,
+            shared_file_count,
         }
     }
 
@@ -325,54 +355,6 @@ impl ServerActor {
         }
     }
 
-    pub fn login(
-        &mut self,
-        username: &str,
-        password: &str,
-    ) -> Result<bool, SoulseekRs> {
-        self.queue_message(MessageFactory::build_login_message(
-            username, password,
-        ));
-        let context = self.context.clone();
-        let mut logged_in;
-        let timeout = Duration::from_secs(5);
-        let start = Instant::now();
-
-        loop {
-            if start.elapsed() > timeout {
-                warn!("Timeout waiting for login response");
-                return Err(SoulseekRs::Timeout);
-            }
-
-            {
-                logged_in = context.read_safe()?.logged_in;
-            }
-
-            if logged_in.is_some() {
-                break;
-            }
-        }
-
-        let logged_in = logged_in.ok_or(SoulseekRs::Timeout)?;
-        if logged_in {
-            info!("Logged in as {}", username);
-            self.queue_message(MessageFactory::build_shared_folders_message(
-                1, 499,
-            ));
-            self.queue_message(MessageFactory::build_no_parent_message());
-            self.queue_message(MessageFactory::build_set_status_message(2));
-            if self.enable_listen {
-                self.queue_message(
-                    MessageFactory::build_set_wait_port_message(
-                        self.listen_port,
-                    ),
-                );
-            }
-        }
-
-        Ok(logged_in)
-    }
-
     pub fn file_search(&mut self, token: u32, query: &str) {
         self.queue_message(MessageFactory::build_file_search_message(
             token, query,
@@ -407,6 +389,20 @@ impl ServerActor {
                     Ok(mut ctx) => ctx.logged_in = Some(message),
                     Err(e) => {
                         error!("[server] LoginStatus write: {}", e);
+                    }
+                }
+                // Send the post-login handshake exactly once, only on success,
+                // on the live path (the old ServerActor::login did this but was
+                // never called). Advertises real shared counts and, when
+                // listening, the port peers must connect to.
+                if message {
+                    for msg in post_login_messages(
+                        self.enable_listen,
+                        self.listen_port,
+                        self.shared_folder_count,
+                        self.shared_file_count,
+                    ) {
+                        self.send_message(msg);
                     }
                 }
             }
@@ -723,5 +719,33 @@ impl Actor for ServerActor {
             }
             ConnectionState::Disconnected => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::post_login_messages;
+    use crate::message::Message;
+
+    fn code_of(message: &Message) -> u32 {
+        u32::from_le_bytes(message.get_data()[0..4].try_into().unwrap())
+    }
+
+    #[test]
+    fn post_login_messages_carry_counts_and_conditional_wait_port() {
+        let messages = post_login_messages(true, 4321, 3, 7);
+        let codes: Vec<u32> = messages.iter().map(code_of).collect();
+        // SharedFolders, HaveNoParent, SetStatus, SetWaitPort.
+        assert_eq!(codes, vec![35, 71, 28, 2]);
+
+        // The SharedFolders message (code 35) carries the real counts.
+        let shared = messages[0].get_data();
+        assert_eq!(u32::from_le_bytes(shared[4..8].try_into().unwrap()), 3);
+        assert_eq!(u32::from_le_bytes(shared[8..12].try_into().unwrap()), 7);
+
+        // Not listening omits SetWaitPort (code 2).
+        let no_listen = post_login_messages(false, 4321, 3, 7);
+        let codes: Vec<u32> = no_listen.iter().map(code_of).collect();
+        assert_eq!(codes, vec![35, 71, 28]);
     }
 }

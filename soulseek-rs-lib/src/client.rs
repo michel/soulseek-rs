@@ -10,6 +10,7 @@ use crate::{
     actor::{ActorSystem, peer_registry::PeerRegistry},
     error::{Result, SoulseekRs},
     peer::{ConnectionType, DownloadPeer, NewPeer, Peer, listen::Listen},
+    shares::Shares,
     types::{Download, Search, SearchResult},
     utils::{lock::RwLockExt, md5, thread_pool::ThreadPool},
 };
@@ -124,6 +125,8 @@ pub struct ClientContext {
     /// Correlation tokens for server-brokered (firewalled) connections, mapping
     /// a token we sent in a ConnectToPeer to the peer we expect back.
     pending_connect_tokens: HashMap<u32, String>,
+    /// Files we share with peers (read-only after connect).
+    pub shares: Arc<Shares>,
     actor_system: Arc<ActorSystem>,
 }
 impl Default for ClientContext {
@@ -385,6 +388,7 @@ impl ClientContext {
             searches: HashMap::new(),
             private_messages: Vec::new(),
             pending_connect_tokens: HashMap::new(),
+            shares: Arc::new(Shares::empty()),
             downloads: DownloadStore::new(),
             actor_system,
         }
@@ -468,11 +472,39 @@ impl Client {
 
         let listen_sender = sender.clone();
 
+        // Scan the shared directory once into the read-only index, and report
+        // the real folder/file counts to the server on login.
+        let shares = match self.shared_directory.as_deref() {
+            Some(dir) if !dir.trim().is_empty() => {
+                match Shares::scan(std::path::Path::new(dir)) {
+                    Ok(scanned) => {
+                        info!(
+                            "Sharing {} files in {} folders from {}",
+                            scanned.file_count(),
+                            scanned.folder_count(),
+                            dir
+                        );
+                        Arc::new(scanned)
+                    }
+                    Err(e) => {
+                        warn!("Failed to scan shared directory {}: {}", dir, e);
+                        Arc::new(Shares::empty())
+                    }
+                }
+            }
+            _ => Arc::new(Shares::empty()),
+        };
+        let shared_folder_count = shares.folder_count();
+        let shared_file_count = shares.file_count();
+        ctx.shares = shares;
+
         let server_actor = ServerActor::new(
             self.address.clone(),
             sender,
             self.listen_port,
             self.enable_listen,
+            shared_folder_count,
+            shared_file_count,
         );
 
         self.server_handle = Some(ctx.actor_system.spawn_with_handle(
