@@ -1174,9 +1174,9 @@ impl Client {
 
         if failed {
             let reason = if peer_registered {
-                "Peer rejected the download request"
+                "The user declined the download"
             } else {
-                "Could not connect to the peer"
+                "Could not connect to the user"
             };
             let _ = download
                 .sender
@@ -1213,7 +1213,7 @@ impl Client {
             .map(|d| (d.token, d.sender.clone()))
             .collect();
         for (token, sender) in doomed {
-            let reason = Some("Peer disconnected".to_string());
+            let reason = Some("The user went offline".to_string());
             let _ = sender.send(DownloadStatus::Failed(reason.clone()));
             context.update_download_with_status(
                 token,
@@ -1274,7 +1274,7 @@ impl Client {
                     context.downloads.update_status(
                         token,
                         DownloadStatus::Failed(Some(
-                            "Peer reported the upload failed".to_string(),
+                            "The upload failed on the other side".to_string(),
                         )),
                     );
                     context.downloads.remove(token);
