@@ -153,11 +153,21 @@ fn wait_until_listening(
 }
 
 /// Resolve a test server or return early with a skip notice.
+///
+/// Set `SOULSEEK_E2E_REQUIRED=1` (as CI does) to turn a missing server into a
+/// hard failure instead of a silent skip, so the suite genuinely runs there.
 macro_rules! server_or_skip {
     () => {
         match TestServer::resolve() {
             Some(server) => server,
             None => {
+                let required = std::env::var("SOULSEEK_E2E_REQUIRED")
+                    .is_ok_and(|v| v != "0" && !v.is_empty());
+                assert!(
+                    !required,
+                    "SOULSEEK_E2E_REQUIRED is set but no soulfind server could \
+                     be started (set SOULFIND_BIN or SOULSEEK_TEST_SERVER)"
+                );
                 println!(
                     "e2e skipped: no soulfind server (set SOULFIND_BIN or \
                      SOULSEEK_TEST_SERVER to run)"
@@ -191,4 +201,47 @@ fn search_round_trips_without_error() {
     let query = "nonexistent query xyzzy";
     let _ = client.search(query, Duration::from_secs(2));
     assert!(client.get_search_results(query).is_empty());
+}
+
+#[test]
+fn wrong_password_is_rejected() {
+    let server = server_or_skip!();
+
+    // soulfind auto-registers a username on first login and binds it to that
+    // password, so a second login with a different password must be rejected.
+    let user = "e2e_pw_user";
+    let mut first =
+        Client::with_settings(server.settings(user, "correct-horse"));
+    first.connect().expect("connect (registering login)");
+    assert!(
+        first.login().expect("first login"),
+        "registration should log in"
+    );
+    drop(first);
+
+    let mut second =
+        Client::with_settings(server.settings(user, "wrong-password"));
+    second.connect().expect("connect (wrong password)");
+    // The server may signal rejection either as a non-success status or as an
+    // authentication error; both mean "not logged in", only `Ok(true)` accepts.
+    assert!(
+        !matches!(second.login(), Ok(true)),
+        "a mismatched password must not be accepted"
+    );
+}
+
+#[test]
+fn two_clients_can_be_logged_in_together() {
+    let server = server_or_skip!();
+
+    // The server must handle several independent sessions at once — this is
+    // the precondition for any peer-to-peer feature routed through it.
+    let mut alice = Client::with_settings(server.settings("e2e_alice", "pw_a"));
+    let mut bob = Client::with_settings(server.settings("e2e_bob", "pw_b"));
+
+    alice.connect().expect("alice connect");
+    bob.connect().expect("bob connect");
+
+    assert!(alice.login().expect("alice login"));
+    assert!(bob.login().expect("bob login"));
 }

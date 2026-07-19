@@ -34,7 +34,7 @@ experience. For me, this is a good balance between learning and practicality.
 - [x] Download files
 - [x] Configure credentials
 - [x] TUI for searching and downloading files
-- [ ] Configure download & upload directories
+- [x] Configure download & upload directories
 - [ ] Share files
 - [ ] Browse user(s) files
 - [ ] Chat in chatrooms
@@ -140,6 +140,20 @@ SOULFIND_BIN=/path/to/soulfind/bin/soulfind \
 > On macOS, soulfind's `SQLITE_CONFIG_SINGLETHREAD` optimization is rejected by
 > the system SQLite; building soulfind with that call made non-fatal lets it run
 > locally. It is only a mutex optimization and does not affect the server.
+
+Set `SOULSEEK_E2E_REQUIRED=1` to turn a missing server into a hard failure
+instead of a skip. Continuous integration sets it so the e2e suite genuinely
+runs against a freshly built soulfind rather than silently skipping.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request:
+
+- **Format & Clippy** — `cargo fmt --all --check` and
+  `cargo clippy --workspace --all-targets -- -D warnings`.
+- **Test** — builds soulfind from source (LDC + `dub build :server`), points
+  `SOULFIND_BIN` at it, and runs `cargo test --workspace` with
+  `SOULSEEK_E2E_REQUIRED=1`, so unit and end-to-end tests both run.
 
 ## License
 

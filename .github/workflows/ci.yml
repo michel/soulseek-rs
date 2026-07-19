@@ -41,7 +41,7 @@ jobs:
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   format:
     name: Format Check
@@ -92,3 +92,44 @@ jobs:
 
       - name: Run tests
         run: cargo test --verbose
+
+  e2e:
+    name: End-to-end (soulfind)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install SQLite runtime/dev libraries
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      - name: Install D toolchain (LDC)
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-latest
+
+      - name: Build soulfind server
+        run: |
+          git clone --depth 1 https://github.com/soulfind-dev/soulfind.git soulfind
+          dub build :server --root soulfind
+          test -x soulfind/bin/soulfind
+          echo "SOULFIND_BIN=$PWD/soulfind/bin/soulfind" >> "$GITHUB_ENV"
+
+      - name: Run e2e tests (required against soulfind)
+        env:
+          SOULSEEK_E2E_REQUIRED: "1"
+        run: cargo test -p soulseek-rs-lib --test e2e -- --nocapture
