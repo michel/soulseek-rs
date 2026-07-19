@@ -842,7 +842,7 @@ fn a_file_downloads_from_a_peer_via_direct_connection() {
         .recv_timeout(Duration::from_secs(10))
         .expect("mock direct peer ready");
     // Let the server finish processing SetWaitPort before we resolve the address.
-    std::thread::sleep(Duration::from_millis(1000));
+    std::thread::sleep(Duration::from_secs(1));
 
     // Target the plain username so download() takes the direct-connect path.
     let (_download, status_rx) = client
@@ -1002,7 +1002,7 @@ fn a_file_downloads_from_a_firewalled_peer_via_server_broker() {
     ready_rx
         .recv_timeout(Duration::from_secs(10))
         .expect("mock firewalled peer ready");
-    std::thread::sleep(Duration::from_millis(1000));
+    std::thread::sleep(Duration::from_secs(1));
 
     let (_download, status_rx) = client
         .download(
