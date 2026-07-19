@@ -26,6 +26,7 @@ use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 
 use soulseek_rs::message::Message;
+use soulseek_rs::message::server::MessageFactory;
 use soulseek_rs::{Client, ClientSettings, DownloadStatus, PeerAddress};
 
 /// A Soulseek server to test against: either a child soulfind process we
@@ -449,21 +450,36 @@ fn run_mock_uploader(cfg: &MockUpload) -> std::io::Result<()> {
         }
     }
 
-    // 5. F (file) connection. PeerInit(F) and the 4-byte transfer token go in a
-    //    single write so the token lands in the listener's read buffer, where
-    //    the download is looked up by token.
-    let mut f = connect_retry(&cfg.listen_addr, Duration::from_secs(5))?;
+    // 5. Open the F (file) connection to the downloader's listener and stream.
+    serve_file_over_f(
+        &cfg.listen_addr,
+        &cfg.peer_username,
+        cfg.token,
+        &cfg.content,
+    )
+}
+
+/// Open an F (file transfer) connection to `downloader_addr` and stream
+/// `content`. PeerInit(F) and the 4-byte transfer token are written together so
+/// the token lands in the listener's read buffer, where the download is looked
+/// up by token; the downloader then sends an 8-byte START_DOWNLOAD offset before
+/// we send the bytes.
+fn serve_file_over_f(
+    downloader_addr: &str,
+    username: &str,
+    token: u32,
+    content: &[u8],
+) -> std::io::Result<()> {
+    let mut f = connect_retry(downloader_addr, Duration::from_secs(5))?;
     f.set_read_timeout(Some(Duration::from_secs(10)))?;
-    let mut init = peer_init_bytes(&cfg.peer_username, "F", cfg.token);
-    init.extend_from_slice(&cfg.token.to_le_bytes());
+    let mut init = peer_init_bytes(username, "F", token);
+    init.extend_from_slice(&token.to_le_bytes());
     f.write_all(&init)?;
     f.flush()?;
 
-    // 6. The downloader replies with an 8-byte START_DOWNLOAD offset, then we
-    //    stream the file bytes.
     let mut start = [0u8; 8];
     f.read_exact(&mut start)?;
-    f.write_all(&cfg.content)?;
+    f.write_all(content)?;
     f.flush()?;
 
     // Keep the connection open briefly so the reader drains everything.
@@ -560,6 +576,206 @@ fn a_file_downloads_from_a_peer_over_p_and_f_connections() {
     let _ = uploader.join();
 
     assert!(completed, "the download should reach Completed");
+
+    let written = std::fs::read(download_dir.join(filename))
+        .expect("downloaded file should exist");
+    assert_eq!(written, content, "downloaded bytes should match the source");
+
+    let _ = std::fs::remove_dir_all(&download_dir);
+}
+
+// ---------------------------------------------------------------------------
+// Direct-connection download: the client initiates the peer connection.
+//
+// Here the mock is a server-registered peer. It logs in to soulfind and
+// advertises a listen port (SetWaitPort), so when our client asks the server
+// for the peer's address (GetPeerAddress) and dials it directly, the mock
+// accepts that inbound P connection and then serves the file. This exercises
+// the outbound PeerInit handshake and the auto-connecting download() path.
+// ---------------------------------------------------------------------------
+
+struct MockDirectUpload {
+    server_addr: String,
+    username: String,
+    password: String,
+    listen_port: u16,
+    downloader_listen_addr: String,
+    downloader_username: String,
+    filename: String,
+    content: Vec<u8>,
+    token: u32,
+    ready: Sender<()>,
+}
+
+fn run_mock_direct_peer(cfg: &MockDirectUpload) -> std::io::Result<()> {
+    // 1. Log in to the server so it knows this user is online.
+    let mut srv = connect_retry(&cfg.server_addr, Duration::from_secs(5))?;
+    srv.set_read_timeout(Some(Duration::from_secs(10)))?;
+    srv.write_all(
+        &MessageFactory::build_login_message(&cfg.username, &cfg.password)
+            .get_buffer(),
+    )?;
+    srv.flush()?;
+    loop {
+        let msg = read_framed(&mut srv)?;
+        if msg.get_message_code() == 1 {
+            break; // login response
+        }
+    }
+
+    // 2. Bind the peer listener, then advertise its port so the server can hand
+    //    our address to the downloader. Bind all interfaces: soulfind reports
+    //    the host's LAN address (not 127.0.0.1), and the downloader dials that.
+    let listener = std::net::TcpListener::bind(("0.0.0.0", cfg.listen_port))?;
+    srv.write_all(
+        &MessageFactory::build_set_wait_port_message(cfg.listen_port)
+            .get_buffer(),
+    )?;
+    srv.flush()?;
+    let _ = cfg.ready.send(());
+
+    // 3. Accept the downloader's inbound P (control) connection and validate its
+    //    PeerInit (peer code 1, int8 code so the fields start at offset 5). The
+    //    accept is bounded so a misrouted connection fails the test instead of
+    //    hanging it.
+    listener.set_nonblocking(true)?;
+    let accept_deadline = Instant::now() + Duration::from_secs(15);
+    let (mut p, _addr) = loop {
+        match listener.accept() {
+            Ok(pair) => break pair,
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= accept_deadline {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "no inbound P connection from the downloader",
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(e),
+        }
+    };
+    p.set_nonblocking(false)?;
+    p.set_read_timeout(Some(Duration::from_secs(10)))?;
+    let mut init = read_framed(&mut p)?;
+    assert_eq!(init.get_message_code(), 1, "expected inbound PeerInit");
+    init.set_pointer(5);
+    assert_eq!(init.read_string(), cfg.downloader_username, "PeerInit user");
+    assert_eq!(init.read_string(), "P", "PeerInit connection type");
+
+    // 4. Negotiate the transfer exactly as in the passive path.
+    loop {
+        let mut msg = read_framed(&mut p)?;
+        if msg.get_message_code() == 43 {
+            msg.set_pointer(8);
+            let _requested = msg.read_string();
+            break;
+        }
+    }
+    let mut tr = Message::new();
+    tr.write_int32(40)
+        .write_int32(1)
+        .write_int32(cfg.token)
+        .write_string(&cfg.filename)
+        .write_int64(cfg.content.len() as u64);
+    p.write_all(&tr.get_buffer())?;
+    p.flush()?;
+    loop {
+        let msg = read_framed(&mut p)?;
+        if msg.get_message_code() == 41 {
+            break; // TransferResponse
+        }
+    }
+
+    // 5. Stream the bytes over an F connection to the downloader's listener.
+    //    `srv` stays in scope so the peer remains online for the whole transfer.
+    serve_file_over_f(
+        &cfg.downloader_listen_addr,
+        &cfg.username,
+        cfg.token,
+        &cfg.content,
+    )
+}
+
+#[test]
+fn a_file_downloads_from_a_peer_via_direct_connection() {
+    let server = server_or_skip!();
+
+    // Downloader with a listener enabled (needed for the F leg).
+    let client_port = free_port().expect("free client listen port");
+    let mut client = Client::with_settings(server.listening_settings(
+        "e2e_direct_dl",
+        "pw",
+        client_port,
+    ));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login"));
+
+    let mock_port = free_port().expect("free mock listen port");
+    let filename = "direct_song.mp3";
+    let content: Vec<u8> = (0..2000u32).map(|i| (i % 251) as u8).collect();
+    let size = content.len() as u64;
+    let token = 515_151_u32;
+    let download_dir = unique_download_dir();
+
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let cfg = MockDirectUpload {
+        server_addr: format!("{}:{}", server.host, server.port),
+        username: "e2e_directpeer".to_string(),
+        password: "pw".to_string(),
+        listen_port: mock_port,
+        downloader_listen_addr: format!("127.0.0.1:{client_port}"),
+        downloader_username: "e2e_direct_dl".to_string(),
+        filename: filename.to_string(),
+        content: content.clone(),
+        token,
+        ready: ready_tx,
+    };
+    let uploader = std::thread::spawn(move || {
+        if let Err(e) = run_mock_direct_peer(&cfg) {
+            eprintln!("[mock direct peer] {e}");
+        }
+    });
+
+    ready_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("mock direct peer ready");
+    // Let the server finish processing SetWaitPort before we resolve the address.
+    std::thread::sleep(Duration::from_millis(1000));
+
+    // Target the plain username so download() takes the direct-connect path.
+    let (_download, status_rx) = client
+        .download(
+            filename.to_string(),
+            "e2e_directpeer".to_string(),
+            size,
+            download_dir.display().to_string(),
+        )
+        .expect("start download");
+
+    let mut completed = false;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline {
+        match status_rx.recv_timeout(Duration::from_millis(500)) {
+            Ok(DownloadStatus::Completed) => {
+                completed = true;
+                break;
+            }
+            Ok(DownloadStatus::Failed | DownloadStatus::TimedOut) => break,
+            _ => {}
+        }
+        if client
+            .get_all_downloads()
+            .iter()
+            .any(|d| matches!(d.status, DownloadStatus::Completed))
+        {
+            completed = true;
+            break;
+        }
+    }
+    let _ = uploader.join();
+
+    assert!(completed, "the direct download should reach Completed");
 
     let written = std::fs::read(download_dir.join(filename))
         .expect("downloaded file should exist");

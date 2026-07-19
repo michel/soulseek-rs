@@ -49,6 +49,10 @@ pub struct PeerActor {
     dispatcher: Option<MessageDispatcher<PeerMessage>>,
     dispatcher_receiver: Option<Receiver<PeerMessage>>,
     queued_messages: Vec<PeerMessage>,
+    own_username: String,
+    /// True when we initiated this connection (no stream supplied at
+    /// construction), so we must send a `PeerInit` once connected.
+    outbound: bool,
 }
 
 impl PeerActor {
@@ -58,7 +62,9 @@ impl PeerActor {
         stream: Option<TcpStream>,
         reader: Option<MessageReader>,
         client_channel: Sender<ClientOperation>,
+        own_username: String,
     ) -> Self {
+        let outbound = stream.is_none();
         let connection_state = if stream.is_some() {
             ConnectionState::Connected
         } else {
@@ -75,6 +81,8 @@ impl PeerActor {
             dispatcher: None,
             dispatcher_receiver: None,
             queued_messages: Vec::new(),
+            own_username,
+            outbound,
         }
     }
 
@@ -529,8 +537,12 @@ impl PeerActor {
     }
 
     fn on_connection_established(&mut self) {
-        let (username, token) = match self.peer.read_safe() {
-            Ok(peer) => (peer.username.clone(), peer.token),
+        let (username, connection_type, token) = match self.peer.read_safe() {
+            Ok(peer) => (
+                peer.username.clone(),
+                peer.connection_type.clone(),
+                peer.token,
+            ),
             Err(e) => {
                 error!(
                     "[peer_actor] on_connection_established peer lock: {}",
@@ -544,11 +556,19 @@ impl PeerActor {
             return;
         };
 
-        if let Some(token) = token {
-            let handshake_msg = MessageFactory::build_watch_user(token);
-            if let Err(e) = stream.write_all(&handshake_msg.get_data()) {
+        // Connections we initiated must announce themselves with a PeerInit
+        // (peer code 1); inbound peers already sent us theirs, so we stay
+        // silent for them. `get_buffer` prepends the length prefix the peer's
+        // MessageReader expects.
+        if self.outbound {
+            let init = MessageFactory::build_peer_init_message(
+                &self.own_username,
+                connection_type,
+                token.unwrap_or(0),
+            );
+            if let Err(e) = stream.write_all(&init.get_buffer()) {
                 error!(
-                    "[peer:{}] Failed to send watch user handshake: {}",
+                    "[peer:{}] Failed to send PeerInit handshake: {}",
                     username, e
                 );
                 self.disconnect_with_error(e);
@@ -561,6 +581,14 @@ impl PeerActor {
         let queued = std::mem::take(&mut self.queued_messages);
         for msg in queued {
             self.handle_message(msg);
+        }
+
+        // Tell the client the control connection is live so any downloads
+        // queued for this peer can now be requested over a handshaken stream.
+        if self.outbound {
+            let _ = self
+                .client_channel
+                .send(ClientOperation::PeerConnected(username));
         }
 
         if let Some(ref handle) = self.self_handle {
