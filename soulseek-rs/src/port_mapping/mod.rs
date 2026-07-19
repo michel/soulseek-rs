@@ -61,6 +61,46 @@ impl Drop for PortMapper {
     }
 }
 
+/// Synchronously probe whether automatic port mapping works on this network:
+/// try to map `port` (UPnP then NAT-PMP), report the result in human-readable
+/// form, then remove the probe mapping. Used by the `portmap` CLI command so a
+/// user can verify reachability on their actual router.
+#[must_use]
+pub fn diagnose(port: u16) -> String {
+    let Some(local_ip) = local_lan_ip() else {
+        return "Could not determine this machine's LAN IP — are you connected \
+                to a network?"
+            .to_string();
+    };
+
+    match map_once(local_ip, port) {
+        Some((backend, _lease)) => {
+            let detail = match &backend {
+                Backend::Upnp { gateway, .. } => {
+                    let ip = gateway.get_external_ip().map_or_else(
+                        |_| "unknown".to_string(),
+                        |ip| ip.to_string(),
+                    );
+                    format!("UPnP-IGD (external address {ip}:{port})")
+                }
+                Backend::NatPmp { .. } => "NAT-PMP".to_string(),
+            };
+            remove(&backend); // clean up the probe mapping
+            format!(
+                "✅ Automatic port mapping works via {detail}.\n   TCP {port} \
+                 was opened on your router, so firewalled peers and the server \
+                 can reach you. The app does this automatically while it runs."
+            )
+        }
+        None => format!(
+            "❌ No UPnP/NAT-PMP router responded for TCP {port}.\n   Automatic \
+             mapping won't work on this network. To browse/download firewalled \
+             peers, forward TCP {port} to this machine on your router (or \
+             enable UPnP there)."
+        ),
+    }
+}
+
 /// Which backend created the active mapping, carrying what's needed to renew and
 /// remove it.
 enum Backend {
@@ -132,6 +172,16 @@ fn map_upnp(local_ip: IpAddr, port: u16) -> Option<(Backend, u32)> {
     };
     let gateway = search_gateway(options).ok()?;
     let local_addr = SocketAddr::new(local_ip, port);
+    map_via_gateway(gateway, local_addr, port)
+}
+
+/// Map `port` on an already-discovered IGD `gateway`. Split out from discovery
+/// so it can be exercised against a mock IGD in tests.
+fn map_via_gateway(
+    gateway: igd_next::Gateway,
+    local_addr: SocketAddr,
+    port: u16,
+) -> Option<(Backend, u32)> {
     // We advertise our listen port verbatim to the Soulseek server, so the
     // EXTERNAL port must equal it. If the exact port can't be mapped (e.g.
     // another LAN device already claimed it), a different external port would
@@ -402,6 +452,139 @@ mod tests {
             ]),
             0,
             "cleanup should request lifetime 0"
+        );
+    }
+
+    /// A minimal in-process UPnP IGD: an HTTP server that answers every SOAP
+    /// control request with a canned envelope containing the Add/Delete/GetIP
+    /// response elements, and forwards each request body to the test.
+    fn mock_igd() -> (SocketAddr, mpsc::Receiver<String>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 1024];
+                // Read headers, then Content-Length bytes of body.
+                let body = loop {
+                    let n = match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => break String::new(),
+                        Ok(n) => n,
+                    };
+                    buf.extend_from_slice(&chunk[..n]);
+                    let text = String::from_utf8_lossy(&buf);
+                    if let Some(hdr_end) = text.find("\r\n\r\n") {
+                        let len = text
+                            .lines()
+                            .find_map(|l| {
+                                l.strip_prefix("Content-Length: ").or_else(
+                                    || l.strip_prefix("content-length: "),
+                                )
+                            })
+                            .and_then(|v| v.trim().parse::<usize>().ok())
+                            .unwrap_or(0);
+                        if buf.len() >= hdr_end + 4 + len {
+                            break text[hdr_end + 4..].to_string();
+                        }
+                    }
+                };
+                if tx.send(body).is_err() {
+                    break;
+                }
+                let soap = r#"<?xml version="1.0"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+<s:Body>
+<u:AddPortMappingResponse xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1"></u:AddPortMappingResponse>
+<u:DeletePortMappingResponse xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1"></u:DeletePortMappingResponse>
+<u:GetExternalIPAddressResponse xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1"><NewExternalIPAddress>203.0.113.7</NewExternalIPAddress></u:GetExternalIPAddressResponse>
+</s:Body>
+</s:Envelope>"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{soap}",
+                    soap.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        (addr, rx)
+    }
+
+    fn igd_control_schema() -> std::collections::HashMap<String, Vec<String>> {
+        let mut schema = std::collections::HashMap::new();
+        schema.insert(
+            "AddPortMapping".to_string(),
+            [
+                "NewRemoteHost",
+                "NewExternalPort",
+                "NewProtocol",
+                "NewInternalPort",
+                "NewInternalClient",
+                "NewEnabled",
+                "NewPortMappingDescription",
+                "NewLeaseDuration",
+            ]
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        );
+        schema.insert(
+            "DeletePortMapping".to_string(),
+            ["NewRemoteHost", "NewExternalPort", "NewProtocol"]
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+        );
+        schema
+    }
+
+    #[test]
+    fn upnp_maps_a_port_against_a_mock_igd() {
+        let (igd_addr, requests) = mock_igd();
+        let gateway = igd_next::Gateway {
+            addr: igd_addr,
+            root_url: format!("http://{igd_addr}/rootDesc.xml"),
+            control_url: "/ctl".to_string(),
+            control_schema_url: format!("http://{igd_addr}/scpd.xml"),
+            control_schema: igd_control_schema(),
+        };
+
+        let local_addr =
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)), 2234);
+        let result = map_via_gateway(gateway, local_addr, 2234);
+
+        let (backend, _lease) =
+            result.expect("mapping against a healthy IGD should succeed");
+        match backend {
+            Backend::Upnp { external_port, .. } => {
+                assert_eq!(
+                    external_port, 2234,
+                    "must map the exact listen port"
+                );
+            }
+            Backend::NatPmp { .. } => panic!("expected a UPnP backend"),
+        }
+
+        // The IGD must have received an AddPortMapping SOAP call quoting our
+        // external and internal port and the LAN client address.
+        let body = requests
+            .recv_timeout(StdDuration::from_secs(3))
+            .expect("IGD should receive an AddPortMapping request");
+        assert!(
+            body.contains("<NewExternalPort>2234</NewExternalPort>"),
+            "request should map external port 2234: {body}"
+        );
+        assert!(
+            body.contains("<NewInternalPort>2234</NewInternalPort>"),
+            "request should target internal port 2234: {body}"
+        );
+        assert!(
+            body.contains("192.168.1.50"),
+            "request should point at the LAN client: {body}"
         );
     }
 

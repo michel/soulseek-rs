@@ -120,6 +120,9 @@ pub enum Commands {
         #[arg(short, long, default_value = "30")]
         listen_secs: u64,
     },
+
+    /// Test whether your router lets us auto-open the listen port (UPnP/NAT-PMP)
+    Portmap,
 }
 
 pub fn parse_server_address(server: &str) -> color_eyre::Result<(String, u16)> {

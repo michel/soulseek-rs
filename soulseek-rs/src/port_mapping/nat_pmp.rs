@@ -175,41 +175,47 @@ pub fn default_gateway() -> Option<Ipv4Addr> {
             .args(["-n", "get", "default"])
             .output()
             .ok()?;
-        let text = String::from_utf8_lossy(&out.stdout);
-        for line in text.lines() {
-            let line = line.trim();
-            if let Some(rest) = line.strip_prefix("gateway:") {
-                return rest.trim().parse().ok();
-            }
-        }
-        None
+        parse_macos_default_gateway(&String::from_utf8_lossy(&out.stdout))
     }
     #[cfg(target_os = "linux")]
     {
-        // /proc/net/route: tab-separated; the default route has Destination
-        // 00000000, and Gateway is a little-endian hex u32.
         let text = std::fs::read_to_string("/proc/net/route").ok()?;
-        for line in text.lines().skip(1) {
-            let mut fields = line.split_whitespace();
-            let _iface = fields.next()?;
-            let destination = fields.next()?;
-            let gateway = fields.next()?;
-            if destination == "00000000" {
-                let raw = u32::from_str_radix(gateway, 16).ok()?;
-                // A 0.0.0.0 gateway is a directly-connected default route (no
-                // next hop): not a usable NAT-PMP gateway. Keep scanning for a
-                // real one rather than returning the unspecified address.
-                if raw != 0 {
-                    return Some(Ipv4Addr::from(raw.to_le_bytes()));
-                }
-            }
-        }
-        None
+        parse_linux_default_gateway(&text)
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         None
     }
+}
+
+/// Parse the gateway IP from `route -n get default` output (macOS).
+#[cfg(any(target_os = "macos", test))]
+#[must_use]
+fn parse_macos_default_gateway(output: &str) -> Option<Ipv4Addr> {
+    output.lines().find_map(|line| {
+        line.trim().strip_prefix("gateway:")?.trim().parse().ok()
+    })
+}
+
+/// Parse the IPv4 default gateway from the contents of `/proc/net/route`
+/// (Linux). Fields are whitespace-separated; the default route has Destination
+/// `00000000` and stores the Gateway as a little-endian hex u32. A `00000000`
+/// (unspecified) gateway is a directly-connected route with no next hop, so it
+/// is skipped rather than returned as `0.0.0.0`.
+#[cfg(any(target_os = "linux", test))]
+#[must_use]
+fn parse_linux_default_gateway(contents: &str) -> Option<Ipv4Addr> {
+    contents.lines().skip(1).find_map(|line| {
+        let mut fields = line.split_whitespace();
+        let _iface = fields.next()?;
+        let destination = fields.next()?;
+        let gateway = fields.next()?;
+        if destination != "00000000" {
+            return None;
+        }
+        let raw = u32::from_str_radix(gateway, 16).ok()?;
+        (raw != 0).then(|| Ipv4Addr::from(raw.to_le_bytes()))
+    })
 }
 
 #[cfg(test)]
@@ -300,6 +306,36 @@ mod tests {
             Err(NatPmpError::NoResponse | NatPmpError::Io(_)) => {}
             other => panic!("expected timeout/io error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_macos_default_gateway() {
+        let output = "   route to: default\ndestination: default\n       mask: default\n    gateway: 192.168.1.254\n  interface: en0\n";
+        assert_eq!(
+            parse_macos_default_gateway(output),
+            Some(Ipv4Addr::new(192, 168, 1, 254))
+        );
+        // No default route → None.
+        assert_eq!(parse_macos_default_gateway("interface: en0\n"), None);
+    }
+
+    #[test]
+    fn parses_linux_default_gateway_and_skips_unspecified() {
+        // Header + a directly-connected default (gateway 00000000) that must be
+        // skipped + the real default route (192.168.0.1 => 0100A8C0 LE).
+        let contents = "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n\
+             tun0\t00000000\t00000000\t0001\t0\t0\t0\t00000000\n\
+             eth0\t00000000\t0100A8C0\t0003\t0\t0\t100\t00000000\n\
+             eth0\t0000A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\n";
+        assert_eq!(
+            parse_linux_default_gateway(contents),
+            Some(Ipv4Addr::new(192, 168, 0, 1))
+        );
+
+        // Only a gateway-less default route → None (not 0.0.0.0).
+        let only_direct = "Iface\tDestination\tGateway\tFlags\n\
+             tun0\t00000000\t00000000\t0001\n";
+        assert_eq!(parse_linux_default_gateway(only_direct), None);
     }
 
     #[test]
