@@ -121,6 +121,8 @@ In the interactive TUI, press `c` to open the chat-rooms popup:
 - several rooms can be **open at once** as tabs — `Tab`/`Shift-Tab` switch
   between them, `x` leaves the active room, `l` returns to the room list;
 - in a room, press `Enter` to type a message and `Enter` again to send;
+- the room's **member list** is selectable with `↑`/`↓`; press `b` to browse
+  the highlighted user's shared files or `m` to send them a private message;
 - **unread messages** bold a room's tab and add a `room (n)` badge, and the
   `c chat (n)` shortcut counts unread across all open rooms.
 

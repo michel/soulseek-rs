@@ -69,6 +69,8 @@ pub struct RoomsState {
     pub view: RoomsView,
     /// Whether the compose input for the active room is capturing keys.
     pub composing: bool,
+    /// Selected index into the active room's member list (for browse/PM).
+    pub user_selected: usize,
 }
 
 impl Default for RoomsState {
@@ -89,6 +91,7 @@ impl RoomsState {
             active: 0,
             view: RoomsView::List,
             composing: false,
+            user_selected: 0,
         }
     }
 
@@ -133,6 +136,7 @@ impl RoomsState {
     /// `true` if the room was newly opened (so the caller should `join_room`).
     pub fn focus_or_open(&mut self, name: &str) -> bool {
         self.view = RoomsView::Chat;
+        self.user_selected = 0;
         if let Some(idx) = self.open_index(name) {
             self.active = idx;
             self.mark_active_read();
@@ -141,6 +145,26 @@ impl RoomsState {
             self.open.push(OpenRoom::new(name.to_string()));
             self.active = self.open.len() - 1;
             true
+        }
+    }
+
+    /// The username highlighted in the active room's member list, if any.
+    #[must_use]
+    pub fn selected_user(&self) -> Option<String> {
+        self.active_room()
+            .and_then(|r| r.users.get(self.user_selected).cloned())
+    }
+
+    pub const fn select_user_up(&mut self) {
+        self.user_selected = self.user_selected.saturating_sub(1);
+    }
+
+    pub fn select_user_down(&mut self) {
+        if let Some(room) = self.active_room()
+            && !room.users.is_empty()
+        {
+            self.user_selected =
+                (self.user_selected + 1).min(room.users.len() - 1);
         }
     }
 
@@ -153,6 +177,7 @@ impl RoomsState {
         if self.active >= self.open.len() {
             self.active = self.open.len().saturating_sub(1);
         }
+        self.user_selected = 0;
         if self.open.is_empty() {
             self.view = RoomsView::List;
         } else {
@@ -165,6 +190,7 @@ impl RoomsState {
     pub fn next_tab(&mut self) {
         if !self.open.is_empty() {
             self.active = (self.active + 1) % self.open.len();
+            self.user_selected = 0;
             self.mark_active_read();
         }
     }
@@ -172,6 +198,7 @@ impl RoomsState {
     pub fn prev_tab(&mut self) {
         if !self.open.is_empty() {
             self.active = (self.active + self.open.len() - 1) % self.open.len();
+            self.user_selected = 0;
             self.mark_active_read();
         }
     }
@@ -467,6 +494,36 @@ mod tests {
             "landing on room a should clear its badge"
         );
         assert_eq!(state.total_unread(), 0);
+    }
+
+    #[test]
+    fn user_selection_navigates_and_resets_across_tabs() {
+        let mut state = RoomsState::new();
+        state.apply_event(
+            RoomEvent::Joined {
+                room: "jazz".to_string(),
+                users: vec![
+                    "alice".to_string(),
+                    "bob".to_string(),
+                    "carol".to_string(),
+                ],
+            },
+            None,
+        );
+        state.focus_or_open("jazz");
+        assert_eq!(state.selected_user().as_deref(), Some("alice"));
+        state.select_user_down();
+        state.select_user_down();
+        assert_eq!(state.selected_user().as_deref(), Some("carol"));
+        state.select_user_down(); // clamps at the last user
+        assert_eq!(state.selected_user().as_deref(), Some("carol"));
+        state.select_user_up();
+        assert_eq!(state.selected_user().as_deref(), Some("bob"));
+
+        // Opening another room resets the user highlight.
+        state.focus_or_open("blues");
+        assert_eq!(state.user_selected, 0);
+        assert_eq!(state.selected_user(), None); // blues has no members yet
     }
 
     #[test]
