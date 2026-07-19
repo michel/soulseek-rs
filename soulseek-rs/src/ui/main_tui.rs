@@ -958,7 +958,7 @@ impl MainTui {
         };
         if !matches!(
             entry.download.status,
-            DownloadStatus::Failed | DownloadStatus::TimedOut
+            DownloadStatus::Failed(_) | DownloadStatus::TimedOut
         ) {
             return;
         }
@@ -995,7 +995,7 @@ impl MainTui {
             !matches!(
                 entry.download.status,
                 DownloadStatus::Completed
-                    | DownloadStatus::Failed
+                    | DownloadStatus::Failed(_)
                     | DownloadStatus::TimedOut
             )
         });

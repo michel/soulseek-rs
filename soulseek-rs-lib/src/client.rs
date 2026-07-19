@@ -374,7 +374,7 @@ fn download_without_a_connection_resolves_failed() {
         .expect("download() should return a handle");
     assert!(matches!(
         receiver.recv_timeout(Duration::from_secs(1)),
-        Ok(DownloadStatus::Failed)
+        Ok(DownloadStatus::Failed(_))
     ));
 }
 
@@ -398,7 +398,7 @@ fn fail_queued_downloads_notifies_receiver_and_store() {
 
     Client::fail_queued_downloads(&client.context, "peer");
 
-    assert!(matches!(receiver.try_recv(), Ok(DownloadStatus::Failed)));
+    assert!(matches!(receiver.try_recv(), Ok(DownloadStatus::Failed(_))));
     assert!(matches!(
         client
             .context
@@ -407,7 +407,7 @@ fn fail_queued_downloads_notifies_receiver_and_store() {
             .get_download_by_token(7)
             .unwrap()
             .status,
-        DownloadStatus::Failed
+        DownloadStatus::Failed(_)
     ));
 }
 
@@ -1056,10 +1056,18 @@ impl Client {
         };
 
         if failed {
-            let _ = download.sender.send(DownloadStatus::Failed);
-            self.context
-                .write_safe()?
-                .update_download_with_status(token, DownloadStatus::Failed);
+            let reason = if peer_registered {
+                "Peer rejected the download request"
+            } else {
+                "Could not connect to the peer"
+            };
+            let _ = download
+                .sender
+                .send(DownloadStatus::Failed(Some(reason.to_string())));
+            self.context.write_safe()?.update_download_with_status(
+                token,
+                DownloadStatus::Failed(Some(reason.to_string())),
+            );
         }
 
         Ok((download, download_receiver))
@@ -1088,8 +1096,12 @@ impl Client {
             .map(|d| (d.token, d.sender.clone()))
             .collect();
         for (token, sender) in doomed {
-            let _ = sender.send(DownloadStatus::Failed);
-            context.update_download_with_status(token, DownloadStatus::Failed);
+            let reason = Some("Peer disconnected".to_string());
+            let _ = sender.send(DownloadStatus::Failed(reason.clone()));
+            context.update_download_with_status(
+                token,
+                DownloadStatus::Failed(reason),
+            );
         }
     }
 
@@ -1142,9 +1154,12 @@ impl Client {
         match client_context.write_safe() {
             Ok(mut context) => {
                 for token in failed_tokens {
-                    context
-                        .downloads
-                        .update_status(token, DownloadStatus::Failed);
+                    context.downloads.update_status(
+                        token,
+                        DownloadStatus::Failed(Some(
+                            "Peer reported the upload failed".to_string(),
+                        )),
+                    );
                     context.downloads.remove(token);
                 }
             }
@@ -1326,9 +1341,12 @@ impl Client {
                                                             );
                                                         }
                                                         Err(e) => {
-                                                            let _ = download.sender.send(DownloadStatus::Failed);
+                                                            let reason = Some(
+                                                                e.to_string(),
+                                                            );
+                                                            let _ = download.sender.send(DownloadStatus::Failed(reason.clone()));
                                                             match client_context_clone.write_safe() {
-                                                                Ok(mut ctx) => ctx.update_download_with_status(download.token, DownloadStatus::Failed),
+                                                                Ok(mut ctx) => ctx.update_download_with_status(download.token, DownloadStatus::Failed(reason)),
                                                                 Err(e) => error!("[client] download failed write: {}", e),
                                                             }
                                                             error!(

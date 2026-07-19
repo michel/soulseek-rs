@@ -614,7 +614,7 @@ fn a_file_downloads_from_a_peer_over_p_and_f_connections() {
                 completed = true;
                 break;
             }
-            Ok(DownloadStatus::Failed | DownloadStatus::TimedOut) => {
+            Ok(DownloadStatus::Failed(_) | DownloadStatus::TimedOut) => {
                 break;
             }
             _ => {}
@@ -862,7 +862,7 @@ fn a_file_downloads_from_a_peer_via_direct_connection() {
                 completed = true;
                 break;
             }
-            Ok(DownloadStatus::Failed | DownloadStatus::TimedOut) => break,
+            Ok(DownloadStatus::Failed(_) | DownloadStatus::TimedOut) => break,
             _ => {}
         }
         if client
@@ -1021,7 +1021,7 @@ fn a_file_downloads_from_a_firewalled_peer_via_server_broker() {
                 completed = true;
                 break;
             }
-            Ok(DownloadStatus::Failed | DownloadStatus::TimedOut) => break,
+            Ok(DownloadStatus::Failed(_) | DownloadStatus::TimedOut) => break,
             _ => {}
         }
         if client
@@ -1122,7 +1122,7 @@ fn two_real_clients_search_and_download() {
                 completed = true;
                 break;
             }
-            Ok(DownloadStatus::Failed | DownloadStatus::TimedOut) => break,
+            Ok(DownloadStatus::Failed(_) | DownloadStatus::TimedOut) => break,
             _ => {}
         }
         if leecher

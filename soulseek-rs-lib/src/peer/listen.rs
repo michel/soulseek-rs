@@ -212,7 +212,7 @@ fn handle_file_connection(
                 match context.client_context.write_safe() {
                     Ok(mut ctx) => ctx.update_download_with_status(
                         failure_token,
-                        DownloadStatus::Failed,
+                        DownloadStatus::Failed(Some(e.to_string())),
                     ),
                     Err(e) => {
                         error!(
