@@ -251,3 +251,24 @@ mod tests {
         assert_eq!(transfer.size, 0);
     }
 }
+
+/// Lifecycle of a file we are serving to a peer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UploadStatus {
+    InProgress,
+    Completed,
+    Cancelled,
+    Failed(String),
+}
+
+/// A snapshot of one upload for display purposes.
+#[derive(Debug, Clone)]
+pub struct UploadInfo {
+    /// The peer receiving the file.
+    pub username: String,
+    /// The peer-facing virtual path being served.
+    pub filename: String,
+    pub size: u64,
+    pub bytes_sent: u64,
+    pub status: UploadStatus,
+}

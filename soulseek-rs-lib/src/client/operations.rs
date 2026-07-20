@@ -652,6 +652,8 @@ impl Client {
                                             UploadJob {
                                                 downloader: downloader.clone(),
                                                 real_path,
+                                                virtual_path: filename.clone(),
+                                                size,
                                             },
                                         );
                                         (ctx.peer_registry.clone(), size)
