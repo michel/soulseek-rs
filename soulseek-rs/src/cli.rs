@@ -16,19 +16,16 @@ pub struct Cli {
     #[arg(short, long, env = "SOULSEEK_PASSWORD")]
     pub password: Option<String>,
 
-    #[arg(
-        short,
-        long,
-        env = "SOULSEEK_SERVER",
-        default_value = "server.slsknet.org:2416"
-    )]
-    pub server: String,
+    /// Server address as host:port (default: server.slsknet.org:2416)
+    #[arg(short, long, env = "SOULSEEK_SERVER")]
+    pub server: Option<String>,
 
     #[arg(long, env = "DISABLE_LISTENER")]
     pub disable_listener: bool,
 
-    #[arg(short, long, env = "LISTENER_PORT", default_value = "2234")]
-    pub listener_port: u16,
+    /// Port to accept peer connections on (default: 2234)
+    #[arg(short, long, env = "LISTENER_PORT")]
+    pub listener_port: Option<u16>,
 
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
     pub verbose: u8,
@@ -43,13 +40,9 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
 
-    #[arg(
-        short,
-        long,
-        env = "SOULSEEK_DOWNLOAD_DIR",
-        default_value = "~/Downloads"
-    )]
-    pub download_dir: String,
+    /// Directory downloads are saved to (default: ~/Downloads)
+    #[arg(short, long, env = "SOULSEEK_DOWNLOAD_DIR")]
+    pub download_dir: Option<String>,
 
     #[arg(
         long,
@@ -58,16 +51,13 @@ pub struct Cli {
     )]
     pub shared_dir: Option<String>,
 
-    #[arg(
-        short = 'c',
-        long,
-        env = "MAX_CONCURRENT_DOWNLOADS",
-        default_value = "5"
-    )]
-    pub max_concurrent_downloads: usize,
+    /// Maximum simultaneous downloads (default: 5)
+    #[arg(short = 'c', long, env = "MAX_CONCURRENT_DOWNLOADS")]
+    pub max_concurrent_downloads: Option<usize>,
 
-    #[arg(long, default_value = "10")]
-    pub search_timeout: u64,
+    /// Seconds a search stays active (default: 10)
+    #[arg(long)]
+    pub search_timeout: Option<u64>,
 }
 
 #[derive(Subcommand, Debug)]
