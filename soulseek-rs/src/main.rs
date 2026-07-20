@@ -72,17 +72,10 @@ fn main() -> Result<()> {
 
     let (server_host, server_port) = parse_server_address(&resolved.server)?;
 
-    // Resolve the optional shared/upload directory up front; a misconfigured
-    // one is a warning, not a fatal error (the client just shares nothing).
-    let shared_directory = match directories::resolve_shared_directory(
-        resolved.shared_dir.as_deref(),
-    ) {
-        Ok(dir) => dir.map(|path| path.display().to_string()),
-        Err(e) => {
-            eprintln!("⚠️  Ignoring shared directory: {e}");
-            None
-        }
-    };
+    // Resolve the configured shared/upload directories up front; a
+    // misconfigured one is a warning, not a fatal error.
+    let shared_directories =
+        directories::resolve_shared_directories(&resolved.shared_dirs);
 
     let settings = ClientSettings {
         username: username.clone(),
@@ -90,7 +83,7 @@ fn main() -> Result<()> {
         server_address: PeerAddress::new(server_host.clone(), server_port),
         enable_listen: !resolved.disable_listener,
         listen_port: resolved.listener_port,
-        shared_directory: shared_directory.clone(),
+        shared_directories: shared_directories.clone(),
     };
 
     match cli.command {
@@ -112,7 +105,7 @@ fn main() -> Result<()> {
                 download_dir,
                 verbose: cli.verbose,
                 max_concurrent_downloads,
-                shared_directory,
+                shared_directories,
             };
             search_and_download(config)
         }
@@ -182,15 +175,8 @@ fn run_default_tui(
         );
     }
 
-    let shared_directory = match directories::resolve_shared_directory(
-        resolved.shared_dir.as_deref(),
-    ) {
-        Ok(dir) => dir.map(|path| path.display().to_string()),
-        Err(e) => {
-            eprintln!("⚠️  Ignoring shared directory: {e}");
-            None
-        }
-    };
+    let shared_directories =
+        directories::resolve_shared_directories(&resolved.shared_dirs);
 
     let secret_store = persist::secret::KeyringStore;
     let initial_password = persist::secret::resolve_password(
@@ -217,7 +203,7 @@ fn run_default_tui(
             server_address: PeerAddress::new(server_host.clone(), server_port),
             enable_listen,
             listen_port,
-            shared_directory: shared_directory.clone(),
+            shared_directories: shared_directories.clone(),
         };
 
     // Clear screen and enable mouse capture before initializing TUI
@@ -475,7 +461,7 @@ fn search_and_download(config: SearchConfig) -> Result<()> {
         ),
         enable_listen: config.enable_listener,
         listen_port: config.listener_port,
-        shared_directory: config.shared_directory.clone(),
+        shared_directories: config.shared_directories.clone(),
     };
 
     let _port_mapper = settings

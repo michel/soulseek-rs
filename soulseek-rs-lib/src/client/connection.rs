@@ -23,27 +23,25 @@ impl Client {
 
         let listen_sender = sender.clone();
 
-        // Scan the shared directory once into the read-only index, and report
-        // the real folder/file counts to the server on login.
-        let shares = match self.shared_directory.as_deref() {
-            Some(dir) if !dir.trim().is_empty() => {
-                match Shares::scan(std::path::Path::new(dir)) {
-                    Ok(scanned) => {
-                        info!(
-                            "Sharing {} files in {} folders from {}",
-                            scanned.file_count(),
-                            scanned.folder_count(),
-                            dir
-                        );
-                        Arc::new(scanned)
-                    }
-                    Err(e) => {
-                        warn!("Failed to scan shared directory {}: {}", dir, e);
-                        Arc::new(Shares::empty())
-                    }
-                }
-            }
-            _ => Arc::new(Shares::empty()),
+        // Scan the shared directories once into the read-only index, and
+        // report the real folder/file counts to the server on login.
+        let roots: Vec<std::path::PathBuf> = self
+            .shared_directories
+            .iter()
+            .filter(|dir| !dir.trim().is_empty())
+            .map(std::path::PathBuf::from)
+            .collect();
+        let shares = if roots.is_empty() {
+            Arc::new(Shares::empty())
+        } else {
+            let scanned = Shares::scan_many(&roots);
+            info!(
+                "Sharing {} files in {} folders from {} directories",
+                scanned.file_count(),
+                scanned.folder_count(),
+                roots.len()
+            );
+            Arc::new(scanned)
         };
         let shared_folder_count = shares.folder_count();
         let shared_file_count = shares.file_count();

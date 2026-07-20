@@ -35,6 +35,20 @@ pub fn resolve_shared_directory(
     Ok(Some(path))
 }
 
+/// Validate several configured share paths; invalid ones are skipped with a
+/// warning instead of aborting (the client just shares less).
+pub fn resolve_shared_directories(dirs: &[String]) -> Vec<String> {
+    let mut resolved = Vec::new();
+    for dir in dirs {
+        match resolve_shared_directory(Some(dir)) {
+            Ok(Some(path)) => resolved.push(path.display().to_string()),
+            Ok(None) => {}
+            Err(e) => eprintln!("⚠️  Ignoring shared directory: {e}"),
+        }
+    }
+    resolved
+}
+
 #[cfg(test)]
 mod tests {
     use super::resolve_shared_directory;
