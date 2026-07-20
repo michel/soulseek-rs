@@ -46,7 +46,7 @@ impl Client {
         let shared_folder_count = shares.folder_count();
         let shared_file_count = shares.file_count();
         ctx.shares = shares;
-        ctx.shared_directories = self.shared_directories.clone();
+        ctx.shared_directories.clone_from(&self.shared_directories);
 
         let server_actor = ServerActor::new(
             self.address.clone(),

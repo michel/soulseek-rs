@@ -59,7 +59,7 @@ pub fn serve_file(
     let mut offset = [0u8; 8];
     stream.read_exact(&mut offset)?;
 
-    let mut buffer = [0u8; 64 * 1024];
+    let mut buffer = vec![0u8; 64 * 1024];
     loop {
         if cancel.load(Ordering::Relaxed) {
             return Err(io::Error::new(
@@ -154,7 +154,7 @@ mod tests {
         // Cancelled before the copy loop starts: the stream must abort with
         // Interrupted instead of serving the whole file.
         let cancel = Arc::new(AtomicBool::new(true));
-        let cancel_flag = cancel.clone();
+        let cancel_flag = cancel;
         let uploader = std::thread::spawn(move || {
             serve_file(
                 "127.0.0.1",
