@@ -51,9 +51,15 @@ fn main() -> Result<()> {
         )
     })?;
 
-    let password = cli.password.clone().ok_or_else(|| {
+    let password = persist::secret::resolve_password(
+        cli.password.as_deref(),
+        resolved.username.as_deref(),
+        resolved.password_cmd.as_deref(),
+        &persist::secret::KeyringStore,
+    )
+    .ok_or_else(|| {
         color_eyre::eyre::eyre!(
-            "Password required: use --password or set SOULSEEK_PASSWORD env var"
+            "Password required: use --password, set SOULSEEK_PASSWORD, or store one in the OS keychain"
         )
     })?;
 
