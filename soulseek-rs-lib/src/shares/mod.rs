@@ -307,7 +307,7 @@ mod tests {
         std::fs::write(music_a.join("a.mp3"), b"a").unwrap();
         std::fs::write(music_b.join("b.mp3"), b"b").unwrap();
 
-        let shares = Shares::scan_many(&[music_a.clone(), music_b.clone()]);
+        let shares = Shares::scan_many(&[music_a, music_b]);
         assert!(shares.get("music\\a.mp3").is_some());
         assert!(
             shares.get("music (2)\\b.mp3").is_some(),

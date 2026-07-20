@@ -701,6 +701,7 @@ impl Client {
 
     /// Ask an in-progress upload to `username` of `filename` to stop.
     /// Returns whether a matching in-progress upload was found.
+    #[must_use = "returns whether a matching upload was found"]
     pub fn cancel_upload(&self, username: &str, filename: &str) -> bool {
         self.context.read_safe().is_ok_and(|ctx| {
             let mut found = false;
