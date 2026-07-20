@@ -84,6 +84,17 @@ impl DownloadStore {
         true
     }
 
+    /// Remove every download matching `username`/`filename` regardless of
+    /// status. Used before retrying a failed download so the stale entry (whose
+    /// md5-derived token collides with the retry's) can't shadow the fresh one.
+    /// Returns whether anything was removed.
+    pub fn remove_by_file(&mut self, username: &str, filename: &str) -> bool {
+        let before = self.downloads.len();
+        self.downloads
+            .retain(|d| !(d.username == username && d.filename == filename));
+        self.downloads.len() != before
+    }
+
     pub fn pause_by_file(&mut self, username: &str, filename: &str) -> bool {
         let Some(download) = self.get_by_file_mut(username, filename) else {
             return false;
@@ -270,6 +281,28 @@ mod tests {
         assert!(!store.remove_queued_by_file("peer", "active.mp3"));
         assert!(store.get_by_token(123).is_none());
         assert!(store.get_by_token(456).is_some());
+    }
+
+    #[test]
+    fn remove_by_file_removes_regardless_of_status() {
+        let mut store = DownloadStore::new();
+        // A failed download (the retry case) plus a same-name duplicate that a
+        // token-migration could have left behind — both must go.
+        let mut failed = make_download(1, DownloadStatus::Failed(None));
+        failed.filename = "song.mp3".to_string();
+        store.add(failed);
+        let mut dup = make_download(2, DownloadStatus::Queued);
+        dup.filename = "song.mp3".to_string();
+        store.add(dup);
+        let mut other = make_download(3, DownloadStatus::Queued);
+        other.filename = "other.mp3".to_string();
+        store.add(other);
+
+        assert!(store.remove_by_file("peer", "song.mp3"));
+        assert!(store.get_by_token(1).is_none());
+        assert!(store.get_by_token(2).is_none());
+        assert!(store.get_by_token(3).is_some(), "other file untouched");
+        assert!(!store.remove_by_file("peer", "song.mp3"), "idempotent");
     }
 
     #[test]

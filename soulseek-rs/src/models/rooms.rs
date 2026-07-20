@@ -284,6 +284,16 @@ impl RoomsState {
                 }
             }
         }
+        // The active room's member list may have grown/shrunk (join/leave or a
+        // wholesale replace on Joined); keep the selection highlight in range so
+        // 'b'/'m' never act on the wrong member or a phantom one.
+        self.clamp_user_selected();
+    }
+
+    /// Keep `user_selected` within the active room's member list.
+    fn clamp_user_selected(&mut self) {
+        let len = self.active_room().map_or(0, |r| r.users.len());
+        self.user_selected = self.user_selected.min(len.saturating_sub(1));
     }
 
     /// Index of the open room `name`, creating an empty tab if necessary.
@@ -524,6 +534,54 @@ mod tests {
         state.focus_or_open("blues");
         assert_eq!(state.user_selected, 0);
         assert_eq!(state.selected_user(), None); // blues has no members yet
+    }
+
+    #[test]
+    fn user_selection_stays_in_range_when_members_leave() {
+        let mut state = RoomsState::new();
+        state.apply_event(
+            RoomEvent::Joined {
+                room: "jazz".to_string(),
+                users: vec![
+                    "alice".to_string(),
+                    "bob".to_string(),
+                    "carol".to_string(),
+                ],
+            },
+            None,
+        );
+        state.focus_or_open("jazz");
+        state.user_selected = 2; // carol highlighted (last)
+
+        // carol leaves: selection must clamp to the new last index, not point
+        // past the end (which would make 'b'/'m' silent no-ops).
+        state.apply_event(
+            RoomEvent::UserLeft {
+                room: "jazz".to_string(),
+                username: "carol".to_string(),
+            },
+            None,
+        );
+        assert_eq!(state.user_selected, 1);
+        assert_eq!(state.selected_user().as_deref(), Some("bob"));
+
+        // Everyone leaves: selection collapses to 0 and yields no user.
+        state.apply_event(
+            RoomEvent::UserLeft {
+                room: "jazz".to_string(),
+                username: "bob".to_string(),
+            },
+            None,
+        );
+        state.apply_event(
+            RoomEvent::UserLeft {
+                room: "jazz".to_string(),
+                username: "alice".to_string(),
+            },
+            None,
+        );
+        assert_eq!(state.user_selected, 0);
+        assert_eq!(state.selected_user(), None);
     }
 
     #[test]
