@@ -1101,6 +1101,23 @@ impl Client {
         }
     }
 
+    /// Remove every download for `username`/`filename` regardless of status.
+    /// Call this before re-issuing [`Client::download`] for a failed download,
+    /// otherwise the stale entry (whose md5-derived token equals the retry's)
+    /// shadows the fresh one and its completion is misrouted.
+    ///
+    /// Returns whether anything was removed.
+    #[must_use]
+    pub fn remove_download(&self, username: &str, filename: &str) -> bool {
+        match self.context.write_safe() {
+            Ok(mut ctx) => ctx.downloads.remove_by_file(username, filename),
+            Err(e) => {
+                error!("[client] remove_download: {}", e);
+                false
+            }
+        }
+    }
+
     pub fn download(
         &self,
         filename: String,

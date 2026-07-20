@@ -1324,9 +1324,13 @@ impl MainTui {
         let client = self.client.clone();
         let sender = self.state.downloads_sender_channel.clone().unwrap();
 
-        // Drop the old failed entry; the retry pushes a fresh one.
+        // Drop the old failed entry from both the UI list and the client's
+        // download store; otherwise the stale entry (same md5-derived token and
+        // filename) shadows the retry and its completion is misrouted, leaving
+        // the retried download stuck showing "Queued".
         self.state.downloads.remove(index);
         self.select_download_after_removal(index);
+        let _ = self.client.remove_download(&username, &filename);
 
         thread::spawn(move || {
             match client.download(filename.clone(), username, size, directory) {
