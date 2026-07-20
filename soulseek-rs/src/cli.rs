@@ -40,7 +40,8 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
 
-    /// Directory downloads are saved to (default: ~/Downloads)
+    /// Directory downloads are saved to (default: your Downloads/Soulseek
+    /// folder, which is also shared unless shared_dir says otherwise)
     #[arg(short, long, env = "SOULSEEK_DOWNLOAD_DIR")]
     pub download_dir: Option<String>,
 

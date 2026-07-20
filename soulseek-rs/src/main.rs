@@ -172,6 +172,16 @@ fn run_default_tui(
 
     let (server_host, server_port) = parse_server_address(&resolved.server)?;
 
+    // Make sure the download folder exists up front: first-run defaults point
+    // download and shared at the same fresh Downloads/Soulseek folder, and
+    // shared-directory validation requires an existing path.
+    if let Err(e) = std::fs::create_dir_all(&resolved.download_dir) {
+        eprintln!(
+            "⚠️  Could not create download directory {}: {e}",
+            resolved.download_dir
+        );
+    }
+
     let shared_directory = match directories::resolve_shared_directory(
         resolved.shared_dir.as_deref(),
     ) {
