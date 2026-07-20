@@ -96,7 +96,7 @@ impl TestServer {
             server_address: PeerAddress::new(self.host.clone(), self.port),
             enable_listen: false,
             listen_port: 0,
-            shared_directory: None,
+            shared_directories: Vec::new(),
         }
     }
 
@@ -1164,7 +1164,7 @@ fn two_real_clients_search_and_download() {
 
     let sharer_port = free_port().expect("sharer port");
     let mut sharer = Client::with_settings(ClientSettings {
-        shared_directory: Some(share_dir.display().to_string()),
+        shared_directories: vec![share_dir.display().to_string()],
         ..server.listening_settings("e2e_sharer", "pw", sharer_port)
     });
     sharer.connect().expect("sharer connect");
@@ -1260,7 +1260,7 @@ fn browse_a_peers_shared_files() {
 
     let sharer_port = free_port().expect("sharer port");
     let mut sharer = Client::with_settings(ClientSettings {
-        shared_directory: Some(share_dir.display().to_string()),
+        shared_directories: vec![share_dir.display().to_string()],
         ..server.listening_settings("e2e_browsee", "pw", sharer_port)
     });
     sharer.connect().expect("sharer connect");
@@ -1316,7 +1316,7 @@ fn browse_a_firewalled_peer_via_broker() {
     // Sharer does NOT listen (firewalled): the browser's direct dial will fail,
     // forcing the server-brokered connect-back.
     let mut sharer = Client::with_settings(ClientSettings {
-        shared_directory: Some(share_dir.display().to_string()),
+        shared_directories: vec![share_dir.display().to_string()],
         ..server.settings("e2e_fw_sharer", "pw")
     });
     sharer.connect().expect("sharer connect");

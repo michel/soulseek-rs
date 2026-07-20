@@ -10,5 +10,5 @@ pub struct SearchConfig {
     pub download_dir: String,
     pub verbose: u8,
     pub max_concurrent_downloads: usize,
-    pub shared_directory: Option<String>,
+    pub shared_directories: Vec<String>,
 }

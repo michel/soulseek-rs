@@ -353,10 +353,13 @@ impl MainTui {
 
         let shortcuts_line = format_shortcuts_styled(&shortcuts);
         // Surface our own sharing status in the block title.
-        let title = format!(
-            "Shortcuts · Sharing: {}",
-            self.client.shared_directory().unwrap_or("off")
-        );
+        let shared = self.client.shared_directories();
+        let sharing = match shared {
+            [] => "off".to_string(),
+            [only] => only.clone(),
+            more => format!("{} folders", more.len()),
+        };
+        let title = format!("Shortcuts · Sharing: {sharing}");
         let shortcuts_widget = Paragraph::new(shortcuts_line).block(
             Block::default()
                 .borders(Borders::ALL)

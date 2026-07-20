@@ -13,7 +13,11 @@ pub struct FileConfig {
     pub listener_port: Option<u16>,
     pub disable_listener: Option<bool>,
     pub download_dir: Option<String>,
+    /// Single shared folder (also what `--shared-dir` sets). Prefer
+    /// `shared_dirs` for multiple; both may be combined.
     pub shared_dir: Option<String>,
+    /// Multiple shared folders. An explicitly empty list disables sharing.
+    pub shared_dirs: Option<Vec<String>>,
     pub max_concurrent_downloads: Option<usize>,
     pub search_timeout: Option<u64>,
     /// Command whose stdout is the password (headless fallback, like mutt's
@@ -61,7 +65,7 @@ pub struct Resolved {
     pub listener_port: u16,
     pub disable_listener: bool,
     pub download_dir: String,
-    pub shared_dir: Option<String>,
+    pub shared_dirs: Vec<String>,
     pub max_concurrent_downloads: usize,
     pub search_timeout: u64,
     pub password_cmd: Option<String>,
@@ -98,14 +102,7 @@ pub fn resolve(cli: &crate::cli::Cli, file: &FileConfig) -> Resolved {
         disable_listener: cli.disable_listener
             || file.disable_listener.unwrap_or(false),
         download_dir: download_dir.clone(),
-        // Soulseek convention: share what you download. An explicitly empty
-        // shared_dir ("") opts out of sharing entirely.
-        shared_dir: cli
-            .shared_dir
-            .clone()
-            .or_else(|| file.shared_dir.clone())
-            .or(Some(download_dir))
-            .filter(|dir| !dir.trim().is_empty()),
+        shared_dirs: resolve_shared_dirs(cli, file, &download_dir),
         max_concurrent_downloads: cli
             .max_concurrent_downloads
             .or(file.max_concurrent_downloads)
@@ -116,6 +113,33 @@ pub fn resolve(cli: &crate::cli::Cli, file: &FileConfig) -> Resolved {
             .unwrap_or(DEFAULT_SEARCH_TIMEOUT),
         password_cmd: file.password_cmd.clone(),
     }
+}
+
+/// Sharing follows the Soulseek convention of sharing what you download:
+/// with nothing configured, the download folder is shared. Configuring any
+/// of `--shared-dir` / `shared_dir` / `shared_dirs` replaces that default
+/// (their non-empty values are combined), and an explicitly empty value
+/// (`shared_dir = ""` or `shared_dirs = []`) disables sharing entirely.
+fn resolve_shared_dirs(
+    cli: &crate::cli::Cli,
+    file: &FileConfig,
+    download_dir: &str,
+) -> Vec<String> {
+    if cli.shared_dir.is_none()
+        && file.shared_dir.is_none()
+        && file.shared_dirs.is_none()
+    {
+        return vec![download_dir.to_string()];
+    }
+    let mut dirs: Vec<String> = Vec::new();
+    let singles = cli.shared_dir.iter().chain(file.shared_dir.iter());
+    for dir in singles.chain(file.shared_dirs.iter().flatten()) {
+        let dir = dir.trim();
+        if !dir.is_empty() && !dirs.iter().any(|d| d == dir) {
+            dirs.push(dir.to_string());
+        }
+    }
+    dirs
 }
 
 #[cfg(test)]
@@ -169,22 +193,19 @@ mod tests {
     }
 
     #[test]
-    fn shared_dir_defaults_to_the_download_dir() {
+    fn sharing_defaults_to_the_download_dir() {
         let resolved = resolve(&bare_cli(), &FileConfig::default());
-        assert_eq!(
-            resolved.shared_dir.as_deref(),
-            Some(resolved.download_dir.as_str())
-        );
+        assert_eq!(resolved.shared_dirs, vec![resolved.download_dir.clone()]);
     }
 
     #[test]
-    fn shared_dir_follows_a_customized_download_dir() {
+    fn sharing_follows_a_customized_download_dir() {
         let file = FileConfig {
             download_dir: Some("/music".into()),
             ..FileConfig::default()
         };
         let resolved = resolve(&bare_cli(), &file);
-        assert_eq!(resolved.shared_dir.as_deref(), Some("/music"));
+        assert_eq!(resolved.shared_dirs, vec!["/music".to_string()]);
     }
 
     #[test]
@@ -194,7 +215,45 @@ mod tests {
             ..FileConfig::default()
         };
         let resolved = resolve(&bare_cli(), &file);
-        assert_eq!(resolved.shared_dir, None);
+        assert!(resolved.shared_dirs.is_empty());
+    }
+
+    #[test]
+    fn empty_shared_dirs_list_disables_sharing() {
+        let file = FileConfig {
+            shared_dirs: Some(Vec::new()),
+            ..FileConfig::default()
+        };
+        let resolved = resolve(&bare_cli(), &file);
+        assert!(resolved.shared_dirs.is_empty());
+    }
+
+    #[test]
+    fn shared_dirs_list_replaces_the_default_share() {
+        let file = FileConfig {
+            shared_dirs: Some(vec!["/a".into(), "/b".into()]),
+            ..FileConfig::default()
+        };
+        let resolved = resolve(&bare_cli(), &file);
+        assert_eq!(
+            resolved.shared_dirs,
+            vec!["/a".to_string(), "/b".to_string()]
+        );
+    }
+
+    #[test]
+    fn cli_shared_dir_combines_with_file_list_and_dedupes() {
+        let mut cli = bare_cli();
+        cli.shared_dir = Some("/a".into());
+        let file = FileConfig {
+            shared_dirs: Some(vec!["/a".into(), "/b".into()]),
+            ..FileConfig::default()
+        };
+        let resolved = resolve(&cli, &file);
+        assert_eq!(
+            resolved.shared_dirs,
+            vec!["/a".to_string(), "/b".to_string()]
+        );
     }
 
     #[test]
@@ -206,6 +265,7 @@ mod tests {
             disable_listener: Some(true),
             download_dir: Some("/music".into()),
             shared_dir: Some("/shared".into()),
+            shared_dirs: None,
             max_concurrent_downloads: Some(2),
             search_timeout: Some(30),
             password_cmd: Some("pass show slsk".into()),
@@ -216,7 +276,7 @@ mod tests {
         assert_eq!(resolved.listener_port, 4321);
         assert!(resolved.disable_listener);
         assert_eq!(resolved.download_dir, "/music");
-        assert_eq!(resolved.shared_dir.as_deref(), Some("/shared"));
+        assert_eq!(resolved.shared_dirs, vec!["/shared".to_string()]);
         assert_eq!(resolved.max_concurrent_downloads, 2);
         assert_eq!(resolved.search_timeout, 30);
         assert_eq!(resolved.password_cmd.as_deref(), Some("pass show slsk"));
