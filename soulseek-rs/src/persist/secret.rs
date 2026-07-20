@@ -32,9 +32,10 @@ impl SecretStore for KeyringStore {
     }
 }
 
-/// Resolve the password with precedence: CLI/env (`cli_password`, already
-/// merged by clap) > OS keychain > `password_cmd` from config.toml. Returns
-/// `None` when no source has one — the caller shows the login screen.
+/// Resolve the password with precedence: CLI/env > keychain > `password_cmd`.
+///
+/// `cli_password` already has env merged in by clap. Returns `None` when no
+/// source has one — the caller shows the login screen.
 ///
 /// Keychain errors are downgraded to "not found": on headless boxes without
 /// a secret service the fallbacks must still work.

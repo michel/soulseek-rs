@@ -418,6 +418,30 @@ fn wrong_password_is_rejected() {
 }
 
 #[test]
+fn registered_username_can_relogin_with_same_password() {
+    let server = server_or_skip!();
+
+    // The TUI's stored-credentials flow depends on this pair of server
+    // behaviors: a fresh username is registered by simply logging in, and a
+    // later session (a "restart") with the same credentials is accepted.
+    let user = "e2e_relogin_user";
+    let mut first = Client::with_settings(server.settings(user, "pw-123"));
+    first.connect().expect("connect (registering login)");
+    assert!(
+        first.login().expect("registering login"),
+        "a fresh username should be auto-registered"
+    );
+    drop(first);
+
+    let mut second = Client::with_settings(server.settings(user, "pw-123"));
+    second.connect().expect("connect (relogin)");
+    assert!(
+        second.login().expect("relogin"),
+        "the same credentials must log in again after a restart"
+    );
+}
+
+#[test]
 fn two_clients_can_be_logged_in_together() {
     let server = server_or_skip!();
 

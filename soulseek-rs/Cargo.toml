@@ -13,6 +13,13 @@ categories = ["command-line-utilities"]
 name = "soulseek-rs"
 path = "src/main.rs"
 
+# Small library target so integration tests can exercise the persistence
+# pipeline; the dependency soulseek-rs-lib already owns the `soulseek_rs`
+# crate name, hence the distinct one.
+[lib]
+name = "soulseek_rs_tui"
+path = "src/lib.rs"
+
 [lints]
 workspace = true
 

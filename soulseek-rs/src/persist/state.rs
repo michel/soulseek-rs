@@ -29,7 +29,8 @@ pub struct StateStore {
 }
 
 impl StateStore {
-    pub fn new(dir: PathBuf) -> Self {
+    #[must_use]
+    pub const fn new(dir: PathBuf) -> Self {
         Self { dir }
     }
 
@@ -198,9 +199,7 @@ mod tests {
     fn migrations_upgrade_old_data() {
         // Machinery test with a synthetic chain: v0 stored plain strings,
         // v1 wraps each in an object {"name": ...}.
-        #[derive(
-            Debug, PartialEq, Default, Serialize, serde::Deserialize,
-        )]
+        #[derive(Debug, PartialEq, Default, Serialize, serde::Deserialize)]
         struct Named {
             name: String,
         }
@@ -216,15 +215,11 @@ mod tests {
         }];
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("things.json");
-        std::fs::write(&path, r#"{"version": 0, "data": ["a", "b"]}"#)
-            .unwrap();
+        std::fs::write(&path, r#"{"version": 0, "data": ["a", "b"]}"#).unwrap();
         let loaded: Vec<Named> = load(&path, chain);
         assert_eq!(
             loaded,
-            vec![
-                Named { name: "a".into() },
-                Named { name: "b".into() }
-            ]
+            vec![Named { name: "a".into() }, Named { name: "b".into() }]
         );
     }
 

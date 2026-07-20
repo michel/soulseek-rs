@@ -88,7 +88,8 @@ impl MainTui {
                         status: soulseek_rs::DownloadStatus::Completed,
                         sender: std::sync::mpsc::channel().0,
                         queue_position: None,
-                        metadata: Default::default(),
+                        metadata: soulseek_rs::types::DownloadMetadata::default(
+                        ),
                     },
                     receiver: None,
                 });

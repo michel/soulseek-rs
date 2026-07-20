@@ -119,7 +119,7 @@ impl LoginForm {
         }
     }
 
-    fn focused_field_mut(&mut self) -> &mut String {
+    const fn focused_field_mut(&mut self) -> &mut String {
         match self.focused {
             LoginField::Username => &mut self.username,
             LoginField::Password => &mut self.password,
@@ -148,18 +148,18 @@ pub fn run_login_flow(
 ) -> Result<Option<LoginOutcome>> {
     let mut form = LoginForm::new(initial_username);
     let mut entered_via_form = false;
-    let mut attempt: Option<Receiver<Result<Client, String>>> = None;
-
-    if let Some(password) = initial_password
-        && !form.username.is_empty()
-    {
-        form.password = password;
-        form.phase = LoginPhase::Connecting;
-        attempt = Some(spawn_attempt(make_settings(
-            form.username.clone(),
-            form.password.clone(),
-        )));
-    }
+    let mut attempt: Option<Receiver<Result<Client, String>>> =
+        match initial_password {
+            Some(password) if !form.username.is_empty() => {
+                form.password = password;
+                form.phase = LoginPhase::Connecting;
+                Some(spawn_attempt(make_settings(
+                    form.username.clone(),
+                    form.password.clone(),
+                )))
+            }
+            _ => None,
+        };
 
     loop {
         terminal.draw(|frame| render(frame, &form))?;
@@ -207,9 +207,7 @@ pub fn run_login_flow(
 }
 
 /// Connect and log in on a background thread so the UI stays responsive.
-fn spawn_attempt(
-    settings: ClientSettings,
-) -> Receiver<Result<Client, String>> {
+fn spawn_attempt(settings: ClientSettings) -> Receiver<Result<Client, String>> {
     let (tx, rx) = channel();
     std::thread::spawn(move || {
         let mut client = Client::with_settings(settings);
@@ -288,13 +286,10 @@ fn render(frame: &mut Frame, form: &LoginForm) {
             "Connecting…",
             Style::default().fg(Color::Yellow),
         ))),
-        LoginPhase::Failed(message) => {
-            Paragraph::new(Line::from(Span::styled(
-                message.clone(),
-                Style::default().fg(Color::Red),
-            )))
-            .wrap(ratatui::widgets::Wrap { trim: true })
-        }
+        LoginPhase::Failed(message) => Paragraph::new(Line::from(
+            Span::styled(message.clone(), Style::default().fg(Color::Red)),
+        ))
+        .wrap(ratatui::widgets::Wrap { trim: true }),
     };
     frame.render_widget(status, rows[3]);
 

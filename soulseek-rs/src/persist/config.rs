@@ -5,7 +5,7 @@ use std::path::Path;
 /// Optional settings read from `config.toml`. Every field is optional so a
 /// partial file (or none at all) is valid; unknown keys are ignored so newer
 /// configs still load in older builds.
-#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FileConfig {
     pub username: Option<String>,
@@ -54,7 +54,7 @@ impl FileConfig {
 
 /// Fully-resolved settings after layering CLI (which already includes env via
 /// clap) over the config file over built-in defaults.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resolved {
     pub username: Option<String>,
     pub server: String,
@@ -73,10 +73,12 @@ pub const DEFAULT_DOWNLOAD_DIR: &str = "~/Downloads";
 pub const DEFAULT_MAX_CONCURRENT_DOWNLOADS: usize = 5;
 pub const DEFAULT_SEARCH_TIMEOUT: u64 = 10;
 
-/// Layer CLI/env values over the config file over defaults. The
-/// `--disable-listener` flag can only enable the disable (a bare flag has no
-/// "explicitly off" form), so file `disable_listener = true` wins unless the
-/// flag is passed.
+/// Layer CLI/env values over the config file over defaults.
+///
+/// The `--disable-listener` flag can only enable the disable (a bare flag
+/// has no "explicitly off" form), so file `disable_listener = true` wins
+/// unless the flag is passed.
+#[must_use]
 pub fn resolve(cli: &crate::cli::Cli, file: &FileConfig) -> Resolved {
     Resolved {
         username: cli.username.clone().or_else(|| file.username.clone()),

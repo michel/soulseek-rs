@@ -17,6 +17,7 @@ impl Snapshot {
     /// Extract what should survive a restart. Downloads that are not yet
     /// `Completed` (including failed/timed-out ones) are marked incomplete
     /// so the next start can re-enqueue them.
+    #[must_use]
     pub fn capture(state: &AppState) -> Self {
         let downloads = state
             .downloads
@@ -25,10 +26,7 @@ impl Snapshot {
                 username: entry.download.username.clone(),
                 filename: entry.download.filename.clone(),
                 size: entry.download.size,
-                download_directory: entry
-                    .download
-                    .download_directory
-                    .clone(),
+                download_directory: entry.download.download_directory.clone(),
                 completed: matches!(
                     entry.download.status,
                     DownloadStatus::Completed
@@ -43,8 +41,12 @@ impl Snapshot {
             }
         }
 
-        let rooms =
-            state.rooms.open.iter().map(|room| room.name.clone()).collect();
+        let rooms = state
+            .rooms
+            .open
+            .iter()
+            .map(|room| room.name.clone())
+            .collect();
 
         Self {
             downloads,
@@ -80,10 +82,7 @@ mod tests {
     use std::sync::{Arc, mpsc};
     use std::time::Instant;
 
-    fn download(
-        filename: &str,
-        status: DownloadStatus,
-    ) -> DownloadEntry {
+    fn download(filename: &str, status: DownloadStatus) -> DownloadEntry {
         let (sender, _receiver) = mpsc::channel();
         DownloadEntry {
             download: Download {
@@ -114,8 +113,12 @@ mod tests {
     #[test]
     fn capture_maps_download_status_to_completed_flag() {
         let mut state = AppState::new();
-        state.downloads.push(download("done.mp3", DownloadStatus::Completed));
-        state.downloads.push(download("queued.mp3", DownloadStatus::Queued));
+        state
+            .downloads
+            .push(download("done.mp3", DownloadStatus::Completed));
+        state
+            .downloads
+            .push(download("queued.mp3", DownloadStatus::Queued));
         state.downloads.push(download(
             "failed.mp3",
             DownloadStatus::Failed(Some("nope".into())),

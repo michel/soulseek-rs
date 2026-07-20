@@ -200,19 +200,15 @@ fn run_default_tui(
 
     let enable_listen = !resolved.disable_listener;
     let listen_port = resolved.listener_port;
-    let make_settings = move |username: String, password: String| {
-        ClientSettings {
+    let make_settings =
+        move |username: String, password: String| ClientSettings {
             username,
             password,
-            server_address: PeerAddress::new(
-                server_host.clone(),
-                server_port,
-            ),
+            server_address: PeerAddress::new(server_host.clone(), server_port),
             enable_listen,
             listen_port,
             shared_directory: shared_directory.clone(),
-        }
-    };
+        };
 
     // Clear screen and enable mouse capture before initializing TUI
     let _ =
@@ -243,8 +239,8 @@ fn run_default_tui(
 
     persist_credentials(&outcome, config_path, file_config, &secret_store);
 
-    let store = persist::paths::state_dir()
-        .map(persist::state::StateStore::new);
+    let store =
+        persist::paths::state_dir().map(persist::state::StateStore::new);
 
     launch_main_tui(
         terminal,

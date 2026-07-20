@@ -111,6 +111,7 @@ pub struct AppState {
 }
 
 impl AppState {
+    #[must_use]
     pub fn new() -> Self {
         let mut searches_table_state = TableState::default();
         searches_table_state.select(Some(0));
@@ -166,6 +167,7 @@ impl AppState {
     }
 
     #[allow(dead_code)]
+    #[must_use]
     pub fn get_selected_search(&self) -> Option<&SearchEntry> {
         self.selected_search_index
             .and_then(|idx| self.searches.get(idx))

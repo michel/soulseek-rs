@@ -1,6 +1,6 @@
 mod download_selector;
-pub mod login;
 mod downloads;
+pub mod login;
 mod main_tui;
 mod panes;
 mod styles;
