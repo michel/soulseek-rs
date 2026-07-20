@@ -59,6 +59,18 @@ fn next_upload_token() -> u32 {
 struct UploadJob {
     downloader: String,
     real_path: std::path::PathBuf,
+    virtual_path: String,
+    size: u64,
+}
+
+/// Live bookkeeping for an upload being served (or recently finished).
+struct ActiveUpload {
+    username: String,
+    filename: String,
+    size: u64,
+    bytes_sent: Arc<std::sync::atomic::AtomicU64>,
+    cancel: Arc<std::sync::atomic::AtomicBool>,
+    status: crate::types::UploadStatus,
 }
 
 /// Build a `FileSearchResponse` for `query` against `shares`, or `None` if
@@ -210,6 +222,7 @@ pub struct ClientContext {
     pending_peer_messages: HashMap<String, Vec<crate::message::Message>>,
     /// Uploads we have offered, keyed by our transfer token.
     uploads: HashMap<u32, UploadJob>,
+    active_uploads: HashMap<u32, ActiveUpload>,
     /// Upload tokens waiting for the downloader's address to be resolved.
     pending_serves: HashMap<String, Vec<u32>>,
     /// Shared-file listings received from peers we browsed.
@@ -507,6 +520,7 @@ impl ClientContext {
             peer_addresses: HashMap::new(),
             pending_peer_messages: HashMap::new(),
             uploads: HashMap::new(),
+            active_uploads: HashMap::new(),
             pending_serves: HashMap::new(),
             browse_results: HashMap::new(),
             room_list: Vec::new(),
@@ -655,6 +669,54 @@ impl Client {
             .read_safe()
             .map(|ctx| ctx.shared_directories.clone())
             .unwrap_or_default()
+    }
+
+    /// Snapshot of the uploads served this session (active and finished),
+    /// most recent last.
+    #[must_use]
+    pub fn uploads(&self) -> Vec<crate::types::UploadInfo> {
+        self.context.read_safe().map_or_else(
+            |_| Vec::new(),
+            |ctx| {
+                let mut tokens: Vec<&u32> = ctx.active_uploads.keys().collect();
+                tokens.sort_unstable();
+                tokens
+                    .into_iter()
+                    .map(|token| {
+                        let upload = &ctx.active_uploads[token];
+                        crate::types::UploadInfo {
+                            username: upload.username.clone(),
+                            filename: upload.filename.clone(),
+                            size: upload.size,
+                            bytes_sent: upload
+                                .bytes_sent
+                                .load(std::sync::atomic::Ordering::Relaxed),
+                            status: upload.status.clone(),
+                        }
+                    })
+                    .collect()
+            },
+        )
+    }
+
+    /// Ask an in-progress upload to `username` of `filename` to stop.
+    /// Returns whether a matching in-progress upload was found.
+    pub fn cancel_upload(&self, username: &str, filename: &str) -> bool {
+        self.context.read_safe().is_ok_and(|ctx| {
+            let mut found = false;
+            for upload in ctx.active_uploads.values() {
+                if upload.username == username
+                    && upload.filename == filename
+                    && upload.status == crate::types::UploadStatus::InProgress
+                {
+                    upload
+                        .cancel
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                    found = true;
+                }
+            }
+            found
+        })
     }
 
     /// Replace the shared directories at runtime: rescan into a fresh

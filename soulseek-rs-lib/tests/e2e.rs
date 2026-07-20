@@ -1245,6 +1245,24 @@ fn two_real_clients_search_and_download() {
         .expect("downloaded file should exist");
     assert_eq!(written, content, "downloaded bytes should match the source");
 
+    // The uploader side tracked the transfer and saw it complete.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut uploads = sharer.uploads();
+    while Instant::now() < deadline
+        && !uploads
+            .iter()
+            .any(|u| u.status == soulseek_rs::types::UploadStatus::Completed)
+    {
+        std::thread::sleep(Duration::from_millis(200));
+        uploads = sharer.uploads();
+    }
+    let upload = uploads
+        .iter()
+        .find(|u| u.status == soulseek_rs::types::UploadStatus::Completed)
+        .expect("uploader should record a completed upload");
+    assert_eq!(upload.username, "e2e_leecher");
+    assert_eq!(upload.bytes_sent, size);
+
     let _ = std::fs::remove_dir_all(share_dir);
     let _ = std::fs::remove_dir_all(download_dir);
 }
