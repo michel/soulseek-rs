@@ -1,13 +1,30 @@
 # Soulseek-rs 🦀
 
-Souleek-rs is a Soulseek library and client built in Rust. It's
-under development and not yet ready for use. Soulseek is a closed-source P2P
-file-sharing network from the 2000s. It's still used by music enthusiasts
-around the world to share niche music.
+Soulseek-rs is a Soulseek library and client built in Rust. Soulseek is a
+closed-source P2P file-sharing network from the 2000s. It's still used by
+music enthusiasts around the world to share niche music.
 
 ## 🎥 Demo
 
 ![CLI Demo](fixtures/demo.gif)
+
+## Features
+
+- **Search & download** — search the network, pick results in the TUI, and
+  queue downloads with pause, resume, and retry
+- **Sharing** — point `--shared-dir` at a directory and your files show up in
+  searches; peers can browse and download them
+- **Browse** — list any user's shared files and download straight from the tree
+- **Chat rooms** — list, join, and talk in public rooms, several open at once
+- **Private messages** — send and receive messages, with an inbox in the TUI
+- **Firewalled peers** — downloads and browsing fall back to server-brokered
+  connections when a peer can't be reached directly
+- **Automatic port mapping** — opens your listen port via UPnP-IGD and
+  NAT-PMP, with a `portmap` subcommand to test your router
+- **TUI and CLI** — a full terminal interface, plus scriptable subcommands
+  (`search`, `message`, `browse`, `rooms`, `chat`, `portmap`)
+- **Zero-dependency library** — the protocol crate uses only the Rust
+  standard library, down to its own zlib inflate and md5
 
 ## Project Goals
 
@@ -149,8 +166,6 @@ To run the project in development mode with debug output and trace output:
 ```bash
 RUST_LOG=trace cargo run
 ```
-
-## Development
 
 To run the tests:
 
