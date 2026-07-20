@@ -113,16 +113,24 @@ impl MainTui {
             // Update spinner
             self.spinner_state = (self.spinner_state + 1) % 10;
 
-            // Poll for input events
+            // Drain every queued input event before the next draw: key
+            // autorepeat outpaces the frame time, and handling one event per
+            // frame makes the backlog keep scrolling for seconds after the
+            // key is released.
             if poll(Duration::from_millis(100))? {
-                match event::read()? {
-                    Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        self.handle_key_event(key);
+                loop {
+                    match event::read()? {
+                        Event::Key(key) if key.kind == KeyEventKind::Press => {
+                            self.handle_key_event(key);
+                        }
+                        Event::Mouse(mouse) => {
+                            self.handle_mouse_event(mouse);
+                        }
+                        _ => {}
                     }
-                    Event::Mouse(mouse) => {
-                        self.handle_mouse_event(mouse);
+                    if self.state.should_exit || !poll(Duration::ZERO)? {
+                        break;
                     }
-                    _ => {}
                 }
             }
         }
@@ -1715,7 +1723,12 @@ impl MainTui {
         // Now update state without holding any client locks
         for (idx, search_results) in all_results {
             if let Some(search) = self.state.searches.get_mut(idx) {
-                if !search_results.is_empty() {
+                // Results only accumulate, so an unchanged file count means
+                // nothing new arrived: skip the rebuild, which clones the
+                // full result list several times and dominates frame time.
+                let total_files: usize =
+                    search_results.iter().map(|r| r.files.len()).sum();
+                if total_files != search.results.len() {
                     search.results.clear();
                     for result in search_results {
                         for file in result.files {
