@@ -46,7 +46,12 @@ impl Shares {
 
         let mut files = Vec::new();
         let mut folder_count = 0;
-        scan_root(root, &root_display_name(root), &mut files, &mut folder_count);
+        scan_root(
+            root,
+            &root_display_name(root),
+            &mut files,
+            &mut folder_count,
+        );
         Ok(Self::from_files(files, folder_count))
     }
 
@@ -278,8 +283,7 @@ mod tests {
     fn scan_many_merges_roots() {
         let root_a = temp_tree();
         let root_b = temp_tree();
-        let shares =
-            Shares::scan_many(&[root_a.clone(), root_b.clone()]);
+        let shares = Shares::scan_many(&[root_a.clone(), root_b.clone()]);
         assert_eq!(shares.file_count(), 6);
         assert_eq!(shares.folder_count(), 4);
         // Files from both roots are reachable under their root's name.
@@ -303,8 +307,7 @@ mod tests {
         std::fs::write(music_a.join("a.mp3"), b"a").unwrap();
         std::fs::write(music_b.join("b.mp3"), b"b").unwrap();
 
-        let shares =
-            Shares::scan_many(&[music_a.clone(), music_b.clone()]);
+        let shares = Shares::scan_many(&[music_a.clone(), music_b.clone()]);
         assert!(shares.get("music\\a.mp3").is_some());
         assert!(
             shares.get("music (2)\\b.mp3").is_some(),

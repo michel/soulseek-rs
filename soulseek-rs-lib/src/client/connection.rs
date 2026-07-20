@@ -2,7 +2,7 @@ use super::{
     Arc, Client, ClientContext, ClientOperation, ConnectionType, DownloadPeer,
     DownloadStatus, Listen, Peer, PeerRegistry, Receiver, Result, RwLock,
     RwLockExt, Sender, ServerActor, ServerMessage, Shares, SoulseekRs,
-    TcpStream, debug, error, info, mpsc, thread, trace, warn,
+    TcpStream, debug, error, info, mpsc, thread, trace,
 };
 
 impl Client {
@@ -46,6 +46,7 @@ impl Client {
         let shared_folder_count = shares.folder_count();
         let shared_file_count = shares.file_count();
         ctx.shares = shares;
+        ctx.shared_directories = self.shared_directories.clone();
 
         let server_actor = ServerActor::new(
             self.address.clone(),

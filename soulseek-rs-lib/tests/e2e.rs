@@ -1250,6 +1250,62 @@ fn two_real_clients_search_and_download() {
 }
 
 #[test]
+fn a_runtime_share_update_is_visible_to_browsers() {
+    let server = server_or_skip!();
+
+    // The sharer starts sharing NOTHING, then adds a directory at runtime
+    // (what the TUI settings screen does).
+    let sharer_port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(server.listening_settings(
+        "e2e_reshare",
+        "pw",
+        sharer_port,
+    ));
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+    assert!(sharer.shared_directories().is_empty());
+
+    let share_dir = unique_download_dir();
+    std::fs::create_dir_all(share_dir.join("new")).unwrap();
+    std::fs::write(share_dir.join("new").join("late.mp3"), b"yyyy").unwrap();
+    sharer
+        .set_shared_directories(vec![share_dir.display().to_string()])
+        .expect("runtime share update");
+    assert_eq!(sharer.shared_directories().len(), 1);
+
+    let browser_port = free_port().expect("browser port");
+    let mut browser = Client::with_settings(server.listening_settings(
+        "e2e_reshare_browser",
+        "pw",
+        browser_port,
+    ));
+    browser.connect().expect("browser connect");
+    assert!(browser.login().expect("browser login"));
+
+    std::thread::sleep(Duration::from_secs(1));
+    browser.browse_user("e2e_reshare").expect("browse request");
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut listing = None;
+    while Instant::now() < deadline {
+        if let Some(result) = browser.take_browse_result("e2e_reshare") {
+            listing = Some(result);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let directories = listing.expect("browser should receive the listing");
+    assert!(
+        directories
+            .iter()
+            .any(|d| d.files.iter().any(|(name, _)| name == "late.mp3")),
+        "the listing should include the file shared at runtime"
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+#[test]
 fn browse_a_peers_shared_files() {
     let server = server_or_skip!();
 
