@@ -671,6 +671,14 @@ impl Client {
             .unwrap_or_default()
     }
 
+    /// `(folders, files)` currently shared with peers.
+    #[must_use]
+    pub fn shared_counts(&self) -> (u32, u32) {
+        self.context.read_safe().map_or((0, 0), |ctx| {
+            (ctx.shares.folder_count(), ctx.shares.file_count())
+        })
+    }
+
     /// Snapshot of the uploads served this session (active and finished),
     /// most recent last.
     #[must_use]

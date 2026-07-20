@@ -29,6 +29,11 @@ impl MainTui {
             return self.handle_rooms_input(key);
         }
 
+        // Settings popup takes over navigation while open.
+        if self.state.settings.is_some() {
+            return self.handle_settings_input(key);
+        }
+
         // Filter mode in Results pane
         if self.state.results_is_filtering
             && self.state.focused_pane == FocusedPane::Results
@@ -79,6 +84,10 @@ impl MainTui {
                 if self.state.focused_pane != FocusedPane::Downloads =>
             {
                 self.start_rooms();
+                return;
+            }
+            KeyCode::Char('o') => {
+                self.open_settings();
                 return;
             }
             KeyCode::Char('b') => {
@@ -361,26 +370,23 @@ impl MainTui {
     }
 
     fn handle_downloads_input(&mut self, key: KeyEvent) {
+        // The pane lists downloads first, then uploads; navigation spans both.
+        let rows = self.state.downloads.len() + self.state.uploads.len();
         match key.code {
-            KeyCode::Up | KeyCode::Char('k')
-                if !self.state.downloads.is_empty() =>
-            {
+            KeyCode::Up | KeyCode::Char('k') if rows > 0 => {
                 let current =
                     self.state.downloads_table_state.selected().unwrap_or(0);
-                let new = if current == 0 {
-                    self.state.downloads.len() - 1
-                } else {
-                    current - 1
-                };
+                let new = if current == 0 { rows - 1 } else { current - 1 };
                 self.state.downloads_table_state.select(Some(new));
             }
-            KeyCode::Down | KeyCode::Char('j')
-                if !self.state.downloads.is_empty() =>
-            {
+            KeyCode::Down | KeyCode::Char('j') if rows > 0 => {
                 let current =
                     self.state.downloads_table_state.selected().unwrap_or(0);
-                let new = (current + 1) % self.state.downloads.len();
+                let new = (current + 1) % rows;
                 self.state.downloads_table_state.select(Some(new));
+            }
+            KeyCode::Char('x') => {
+                self.cancel_selected_upload();
             }
             KeyCode::Char('p') => {
                 self.toggle_selected_download_pause();

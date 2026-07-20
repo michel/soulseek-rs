@@ -4,6 +4,7 @@ mod input;
 mod render;
 mod rooms;
 mod search;
+mod settings;
 
 use crate::models::AppState;
 use crate::persist::{
@@ -176,6 +177,9 @@ impl MainTui {
 
             // Poll for chat-room events
             self.poll_room_events();
+
+            // Refresh the uploads we are serving to peers
+            self.state.uploads = self.client.uploads();
 
             self.spinner_state = (self.spinner_state + 1) % 10;
 

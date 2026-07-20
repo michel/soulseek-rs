@@ -189,6 +189,32 @@ impl MainTui {
         self.state.results_selected_indices.clear();
     }
 
+    /// Cancel the selected transfer when it is an upload row (uploads are
+    /// listed after the downloads in the shared pane).
+    pub(super) fn cancel_selected_upload(&self) {
+        let Some(index) = self.state.downloads_table_state.selected() else {
+            return;
+        };
+        let Some(upload) = self
+            .state
+            .uploads
+            .get(index.wrapping_sub(self.state.downloads.len()))
+        else {
+            return;
+        };
+        if upload.status == soulseek_rs::types::UploadStatus::InProgress
+            && !self
+                .client
+                .cancel_upload(&upload.username, &upload.filename)
+        {
+            soulseek_rs::warn!(
+                "No in-progress upload of {} to {} to cancel",
+                upload.filename,
+                upload.username
+            );
+        }
+    }
+
     pub(super) fn update_downloads(&mut self) {
         if let Some(ref receiver) = self.state.downloads_receiver_channel {
             while let Ok((download, download_receiver)) = receiver.try_recv() {
