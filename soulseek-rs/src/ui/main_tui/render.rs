@@ -134,6 +134,7 @@ impl MainTui {
             frame,
             downloads_chunks[0],
             &self.state.downloads,
+            &self.state.uploads,
             &mut self.state.downloads_table_state,
             self.state.focused_pane == FocusedPane::Downloads,
         );
@@ -170,6 +171,11 @@ impl MainTui {
             );
         }
 
+        // Settings popup overlays everything when open.
+        if self.state.settings.is_some() {
+            self.render_settings_popup(frame);
+        }
+
         // Chat rooms overlay everything when open.
         if self.state.show_rooms {
             let area = centered_rect(85, 80, frame.area());
@@ -181,6 +187,67 @@ impl MainTui {
                 &mut self.state.rooms_list_table_state,
             );
         }
+    }
+
+    fn render_settings_popup(&self, frame: &mut Frame) {
+        use crate::models::SettingsMode;
+        let Some(settings) = self.state.settings.as_ref() else {
+            return;
+        };
+        let area = centered_rect(70, 60, frame.area());
+        frame.render_widget(ratatui::widgets::Clear, area);
+
+        let mut lines: Vec<ratatui::text::Line> = Vec::new();
+        let marker = |selected: bool| if selected { "> " } else { "  " };
+
+        let download_line = if settings.mode == SettingsMode::EditingDownloadDir
+        {
+            format!("> Download folder: {}▏", settings.input)
+        } else {
+            format!(
+                "{}Download folder: {}",
+                marker(settings.selected == 0),
+                settings.download_dir
+            )
+        };
+        lines.push(ratatui::text::Line::from(download_line));
+        lines.push(ratatui::text::Line::from(""));
+        lines.push(ratatui::text::Line::from(format!(
+            "Shared folders ({}):",
+            settings.share_dirs.len()
+        )));
+        for (i, dir) in settings.share_dirs.iter().enumerate() {
+            lines.push(ratatui::text::Line::from(format!(
+                "{}{}",
+                marker(settings.selected == i + 1),
+                dir
+            )));
+        }
+        if settings.share_dirs.is_empty() {
+            lines.push(ratatui::text::Line::from(
+                "  (nothing shared — press 'a' to add a folder)",
+            ));
+        }
+        if settings.mode == SettingsMode::AddingShare {
+            lines.push(ratatui::text::Line::from(format!(
+                "  Add share: {}▏",
+                settings.input
+            )));
+        }
+        if let Some(status) = &settings.status {
+            lines.push(ratatui::text::Line::from(""));
+            lines.push(ratatui::text::Line::from(status.clone()));
+        }
+
+        let block = ratatui::widgets::Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .title(" Settings ");
+        frame.render_widget(
+            ratatui::widgets::Paragraph::new(lines)
+                .block(block)
+                .wrap(ratatui::widgets::Wrap { trim: false }),
+            area,
+        );
     }
 
     fn render_messages_popup(&self, frame: &mut Frame) {
@@ -273,7 +340,16 @@ impl MainTui {
             "chat".to_string()
         };
 
-        let shortcuts = if self.state.show_rooms {
+        let shortcuts = if self.state.settings.is_some() {
+            vec![
+                ("↑↓", "move"),
+                ("Enter/e", "edit download dir"),
+                ("a", "add share"),
+                ("d", "remove share"),
+                ("r", "re-index"),
+                ("Esc", "close"),
+            ]
+        } else if self.state.show_rooms {
             self.rooms_shortcuts()
         } else if self.state.show_browse {
             vec![

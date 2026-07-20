@@ -1,4 +1,4 @@
-use crate::models::{BrowseTabs, FileDisplayData, RoomsState};
+use crate::models::{BrowseTabs, FileDisplayData, RoomsState, SettingsState};
 use ratatui::{layout::Rect, widgets::TableState};
 use soulseek_rs::{DownloadStatus, types::Download};
 use std::sync::atomic::AtomicBool;
@@ -104,6 +104,12 @@ pub struct AppState {
     pub show_rooms: bool,
     pub rooms_list_table_state: TableState,
 
+    // Settings popup (download folder + share paths)
+    pub settings: Option<SettingsState>,
+
+    // Uploads we are serving (refreshed from the client every tick)
+    pub uploads: Vec<soulseek_rs::types::UploadInfo>,
+
     // Pane areas for mouse interaction
     pub searches_pane_area: Option<Rect>,
     pub results_pane_area: Option<Rect>,
@@ -159,6 +165,10 @@ impl AppState {
             rooms: RoomsState::new(),
             show_rooms: false,
             rooms_list_table_state: TableState::default(),
+
+            settings: None,
+
+            uploads: Vec::new(),
 
             searches_pane_area: None,
             results_pane_area: None,

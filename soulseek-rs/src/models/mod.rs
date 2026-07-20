@@ -2,6 +2,7 @@ mod app_state;
 mod browse;
 mod file_display_data;
 mod rooms;
+mod settings;
 
 pub use app_state::{
     AppState, ChatMessage, CommandBarMode, DownloadEntry, FocusedPane,
@@ -12,3 +13,4 @@ pub use browse::{
 };
 pub use file_display_data::FileDisplayData;
 pub use rooms::{RoomLine, RoomsState, RoomsView};
+pub use settings::{SettingsAction, SettingsMode, SettingsState};

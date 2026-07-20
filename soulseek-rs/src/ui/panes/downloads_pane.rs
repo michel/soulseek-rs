@@ -13,23 +13,25 @@ use ratatui::{
     },
 };
 use soulseek_rs::DownloadStatus;
+use soulseek_rs::types::{UploadInfo, UploadStatus};
 
 pub fn render_downloads_pane(
     frame: &mut Frame,
     area: Rect,
     downloads: &[DownloadEntry],
+    uploads: &[UploadInfo],
     table_state: &mut TableState,
     focused: bool,
 ) {
-    if downloads.is_empty() {
+    if downloads.is_empty() && uploads.is_empty() {
         let empty_block = Block::default()
             .borders(Borders::ALL)
             .border_style(border_style(focused))
             .border_type(border_type(focused))
-            .title("[3] Downloads");
+            .title("[3] Downloads/Uploads");
 
         let paragraph = Paragraph::new(
-            "No downloads. Select files from Results and press Enter.",
+            "No transfers. Select files from Results and press Enter.",
         )
         .block(empty_block);
         frame.render_widget(paragraph, area);
@@ -45,7 +47,7 @@ pub fn render_downloads_pane(
     ])
     .height(1);
 
-    let rows: Vec<Row> = downloads
+    let mut rows: Vec<Row> = downloads
         .iter()
         .map(|download_entry| {
             let download = &download_entry.download;
@@ -112,6 +114,46 @@ pub fn render_downloads_pane(
         })
         .collect();
 
+    rows.extend(uploads.iter().map(|upload| {
+        let (status_icon, status_style) = match &upload.status {
+            UploadStatus::InProgress => ("⧗", warning_style()),
+            UploadStatus::Completed => ("✓", success_style()),
+            UploadStatus::Cancelled => ("✗", inactive_style()),
+            UploadStatus::Failed(_) => ("✗", error_style()),
+        };
+        let progress_text = match &upload.status {
+            UploadStatus::InProgress => {
+                let percent = if upload.size > 0 {
+                    (upload.bytes_sent as f64 / upload.size as f64 * 100.0)
+                        as u8
+                } else {
+                    0
+                };
+                format!(
+                    "{}/{} ({}%)",
+                    format_bytes(upload.bytes_sent),
+                    format_bytes(upload.size),
+                    percent
+                )
+            }
+            UploadStatus::Completed => format_bytes(upload.size),
+            UploadStatus::Cancelled => "Cancelled".to_string(),
+            UploadStatus::Failed(_) => "Failed".to_string(),
+        };
+        let basename = upload
+            .filename
+            .rsplit(['\\', '/'])
+            .next()
+            .unwrap_or(&upload.filename);
+        Row::new(vec![
+            Cell::from(format!("↑ {status_icon}")).style(status_style),
+            Cell::from(basename.to_string()),
+            Cell::from(upload.username.clone()),
+            Cell::from(progress_text),
+            Cell::from(String::new()),
+        ])
+    }));
+
     let widths = [
         ratatui::layout::Constraint::Length(8),
         ratatui::layout::Constraint::Fill(2),
@@ -130,7 +172,7 @@ pub fn render_downloads_pane(
                 .borders(Borders::ALL)
                 .border_style(border_style(focused))
                 .border_type(border_type(focused))
-                .title("[3] Downloads"),
+                .title("[3] Downloads/Uploads"),
         );
 
     frame.render_stateful_widget(table, area, table_state);
