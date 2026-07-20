@@ -28,22 +28,15 @@ const fn command_bar_prefix(mode: CommandBarMode) -> &'static str {
 
 impl MainTui {
     pub(super) fn render(&mut self, frame: &mut Frame) {
-        let main_chunks = if self.state.command_bar_active {
-            Layout::vertical([
-                Constraint::Length(3), // Status bar
-                Constraint::Fill(1),   // Main content
-                Constraint::Length(3), // Command bar
-                Constraint::Length(3), // Shortcuts
-            ])
-            .split(frame.area())
-        } else {
-            Layout::vertical([
-                Constraint::Length(3), // Status bar
-                Constraint::Fill(1),   // Main content
-                Constraint::Length(3), // Shortcuts
-            ])
-            .split(frame.area())
-        };
+        let mut constraints = vec![
+            Constraint::Length(3), // Status bar
+            Constraint::Fill(1),   // Main content
+        ];
+        if self.state.command_bar_active {
+            constraints.push(Constraint::Length(3)); // Command bar
+        }
+        constraints.push(Constraint::Length(3)); // Shortcuts
+        let main_chunks = Layout::vertical(constraints).split(frame.area());
 
         render_download_stats(
             frame,
@@ -432,8 +425,7 @@ fn visible_input_at_cursor(
         return (String::new(), 0);
     }
 
-    let cursor_position =
-        super::input::clamp_cursor_to_char_boundary(input, cursor_position);
+    let cursor_position = input.floor_char_boundary(cursor_position);
     let cursor_character_index = input[..cursor_position].chars().count();
     let max_cursor_column = usize::from(width.saturating_sub(1));
     let start_character_index =

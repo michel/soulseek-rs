@@ -21,7 +21,6 @@ pub struct MainTui {
     #[allow(dead_code)]
     max_concurrent_downloads: usize,
     search_timeout: Duration,
-    #[allow(dead_code)]
     spinner_state: usize,
 }
 
