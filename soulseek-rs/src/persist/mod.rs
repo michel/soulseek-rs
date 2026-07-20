@@ -7,4 +7,5 @@
 pub mod config;
 pub mod paths;
 pub mod secret;
+pub mod snapshot;
 pub mod state;
