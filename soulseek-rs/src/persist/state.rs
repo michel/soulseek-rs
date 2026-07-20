@@ -91,7 +91,7 @@ fn load<T: DeserializeOwned + Default>(
         return T::default();
     };
     let Ok(envelope) = serde_json::from_str::<Value>(&text) else {
-        soulseek_rs::warn!("Ignoring corrupt state file {}", path.display());
+        set_aside(path, "corrupt");
         return T::default();
     };
     let version = envelope
@@ -99,23 +99,36 @@ fn load<T: DeserializeOwned + Default>(
         .and_then(Value::as_u64)
         .unwrap_or(u64::MAX) as usize;
     if version > migrations.len() {
-        soulseek_rs::warn!(
-            "Ignoring state file {} from a newer version",
-            path.display()
-        );
+        set_aside(path, "from a newer version");
         return T::default();
     }
     let mut data = envelope.get("data").cloned().unwrap_or(Value::Null);
     for migration in &migrations[version..] {
         data = migration(data);
     }
-    serde_json::from_value(data).unwrap_or_else(|e| {
-        soulseek_rs::warn!(
-            "Ignoring unreadable state file {}: {e}",
-            path.display()
-        );
+    serde_json::from_value(data).unwrap_or_else(|_| {
+        set_aside(path, "unreadable");
         T::default()
     })
+}
+
+/// Rename an unusable state file to `.bak` so a later save doesn't
+/// overwrite it and the user can still recover or inspect it.
+fn set_aside(path: &Path, why: &str) {
+    let bak = path.with_extension("json.bak");
+    // Windows rename fails when the target exists; drop the old backup.
+    let _ = std::fs::remove_file(&bak);
+    match std::fs::rename(path, &bak) {
+        Ok(()) => soulseek_rs::warn!(
+            "State file {} is {why}; moved to {}",
+            path.display(),
+            bak.display()
+        ),
+        Err(e) => soulseek_rs::warn!(
+            "State file {} is {why} (backup failed: {e})",
+            path.display()
+        ),
+    }
 }
 
 fn save<T: Serialize>(path: &Path, version: u32, data: &T) -> Result<()> {
@@ -178,21 +191,41 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_file_loads_as_empty() {
+    fn corrupt_file_loads_as_empty_and_is_kept_as_bak() {
         let (tmp, store) = store();
         let path = tmp.path().join("state").join("downloads.json");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "{ not json").unwrap();
         assert_eq!(store.load_downloads(), vec![]);
+        // The bad file is set aside, not left to be overwritten.
+        assert!(!path.exists());
+        let bak = path.with_extension("json.bak");
+        assert_eq!(std::fs::read_to_string(bak).unwrap(), "{ not json");
     }
 
     #[test]
-    fn file_from_a_newer_build_loads_as_empty() {
+    fn a_second_corrupt_file_replaces_the_previous_bak() {
+        let (tmp, store) = store();
+        let path = tmp.path().join("state").join("downloads.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path.with_extension("json.bak"), "old bak").unwrap();
+        std::fs::write(&path, "{ newer corruption").unwrap();
+        assert_eq!(store.load_downloads(), vec![]);
+        assert_eq!(
+            std::fs::read_to_string(path.with_extension("json.bak")).unwrap(),
+            "{ newer corruption"
+        );
+    }
+
+    #[test]
+    fn file_from_a_newer_build_loads_as_empty_and_is_kept_as_bak() {
         let (tmp, store) = store();
         let path = tmp.path().join("state").join("rooms.json");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, r#"{"version": 99, "data": ["x"]}"#).unwrap();
         assert_eq!(store.load_rooms(), Vec::<String>::new());
+        assert!(!path.exists());
+        assert!(path.with_extension("json.bak").exists());
     }
 
     #[test]
