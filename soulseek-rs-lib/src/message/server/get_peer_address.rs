@@ -24,14 +24,12 @@ impl MessageHandler<ServerMessage> for GetPeerAddressHandler {
         let obfuscated_port = message.read_int32() as u16;
         crate::debug!("GetPeerAddressHandler: {username:?}");
 
-        sender
-            .send(ServerMessage::GetPeerAddressResponse {
-                username,
-                host,
-                port,
-                obfuscation_type,
-                obfuscated_port,
-            })
-            .unwrap();
+        let _ = sender.send(ServerMessage::GetPeerAddressResponse {
+            username,
+            host,
+            port,
+            obfuscation_type,
+            obfuscated_port,
+        });
     }
 }

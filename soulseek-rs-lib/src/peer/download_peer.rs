@@ -380,10 +380,9 @@ impl DownloadPeer {
         status: DownloadStatus,
     ) {
         let _ = download.sender.send(status.clone());
-        client_context
-            .write()
-            .unwrap()
-            .update_download_with_status(download.token, status);
+        if let Ok(mut context) = client_context.write() {
+            context.update_download_with_status(download.token, status);
+        }
     }
 
     fn wait_while_paused(
@@ -491,7 +490,7 @@ impl DownloadPeer {
             let _ = dl.sender.send(DownloadStatus::Queued);
             client_context
                 .write()
-                .unwrap()
+                .map_err(|_| DownloadError::LockPoisoned)?
                 .update_download_with_status(dl.token, DownloadStatus::Queued);
         }
 

@@ -59,9 +59,7 @@ impl MessageHandler<PeerMessage> for FileSearchResponse {
             return;
         };
 
-        sender
-            .send(PeerMessage::FileSearchResult(file_search))
-            .unwrap();
+        let _ = sender.send(PeerMessage::FileSearchResult(file_search));
     }
 }
 

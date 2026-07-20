@@ -23,6 +23,6 @@ impl MessageHandler<PeerMessage> for PeerInit {
             username, connection_type, token
         );
 
-        sender.send(PeerMessage::SetUsername(username)).unwrap();
+        let _ = sender.send(PeerMessage::SetUsername(username));
     }
 }

@@ -184,17 +184,12 @@ impl HuffmanTree {
         let mut node = &mut self.root;
         for i in (0..n).rev() {
             let b = (codeword >> i) & 1;
-            if b != 0 {
-                if node.right.is_none() {
-                    node.right = Some(Box::new(Node::new()));
-                }
-                node = node.right.as_mut().unwrap();
+            let child = if b != 0 {
+                &mut node.right
             } else {
-                if node.left.is_none() {
-                    node.left = Some(Box::new(Node::new()));
-                }
-                node = node.left.as_mut().unwrap();
-            }
+                &mut node.left
+            };
+            node = child.get_or_insert_with(|| Box::new(Node::new()));
         }
         node.symbol = Some(symbol);
     }

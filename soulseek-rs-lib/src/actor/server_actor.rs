@@ -413,37 +413,10 @@ impl ServerActor {
 
         match msg {
             ServerMessage::ConnectToPeer(peer) => {
-                if let Some(op) = match peer.connection_type {
-                    ConnectionType::P | ConnectionType::F => {
-                        Some(ClientOperation::ConnectToPeer(peer))
-                    }
-                    ConnectionType::D => None,
-                } && let Err(e) = self.client_channel.send(op)
-                {
-                    error!("[server] failed to send ConnectToPeer: {}", e);
-                }
+                self.handle_connect_to_peer(peer);
             }
             ServerMessage::LoginStatus(message) => {
-                match self.context.write_safe() {
-                    Ok(mut ctx) => ctx.logged_in = Some(message),
-                    Err(e) => {
-                        error!("[server] LoginStatus write: {}", e);
-                    }
-                }
-                // Send the post-login handshake exactly once, only on success,
-                // on the live path (the old ServerActor::login did this but was
-                // never called). Advertises real shared counts and, when
-                // listening, the port peers must connect to.
-                if message {
-                    for msg in post_login_messages(
-                        self.enable_listen,
-                        self.listen_port,
-                        self.shared_folder_count,
-                        self.shared_file_count,
-                    ) {
-                        self.send_message(msg);
-                    }
-                }
+                self.handle_login_status(message);
             }
             ServerMessage::PierceFirewall(token) => {
                 self.send_message(
@@ -465,40 +438,16 @@ impl ServerActor {
                 obfuscation_type,
                 obfuscated_port,
             } => {
-                debug!(
-                    "[server] Received GetPeerAddress response for {}: {}:{} (obf_type: {}, obf_port: {})",
-                    username, host, port, obfuscation_type, obfuscated_port
+                self.handle_get_peer_address_response(
+                    username,
+                    host,
+                    port,
+                    obfuscation_type,
+                    obfuscated_port,
                 );
-
-                if let Err(e) = self.client_channel.send(
-                    ClientOperation::GetPeerAddressResponse {
-                        username,
-                        host,
-                        port,
-                        obfuscation_type,
-                        obfuscated_port,
-                    },
-                ) {
-                    error!(
-                        "[server] Error forwarding GetPeerAddress response to client: {}",
-                        e
-                    );
-                }
             }
             ServerMessage::PrivateMessageReceived(user_message) => {
-                debug!(
-                    "[server] Private message from {}",
-                    user_message.username()
-                );
-                if let Err(e) = self
-                    .client_channel
-                    .send(ClientOperation::PrivateMessageReceived(user_message))
-                {
-                    error!(
-                        "[server] Error forwarding private message to client: {}",
-                        e
-                    );
-                }
+                self.handle_private_message_received(user_message);
             }
             ServerMessage::RoomListReceived(rooms) => {
                 self.forward_room_event(RoomEvent::List(rooms));
@@ -537,41 +486,7 @@ impl ServerActor {
                 password,
                 response,
             } => {
-                self.queue_message(MessageFactory::build_login_message(
-                    &username, &password,
-                ));
-
-                let start = std::time::Instant::now();
-                let timeout = Duration::from_secs(5);
-
-                let context = self.context.clone();
-                std::thread::spawn(move || {
-                    loop {
-                        if start.elapsed() >= timeout {
-                            let _ = response.send(Err(SoulseekRs::Timeout));
-                            break;
-                        }
-
-                        let logged_in = match context.read_safe() {
-                            Ok(ctx) => ctx.logged_in,
-                            Err(e) => {
-                                let _ = response.send(Err(e));
-                                break;
-                            }
-                        };
-                        if let Some(logged_in) = logged_in {
-                            let result = if logged_in {
-                                Ok(true)
-                            } else {
-                                Err(SoulseekRs::AuthenticationFailed)
-                            };
-                            let _ = response.send(result);
-                            break;
-                        }
-
-                        std::thread::sleep(Duration::from_millis(100));
-                    }
-                });
+                self.handle_login(username, password, response);
             }
             ServerMessage::FileSearch { token, query } => {
                 self.file_search(token, &query);
@@ -581,16 +496,146 @@ impl ServerActor {
                 token,
                 query,
             } => {
-                if let Err(e) =
-                    self.client_channel.send(ClientOperation::IncomingSearch {
-                        username,
-                        token,
-                        query,
-                    })
-                {
-                    error!("[server] forward IncomingSearch: {}", e);
-                }
+                self.handle_file_search_request(username, token, query);
             }
+        }
+    }
+
+    fn handle_connect_to_peer(&self, peer: Peer) {
+        if let Some(op) = match peer.connection_type {
+            ConnectionType::P | ConnectionType::F => {
+                Some(ClientOperation::ConnectToPeer(peer))
+            }
+            ConnectionType::D => None,
+        } && let Err(e) = self.client_channel.send(op)
+        {
+            error!("[server] failed to send ConnectToPeer: {}", e);
+        }
+    }
+
+    fn handle_login_status(&mut self, message: bool) {
+        match self.context.write_safe() {
+            Ok(mut ctx) => ctx.logged_in = Some(message),
+            Err(e) => {
+                error!("[server] LoginStatus write: {}", e);
+            }
+        }
+        // Send the post-login handshake exactly once, only on success,
+        // on the live path (the old ServerActor::login did this but was
+        // never called). Advertises real shared counts and, when
+        // listening, the port peers must connect to.
+        if message {
+            for msg in post_login_messages(
+                self.enable_listen,
+                self.listen_port,
+                self.shared_folder_count,
+                self.shared_file_count,
+            ) {
+                self.send_message(msg);
+            }
+        }
+    }
+
+    fn handle_get_peer_address_response(
+        &self,
+        username: String,
+        host: String,
+        port: u32,
+        obfuscation_type: u32,
+        obfuscated_port: u16,
+    ) {
+        debug!(
+            "[server] Received GetPeerAddress response for {}: {}:{} (obf_type: {}, obf_port: {})",
+            username, host, port, obfuscation_type, obfuscated_port
+        );
+
+        if let Err(e) =
+            self.client_channel
+                .send(ClientOperation::GetPeerAddressResponse {
+                    username,
+                    host,
+                    port,
+                    obfuscation_type,
+                    obfuscated_port,
+                })
+        {
+            error!(
+                "[server] Error forwarding GetPeerAddress response to client: {}",
+                e
+            );
+        }
+    }
+
+    fn handle_private_message_received(&self, user_message: UserMessage) {
+        debug!("[server] Private message from {}", user_message.username());
+        if let Err(e) = self
+            .client_channel
+            .send(ClientOperation::PrivateMessageReceived(user_message))
+        {
+            error!(
+                "[server] Error forwarding private message to client: {}",
+                e
+            );
+        }
+    }
+
+    fn handle_login(
+        &mut self,
+        username: String,
+        password: String,
+        response: std::sync::mpsc::Sender<Result<bool, SoulseekRs>>,
+    ) {
+        self.queue_message(MessageFactory::build_login_message(
+            &username, &password,
+        ));
+
+        let start = std::time::Instant::now();
+        let timeout = Duration::from_secs(5);
+
+        let context = self.context.clone();
+        std::thread::spawn(move || {
+            loop {
+                if start.elapsed() >= timeout {
+                    let _ = response.send(Err(SoulseekRs::Timeout));
+                    break;
+                }
+
+                let logged_in = match context.read_safe() {
+                    Ok(ctx) => ctx.logged_in,
+                    Err(e) => {
+                        let _ = response.send(Err(e));
+                        break;
+                    }
+                };
+                if let Some(logged_in) = logged_in {
+                    let result = if logged_in {
+                        Ok(true)
+                    } else {
+                        Err(SoulseekRs::AuthenticationFailed)
+                    };
+                    let _ = response.send(result);
+                    break;
+                }
+
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        });
+    }
+
+    fn handle_file_search_request(
+        &self,
+        username: String,
+        token: u32,
+        query: String,
+    ) {
+        if let Err(e) =
+            self.client_channel.send(ClientOperation::IncomingSearch {
+                username,
+                token,
+                query,
+            })
+        {
+            error!("[server] forward IncomingSearch: {}", e);
         }
     }
 
@@ -696,7 +741,7 @@ impl ServerActor {
                 .get_message_name(
                     MessageType::Server,
                     u32::from_le_bytes(
-                        message.get_slice(0, 4).try_into().unwrap()
+                        message.get_slice(0, 4).try_into().unwrap_or_default()
                     )
                 )
                 .map_err(|e| e.to_string())

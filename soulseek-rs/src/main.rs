@@ -23,23 +23,7 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    let log_level = match cli.verbose {
-        0 => "ERROR",
-        1 => "WARN",
-        2 => "INFO",
-        3 => "DEBUG",
-        _ => "TRACE",
-    };
-    // SAFETY: Called before any threads are spawned
-    unsafe { env::set_var("LOG_LEVEL", log_level) };
-
-    // Set LOG_FILE env var if provided via CLI
-    if let Some(log_file) = &cli.log_file {
-        // SAFETY: Called before any threads are spawned
-        unsafe {
-            env::set_var("LOG_FILE", log_file.to_string_lossy().to_string());
-        };
-    }
+    init_logging(&cli);
 
     // `portmap` is a local network diagnostic; it needs no server credentials,
     // so handle it before requiring a username/password.
@@ -78,6 +62,15 @@ fn main() -> Result<()> {
         }
     };
 
+    let settings = ClientSettings {
+        username: username.clone(),
+        password: password.clone(),
+        server_address: PeerAddress::new(server_host.clone(), server_port),
+        enable_listen: !cli.disable_listener,
+        listen_port: cli.listener_port,
+        shared_directory: shared_directory.clone(),
+    };
+
     match cli.command {
         Some(Commands::Search {
             query,
@@ -104,110 +97,91 @@ fn main() -> Result<()> {
         Some(Commands::Message {
             username: recipient,
             message,
-        }) => send_private_message(
-            &ClientSettings {
-                username,
-                password,
-                server_address: PeerAddress::new(server_host, server_port),
-                enable_listen: !cli.disable_listener,
-                listen_port: cli.listener_port,
-                shared_directory,
-            },
-            &recipient,
-            &message,
-        ),
-        Some(Commands::Browse { username: target }) => browse_user(
-            &ClientSettings {
-                username,
-                password,
-                server_address: PeerAddress::new(server_host, server_port),
-                enable_listen: !cli.disable_listener,
-                listen_port: cli.listener_port,
-                shared_directory,
-            },
-            &target,
-        ),
-        Some(Commands::Rooms) => list_rooms(&ClientSettings {
-            username,
-            password,
-            server_address: PeerAddress::new(server_host, server_port),
-            enable_listen: !cli.disable_listener,
-            listen_port: cli.listener_port,
-            shared_directory,
-        }),
+        }) => send_private_message(&settings, &recipient, &message),
+        Some(Commands::Browse { username: target }) => {
+            browse_user(&settings, &target)
+        }
+        Some(Commands::Rooms) => list_rooms(&settings),
         Some(Commands::Chat {
             room,
             message,
             listen_secs,
-        }) => chat_room(
-            &ClientSettings {
-                username,
-                password,
-                server_address: PeerAddress::new(server_host, server_port),
-                enable_listen: !cli.disable_listener,
-                listen_port: cli.listener_port,
-                shared_directory,
-            },
-            &room,
-            message.as_deref(),
-            listen_secs,
-        ),
+        }) => chat_room(&settings, &room, message.as_deref(), listen_secs),
         // Handled before the credential check above.
         Some(Commands::Portmap) => unreachable!(),
-        None => {
-            use ratatui::crossterm::{
-                event::EnableMouseCapture,
-                execute,
-                terminal::{Clear, ClearType},
-            };
-
-            // Launch main TUI
-            // Enable logger buffering BEFORE connection to prevent log artifacts
-            soulseek_rs::utils::logger::enable_buffering();
-
-            let settings = ClientSettings {
-                username,
-                password,
-                server_address: PeerAddress::new(server_host, server_port),
-                enable_listen: !cli.disable_listener,
-                listen_port: cli.listener_port,
-                shared_directory,
-            };
-
-            // Best-effort: make ourselves reachable behind a home router so
-            // firewalled peers can connect back. Kept alive for the session.
-            let _port_mapper = settings
-                .enable_listen
-                .then(|| port_mapping::PortMapper::spawn(settings.listen_port));
-
-            let mut client = Client::with_settings(settings);
-            client.connect().map_err(|e| {
-                color_eyre::eyre::eyre!("Failed to connect: {}", e)
-            })?;
-            client.login().map_err(|e| {
-                color_eyre::eyre::eyre!("Failed to login: {}", e)
-            })?;
-
-            let client = Arc::new(client);
-
-            // Clear screen and enable mouse capture before initializing TUI
-            let _ = execute!(
-                std::io::stdout(),
-                Clear(ClearType::All),
-                EnableMouseCapture
-            );
-
-            let terminal = ratatui::init();
-
-            launch_main_tui(
-                terminal,
-                client,
-                cli.download_dir,
-                cli.max_concurrent_downloads,
-                Duration::from_secs(cli.search_timeout),
-            )
-        }
+        None => run_default_tui(
+            settings,
+            cli.download_dir,
+            cli.max_concurrent_downloads,
+            Duration::from_secs(cli.search_timeout),
+        ),
     }
+}
+
+fn init_logging(cli: &Cli) {
+    let log_level = match cli.verbose {
+        0 => "ERROR",
+        1 => "WARN",
+        2 => "INFO",
+        3 => "DEBUG",
+        _ => "TRACE",
+    };
+    // SAFETY: Called before any threads are spawned
+    unsafe { env::set_var("LOG_LEVEL", log_level) };
+
+    if let Some(log_file) = &cli.log_file {
+        // SAFETY: Called before any threads are spawned
+        unsafe {
+            env::set_var("LOG_FILE", log_file.to_string_lossy().to_string());
+        };
+    }
+}
+
+/// Connect, log in, and run the interactive TUI (the default no-subcommand path).
+fn run_default_tui(
+    settings: ClientSettings,
+    download_dir: String,
+    max_concurrent_downloads: usize,
+    search_timeout: Duration,
+) -> Result<()> {
+    use ratatui::crossterm::{
+        event::EnableMouseCapture,
+        execute,
+        terminal::{Clear, ClearType},
+    };
+
+    // Enable logger buffering BEFORE connection to prevent log artifacts
+    soulseek_rs::utils::logger::enable_buffering();
+
+    // Best-effort: make ourselves reachable behind a home router so
+    // firewalled peers can connect back. Kept alive for the session.
+    let _port_mapper = settings
+        .enable_listen
+        .then(|| port_mapping::PortMapper::spawn(settings.listen_port));
+
+    let mut client = Client::with_settings(settings);
+    client
+        .connect()
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to connect: {}", e))?;
+    client
+        .login()
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to login: {}", e))?;
+
+    let client = Arc::new(client);
+
+    // Clear screen and enable mouse capture before initializing TUI
+    let _ =
+        execute!(std::io::stdout(), Clear(ClearType::All), EnableMouseCapture);
+
+    let terminal = ratatui::init();
+
+    launch_main_tui(
+        terminal,
+        client,
+        download_dir,
+        max_concurrent_downloads,
+        search_timeout,
+    )
 }
 
 fn browse_user(settings: &ClientSettings, target: &str) -> Result<()> {
@@ -420,10 +394,8 @@ fn search_and_download(config: SearchConfig) -> Result<()> {
     // Wrap client in Arc for sharing with FileSelector
     let client = Arc::new(client);
 
-    // Create cancel flag for search
     let cancel_flag = Arc::new(AtomicBool::new(false));
 
-    // Start search in background thread
     let search_client = client.clone();
     let search_query = config.query.clone();
     let search_timeout = Duration::from_secs(config.timeout);
@@ -450,7 +422,6 @@ fn search_and_download(config: SearchConfig) -> Result<()> {
     // Cancel search thread - no need to wait for it
     cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
 
-    // Get final results
     let results = client.get_search_results(&config.query);
 
     if selected_indices.is_empty() {

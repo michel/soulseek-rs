@@ -297,7 +297,6 @@ fn compute_md5_digest(mut v: Vec<u8>) -> String {
         let word_cc = word_c;
         let word_dd = word_d;
 
-        // execute round 1
         let result =
             round_one_operations(word_a, word_b, word_c, word_d, &table, &x);
         word_a = result[0];
@@ -305,7 +304,6 @@ fn compute_md5_digest(mut v: Vec<u8>) -> String {
         word_c = result[2];
         word_d = result[3];
 
-        // execute round 2
         let result =
             round_two_operations(word_a, word_b, word_c, word_d, &table, &x);
 
@@ -314,7 +312,6 @@ fn compute_md5_digest(mut v: Vec<u8>) -> String {
         word_c = result[2];
         word_d = result[3];
 
-        // execute round 3
         let result =
             round_three_operations(word_a, word_b, word_c, word_d, &table, &x);
         word_a = result[0];
@@ -322,7 +319,6 @@ fn compute_md5_digest(mut v: Vec<u8>) -> String {
         word_c = result[2];
         word_d = result[3];
 
-        // execute round 4
         let result =
             round_four_operations(word_a, word_b, word_c, word_d, &table, &x);
         word_a = result[0];

@@ -13,6 +13,6 @@ impl MessageHandler<PeerMessage> for TransferRequest {
     fn handle(&self, message: &mut Message, sender: Sender<PeerMessage>) {
         let transfer = Transfer::new_from_message(message);
 
-        sender.send(PeerMessage::TransferRequest(transfer)).unwrap();
+        let _ = sender.send(PeerMessage::TransferRequest(transfer));
     }
 }

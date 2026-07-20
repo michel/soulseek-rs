@@ -60,13 +60,11 @@ impl MultiDownloadProgress {
     }
 
     pub fn run(&mut self, mut terminal: DefaultTerminal) -> Result<()> {
-        // Start initial batch of downloads
         self.start_next_batch();
 
         loop {
             terminal.draw(|frame| self.render(frame))?;
 
-            // Check for incoming downloads from background thread
             while let Ok((download, receiver)) =
                 self.receiver_channel.try_recv()
             {
@@ -96,12 +94,10 @@ impl MultiDownloadProgress {
                 }
             }
 
-            // Start next batch after iteration completes
             if need_start_next {
                 self.start_next_batch();
             }
 
-            // Handle keyboard input
             if poll(Duration::from_millis(100))?
                 && let Event::Key(key) = event::read()?
             {
@@ -118,7 +114,6 @@ impl MultiDownloadProgress {
     }
 
     fn start_next_batch(&mut self) {
-        // Start queued downloads up to max_concurrent limit
         for download_entry in &self.downloads {
             if self.active_count >= self.max_concurrent {
                 break;

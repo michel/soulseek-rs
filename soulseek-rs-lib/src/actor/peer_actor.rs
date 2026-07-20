@@ -199,130 +199,23 @@ impl PeerActor {
                 self.send_message(message);
             }
             PeerMessage::FileSearchResult(file_search) => {
-                if let Err(e) = self
-                    .client_channel
-                    .send(ClientOperation::SearchResult(file_search))
-                {
-                    error!(
-                        "[peer:{}] failed to forward search result: {}",
-                        self.peer_username(),
-                        e
-                    );
-                }
+                self.handle_file_search_result(file_search);
             }
             PeerMessage::TransferRequest(transfer) => {
-                let username = self.peer_username();
-                debug!(
-                    "[peer:{}] TransferRequest for {}",
-                    username, transfer.token
-                );
-
-                if let Err(e) = self.client_channel.send(
-                    ClientOperation::UpdateDownloadTokens(
-                        transfer.clone(),
-                        username.clone(),
-                    ),
-                ) {
-                    error!(
-                        "[peer:{}] failed to send UpdateDownloadTokens: {}",
-                        username, e
-                    );
-                }
-
-                let transfer_response =
-                    MessageFactory::build_transfer_response_message(transfer);
-
-                if let Some(ref handle) = self.self_handle
-                    && let Err(e) =
-                        handle.send(PeerMessage::SendMessage(transfer_response))
-                {
-                    error!(
-                        "[peer:{}] Failed to send TransferResponse message: {}",
-                        username, e
-                    );
-                }
+                self.handle_transfer_request(transfer);
             }
             PeerMessage::TransferResponse {
                 token,
                 allowed,
                 reason,
             } => {
-                let username = self.peer_username();
-                debug!(
-                    "[peer:{}] transfer response token: {} allowed: {}",
-                    username, token, allowed
-                );
-
-                // If this token is one of our uploads, the peer just accepted
-                // our offer — start streaming. This leaves the download path
-                // (every other token) byte-for-byte unchanged.
-                if self.serving_tokens.remove(&token) {
-                    if allowed {
-                        let _ = self
-                            .client_channel
-                            .send(ClientOperation::StartUpload { token });
-                    }
-                    return;
-                }
-
-                if allowed {
-                    debug!(
-                        "[peer:{}] Transfer allowed, ready to connect with token {:}",
-                        username, token
-                    );
-                    let Some(peer_snapshot) = self.peer_snapshot() else {
-                        return;
-                    };
-                    if let Err(e) = self.client_channel.send(
-                        ClientOperation::DownloadFromPeer(
-                            token,
-                            peer_snapshot,
-                            allowed,
-                        ),
-                    ) {
-                        error!(
-                            "[peer:{}] failed to send DownloadFromPeer: {}",
-                            username, e
-                        );
-                    }
-                } else if let Some(reason_text) = reason {
-                    debug!(
-                        "[peer:{}] Transfer rejected: {} - token {}, waiting for TransferRequest...",
-                        username, reason_text, token
-                    );
-                }
+                self.handle_transfer_response(token, allowed, reason);
             }
             PeerMessage::PlaceInQueueResponse { filename, place } => {
-                let username = self.peer_username();
-                debug!(
-                    "[peer:{}] Place in queue response - file: {}, place: {}",
-                    username, filename, place
-                );
-                if let Err(e) = self.client_channel.send(
-                    ClientOperation::PlaceInQueueUpdate {
-                        username: username.clone(),
-                        filename,
-                        place,
-                    },
-                ) {
-                    error!(
-                        "[peer:{}] failed to forward PlaceInQueueUpdate: {}",
-                        username, e
-                    );
-                }
+                self.handle_place_in_queue_response(filename, place);
             }
             PeerMessage::SetUsername(username) => {
-                trace!(
-                    "[peer:{}] SetUsername: {}",
-                    self.peer_username(),
-                    username
-                );
-                match self.peer.write_safe() {
-                    Ok(mut p) => p.username = username,
-                    Err(e) => {
-                        error!("[peer_actor] SetUsername write: {}", e);
-                    }
-                }
+                self.handle_set_username(username);
             }
             PeerMessage::QueueUpload(filename) => {
                 let message =
@@ -330,48 +223,20 @@ impl PeerActor {
                 self.send_message(message);
             }
             PeerMessage::IncomingQueueUpload(filename) => {
-                // A peer wants to download one of our shared files. Ask the
-                // client (which owns the shares) to prepare the upload.
-                let requester_key = self.peer_username();
-                if let Err(e) =
-                    self.client_channel.send(ClientOperation::QueueUpload {
-                        requester_key,
-                        filename,
-                    })
-                {
-                    error!("[peer_actor] forward IncomingQueueUpload: {}", e);
-                }
+                self.handle_incoming_queue_upload(filename);
             }
             PeerMessage::ServeUpload {
                 token,
                 filename,
                 size,
             } => {
-                self.serving_tokens.insert(token);
-                let message = MessageFactory::build_upload_transfer_request(
-                    &filename, token, size,
-                );
-                self.send_message(message);
+                self.handle_serve_upload(token, filename, size);
             }
             PeerMessage::ShareListRequested => {
-                let requester_key = self.peer_username();
-                if let Err(e) = self
-                    .client_channel
-                    .send(ClientOperation::ShareListRequested { requester_key })
-                {
-                    error!("[peer_actor] forward ShareListRequested: {}", e);
-                }
+                self.handle_share_list_requested();
             }
             PeerMessage::ShareListReceived(directories) => {
-                let username = self.peer_username();
-                if let Err(e) =
-                    self.client_channel.send(ClientOperation::BrowseResult {
-                        username,
-                        directories,
-                    })
-                {
-                    error!("[peer_actor] forward BrowseResult: {}", e);
-                }
+                self.handle_share_list_received(directories);
             }
             PeerMessage::RequestTransfer(download) => {
                 let message = MessageFactory::build_transfer_request_message(
@@ -384,16 +249,186 @@ impl PeerActor {
                 self.process_read();
             }
             PeerMessage::UploadFailed(username, filename) => {
-                if let Err(e) = self
-                    .client_channel
-                    .send(ClientOperation::UploadFailed(username, filename))
-                {
-                    error!(
-                        "[peer_actor] failed to forward UploadFailed: {}",
-                        e
-                    );
-                }
+                self.handle_upload_failed(username, filename);
             }
+        }
+    }
+
+    fn handle_file_search_result(&self, file_search: SearchResult) {
+        if let Err(e) = self
+            .client_channel
+            .send(ClientOperation::SearchResult(file_search))
+        {
+            error!(
+                "[peer:{}] failed to forward search result: {}",
+                self.peer_username(),
+                e
+            );
+        }
+    }
+
+    fn handle_transfer_request(&self, transfer: Transfer) {
+        let username = self.peer_username();
+        debug!("[peer:{}] TransferRequest for {}", username, transfer.token);
+
+        if let Err(e) =
+            self.client_channel
+                .send(ClientOperation::UpdateDownloadTokens(
+                    transfer.clone(),
+                    username.clone(),
+                ))
+        {
+            error!(
+                "[peer:{}] failed to send UpdateDownloadTokens: {}",
+                username, e
+            );
+        }
+
+        let transfer_response =
+            MessageFactory::build_transfer_response_message(transfer);
+
+        if let Some(ref handle) = self.self_handle
+            && let Err(e) =
+                handle.send(PeerMessage::SendMessage(transfer_response))
+        {
+            error!(
+                "[peer:{}] Failed to send TransferResponse message: {}",
+                username, e
+            );
+        }
+    }
+
+    fn handle_transfer_response(
+        &mut self,
+        token: u32,
+        allowed: bool,
+        reason: Option<String>,
+    ) {
+        let username = self.peer_username();
+        debug!(
+            "[peer:{}] transfer response token: {} allowed: {}",
+            username, token, allowed
+        );
+
+        // If this token is one of our uploads, the peer just accepted
+        // our offer — start streaming. This leaves the download path
+        // (every other token) byte-for-byte unchanged.
+        if self.serving_tokens.remove(&token) {
+            if allowed {
+                let _ = self
+                    .client_channel
+                    .send(ClientOperation::StartUpload { token });
+            }
+            return;
+        }
+
+        if allowed {
+            debug!(
+                "[peer:{}] Transfer allowed, ready to connect with token {:}",
+                username, token
+            );
+            let Some(peer_snapshot) = self.peer_snapshot() else {
+                return;
+            };
+            if let Err(e) =
+                self.client_channel.send(ClientOperation::DownloadFromPeer(
+                    token,
+                    peer_snapshot,
+                    allowed,
+                ))
+            {
+                error!(
+                    "[peer:{}] failed to send DownloadFromPeer: {}",
+                    username, e
+                );
+            }
+        } else if let Some(reason_text) = reason {
+            debug!(
+                "[peer:{}] Transfer rejected: {} - token {}, waiting for TransferRequest...",
+                username, reason_text, token
+            );
+        }
+    }
+
+    fn handle_place_in_queue_response(&self, filename: String, place: u32) {
+        let username = self.peer_username();
+        debug!(
+            "[peer:{}] Place in queue response - file: {}, place: {}",
+            username, filename, place
+        );
+        if let Err(e) =
+            self.client_channel
+                .send(ClientOperation::PlaceInQueueUpdate {
+                    username: username.clone(),
+                    filename,
+                    place,
+                })
+        {
+            error!(
+                "[peer:{}] failed to forward PlaceInQueueUpdate: {}",
+                username, e
+            );
+        }
+    }
+
+    fn handle_set_username(&self, username: String) {
+        trace!("[peer:{}] SetUsername: {}", self.peer_username(), username);
+        match self.peer.write_safe() {
+            Ok(mut p) => p.username = username,
+            Err(e) => {
+                error!("[peer_actor] SetUsername write: {}", e);
+            }
+        }
+    }
+
+    fn handle_incoming_queue_upload(&self, filename: String) {
+        // A peer wants to download one of our shared files. Ask the
+        // client (which owns the shares) to prepare the upload.
+        let requester_key = self.peer_username();
+        if let Err(e) = self.client_channel.send(ClientOperation::QueueUpload {
+            requester_key,
+            filename,
+        }) {
+            error!("[peer_actor] forward IncomingQueueUpload: {}", e);
+        }
+    }
+
+    fn handle_serve_upload(&mut self, token: u32, filename: String, size: u64) {
+        self.serving_tokens.insert(token);
+        let message = MessageFactory::build_upload_transfer_request(
+            &filename, token, size,
+        );
+        self.send_message(message);
+    }
+
+    fn handle_share_list_requested(&self) {
+        let requester_key = self.peer_username();
+        if let Err(e) = self
+            .client_channel
+            .send(ClientOperation::ShareListRequested { requester_key })
+        {
+            error!("[peer_actor] forward ShareListRequested: {}", e);
+        }
+    }
+
+    fn handle_share_list_received(&self, directories: Vec<SharedDirectory>) {
+        let username = self.peer_username();
+        if let Err(e) =
+            self.client_channel.send(ClientOperation::BrowseResult {
+                username,
+                directories,
+            })
+        {
+            error!("[peer_actor] forward BrowseResult: {}", e);
+        }
+    }
+
+    fn handle_upload_failed(&self, username: String, filename: String) {
+        if let Err(e) = self
+            .client_channel
+            .send(ClientOperation::UploadFailed(username, filename))
+        {
+            error!("[peer_actor] failed to forward UploadFailed: {}", e);
         }
     }
 
@@ -489,7 +524,7 @@ impl PeerActor {
                 .get_message_name(
                     MessageType::Peer,
                     u32::from_le_bytes(
-                        message.get_slice(0, 4).try_into().unwrap()
+                        message.get_slice(0, 4).try_into().unwrap_or_default()
                     )
                 )
                 .map_err(|e| e.to_string())
