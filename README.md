@@ -23,8 +23,6 @@ music enthusiasts around the world to share niche music.
   NAT-PMP, with a `portmap` subcommand to test your router
 - **TUI and CLI** — a full terminal interface, plus scriptable subcommands
   (`search`, `message`, `browse`, `rooms`, `chat`, `portmap`)
-- **Zero-dependency library** — the protocol crate uses only the Rust
-  standard library, down to its own zlib inflate and md5
 
 ## Project Goals
 
