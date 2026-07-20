@@ -45,6 +45,13 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // The interactive TUI handles missing credentials itself with a
+    // login/registration screen; only the one-shot subcommands hard-require
+    // them up front.
+    if cli.command.is_none() {
+        return run_default_tui(&cli, &resolved, config_path, &file_config);
+    }
+
     let username = resolved.username.clone().ok_or_else(|| {
         color_eyre::eyre::eyre!(
             "Username required: use --username, set SOULSEEK_USERNAME, or add it to config.toml"
@@ -122,14 +129,9 @@ fn main() -> Result<()> {
             message,
             listen_secs,
         }) => chat_room(&settings, &room, message.as_deref(), listen_secs),
-        // Handled before the credential check above.
-        Some(Commands::Portmap) => unreachable!(),
-        None => run_default_tui(
-            settings,
-            resolved.download_dir.clone(),
-            resolved.max_concurrent_downloads,
-            Duration::from_secs(resolved.search_timeout),
-        ),
+        // Portmap is handled before the credential check; None returns early
+        // into run_default_tui above.
+        Some(Commands::Portmap) | None => unreachable!(),
     }
 }
 
@@ -152,12 +154,15 @@ fn init_logging(cli: &Cli) {
     }
 }
 
-/// Connect, log in, and run the interactive TUI (the default no-subcommand path).
+/// Run the interactive TUI (the default no-subcommand path): bring the
+/// terminal up first, run the login/registration screen (skipped past when
+/// stored credentials work), persist whatever logged in, then enter the
+/// main UI.
 fn run_default_tui(
-    settings: ClientSettings,
-    download_dir: String,
-    max_concurrent_downloads: usize,
-    search_timeout: Duration,
+    cli: &Cli,
+    resolved: &persist::config::Resolved,
+    config_path: Option<std::path::PathBuf>,
+    file_config: &persist::config::FileConfig,
 ) -> Result<()> {
     use ratatui::crossterm::{
         event::EnableMouseCapture,
@@ -165,38 +170,111 @@ fn run_default_tui(
         terminal::{Clear, ClearType},
     };
 
+    let (server_host, server_port) = parse_server_address(&resolved.server)?;
+
+    let shared_directory = match directories::resolve_shared_directory(
+        resolved.shared_dir.as_deref(),
+    ) {
+        Ok(dir) => dir.map(|path| path.display().to_string()),
+        Err(e) => {
+            eprintln!("⚠️  Ignoring shared directory: {e}");
+            None
+        }
+    };
+
+    let secret_store = persist::secret::KeyringStore;
+    let initial_password = persist::secret::resolve_password(
+        cli.password.as_deref(),
+        resolved.username.as_deref(),
+        resolved.password_cmd.as_deref(),
+        &secret_store,
+    );
+
     // Enable logger buffering BEFORE connection to prevent log artifacts
     soulseek_rs::utils::logger::enable_buffering();
 
     // Best-effort: make ourselves reachable behind a home router so
     // firewalled peers can connect back. Kept alive for the session.
-    let _port_mapper = settings
-        .enable_listen
-        .then(|| port_mapping::PortMapper::spawn(settings.listen_port));
+    let _port_mapper = (!resolved.disable_listener)
+        .then(|| port_mapping::PortMapper::spawn(resolved.listener_port));
 
-    let mut client = Client::with_settings(settings);
-    client
-        .connect()
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to connect: {}", e))?;
-    client
-        .login()
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to login: {}", e))?;
-
-    let client = Arc::new(client);
+    let enable_listen = !resolved.disable_listener;
+    let listen_port = resolved.listener_port;
+    let make_settings = move |username: String, password: String| {
+        ClientSettings {
+            username,
+            password,
+            server_address: PeerAddress::new(
+                server_host.clone(),
+                server_port,
+            ),
+            enable_listen,
+            listen_port,
+            shared_directory: shared_directory.clone(),
+        }
+    };
 
     // Clear screen and enable mouse capture before initializing TUI
     let _ =
         execute!(std::io::stdout(), Clear(ClearType::All), EnableMouseCapture);
+    let mut terminal = ratatui::init();
 
-    let terminal = ratatui::init();
+    let outcome = ui::login::run_login_flow(
+        &mut terminal,
+        &make_settings,
+        resolved.username.clone(),
+        initial_password,
+    );
+
+    let outcome = match outcome {
+        Ok(Some(outcome)) => outcome,
+        Ok(None) => {
+            // User cancelled at the login screen.
+            ratatui::restore();
+            soulseek_rs::utils::logger::disable_buffering();
+            return Ok(());
+        }
+        Err(e) => {
+            ratatui::restore();
+            soulseek_rs::utils::logger::disable_buffering();
+            return Err(e);
+        }
+    };
+
+    persist_credentials(&outcome, config_path, file_config, &secret_store);
 
     launch_main_tui(
         terminal,
-        client,
-        download_dir,
-        max_concurrent_downloads,
-        search_timeout,
+        Arc::new(outcome.client),
+        resolved.download_dir.clone(),
+        resolved.max_concurrent_downloads,
+        Duration::from_secs(resolved.search_timeout),
     )
+}
+
+/// After a successful login, remember the username in config.toml and — when
+/// it was typed into the form — the password in the OS keychain. Both are
+/// best-effort: failing to persist must not break a working session.
+fn persist_credentials(
+    outcome: &ui::login::LoginOutcome,
+    config_path: Option<std::path::PathBuf>,
+    file_config: &persist::config::FileConfig,
+    secret_store: &dyn persist::secret::SecretStore,
+) {
+    if let Some(path) = config_path
+        && file_config.username.as_deref() != Some(&outcome.username)
+    {
+        let mut updated = file_config.clone();
+        updated.username = Some(outcome.username.clone());
+        if let Err(e) = updated.save(&path) {
+            eprintln!("⚠️  Could not save config: {e}");
+        }
+    }
+    if outcome.entered_via_form
+        && let Err(e) = secret_store.set(&outcome.username, &outcome.password)
+    {
+        eprintln!("⚠️  Could not store password in keychain: {e}");
+    }
 }
 
 fn browse_user(settings: &ClientSettings, target: &str) -> Result<()> {

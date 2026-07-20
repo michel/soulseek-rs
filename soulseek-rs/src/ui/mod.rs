@@ -1,4 +1,5 @@
 mod download_selector;
+pub mod login;
 mod downloads;
 mod main_tui;
 mod panes;
