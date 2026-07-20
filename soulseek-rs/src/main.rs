@@ -243,12 +243,16 @@ fn run_default_tui(
 
     persist_credentials(&outcome, config_path, file_config, &secret_store);
 
+    let store = persist::paths::state_dir()
+        .map(persist::state::StateStore::new);
+
     launch_main_tui(
         terminal,
         Arc::new(outcome.client),
         resolved.download_dir.clone(),
         resolved.max_concurrent_downloads,
         Duration::from_secs(resolved.search_timeout),
+        store,
     )
 }
 
