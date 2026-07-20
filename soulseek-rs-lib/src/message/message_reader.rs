@@ -33,20 +33,35 @@ impl MessageReader {
         }
     }
 
+    /// Drain the (non-blocking) socket into the internal buffer until it
+    /// reports `WouldBlock`. mio readiness is edge-triggered: stopping after a
+    /// partial read would strand the rest in the kernel buffer with no further
+    /// event. A remote close (0-byte read) surfaces as `UnexpectedEof` so the
+    /// caller can tear the connection down; bytes received before the close
+    /// remain buffered for extraction.
     pub fn read_from_socket<R: Read>(
         &mut self,
         stream: &mut R,
     ) -> io::Result<()> {
-        let mut temp_buffer = [0; 1024]; // Temporary buffer for reading from the socket
-        let bytes_read = stream.read(&mut temp_buffer)?;
-        if bytes_read == 0 {
-            return Ok(());
+        let mut temp_buffer = [0; 4096];
+        loop {
+            match stream.read(&mut temp_buffer) {
+                Ok(0) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "connection closed by peer",
+                    ));
+                }
+                Ok(bytes_read) => {
+                    self.buffer.extend(&temp_buffer[..bytes_read]);
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    return Ok(());
+                }
+                Err(e) => return Err(e),
+            }
         }
-
-        // Add the read bytes to the internal buffer
-        self.buffer.extend(&temp_buffer[..bytes_read]);
-
-        Ok(())
     }
 
     #[must_use]
@@ -104,6 +119,45 @@ mod tests {
         );
         assert_eq!(message.read_string(), "username");
     }
+    #[test]
+    fn read_from_socket_drains_until_would_block_and_reports_eof() {
+        use std::io::Read;
+
+        // A stream yielding two chunks, then WouldBlock, then EOF — the shape
+        // a non-blocking socket presents under edge-triggered readiness.
+        struct Script(Vec<std::io::Result<Vec<u8>>>);
+        impl Read for Script {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                match self.0.remove(0) {
+                    Ok(bytes) => {
+                        buf[..bytes.len()].copy_from_slice(&bytes);
+                        Ok(bytes.len())
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+        }
+
+        let mut reader = MessageReader::new();
+        let mut stream = Script(vec![
+            Ok(vec![1; 10]),
+            Ok(vec![2; 5]),
+            Err(std::io::Error::from(std::io::ErrorKind::WouldBlock)),
+            Ok(vec![3; 4]),
+            Ok(Vec::new()), // EOF
+        ]);
+
+        // First call drains both chunks and stops at WouldBlock.
+        reader.read_from_socket(&mut stream).unwrap();
+        assert_eq!(reader.buffer_len(), 15);
+
+        // Second call reads the tail, then surfaces the close as
+        // UnexpectedEof while keeping the bytes received before it.
+        let err = reader.read_from_socket(&mut stream).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+        assert_eq!(reader.buffer_len(), 19);
+    }
+
     #[test]
     fn test_extract_message_incomplete_message() {
         let incomplete_buffer = vec![1, 2, 3];

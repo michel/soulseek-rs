@@ -144,27 +144,36 @@ impl IncomingConnectionActor {
     }
 
     fn process_readable(&mut self, registry: &Registry) {
-        loop {
+        let read_result = {
             let Some(stream) = self.stream.as_mut() else {
                 self.done = true;
                 return;
             };
+            self.reader.read_from_socket(stream)
+        };
 
-            match self.reader.read_from_socket(stream) {
-                Ok(()) => {
-                    if self.try_handoff_connection(registry) {
-                        return;
-                    }
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                Err(e) => {
-                    error!(
-                        "[listener:{}] Failed to read peer init message: {}",
-                        self.peer_addr, e
+        match read_result {
+            Ok(()) => {
+                self.try_handoff_connection(registry);
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                // The peer closed; a complete handshake may still be buffered
+                // (read_from_socket keeps bytes received before the close).
+                // Hand it off if so, otherwise give up on this socket.
+                if !self.try_handoff_connection(registry) {
+                    debug!(
+                        "[listener:{}] connection closed before a complete peer init",
+                        self.peer_addr
                     );
                     self.done = true;
-                    return;
                 }
+            }
+            Err(e) => {
+                error!(
+                    "[listener:{}] Failed to read peer init message: {}",
+                    self.peer_addr, e
+                );
+                self.done = true;
             }
         }
     }

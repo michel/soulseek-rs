@@ -9,7 +9,7 @@ use crate::message::peer::{
 use crate::message::server::MessageFactory;
 use crate::message::{Handlers, Message, MessageReader, MessageType};
 use crate::peer::Peer;
-use crate::types::{Download, SearchResult, Transfer};
+use crate::types::{SearchResult, Transfer};
 use crate::{debug, error, trace, warn};
 
 use mio::event::Event;
@@ -36,7 +36,6 @@ pub enum PeerMessage {
     },
     SetUsername(String),
     QueueUpload(String),
-    RequestTransfer(Download),
     /// A peer queued one of our shared files for download (they sent us code 43).
     IncomingQueueUpload(String),
     /// A peer asked to browse our shared files (they sent us code 4).
@@ -330,13 +329,6 @@ impl PeerActor {
                     error!("[peer_actor] forward BrowseResult: {}", e);
                 }
             }
-            PeerMessage::RequestTransfer(download) => {
-                let message = MessageFactory::build_transfer_request_message(
-                    &download.filename,
-                    download.token,
-                );
-                self.send_message(message);
-            }
             PeerMessage::UploadFailed(username, filename) => {
                 if let Err(e) = self
                     .client_channel
@@ -356,31 +348,37 @@ impl PeerActor {
             self.extract_and_process_messages();
         }
 
-        {
+        let read_result = {
             let Some(stream) = self.stream.as_mut() else {
                 return;
             };
+            self.reader.read_from_socket(stream)
+        };
 
-            match self.reader.read_from_socket(stream) {
-                Ok(()) => {}
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
-                Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
-                    debug!(
-                        "Read operation timed out for peer actor {:}:{:}",
-                        self.peer.host, self.peer.port
-                    );
-                }
-                Err(e) => {
-                    let username = self.peer_username();
-                    error!(
-                        "[peer:{}] Error reading from peer: {} (kind: {:?}). Disconnecting.",
-                        username,
-                        e,
-                        e.kind()
-                    );
-                    self.disconnect_with_error(e);
-                    return;
-                }
+        match read_result {
+            Ok(()) => {}
+            Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                // Orderly remote close. Peers routinely close right after
+                // sending (e.g. search responders), so drain what arrived
+                // before tearing the connection down.
+                debug!(
+                    "[peer:{}] connection closed by peer",
+                    self.peer_username()
+                );
+                self.extract_and_process_messages();
+                self.disconnect();
+                return;
+            }
+            Err(e) => {
+                let username = self.peer_username();
+                error!(
+                    "[peer:{}] Error reading from peer: {} (kind: {:?}). Disconnecting.",
+                    username,
+                    e,
+                    e.kind()
+                );
+                self.disconnect_with_error(e);
+                return;
             }
         }
         self.extract_and_process_messages();

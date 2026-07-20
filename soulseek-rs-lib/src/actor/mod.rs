@@ -464,12 +464,31 @@ impl<A: Actor> RuntimeActor<A> {
     }
 
     fn reschedule_tick(&mut self) {
-        self.tick_generation = self.tick_generation.wrapping_add(1);
-        self.next_tick = self.actor.tick_interval().map(|interval| {
-            Instant::now()
-                .checked_add(interval)
-                .unwrap_or_else(Instant::now)
-        });
+        // An armed deadline must survive unrelated callbacks: re-arming it
+        // here on every action would let steady mailbox/IO traffic push the
+        // tick out forever, starving every deadline enforced in tick().
+        // ActorCell::tick clears next_tick when it fires, so the next
+        // interval is armed from that point.
+        match self.actor.tick_interval() {
+            Some(interval) => {
+                if self.next_tick.is_none() {
+                    self.tick_generation =
+                        self.tick_generation.wrapping_add(1);
+                    self.next_tick = Some(
+                        Instant::now()
+                            .checked_add(interval)
+                            .unwrap_or_else(Instant::now),
+                    );
+                }
+            }
+            None => {
+                if self.next_tick.is_some() {
+                    self.tick_generation =
+                        self.tick_generation.wrapping_add(1);
+                    self.next_tick = None;
+                }
+            }
+        }
     }
 }
 
@@ -525,6 +544,9 @@ impl<A: Actor> ActorCell for RuntimeActor<A> {
 
     fn tick(&mut self, registry: &Registry) {
         self.tick_count += 1;
+        // This deadline just fired; clear it so after_action arms the next
+        // interval from now instead of re-queueing the past deadline.
+        self.next_tick = None;
         self.run_actor_call("tick", Actor::tick);
         self.after_action(registry);
     }
@@ -847,5 +869,47 @@ mod tests {
         }
 
         assert_eq!(count.load(Ordering::SeqCst), message_count);
+    }
+
+    struct TickingActor {
+        ticks: Arc<AtomicUsize>,
+    }
+
+    impl Actor for TickingActor {
+        type Message = ();
+
+        fn handle(&mut self, (): Self::Message) {}
+
+        fn tick(&mut self) {
+            self.ticks.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn tick_interval(&self) -> Option<Duration> {
+            Some(Duration::from_millis(50))
+        }
+    }
+
+    #[test]
+    fn steady_message_traffic_does_not_starve_ticks() {
+        // The tick deadline must hold while the mailbox stays busy: deadlines
+        // (connect/login/search timeouts) are enforced in tick(), so an actor
+        // that is never idle must still tick.
+        let system = ActorSystem::new();
+        let ticks = Arc::new(AtomicUsize::new(0));
+        let handle = system.spawn(TickingActor {
+            ticks: ticks.clone(),
+        });
+
+        let deadline = Instant::now() + Duration::from_millis(300);
+        while Instant::now() < deadline {
+            let _ = handle.send(());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        assert!(
+            ticks.load(Ordering::SeqCst) >= 3,
+            "ticks starved under steady traffic: {}",
+            ticks.load(Ordering::SeqCst)
+        );
     }
 }

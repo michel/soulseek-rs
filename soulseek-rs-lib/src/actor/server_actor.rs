@@ -163,7 +163,6 @@ pub enum ServerMessage {
     },
     #[allow(dead_code)]
     ConnectToPeer(Peer),
-    PierceFirewall(u32),
     GetPeerAddress(String),
     GetPeerAddressResponse {
         username: String,
@@ -399,13 +398,10 @@ impl ServerActor {
     fn complete_login(&mut self, logged_in: bool) {
         self.context.logged_in = Some(logged_in);
 
-        let Some(pending) = self.pending_login.take() else {
-            return;
-        };
-
+        // The session is live regardless of whether the login waiter is still
+        // around (it may have timed out): always complete the handshake, or
+        // the server never learns our shared counts and listen port.
         if logged_in {
-            debug!("Logged in as {}", pending.username);
-            let _ = pending.response.send(Ok(true));
             for message in post_login_messages(
                 self.enable_listen,
                 self.listen_port,
@@ -414,6 +410,15 @@ impl ServerActor {
             ) {
                 self.queue_message(message);
             }
+        }
+
+        let Some(pending) = self.pending_login.take() else {
+            return;
+        };
+
+        if logged_in {
+            debug!("Logged in as {}", pending.username);
+            let _ = pending.response.send(Ok(true));
         } else {
             let _ =
                 pending.response.send(Err(SoulseekRs::AuthenticationFailed));
@@ -466,11 +471,6 @@ impl ServerActor {
             }
             ServerMessage::LoginStatus(message) => {
                 self.complete_login(message);
-            }
-            ServerMessage::PierceFirewall(token) => {
-                self.send_message(
-                    MessageFactory::build_pierce_firewall_message(token),
-                );
             }
             ServerMessage::SendMessage(message) => {
                 self.send_message(message);
@@ -584,26 +584,30 @@ impl ServerActor {
             self.extract_and_process_messages();
         }
 
-        {
+        let read_result = {
             let Some(stream) = self.stream.as_mut() else {
                 return;
             };
+            self.reader.read_from_socket(stream)
+        };
 
-            match self.reader.read_from_socket(stream) {
-                Ok(()) => {}
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
-                Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
-                    debug!("[server] Read operation timed out",);
-                }
-                Err(e) => {
-                    error!(
-                        "[server] Error reading from server: {} (kind: {:?}). Disconnecting.",
-                        e,
-                        e.kind()
-                    );
-                    self.disconnect_with_error(e);
-                    return;
-                }
+        match read_result {
+            Ok(()) => {}
+            Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                // Orderly close: drain what arrived, then disconnect.
+                debug!("[server] connection closed by server");
+                self.extract_and_process_messages();
+                self.disconnect();
+                return;
+            }
+            Err(e) => {
+                error!(
+                    "[server] Error reading from server: {} (kind: {:?}). Disconnecting.",
+                    e,
+                    e.kind()
+                );
+                self.disconnect_with_error(e);
+                return;
             }
         }
         self.extract_and_process_messages();

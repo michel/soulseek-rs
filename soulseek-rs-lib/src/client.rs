@@ -12,7 +12,7 @@ use crate::{
     error::{Result, SoulseekRs},
     message::peer::{FileEntry, SharedDirectory, build_file_search_response},
     peer::{
-        ConnectionType, DownloadPeer, NewPeer, Peer, PeerMessage,
+        ConnectionType, DownloadPeer, Peer, PeerMessage,
         listen::ListenActor,
     },
     shares::Shares,
@@ -129,7 +129,6 @@ impl Default for ClientSettings {
 }
 
 pub enum ClientOperation {
-    NewPeer(NewPeer),
     PeerConnection {
         peer: Peer,
         stream: TcpStream,
@@ -159,7 +158,6 @@ pub enum ClientOperation {
     },
     SearchResult(SearchResult),
     PeerDisconnected(u64, String, Option<SoulseekRs>),
-    PierceFireWall(Peer),
     DownloadFromPeer(u32, Peer, bool),
     DownloadStatusUpdate {
         token: u32,
@@ -860,10 +858,6 @@ impl ClientActor {
             ClientOperation::PeerConnectFailed(id, username) => {
                 self.broker_peer_connection(id, username);
             }
-            ClientOperation::PierceFireWall(peer) => {
-                self.send_pierce_firewall(&peer);
-                self.connect_or_download(peer, None, None);
-            }
             ClientOperation::DownloadFromPeer(token, peer, allowed) => {
                 self.schedule_download_from_peer(token, peer, allowed);
             }
@@ -881,9 +875,6 @@ impl ClientActor {
                 notify,
             } => {
                 self.apply_download_status(token, status, notify);
-            }
-            ClientOperation::NewPeer(new_peer) => {
-                self.handle_new_peer(new_peer);
             }
             ClientOperation::GetPeerAddressResponse {
                 username,
@@ -1015,31 +1006,6 @@ impl ClientActor {
             ConnectionType::D => {
                 error!("ConnectionType::D not implemented");
             }
-        }
-    }
-
-    fn send_pierce_firewall(&self, peer: &Peer) {
-        debug!("Piercing firewall for peer: {:?}", peer);
-
-        let context = match self.context.read_safe() {
-            Ok(c) => c,
-            Err(e) => {
-                error!("[client] pierce_firewall read: {}", e);
-                return;
-            }
-        };
-        if let Some(server_handle) = &context.server_handle {
-            if let Some(token) = peer.token {
-                if let Err(e) =
-                    server_handle.send(ServerMessage::PierceFirewall(token))
-                {
-                    error!("Failed to send PierceFirewall message: {}", e);
-                }
-            } else {
-                error!("No token available for PierceFirewall");
-            }
-        } else {
-            error!("No server handle available for PierceFirewall");
         }
     }
 
@@ -1610,57 +1576,6 @@ impl ClientActor {
         if notify && let Some(sender) = sender {
             let _ = sender.send(status);
         }
-    }
-
-    fn handle_new_peer(&self, new_peer: NewPeer) {
-        let peer_exists = match self.context.read_safe() {
-            Ok(ctx) => ctx
-                .peer_registry
-                .as_ref()
-                .is_some_and(|r| r.contains(&new_peer.username)),
-            Err(e) => {
-                error!("[client] NewPeer read: {}", e);
-                return;
-            }
-        };
-
-        if peer_exists {
-            debug!("Already connected to {}", new_peer.username);
-        } else {
-            let send_result = self.context.read_safe().ok().and_then(|ctx| {
-                ctx.server_handle.as_ref().map(|s| {
-                    s.send(ServerMessage::GetPeerAddress(
-                        new_peer.username.clone(),
-                    ))
-                })
-            });
-            if let Some(Err(e)) = send_result {
-                error!("[client] NewPeer send GetPeerAddress: {}", e);
-            }
-        }
-
-        let addr = match new_peer.tcp_stream.peer_addr() {
-            Ok(a) => a,
-            Err(e) => {
-                error!("[client] NewPeer peer_addr: {}", e);
-                return;
-            }
-        };
-        let host = addr.ip().to_string();
-        let port: u32 = addr.port().into();
-
-        let peer = Peer {
-            username: new_peer.username.clone(),
-            connection_type: new_peer.connection_type,
-            host,
-            port,
-            token: Some(new_peer.token),
-            privileged: None,
-            obfuscated_port: None,
-            unknown: None,
-        };
-
-        self.connect_or_download(peer, Some(new_peer.tcp_stream), None);
     }
 
     fn handle_peer_address_response(
