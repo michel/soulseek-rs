@@ -108,10 +108,10 @@ impl MainTui {
     }
 
     fn handle_command_bar_input(&mut self, key: KeyEvent) {
-        self.state.command_bar_cursor_position = clamp_cursor_to_char_boundary(
-            &self.state.command_bar_input,
-            self.state.command_bar_cursor_position,
-        );
+        self.state.command_bar_cursor_position = self
+            .state
+            .command_bar_input
+            .floor_char_boundary(self.state.command_bar_cursor_position);
 
         match key.code {
             KeyCode::Enter => {
@@ -437,23 +437,8 @@ impl MainTui {
     }
 }
 
-pub(super) const fn clamp_cursor_to_char_boundary(
-    input: &str,
-    cursor_position: usize,
-) -> usize {
-    if cursor_position >= input.len() {
-        return input.len();
-    }
-
-    let mut cursor_position = cursor_position;
-    while cursor_position > 0 && !input.is_char_boundary(cursor_position) {
-        cursor_position -= 1;
-    }
-    cursor_position
-}
-
 fn previous_char_boundary(input: &str, cursor_position: usize) -> usize {
-    let cursor_position = clamp_cursor_to_char_boundary(input, cursor_position);
+    let cursor_position = input.floor_char_boundary(cursor_position);
 
     input[..cursor_position]
         .char_indices()
@@ -462,7 +447,7 @@ fn previous_char_boundary(input: &str, cursor_position: usize) -> usize {
 }
 
 fn next_char_boundary(input: &str, cursor_position: usize) -> usize {
-    let cursor_position = clamp_cursor_to_char_boundary(input, cursor_position);
+    let cursor_position = input.floor_char_boundary(cursor_position);
 
     if cursor_position >= input.len() {
         return input.len();
