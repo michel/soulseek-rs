@@ -96,7 +96,9 @@ pub fn log(level: LogLevel, message: &str) {
             };
 
             let now = std::time::SystemTime::now();
-            let datetime = now.duration_since(std::time::UNIX_EPOCH).unwrap();
+            let datetime = now
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default();
             let secs = datetime.as_secs();
             let subsec_millis = datetime.subsec_millis();
 

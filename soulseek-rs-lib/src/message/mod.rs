@@ -57,10 +57,8 @@ impl Message {
 
         let chunks = data.chunks(BYTES_PER_LINE);
         for (i, chunk) in chunks.enumerate() {
-            // Print the offset
             print!("{:04x}  ", i * BYTES_PER_LINE);
 
-            // Print the hexadecimal part
             for j in 0..BYTES_PER_LINE {
                 if j < chunk.len() {
                     print!("{:02x} ", chunk[j]);
@@ -76,7 +74,6 @@ impl Message {
 
             print!("  ");
 
-            // Print the ASCII part
             let mut i = 0;
             for &byte in chunk {
                 i += 1;
@@ -101,7 +98,7 @@ impl Message {
         if self.data.len() < 8 {
             return 0;
         }
-        u32::from_le_bytes(self.data[4..8].try_into().unwrap())
+        self.data[4..8].try_into().map_or(0, u32::from_le_bytes)
     }
 
     #[must_use]

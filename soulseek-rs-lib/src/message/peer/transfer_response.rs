@@ -16,12 +16,10 @@ impl MessageHandler<PeerMessage> for TransferResponse {
         let allowed = message.read_int8();
         let reason = (allowed == 0).then(|| message.read_string());
 
-        sender
-            .send(PeerMessage::TransferResponse {
-                token,
-                allowed: allowed == 1,
-                reason,
-            })
-            .unwrap();
+        let _ = sender.send(PeerMessage::TransferResponse {
+            token,
+            allowed: allowed == 1,
+            reason,
+        });
     }
 }

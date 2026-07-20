@@ -15,8 +15,7 @@ impl MessageHandler<PeerMessage> for PlaceInQueueResponse {
         let filename = message.read_string();
         let place = message.read_int32();
 
-        sender
-            .send(PeerMessage::PlaceInQueueResponse { filename, place })
-            .unwrap();
+        let _ =
+            sender.send(PeerMessage::PlaceInQueueResponse { filename, place });
     }
 }

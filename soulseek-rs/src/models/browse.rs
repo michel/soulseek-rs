@@ -563,7 +563,6 @@ mod tests {
     fn browse_tabs_retry_active_only_when_timed_out() {
         let mut tabs = BrowseTabs::new();
         tabs.open("alice");
-        // Loading tab isn't retryable.
         assert_eq!(tabs.retry_active(), None);
         tabs.active_tab_mut().unwrap().status = BrowseStatus::TimedOut;
         // Timed-out tab retries and resets to loading.

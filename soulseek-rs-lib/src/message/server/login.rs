@@ -16,13 +16,14 @@ impl MessageHandler<ServerMessage> for LoginHandler {
         let response = message.read_int8();
 
         if response != 1 {
-            return sender.send(ServerMessage::LoginStatus(false)).unwrap();
+            let _ = sender.send(ServerMessage::LoginStatus(false));
+            return;
         }
 
         info!("Login successful");
         let greeting = message.read_string();
         debug!("Server greeting: {:?}", greeting);
 
-        sender.send(ServerMessage::LoginStatus(true)).unwrap();
+        let _ = sender.send(ServerMessage::LoginStatus(true));
     }
 }

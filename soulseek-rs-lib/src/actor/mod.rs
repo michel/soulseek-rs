@@ -74,7 +74,6 @@ impl ActorSystem {
         let (sender, receiver) = channel::<ActorMessage<A::Message>>();
         let handle = ActorHandle { sender };
 
-        // Start the actor event loop on the thread pool
         self.thread_pool.execute(move || {
             actor.on_start();
             Self::run_actor_loop(&mut actor, receiver);
@@ -198,7 +197,6 @@ mod tests {
 
         assert_eq!(count.load(Ordering::SeqCst), 6);
 
-        // Stop the actor
         handle.stop().unwrap();
 
         // Give actor time to process the stop message

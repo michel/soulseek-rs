@@ -85,7 +85,6 @@ impl FileSelector {
             terminal.draw(|frame| self.render(frame))?;
             self.spinner_state = (self.spinner_state + 1) % 10;
 
-            // Update spinner animation every 80ms
             self.last_spinner_update = Instant::now();
 
             // Poll for new search results if active
@@ -106,7 +105,6 @@ impl FileSelector {
                 }
             }
 
-            // Check for keyboard input with timeout for polling
             let timeout = if self.search_active {
                 Duration::from_millis(50)
             } else {
@@ -144,7 +142,6 @@ impl FileSelector {
                 }
             }
 
-            // Update items and reset state
             let len = new_items.len();
             self.all_items = new_items.clone();
             self.items = new_items;
@@ -354,7 +351,21 @@ impl FileSelector {
             (None, chunks[1])
         };
 
-        let title = if self.search_active {
+        self.render_results_table(frame, table_area);
+
+        if self.items.is_empty() {
+            self.render_loading_message(frame, table_area);
+        }
+
+        if let Some(info_area) = info_area {
+            self.render_info(frame, info_area);
+        }
+
+        self.render_controls(frame, controls_area);
+    }
+
+    fn table_title(&self) -> String {
+        if self.search_active {
             // Live Soulseek search is active
             let spinner = get_spinner_char(self.spinner_state);
             let elapsed = self.search_start_time.elapsed().as_secs();
@@ -378,7 +389,15 @@ impl FileSelector {
                 "Multi-select files to download ({} selected)",
                 self.selected_indices.len()
             )
-        };
+        }
+    }
+
+    fn render_results_table(
+        &mut self,
+        frame: &mut Frame,
+        table_area: ratatui::layout::Rect,
+    ) {
+        let title = self.table_title();
 
         let header = Row::new(vec![
             Cell::from(""),
@@ -465,108 +484,109 @@ impl FileSelector {
             frame.buffer_mut(),
             &mut self.state,
         );
+    }
 
-        if self.items.is_empty() {
-            let spinner = get_spinner_char(self.spinner_state);
+    fn render_loading_message(
+        &self,
+        frame: &mut Frame,
+        table_area: ratatui::layout::Rect,
+    ) {
+        let spinner = get_spinner_char(self.spinner_state);
 
-            let mut loading_message: Vec<Span> = Vec::new();
-            if self.items.is_empty() && self.search_active {
-                loading_message.extend(vec![
-                    Span::raw(spinner),
-                    Span::raw(" Searching for '"),
-                    Span::styled(self.soulseek_query.clone(), primary_style()),
-                    Span::raw(format!(
-                        "' [{}/{}s]",
-                        self.search_start_time.elapsed().as_secs(),
-                        self.search_timeout.as_secs()
-                    )),
-                ]);
-            } else {
-                loading_message.extend(vec![
-                    Span::raw(spinner),
-                    Span::raw(" Searching for '"),
-                    Span::styled(self.soulseek_query.clone(), primary_style()),
-                    Span::raw("'; No results yet"),
-                ]);
-            }
-
-            // Center the loading message
-            let vertical = Layout::vertical([
-                Constraint::Fill(1),
-                Constraint::Length(3),
-                Constraint::Fill(1),
-            ])
-            .split(table_area);
-
-            let loading_message_line = Line::from(loading_message);
-            // Calculate responsive width: text + generous padding for borders and spacing, max 80% of screen
-            let text_width =
-                loading_message_line.to_string().chars().count() as u16 + 5; // +10 for borders, padding, and safety margin
-            let max_width = (table_area.width * 80) / 100;
-            let widget_width = text_width.min(max_width);
-
-            let horizontal = Layout::horizontal([
-                Constraint::Fill(1),
-                Constraint::Length(widget_width),
-                Constraint::Fill(1),
-            ])
-            .split(vertical[1]);
-
-            let loading_widget = Paragraph::new(loading_message_line)
-                .style(Style::default())
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(primary_style())
-                        .border_type(border_type(false)),
-                )
-                .alignment(Alignment::Center)
-                .wrap(Wrap { trim: true });
-
-            frame.render_widget(loading_widget, horizontal[1]);
+        let mut loading_message: Vec<Span> = Vec::new();
+        if self.items.is_empty() && self.search_active {
+            loading_message.extend(vec![
+                Span::raw(spinner),
+                Span::raw(" Searching for '"),
+                Span::styled(self.soulseek_query.clone(), primary_style()),
+                Span::raw(format!(
+                    "' [{}/{}s]",
+                    self.search_start_time.elapsed().as_secs(),
+                    self.search_timeout.as_secs()
+                )),
+            ]);
+        } else {
+            loading_message.extend(vec![
+                Span::raw(spinner),
+                Span::raw(" Searching for '"),
+                Span::styled(self.soulseek_query.clone(), primary_style()),
+                Span::raw("'; No results yet"),
+            ]);
         }
 
-        if let Some(info_area) = info_area {
-            let (info_text, title, style) = if self.is_filtering {
-                (
-                    format!("Filter: {}", self.filter_query),
-                    "Filter",
-                    warning_style(),
-                )
-            } else if !self.filter_query.is_empty() {
-                (
-                    format!(
-                        "Current filter: {} (press / to modify, Esc to clear)",
-                        self.filter_query
-                    ),
-                    "Filter",
-                    primary_style(),
-                )
-            } else {
-                (
-                    format!(
-                        "{} file(s) selected for download",
-                        self.selected_indices.len()
-                    ),
-                    "Selection",
-                    success_style(),
-                )
-            };
+        // Center the loading message
+        let vertical = Layout::vertical([
+            Constraint::Fill(1),
+            Constraint::Length(3),
+            Constraint::Fill(1),
+        ])
+        .split(table_area);
 
-            let info_widget = Paragraph::new(info_text)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_type(border_type(false))
-                        .title(title),
-                )
-                .style(style);
+        let loading_message_line = Line::from(loading_message);
+        // Calculate responsive width: text + generous padding for borders and spacing, max 80% of screen
+        let text_width =
+            loading_message_line.to_string().chars().count() as u16 + 5; // +10 for borders, padding, and safety margin
+        let max_width = (table_area.width * 80) / 100;
+        let widget_width = text_width.min(max_width);
 
-            frame.render_widget(info_widget, info_area);
-        }
+        let horizontal = Layout::horizontal([
+            Constraint::Fill(1),
+            Constraint::Length(widget_width),
+            Constraint::Fill(1),
+        ])
+        .split(vertical[1]);
 
-        // Render controls footer
-        self.render_controls(frame, controls_area);
+        let loading_widget = Paragraph::new(loading_message_line)
+            .style(Style::default())
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(primary_style())
+                    .border_type(border_type(false)),
+            )
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true });
+
+        frame.render_widget(loading_widget, horizontal[1]);
+    }
+
+    fn render_info(&self, frame: &mut Frame, info_area: ratatui::layout::Rect) {
+        let (info_text, title, style) = if self.is_filtering {
+            (
+                format!("Filter: {}", self.filter_query),
+                "Filter",
+                warning_style(),
+            )
+        } else if !self.filter_query.is_empty() {
+            (
+                format!(
+                    "Current filter: {} (press / to modify, Esc to clear)",
+                    self.filter_query
+                ),
+                "Filter",
+                primary_style(),
+            )
+        } else {
+            (
+                format!(
+                    "{} file(s) selected for download",
+                    self.selected_indices.len()
+                ),
+                "Selection",
+                success_style(),
+            )
+        };
+
+        let info_widget = Paragraph::new(info_text)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(border_type(false))
+                    .title(title),
+            )
+            .style(style);
+
+        frame.render_widget(info_widget, info_area);
     }
 
     fn render_controls(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
