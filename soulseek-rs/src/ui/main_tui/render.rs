@@ -354,7 +354,7 @@ impl MainTui {
         let shortcuts_line = format_shortcuts_styled(&shortcuts);
         // Surface our own sharing status in the block title.
         let shared = self.client.shared_directories();
-        let sharing = match shared {
+        let sharing = match shared.as_slice() {
             [] => "off".to_string(),
             [only] => only.clone(),
             more => format!("{} folders", more.len()),

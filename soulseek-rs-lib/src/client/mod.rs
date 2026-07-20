@@ -202,6 +202,8 @@ pub struct ClientContext {
     pending_connect_tokens: HashMap<u32, String>,
     /// Files we share with peers (read-only after connect).
     pub shares: Arc<Shares>,
+    /// The directories the current share index was built from.
+    pub shared_directories: Vec<String>,
     /// Peer listen addresses learned from GetPeerAddress responses.
     peer_addresses: HashMap<String, (String, u32)>,
     /// Peer messages waiting for a control connection to that peer.
@@ -501,6 +503,7 @@ impl ClientContext {
             private_messages: Vec::new(),
             pending_connect_tokens: HashMap::new(),
             shares: Arc::new(Shares::empty()),
+            shared_directories: Vec::new(),
             peer_addresses: HashMap::new(),
             pending_peer_messages: HashMap::new(),
             uploads: HashMap::new(),
@@ -645,10 +648,51 @@ impl Client {
         }
     }
 
-    /// The directories whose files are shared with other peers.
+    /// The directories whose files are currently shared with other peers.
     #[must_use]
-    pub fn shared_directories(&self) -> &[String] {
-        &self.shared_directories
+    pub fn shared_directories(&self) -> Vec<String> {
+        self.context
+            .read_safe()
+            .map(|ctx| ctx.shared_directories.clone())
+            .unwrap_or_default()
+    }
+
+    /// Replace the shared directories at runtime: rescan into a fresh
+    /// index (served to peers from then on) and re-announce the new
+    /// folder/file counts to the server.
+    ///
+    /// # Errors
+    /// Returns [`SoulseekRs::NotConnected`] if the client is not connected.
+    pub fn set_shared_directories(&self, dirs: Vec<String>) -> Result<()> {
+        let roots: Vec<std::path::PathBuf> = dirs
+            .iter()
+            .filter(|dir| !dir.trim().is_empty())
+            .map(std::path::PathBuf::from)
+            .collect();
+        let shares = if roots.is_empty() {
+            Shares::empty()
+        } else {
+            Shares::scan_many(&roots)
+        };
+        info!(
+            "Now sharing {} files in {} folders from {} directories",
+            shares.file_count(),
+            shares.folder_count(),
+            roots.len()
+        );
+        let folder_count = shares.folder_count();
+        let file_count = shares.file_count();
+        {
+            let mut ctx = self.context.write_safe()?;
+            ctx.shares = Arc::new(shares);
+            ctx.shared_directories = dirs;
+        }
+        self.send_server_message(
+            crate::message::server::MessageFactory::build_shared_folders_message(
+                folder_count,
+                file_count,
+            ),
+        )
     }
 }
 

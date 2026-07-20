@@ -28,7 +28,7 @@ impl Client {
 
     /// Send a raw server message via the server actor, mapping a dead channel
     /// to [`SoulseekRs::NotConnected`].
-    fn send_server_message(
+    pub(super) fn send_server_message(
         &self,
         message: crate::message::Message,
     ) -> Result<()> {
