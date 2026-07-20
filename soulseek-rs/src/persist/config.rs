@@ -69,7 +69,6 @@ pub struct Resolved {
 
 pub const DEFAULT_SERVER: &str = "server.slsknet.org:2416";
 pub const DEFAULT_LISTENER_PORT: u16 = 2234;
-pub const DEFAULT_DOWNLOAD_DIR: &str = "~/Downloads";
 pub const DEFAULT_MAX_CONCURRENT_DOWNLOADS: usize = 5;
 pub const DEFAULT_SEARCH_TIMEOUT: u64 = 10;
 
@@ -80,6 +79,11 @@ pub const DEFAULT_SEARCH_TIMEOUT: u64 = 10;
 /// unless the flag is passed.
 #[must_use]
 pub fn resolve(cli: &crate::cli::Cli, file: &FileConfig) -> Resolved {
+    let download_dir = cli
+        .download_dir
+        .clone()
+        .or_else(|| file.download_dir.clone())
+        .unwrap_or_else(super::paths::default_download_dir);
     Resolved {
         username: cli.username.clone().or_else(|| file.username.clone()),
         server: cli
@@ -93,12 +97,15 @@ pub fn resolve(cli: &crate::cli::Cli, file: &FileConfig) -> Resolved {
             .unwrap_or(DEFAULT_LISTENER_PORT),
         disable_listener: cli.disable_listener
             || file.disable_listener.unwrap_or(false),
-        download_dir: cli
-            .download_dir
+        download_dir: download_dir.clone(),
+        // Soulseek convention: share what you download. An explicitly empty
+        // shared_dir ("") opts out of sharing entirely.
+        shared_dir: cli
+            .shared_dir
             .clone()
-            .or_else(|| file.download_dir.clone())
-            .unwrap_or_else(|| DEFAULT_DOWNLOAD_DIR.to_string()),
-        shared_dir: cli.shared_dir.clone().or_else(|| file.shared_dir.clone()),
+            .or_else(|| file.shared_dir.clone())
+            .or(Some(download_dir))
+            .filter(|dir| !dir.trim().is_empty()),
         max_concurrent_downloads: cli
             .max_concurrent_downloads
             .or(file.max_concurrent_downloads)
@@ -138,7 +145,6 @@ mod tests {
         let resolved = resolve(&bare_cli(), &FileConfig::default());
         assert_eq!(resolved.server, DEFAULT_SERVER);
         assert_eq!(resolved.listener_port, DEFAULT_LISTENER_PORT);
-        assert_eq!(resolved.download_dir, DEFAULT_DOWNLOAD_DIR);
         assert_eq!(
             resolved.max_concurrent_downloads,
             DEFAULT_MAX_CONCURRENT_DOWNLOADS
@@ -146,6 +152,49 @@ mod tests {
         assert_eq!(resolved.search_timeout, DEFAULT_SEARCH_TIMEOUT);
         assert!(!resolved.disable_listener);
         assert_eq!(resolved.username, None);
+    }
+
+    #[test]
+    fn default_download_dir_is_a_soulseek_folder_under_downloads() {
+        let resolved = resolve(&bare_cli(), &FileConfig::default());
+        let path = std::path::Path::new(&resolved.download_dir);
+        assert!(path.is_absolute(), "must not rely on ~ expansion");
+        assert_eq!(path.file_name().and_then(|n| n.to_str()), Some("Soulseek"));
+        assert_eq!(
+            path.parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str()),
+            Some("Downloads")
+        );
+    }
+
+    #[test]
+    fn shared_dir_defaults_to_the_download_dir() {
+        let resolved = resolve(&bare_cli(), &FileConfig::default());
+        assert_eq!(
+            resolved.shared_dir.as_deref(),
+            Some(resolved.download_dir.as_str())
+        );
+    }
+
+    #[test]
+    fn shared_dir_follows_a_customized_download_dir() {
+        let file = FileConfig {
+            download_dir: Some("/music".into()),
+            ..FileConfig::default()
+        };
+        let resolved = resolve(&bare_cli(), &file);
+        assert_eq!(resolved.shared_dir.as_deref(), Some("/music"));
+    }
+
+    #[test]
+    fn empty_shared_dir_disables_sharing() {
+        let file = FileConfig {
+            shared_dir: Some(String::new()),
+            ..FileConfig::default()
+        };
+        let resolved = resolve(&bare_cli(), &file);
+        assert_eq!(resolved.shared_dir, None);
     }
 
     #[test]

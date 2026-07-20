@@ -23,3 +23,21 @@ pub fn state_dir() -> Option<PathBuf> {
 fn project_dirs() -> Option<ProjectDirs> {
     ProjectDirs::from("", "", "soulseek-rs")
 }
+
+/// Default download (and shared) folder: a `Soulseek` subfolder of the
+/// platform Downloads directory (XDG on Linux, known-folder on Windows),
+/// so Soulseek files don't clutter the Downloads root.
+#[must_use]
+pub fn default_download_dir() -> String {
+    let user_dirs = directories::UserDirs::new();
+    let downloads = user_dirs
+        .as_ref()
+        .and_then(|dirs| dirs.download_dir().map(std::path::Path::to_path_buf))
+        .or_else(|| {
+            user_dirs
+                .as_ref()
+                .map(|dirs| dirs.home_dir().join("Downloads"))
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("Downloads"));
+    downloads.join("Soulseek").display().to_string()
+}
