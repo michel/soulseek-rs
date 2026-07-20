@@ -2,6 +2,7 @@ mod cli;
 mod config;
 mod directories;
 mod models;
+mod persist;
 mod port_mapping;
 mod ui;
 
@@ -25,35 +26,43 @@ fn main() -> Result<()> {
 
     init_logging(&cli);
 
+    // Layer CLI/env values over config.toml over built-in defaults.
+    let config_path = persist::paths::config_file();
+    let file_config = match &config_path {
+        Some(path) => persist::config::FileConfig::load(path)?,
+        None => persist::config::FileConfig::default(),
+    };
+    let resolved = persist::config::resolve(&cli, &file_config);
+
     // `portmap` is a local network diagnostic; it needs no server credentials,
     // so handle it before requiring a username/password.
     if matches!(cli.command, Some(Commands::Portmap)) {
         println!(
             "Testing automatic port mapping for TCP {}…",
-            cli.listener_port
+            resolved.listener_port
         );
-        println!("{}", port_mapping::diagnose(cli.listener_port));
+        println!("{}", port_mapping::diagnose(resolved.listener_port));
         return Ok(());
     }
 
-    let username = cli.username.ok_or_else(|| {
+    let username = resolved.username.clone().ok_or_else(|| {
         color_eyre::eyre::eyre!(
-            "Username required: use --username or set SOULSEEK_USERNAME env var"
+            "Username required: use --username, set SOULSEEK_USERNAME, or add it to config.toml"
         )
     })?;
 
-    let password = cli.password.ok_or_else(|| {
+    let password = cli.password.clone().ok_or_else(|| {
         color_eyre::eyre::eyre!(
             "Password required: use --password or set SOULSEEK_PASSWORD env var"
         )
     })?;
 
-    let (server_host, server_port) = parse_server_address(&cli.server)?;
+    let (server_host, server_port) = parse_server_address(&resolved.server)?;
 
     // Resolve the optional shared/upload directory up front; a misconfigured
     // one is a warning, not a fatal error (the client just shares nothing).
     let shared_directory = match directories::resolve_shared_directory(
-        cli.shared_dir.as_deref(),
+        resolved.shared_dir.as_deref(),
     ) {
         Ok(dir) => dir.map(|path| path.display().to_string()),
         Err(e) => {
@@ -66,8 +75,8 @@ fn main() -> Result<()> {
         username: username.clone(),
         password: password.clone(),
         server_address: PeerAddress::new(server_host.clone(), server_port),
-        enable_listen: !cli.disable_listener,
-        listen_port: cli.listener_port,
+        enable_listen: !resolved.disable_listener,
+        listen_port: resolved.listener_port,
         shared_directory: shared_directory.clone(),
     };
 
@@ -83,8 +92,8 @@ fn main() -> Result<()> {
                 password,
                 server_host,
                 server_port,
-                enable_listener: !cli.disable_listener,
-                listener_port: cli.listener_port,
+                enable_listener: !resolved.disable_listener,
+                listener_port: resolved.listener_port,
                 query,
                 timeout,
                 download_dir,
@@ -111,9 +120,9 @@ fn main() -> Result<()> {
         Some(Commands::Portmap) => unreachable!(),
         None => run_default_tui(
             settings,
-            cli.download_dir,
-            cli.max_concurrent_downloads,
-            Duration::from_secs(cli.search_timeout),
+            resolved.download_dir.clone(),
+            resolved.max_concurrent_downloads,
+            Duration::from_secs(resolved.search_timeout),
         ),
     }
 }
