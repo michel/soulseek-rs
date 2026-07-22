@@ -35,7 +35,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.9"
 directories = "6"
-keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+# Linux uses the pure-Rust zbus Secret Service backend (async-secret-service
+# + async-io + crypto-rust) instead of sync-secret-service, which links the
+# system libdbus and breaks builds without libdbus-1-dev.
+keyring = { version = "3", features = ["apple-native", "windows-native", "async-secret-service", "async-io", "crypto-rust"] }
 
 [dev-dependencies]
 tempfile = "3"
