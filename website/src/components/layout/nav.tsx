@@ -37,7 +37,7 @@ export const Nav = () => (
               cn(
                 'relative inline-flex shrink-0 items-center rounded-md px-3.5 py-1.5 text-label uppercase tracking-[var(--tracking-label)] max-sm:min-h-11 sm:px-3',
                 isActive
-                  ? "bg-raised text-primary before:text-accent before:content-['›_'] after:absolute after:inset-x-3 after:bottom-px after:h-0.5 after:bg-accent"
+                  ? "bg-raised text-primary before:text-accent-text before:content-['›_'] after:absolute after:inset-x-3 after:bottom-px after:h-0.5 after:bg-accent"
                   : 'text-secondary hover:bg-[var(--bg-selection)] hover:text-primary',
               )
             }

@@ -14,6 +14,15 @@ import { InfoPane, ResultsPane, SearchesPane, TransfersPane } from './panes'
 import { useFitScale } from './use-fit-scale'
 
 const DESIGN_WIDTH = 1360
+/*
+ * Natural height of the terminal at DESIGN_WIDTH, measured in the browser.
+ *
+ * The layout is fixed — no content-driven heights — so the wrapper can hold
+ * this ratio in CSS from the very first paint. Without it the prerendered
+ * hero occupied its full unscaled height, then collapsed to the scaled one
+ * once JS measured, shifting everything below it by ~145px.
+ */
+const DESIGN_HEIGHT = 863
 const TICK_MS = 480
 const MAX_CONCURRENT = 2
 /** Where the scripted run leaves the cursor. */
@@ -374,8 +383,10 @@ export const HeroTerminal = () => {
   return (
     <div
       ref={wrapRef}
-      className="w-full overflow-x-auto overflow-y-hidden"
-      style={ready ? { height } : undefined}
+      className="w-full overflow-hidden"
+      // aspect-ratio reserves the right box before JS runs; once measured the
+      // explicit height takes over and the two agree, so nothing moves.
+      style={ready ? { height } : { aspectRatio: `${String(DESIGN_WIDTH)} / ${String(DESIGN_HEIGHT)}` }}
     >
       <div style={ready ? { width: DESIGN_WIDTH * scale, height } : undefined}>
         <div

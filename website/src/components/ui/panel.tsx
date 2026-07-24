@@ -51,7 +51,7 @@ export const Callout = ({ title, tone = 'accent', children, className }: Callout
       <div
         className={cn(
           'mb-2 text-label uppercase tracking-[var(--tracking-label)]',
-          tone === 'warn' ? 'text-warning' : 'text-accent',
+          tone === 'warn' ? 'text-warning' : 'text-accent-text',
         )}
       >
         {title}

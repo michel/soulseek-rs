@@ -27,7 +27,7 @@ export const OsIcon = ({ name, className }: OsIconProps) => (
     role="img"
     aria-label={name}
     className={cn(
-      'block size-[22px] shrink-0 text-primary transition-colors group-hover:text-accent',
+      'block size-[22px] shrink-0 text-primary transition-colors group-hover:text-accent-text',
       className,
     )}
   >
