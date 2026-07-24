@@ -1,3 +1,6 @@
 /target
 .serena
 .
+
+# Impeccable: per-developer hook consent and private detector overrides.
+.impeccable/config.local.json
