@@ -25,7 +25,7 @@ const { render } = (await import(SSR_ENTRY)) as {
 
 const DIST = join(import.meta.dirname, '..', 'dist')
 
-const SITE_URL = 'https://michel.github.io/soulseek-rs/'
+const SITE_URL = 'https://re-invention.nl/soulseek-rs/'
 
 const escapeAttr = (value: string): string =>
   value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')

@@ -19,4 +19,4 @@ export const LINKS = {
 export const VERSION = __APP_VERSION__
 
 /** Where the site is served from. Used for canonical and og:url. */
-export const SITE_URL = 'https://michel.github.io/soulseek-rs/'
+export const SITE_URL = 'https://re-invention.nl/soulseek-rs/'
