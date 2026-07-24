@@ -98,7 +98,12 @@ jobs:
           test -x soulfind/bin/soulfind
           echo "SOULFIND_BIN=$PWD/soulfind/bin/soulfind" >> "$GITHUB_ENV"
 
-      - name: Run e2e tests (required against soulfind)
+      - name: Run library e2e tests (required against soulfind)
         env:
           SOULSEEK_E2E_REQUIRED: "1"
         run: cargo test -p soulseek-rs-lib --test e2e -- --nocapture
+
+      - name: Run CLI e2e tests (required against soulfind)
+        env:
+          SOULSEEK_E2E_REQUIRED: "1"
+        run: cargo test -p soulseek-rs --test cli_e2e -- --nocapture

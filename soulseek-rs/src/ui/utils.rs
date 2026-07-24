@@ -30,12 +30,6 @@ pub fn format_speed(speed_bytes_per_sec: f64) -> String {
     format!("{mb:.1} MB/s")
 }
 
-pub fn get_bitrate(
-    attribs: &std::collections::HashMap<u32, u32>,
-) -> Option<u32> {
-    attribs.get(&0).copied()
-}
-
 const SPINNER_CHARS: [&str; 10] =
     ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 

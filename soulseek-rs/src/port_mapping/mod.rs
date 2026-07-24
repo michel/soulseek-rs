@@ -61,43 +61,69 @@ impl Drop for PortMapper {
     }
 }
 
+/// The outcome of a port-mapping probe: a verdict a script can branch on
+/// plus the advice a human needs when it fails.
+pub struct Probe {
+    pub ok: bool,
+    /// `upnp`, `natpmp`, or `none`.
+    pub backend: &'static str,
+    /// External `address:port` the mapping exposes, when the backend reports
+    /// one.
+    pub external: Option<String>,
+    pub advice: String,
+}
+
 /// Synchronously probe whether automatic port mapping works on this network:
-/// try to map `port` (UPnP then NAT-PMP), report the result in human-readable
-/// form, then remove the probe mapping. Used by the `portmap` CLI command so a
-/// user can verify reachability on their actual router.
+/// try to map `port` (UPnP then NAT-PMP), then remove the probe mapping.
+/// Backs the `portmap` command so a user can verify reachability on their
+/// actual router.
 #[must_use]
-pub fn diagnose(port: u16) -> String {
+pub fn probe(port: u16) -> Probe {
     let Some(local_ip) = local_lan_ip() else {
-        return "Could not determine this machine's LAN IP — are you connected \
-                to a network?"
-            .to_string();
+        return Probe {
+            ok: false,
+            backend: "none",
+            external: None,
+            advice: "Could not determine this machine's LAN IP — are you \
+                     connected to a network?"
+                .to_string(),
+        };
     };
 
     match map_once(local_ip, port) {
         Some((backend, _lease)) => {
-            let detail = match &backend {
-                Backend::Upnp { gateway, .. } => {
-                    let ip = gateway.get_external_ip().map_or_else(
-                        |_| "unknown".to_string(),
-                        |ip| ip.to_string(),
-                    );
-                    format!("UPnP-IGD (external address {ip}:{port})")
-                }
-                Backend::NatPmp { .. } => "NAT-PMP".to_string(),
+            let (name, external) = match &backend {
+                Backend::Upnp { gateway, .. } => (
+                    "upnp",
+                    gateway
+                        .get_external_ip()
+                        .ok()
+                        .map(|ip| format!("{ip}:{port}")),
+                ),
+                Backend::NatPmp { .. } => ("natpmp", None),
             };
             remove(&backend); // clean up the probe mapping
-            format!(
-                "✅ Automatic port mapping works via {detail}.\n   TCP {port} \
-                 was opened on your router, so firewalled peers and the server \
-                 can reach you. The app does this automatically while it runs."
-            )
+            Probe {
+                ok: true,
+                backend: name,
+                external,
+                advice: format!(
+                    "Automatic port mapping works. TCP {port} was opened on \
+                     your router, so firewalled peers and the server can \
+                     reach you. The app does this automatically while it runs."
+                ),
+            }
         }
-        None => format!(
-            "❌ No UPnP/NAT-PMP router responded for TCP {port}.\n   Automatic \
-             mapping won't work on this network. To browse/download firewalled \
-             peers, forward TCP {port} to this machine on your router (or \
-             enable UPnP there)."
-        ),
+        None => Probe {
+            ok: false,
+            backend: "none",
+            external: None,
+            advice: format!(
+                "No UPnP/NAT-PMP router responded for TCP {port}. To \
+                 browse/download firewalled peers, forward TCP {port} to this \
+                 machine on your router (or enable UPnP there)."
+            ),
+        },
     }
 }
 

@@ -5,6 +5,11 @@ use super::{
     TcpStream, debug, error, info, mpsc, thread, trace,
 };
 
+/// Ceiling on the wait for a login verdict. Generous enough for a slow server
+/// and a retrying connect, short enough that an unattended caller ends.
+const LOGIN_RESPONSE_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(45);
+
 impl Client {
     pub fn connect(&mut self) -> Result<()> {
         let (sender, message_reader): (
@@ -89,6 +94,13 @@ impl Client {
         Ok(())
     }
 
+    /// Log in and wait for the server's verdict.
+    ///
+    /// The wait is bounded: the actor only answers once it has a working
+    /// connection, so a server that never completes the TCP handshake would
+    /// otherwise block the caller forever. A caller that hits
+    /// [`SoulseekRs::Timeout`] can retry or give up, but it always regains
+    /// control.
     pub fn login(&self) -> Result<bool> {
         info!("Logging in as {}", self.username);
         if let Some(handle) = &self.server_handle {
@@ -99,7 +111,7 @@ impl Client {
                 response: tx,
             });
 
-            match rx.recv() {
+            match rx.recv_timeout(LOGIN_RESPONSE_TIMEOUT) {
                 Ok(result) => result,
                 Err(_) => Err(SoulseekRs::Timeout),
             }
