@@ -57,6 +57,7 @@ pub fn candidates(
                 bitrate: file.attribs.get(&ATTR_BITRATE).copied(),
                 duration: file.attribs.get(&ATTR_DURATION).copied(),
                 free_slot: result.slots > 0,
+                slots: result.slots,
                 speed: result.speed,
             };
             if filter.keeps(&candidate) {

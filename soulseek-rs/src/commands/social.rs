@@ -5,7 +5,7 @@ use super::{Ctx, Session, confirm_flush};
 use crate::cli::BrowseArgs;
 use crate::output::{
     BrowseRecord, CliError, CliResult, Out, PrivateMessageRecord,
-    RoomEventRecord, RoomRecord,
+    RoomEventRecord, RoomMemberRecord, RoomRecord,
 };
 use soulseek_rs::types::RoomEvent;
 use soulseek_rs::{Client, SharedDirectory};
@@ -130,6 +130,41 @@ pub fn room_say(ctx: &Ctx, room: &str, message: &str) -> CliResult {
     Err(CliError::timeout(format!(
         "the server did not acknowledge the message to {room}"
     )))
+}
+
+/// List a room's membership. Joining is what makes the server send it, so we
+/// join, wait for the roster, and leave again.
+pub fn room_users(ctx: &Ctx, room: &str, timeout: Duration) -> CliResult {
+    let session = Session::open(ctx)?;
+    session.client.join_room(room).map_err(|e| {
+        CliError::connection(format!("cannot join {room}: {e}"))
+    })?;
+    ctx.out
+        .status(&format!("waiting for {room}'s member list…"));
+
+    let deadline = Instant::now() + timeout;
+    let mut members = Vec::new();
+    while Instant::now() < deadline && members.is_empty() {
+        members = session.client.room_members(room);
+        if members.is_empty() {
+            std::thread::sleep(POLL);
+        }
+    }
+    let _ = session.client.leave_room(room);
+
+    if members.is_empty() {
+        return Err(CliError::timeout(format!(
+            "{room} sent no member list within {}s",
+            timeout.as_secs()
+        )));
+    }
+    for user in members {
+        ctx.out.emit(&RoomMemberRecord {
+            room: room.to_string(),
+            user,
+        });
+    }
+    Ok(())
 }
 
 pub fn room_listen(ctx: &Ctx, room: &str, span: Option<Duration>) -> CliResult {

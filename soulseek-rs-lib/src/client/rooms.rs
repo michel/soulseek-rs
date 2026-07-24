@@ -2,6 +2,7 @@ use super::{
     Client, PeerMessage, Result, RoomEvent, RoomInfo, RwLockExt, ServerMessage,
     SharedDirectory, SoulseekRs, UserMessage, error,
 };
+use crate::types::UserInfo;
 
 impl Client {
     /// Send a private message to another user via the server.
@@ -96,6 +97,60 @@ impl Client {
             Ok(ctx) => ctx.room_list(),
             Err(e) => {
                 error!("[client] room_list: {}", e);
+                Vec::new()
+            }
+        }
+    }
+
+    /// Ask the server what it knows about `username`: online status and share
+    /// statistics.
+    ///
+    /// Any previous answer for `username` is discarded first, so
+    /// [`Client::user_info`] returns `None` until the replies to *this*
+    /// request arrive — polling it cannot mistake a stale snapshot for a
+    /// fresh one.
+    ///
+    /// # Errors
+    /// Returns [`SoulseekRs::NotConnected`] if the client is not connected.
+    pub fn request_user_info(&self, username: &str) -> Result<()> {
+        use crate::message::server::MessageFactory;
+        self.context.write_safe()?.invalidate_user_info(username);
+        self.send_server_message(MessageFactory::build_get_user_status(
+            username,
+        ))?;
+        self.send_server_message(MessageFactory::build_get_user_stats(username))
+    }
+
+    /// What the server has told us about `username` since the last
+    /// [`Client::request_user_info`], or `None` before any reply arrives.
+    ///
+    /// Presence and statistics are separate replies, so a snapshot can carry
+    /// one and not the other; [`UserInfo::is_complete`] reports when both
+    /// have landed.
+    #[must_use]
+    pub fn user_info(&self, username: &str) -> Option<UserInfo> {
+        match self.context.read_safe() {
+            Ok(ctx) => ctx.user_info(username),
+            Err(e) => {
+                error!("[client] user_info: {}", e);
+                None
+            }
+        }
+    }
+
+    /// Who is currently in `room`, sorted by name.
+    ///
+    /// The roster is built from the membership the server sends when
+    /// [`Client::join_room`] succeeds and kept current by the join and leave
+    /// events after it, so it is populated shortly after joining rather than
+    /// immediately. Returns an empty list for a room this client has not
+    /// joined.
+    #[must_use]
+    pub fn room_members(&self, room: &str) -> Vec<String> {
+        match self.context.read_safe() {
+            Ok(ctx) => ctx.room_members(room),
+            Err(e) => {
+                error!("[client] room_members: {}", e);
                 Vec::new()
             }
         }

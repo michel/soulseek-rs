@@ -492,6 +492,36 @@ impl Client {
                                     e
                                 ),
                             },
+                            ClientOperation::UserStatusReceived {
+                                username,
+                                status,
+                                privileged,
+                            } => match client_context.write_safe() {
+                                Ok(mut ctx) => ctx.apply_user_status(
+                                    username, status, privileged,
+                                ),
+                                Err(e) => error!(
+                                    "[client] UserStatusReceived write: {}",
+                                    e
+                                ),
+                            },
+                            ClientOperation::UserStatsReceived {
+                                username,
+                                average_speed,
+                                shared_files,
+                                shared_folders,
+                            } => match client_context.write_safe() {
+                                Ok(mut ctx) => ctx.apply_user_stats(
+                                    username,
+                                    average_speed,
+                                    shared_files,
+                                    shared_folders,
+                                ),
+                                Err(e) => error!(
+                                    "[client] UserStatsReceived write: {}",
+                                    e
+                                ),
+                            },
                             ClientOperation::RoomEvent(event) => {
                                 match client_context.write_safe() {
                                     Ok(mut ctx) => ctx.apply_room_event(event),

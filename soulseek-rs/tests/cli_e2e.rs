@@ -975,3 +975,481 @@ fn message_read_streams_incoming_private_messages() {
     });
     assert!(read, "stdout was: {:?}", stdout(&output));
 }
+
+// ---------------------------------------------------------------------------
+// Being a peer: whoami, user, serve, shares, room users
+// ---------------------------------------------------------------------------
+
+#[test]
+fn whoami_confirms_the_login_and_reports_what_we_offer() {
+    let server = server_or_skip!();
+    let share = Scratch::new("share");
+    std::fs::write(share.path().join("offered.bin"), probe_bytes())
+        .expect("share file");
+
+    let output = cli(
+        &server,
+        "cli_e2e_whoami",
+        &["--shared-dir", &share.display(), "--json", "whoami"],
+    );
+    assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+
+    let record: serde_json::Value =
+        serde_json::from_str(records(&output).first().expect("one record"))
+            .expect("valid JSON");
+    assert_eq!(record["user"], "cli_e2e_whoami");
+    assert_eq!(record["shared_files"], 1, "the shared file is indexed");
+    assert!(record["server"].as_str().is_some_and(|s| s.contains(':')));
+}
+
+#[test]
+fn whoami_fails_with_the_connection_code_on_a_bad_password() {
+    let server = server_or_skip!();
+    let _owner = server.client("cli_e2e_whoami_owner", Vec::new());
+
+    let output = run(&[
+        "--no-config",
+        "--quiet",
+        "--server",
+        &server.address(),
+        "--username",
+        "cli_e2e_whoami_owner",
+        "--password",
+        "wrong",
+        "--no-listener",
+        "whoami",
+    ]);
+    assert_eq!(code(&output), EXIT_CONNECTION);
+}
+
+#[test]
+fn user_reports_a_peers_status_and_share_counts() {
+    let server = server_or_skip!();
+    let share = Scratch::new("share");
+    std::fs::create_dir_all(share.path().join("album")).expect("album");
+    for name in ["a.bin", "b.bin"] {
+        std::fs::write(share.path().join("album").join(name), probe_bytes())
+            .expect("share file");
+    }
+    let _subject = server.client("cli_e2e_subject", vec![share.display()]);
+    settle();
+
+    let output = cli(
+        &server,
+        "cli_e2e_asker",
+        &["--json", "user", "cli_e2e_subject"],
+    );
+    assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+
+    let record: serde_json::Value =
+        serde_json::from_str(records(&output).first().expect("one record"))
+            .expect("valid JSON");
+    assert_eq!(record["user"], "cli_e2e_subject");
+    assert_ne!(record["status"], "offline", "the subject is logged in");
+    assert_eq!(record["shared_files"], 2);
+}
+
+#[test]
+fn serve_stays_online_and_reports_an_upload_a_peer_pulls() {
+    let server = server_or_skip!();
+    let share = Scratch::new("share");
+    let target = Scratch::new("downloads");
+    std::fs::write(share.path().join("served.bin"), probe_bytes())
+        .expect("share file");
+
+    // A serving process: online, sharing, streaming upload records.
+    let mut args = server.args("cli_e2e_server");
+    args.retain(|arg| arg != "--quiet");
+    args.extend(
+        [
+            "--shared-dir",
+            &share.display(),
+            "--json",
+            "serve",
+            "--duration",
+            "25",
+        ]
+        .iter()
+        .map(|a| (*a).to_string()),
+    );
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let child = command(&refs)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the binary should run");
+
+    // Give it time to log in and register its listen port, then pull a file
+    // from it the way any peer would: browse to learn the path, then download.
+    std::thread::sleep(Duration::from_secs(4));
+    let listing = cli(&server, "cli_e2e_puller", &["browse", "cli_e2e_server"]);
+    let remote_path = records(&listing)
+        .into_iter()
+        .find(|line| line.contains("served.bin"))
+        .and_then(|row| row.rsplit('\t').next().map(String::from))
+        .unwrap_or_else(|| {
+            panic!(
+                "a serving process should answer a browse; exit={} stderr={}",
+                code(&listing),
+                stderr(&listing)
+            )
+        });
+
+    let puller = cli(
+        &server,
+        "cli_e2e_puller",
+        &[
+            "--download-dir",
+            &target.display(),
+            "download",
+            "cli_e2e_server",
+            &remote_path,
+            "--size",
+            &probe_bytes().len().to_string(),
+            "--timeout",
+            "20",
+        ],
+    );
+
+    let output = child.wait_with_output().expect("serve should finish");
+    assert_eq!(code(&output), EXIT_OK, "serve stderr: {}", stderr(&output));
+
+    // The download may take the browse path for its remote name; what this
+    // test pins is that serve REPORTED the upload it served.
+    let uploads: Vec<serde_json::Value> = records(&output)
+        .iter()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    assert!(
+        !uploads.is_empty(),
+        "serve should report the upload. puller exit={} stderr={} serve stdout={:?}",
+        code(&puller),
+        stderr(&puller),
+        stdout(&output)
+    );
+    let last = &uploads[uploads.len() - 1];
+    assert_eq!(last["user"], "cli_e2e_puller");
+    assert!(
+        last["path"]
+            .as_str()
+            .is_some_and(|p| p.contains("served.bin"))
+    );
+}
+
+#[test]
+fn serve_refuses_to_run_with_nothing_to_share() {
+    let server = server_or_skip!();
+    let output = cli(
+        &server,
+        "cli_e2e_empty_server",
+        &["--shared-dir", "", "serve", "--duration", "5"],
+    );
+    assert_eq!(code(&output), EXIT_USAGE);
+    assert!(stderr(&output).contains("share"), "got {}", stderr(&output));
+}
+
+#[test]
+fn shares_status_reports_what_the_network_will_see() {
+    let server = server_or_skip!();
+    let share = Scratch::new("share");
+    for name in ["one.bin", "two.bin", "three.bin"] {
+        std::fs::write(share.path().join(name), probe_bytes())
+            .expect("share file");
+    }
+
+    let output = cli(
+        &server,
+        "cli_e2e_shares",
+        &[
+            "--shared-dir",
+            &share.display(),
+            "--json",
+            "shares",
+            "status",
+        ],
+    );
+    assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+
+    let record: serde_json::Value =
+        serde_json::from_str(records(&output).first().expect("one record"))
+            .expect("valid JSON");
+    assert_eq!(record["files"], 3);
+    assert!(record["folders"].as_u64().is_some_and(|n| n >= 1));
+}
+
+#[test]
+fn shares_reindex_picks_up_a_file_added_after_startup() {
+    let server = server_or_skip!();
+    let share = Scratch::new("share");
+    std::fs::write(share.path().join("first.bin"), probe_bytes())
+        .expect("share file");
+    std::fs::write(share.path().join("second.bin"), probe_bytes())
+        .expect("share file");
+
+    let output = cli(
+        &server,
+        "cli_e2e_reindex",
+        &[
+            "--shared-dir",
+            &share.display(),
+            "--json",
+            "shares",
+            "reindex",
+        ],
+    );
+    assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+
+    let record: serde_json::Value =
+        serde_json::from_str(records(&output).first().expect("one record"))
+            .expect("valid JSON");
+    assert_eq!(record["files"], 2, "re-indexing should see both files");
+}
+
+#[test]
+fn room_users_lists_who_is_in_the_room() {
+    let server = server_or_skip!();
+    let resident = server.client("cli_e2e_resident", Vec::new());
+    resident.join_room("cli_e2e_roster").expect("join");
+    settle();
+
+    let output = cli(
+        &server,
+        "cli_e2e_roster_asker",
+        &["room", "users", "cli_e2e_roster"],
+    );
+    assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+    assert!(
+        records(&output)
+            .iter()
+            .any(|line| line == "cli_e2e_resident"),
+        "the resident should be listed, got {:?}",
+        records(&output)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Configuration (no server needed)
+// ---------------------------------------------------------------------------
+
+/// Run the binary against a throwaway config file.
+fn with_config(config: &Path, args: &[&str]) -> Output {
+    let mut all = vec!["--config", config.to_str().expect("utf-8 path")];
+    all.extend_from_slice(args);
+    run(&all)
+}
+
+#[test]
+fn config_set_writes_a_value_that_get_reads_back() {
+    let dir = Scratch::new("config");
+    let config = dir.path().join("config.toml");
+
+    let set =
+        with_config(&config, &["config", "set", "download_dir", "/music"]);
+    assert_eq!(code(&set), EXIT_OK, "stderr: {}", stderr(&set));
+
+    let got = with_config(&config, &["config", "get", "download_dir"]);
+    assert_eq!(code(&got), EXIT_OK);
+    assert_eq!(records(&got), ["download_dir\t/music"]);
+
+    // And the next run actually starts from it.
+    let listed = with_config(&config, &["--json", "config", "list"]);
+    let values: Vec<serde_json::Value> = records(&listed)
+        .iter()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    assert!(
+        values
+            .iter()
+            .any(|v| v["key"] == "download_dir" && v["value"] == "/music"),
+        "config list should show the saved value"
+    );
+}
+
+#[test]
+fn config_rejects_an_unknown_key_and_a_bad_value() {
+    let dir = Scratch::new("config");
+    let config = dir.path().join("config.toml");
+
+    let unknown = with_config(&config, &["config", "set", "colour", "blue"]);
+    assert_eq!(code(&unknown), EXIT_USAGE);
+    assert!(stderr(&unknown).contains("unknown setting"));
+
+    let bad =
+        with_config(&config, &["config", "set", "listener_port", "not-a-port"]);
+    assert_eq!(code(&bad), EXIT_USAGE);
+}
+
+#[test]
+fn config_get_of_an_unset_key_is_the_no_results_code() {
+    let dir = Scratch::new("config");
+    let config = dir.path().join("config.toml");
+    let output = with_config(&config, &["config", "get", "username"]);
+    assert_eq!(code(&output), EXIT_NO_RESULTS);
+}
+
+#[test]
+fn config_path_reports_the_file_in_use() {
+    let dir = Scratch::new("config");
+    let config = dir.path().join("config.toml");
+    let output = with_config(&config, &["config", "path"]);
+    assert_eq!(code(&output), EXIT_OK);
+    assert!(
+        records(&output)[0].contains("config.toml"),
+        "got {:?}",
+        records(&output)
+    );
+}
+
+#[test]
+fn shares_add_and_remove_persist_to_the_config_file() {
+    let dir = Scratch::new("config");
+    let shared = Scratch::new("shared");
+    let config = dir.path().join("config.toml");
+
+    let added = with_config(&config, &["shares", "add", &shared.display()]);
+    assert_eq!(code(&added), EXIT_OK, "stderr: {}", stderr(&added));
+
+    let listed = with_config(&config, &["shares", "list"]);
+    assert_eq!(code(&listed), EXIT_OK);
+    assert!(
+        records(&listed)
+            .iter()
+            .any(|line| line.contains(&shared.display())),
+        "the added folder should be listed, got {:?}",
+        records(&listed)
+    );
+
+    let removed =
+        with_config(&config, &["shares", "remove", &shared.display()]);
+    assert_eq!(code(&removed), EXIT_OK, "stderr: {}", stderr(&removed));
+
+    let after = with_config(&config, &["shares", "list"]);
+    assert!(
+        !records(&after)
+            .iter()
+            .any(|line| line.contains(&shared.display())),
+        "the folder should be gone, got {:?}",
+        records(&after)
+    );
+}
+
+#[test]
+fn shares_add_refuses_a_folder_that_is_not_there() {
+    let dir = Scratch::new("config");
+    let config = dir.path().join("config.toml");
+    let output =
+        with_config(&config, &["shares", "add", "/definitely/not/here"]);
+    assert_eq!(code(&output), EXIT_USAGE);
+    assert!(
+        stderr(&output).contains("does not exist"),
+        "got {}",
+        stderr(&output)
+    );
+}
+
+/// The contract every scripted consumer relies on: with `--json`, stdout
+/// carries newline-delimited JSON and nothing else, while the progress
+/// narration still goes to stderr.
+#[test]
+fn json_mode_keeps_stdout_pure_for_every_command() {
+    let server = server_or_skip!();
+    let share = Scratch::new("share");
+    std::fs::write(share.path().join("purity_probe.bin"), probe_bytes())
+        .expect("share file");
+    let peer = server.client("cli_e2e_purity_peer", vec![share.display()]);
+    peer.join_room("cli_e2e_purity_room").expect("join");
+    settle();
+
+    // Deliberately NOT --quiet: progress must be produced, and must not land
+    // on stdout. Commands are run for their output shape, not their verdict —
+    // several legitimately exit non-zero here.
+    let cases: Vec<Vec<&str>> = vec![
+        vec!["whoami"],
+        vec!["search", "purity_probe"],
+        vec!["browse", "cli_e2e_purity_peer"],
+        vec!["user", "cli_e2e_purity_peer"],
+        vec!["room", "list"],
+        vec!["room", "users", "cli_e2e_purity_room"],
+        vec!["room", "listen", "cli_e2e_purity_room", "--duration", "2"],
+        vec!["message", "read", "--duration", "2"],
+        vec!["shares", "status"],
+        vec!["shares", "list"],
+        vec!["config", "list"],
+        vec!["config", "path"],
+        vec!["portmap"],
+        vec!["search", "nothing_matches_this_qzx"],
+        vec!["browse", "no_such_user_qzx"],
+    ];
+
+    let mut narrated = false;
+    for case in cases {
+        let mut args = server.args("cli_e2e_purity");
+        args.retain(|arg| arg != "--quiet");
+        args.push("--json".to_string());
+        args.push("--search-timeout".to_string());
+        args.push("3".to_string());
+        args.extend(case.iter().map(|a| (*a).to_string()));
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let output = run(&refs);
+
+        for line in stdout(&output).lines() {
+            assert!(
+                serde_json::from_str::<serde_json::Value>(line).is_ok(),
+                "`{}` put a non-JSON line on stdout: {line:?}",
+                case.join(" ")
+            );
+        }
+        narrated |= !stderr(&output).trim().is_empty();
+    }
+
+    assert!(
+        narrated,
+        "progress should still be reported — on stderr, where it belongs"
+    );
+}
+
+/// Failure must never leave half a record behind for a parser to trip on.
+#[test]
+fn a_failing_command_writes_nothing_at_all_to_stdout() {
+    let server = server_or_skip!();
+    for case in [
+        vec!["search", "nothing_matches_this_qzx"],
+        vec!["browse", "no_such_user_qzx"],
+    ] {
+        let mut args = server.args("cli_e2e_empty_stdout");
+        args.push("--json".to_string());
+        args.push("--search-timeout".to_string());
+        args.push("3".to_string());
+        args.extend(case.iter().map(|a| (*a).to_string()));
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let output = run(&refs);
+
+        assert_ne!(code(&output), EXIT_OK, "`{}` should fail", case.join(" "));
+        assert!(
+            stdout(&output).trim().is_empty(),
+            "`{}` failed but still wrote to stdout: {:?}",
+            case.join(" "),
+            stdout(&output)
+        );
+    }
+}
+
+/// Asking about a user nobody has heard of is a question the server answers,
+/// not an error: the answer is "offline", and a script branches on the record
+/// rather than on a failure.
+#[test]
+fn asking_about_an_unknown_user_succeeds_with_an_offline_record() {
+    let server = server_or_skip!();
+    let output = cli(
+        &server,
+        "cli_e2e_unknown_asker",
+        &["--json", "user", "nobody_qzx"],
+    );
+
+    assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+    let record: serde_json::Value =
+        serde_json::from_str(records(&output).first().expect("one record"))
+            .expect("valid JSON");
+    assert_eq!(record["status"], "offline");
+    assert_eq!(record["shared_files"], 0);
+}

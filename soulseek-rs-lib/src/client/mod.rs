@@ -3,7 +3,10 @@ use crate::actor::server_actor::{
     PeerAddress, ServerActor, ServerMessage, UserMessage,
 };
 use crate::download_store::{DownloadStore, collect_failed_tokens};
-use crate::types::{DownloadMetadata, DownloadStatus, RoomEvent, RoomInfo};
+use crate::types::{
+    DownloadMetadata, DownloadStatus, RoomEvent, RoomInfo, UserInfo,
+    UserPresence, UserStats, UserStatus,
+};
 use crate::utils::logger;
 use crate::{
     Transfer,
@@ -167,8 +170,10 @@ impl Default for ClientSettings {
     }
 }
 
+/// The client loop's mailbox. Non-exhaustive for the same reason as
+/// [`ServerMessage`]: new protocol coverage adds variants.
 #[derive(Debug)]
-
+#[non_exhaustive]
 pub enum ClientOperation {
     NewPeer(NewPeer),
     ConnectToPeer(Peer),
@@ -192,6 +197,19 @@ pub enum ClientOperation {
     },
     SetServerSender(Sender<ServerMessage>),
     PrivateMessageReceived(UserMessage),
+    /// The server answered `GetUserStatus` for a user we asked about.
+    UserStatusReceived {
+        username: String,
+        status: u32,
+        privileged: bool,
+    },
+    /// The server answered `GetUserStats` for a user we asked about.
+    UserStatsReceived {
+        username: String,
+        average_speed: u32,
+        shared_files: u32,
+        shared_folders: u32,
+    },
     PeerConnected(String),
     /// A search distributed to us by the server; reply if our shares match.
     IncomingSearch {
@@ -255,6 +273,12 @@ pub struct ClientContext {
     room_list: Vec<RoomInfo>,
     /// Chat-room events awaiting consumption by the client/UI.
     room_events: Vec<RoomEvent>,
+    /// Who is in each room we have joined, kept current from the membership
+    /// the server sends on join plus the later join/leave events.
+    room_members: HashMap<String, Vec<String>>,
+    /// What the server has told us about other users, merged across the
+    /// separate status and statistics replies.
+    user_info: HashMap<String, UserInfo>,
     actor_system: Arc<ActorSystem>,
 }
 impl Default for ClientContext {
@@ -549,18 +573,98 @@ impl ClientContext {
             browse_results: HashMap::new(),
             room_list: Vec::new(),
             room_events: Vec::new(),
+            room_members: HashMap::new(),
+            user_info: HashMap::new(),
             downloads: DownloadStore::new(),
             actor_system,
         }
     }
 
-    /// Apply a chat-room event: keep the room-list snapshot current and queue
-    /// the event for the client/UI to drain.
+    /// Apply a chat-room event: keep the room-list snapshot and the per-room
+    /// rosters current, then queue the event for the client/UI to drain.
     pub fn apply_room_event(&mut self, event: RoomEvent) {
-        if let RoomEvent::List(rooms) = &event {
-            self.room_list.clone_from(rooms);
+        match &event {
+            RoomEvent::List(rooms) => self.room_list.clone_from(rooms),
+            RoomEvent::Joined { room, users } => {
+                let mut members = users.clone();
+                members.sort();
+                members.dedup();
+                self.room_members.insert(room.clone(), members);
+            }
+            RoomEvent::Left { room } => {
+                self.room_members.remove(room);
+            }
+            RoomEvent::UserJoined { room, username } => {
+                let members =
+                    self.room_members.entry(room.clone()).or_default();
+                if let Err(at) = members.binary_search(username) {
+                    members.insert(at, username.clone());
+                }
+            }
+            RoomEvent::UserLeft { room, username } => {
+                if let Some(members) = self.room_members.get_mut(room)
+                    && let Ok(at) = members.binary_search(username)
+                {
+                    members.remove(at);
+                }
+            }
+            RoomEvent::Message { .. } => {}
         }
         self.room_events.push(event);
+    }
+
+    /// Record a `GetUserStatus` reply, merging it with any statistics already
+    /// received for that user.
+    pub fn apply_user_status(
+        &mut self,
+        username: String,
+        status: u32,
+        privileged: bool,
+    ) {
+        self.user_info
+            .entry(username.clone())
+            .or_insert_with(|| UserInfo::pending(username))
+            .presence = Some(UserPresence {
+            status: UserStatus::from_code(status),
+            privileged,
+        });
+    }
+
+    /// Forget what we know about `username`, so the next poll reports the
+    /// answer to the request being made now rather than the previous one.
+    pub fn invalidate_user_info(&mut self, username: &str) {
+        self.user_info.remove(username);
+    }
+
+    /// Record a `GetUserStats` reply, merging it with any status already
+    /// received for that user.
+    pub fn apply_user_stats(
+        &mut self,
+        username: String,
+        average_speed: u32,
+        shared_files: u32,
+        shared_folders: u32,
+    ) {
+        self.user_info
+            .entry(username.clone())
+            .or_insert_with(|| UserInfo::pending(username))
+            .stats = Some(UserStats {
+            average_speed,
+            shared_files,
+            shared_folders,
+        });
+    }
+
+    /// What the server has said about `username` so far.
+    #[must_use]
+    pub fn user_info(&self, username: &str) -> Option<UserInfo> {
+        self.user_info.get(username).cloned()
+    }
+
+    /// Who is currently in `room`, sorted, or empty when we are not in it.
+    #[must_use]
+    pub fn room_members(&self, room: &str) -> Vec<String> {
+        self.room_members.get(room).cloned().unwrap_or_default()
     }
 
     /// The latest snapshot of the public chat-room list.
@@ -812,9 +916,99 @@ mod uploads;
 
 #[cfg(test)]
 mod tests {
-    use super::upload_speed;
-    use crate::types::UploadStatus;
+    use super::{ClientContext, upload_speed};
+    use crate::types::{RoomEvent, UploadStatus};
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn the_room_roster_follows_the_joins_and_leaves_the_server_reports() {
+        let mut context = ClientContext::new();
+
+        // Joining hands us the current membership in one event.
+        context.apply_room_event(RoomEvent::Joined {
+            room: "lobby".to_string(),
+            users: vec!["bob".to_string(), "alice".to_string()],
+        });
+        assert_eq!(context.room_members("lobby"), ["alice", "bob"]);
+
+        context.apply_room_event(RoomEvent::UserJoined {
+            room: "lobby".to_string(),
+            username: "carol".to_string(),
+        });
+        context.apply_room_event(RoomEvent::UserLeft {
+            room: "lobby".to_string(),
+            username: "bob".to_string(),
+        });
+        assert_eq!(context.room_members("lobby"), ["alice", "carol"]);
+
+        // Events for other rooms do not leak into this one.
+        context.apply_room_event(RoomEvent::UserJoined {
+            room: "elsewhere".to_string(),
+            username: "dave".to_string(),
+        });
+        assert_eq!(context.room_members("lobby"), ["alice", "carol"]);
+
+        // A room we never joined has no roster, and leaving forgets it.
+        assert!(context.room_members("unknown").is_empty());
+        context.apply_room_event(RoomEvent::Left {
+            room: "lobby".to_string(),
+        });
+        assert!(context.room_members("lobby").is_empty());
+    }
+
+    #[test]
+    fn a_fresh_request_discards_the_previous_answer() {
+        // Without this, a poll after a second request returns the old
+        // snapshot immediately and the caller cannot tell stale from fresh.
+        let mut context = ClientContext::new();
+        context.apply_user_status("alice".to_string(), 2, false);
+        context.apply_user_stats("alice".to_string(), 10, 20, 30);
+        assert!(context.user_info("alice").is_some_and(|i| i.is_complete()));
+
+        context.invalidate_user_info("alice");
+        assert!(
+            context.user_info("alice").is_none(),
+            "a new request must not be answerable from the old reply"
+        );
+    }
+
+    #[test]
+    fn each_reply_fills_only_its_own_half() {
+        let mut context = ClientContext::new();
+        context.apply_user_status("bob".to_string(), 1, true);
+
+        let info = context.user_info("bob").expect("a snapshot");
+        assert!(!info.is_complete(), "stats have not arrived");
+        assert_eq!(
+            info.presence.map(|p| p.status),
+            Some(crate::types::UserStatus::Away)
+        );
+        assert!(info.stats.is_none(), "must not invent statistics");
+
+        context.apply_user_stats("bob".to_string(), 5, 6, 7);
+        let info = context.user_info("bob").expect("a snapshot");
+        assert!(info.is_complete());
+        assert_eq!(info.stats.map(|s| s.shared_files), Some(6));
+        assert_eq!(
+            info.presence.map(|p| p.privileged),
+            Some(true),
+            "the earlier half must survive the merge"
+        );
+    }
+
+    #[test]
+    fn a_user_joining_twice_is_listed_once() {
+        let mut context = ClientContext::new();
+        context.apply_room_event(RoomEvent::Joined {
+            room: "lobby".to_string(),
+            users: vec!["alice".to_string()],
+        });
+        context.apply_room_event(RoomEvent::UserJoined {
+            room: "lobby".to_string(),
+            username: "alice".to_string(),
+        });
+        assert_eq!(context.room_members("lobby"), ["alice"]);
+    }
 
     #[test]
     fn upload_speed_is_reported_only_while_running() {

@@ -1,0 +1,200 @@
+//! Managing what this client shares and what it remembers: `shares` and
+//! `config`.
+//!
+//! Both write to the same `config.toml` the TUI uses, so a change made here is
+//! what the next run — interactive or scripted — starts from.
+
+use super::{Ctx, Session};
+use crate::directories;
+use crate::output::{
+    CliError, CliResult, ConfigRecord, Out, ShareRecord, ShareStatusRecord,
+};
+use crate::persist::config::FileConfig;
+use std::path::PathBuf;
+
+/// Where a `shares`/`config` change is written, and what it starts from.
+pub struct Store {
+    pub path: Option<PathBuf>,
+    pub config: FileConfig,
+}
+
+impl Store {
+    fn save(&self, config: &FileConfig) -> CliResult {
+        let Some(path) = &self.path else {
+            return Err(CliError::usage(
+                "no config file to write to (running with --no-config)",
+            ));
+        };
+        config
+            .save(path)
+            .map_err(|e| CliError::usage(format!("cannot save config: {e}")))
+    }
+}
+
+pub fn shares_list(out: &Out, store: &Store, resolved: &[String]) -> CliResult {
+    let directories = configured_shares(store, resolved);
+    if directories.is_empty() {
+        return Err(CliError::no_results("no folders are shared"));
+    }
+    for directory in directories {
+        out.emit(&ShareRecord {
+            usable: directories::resolve_shared_directory(Some(&directory))
+                .is_ok_and(|resolved| resolved.is_some()),
+            directory,
+        });
+    }
+    Ok(())
+}
+
+pub fn shares_add(out: &Out, store: &Store, directory: &str) -> CliResult {
+    // Refuse a folder that is not there: sharing it would silently index
+    // nothing, and the mistake would only surface as "no one can find my
+    // files" much later.
+    match directories::resolve_shared_directory(Some(directory)) {
+        Ok(Some(_)) => {}
+        Ok(None) => return Err(CliError::usage("no folder given")),
+        Err(e) => return Err(CliError::usage(e)),
+    }
+
+    let mut updated = store.config.clone();
+    let mut dirs = share_list(&store.config);
+    if dirs.iter().any(|existing| existing == directory) {
+        out.status(&format!("{directory} is already shared"));
+        return Ok(());
+    }
+    dirs.push(directory.to_string());
+    updated.shared_dirs = Some(dirs);
+    updated.shared_dir = None;
+    store.save(&updated)?;
+    out.status(&format!("sharing {directory}"));
+    Ok(())
+}
+
+pub fn shares_remove(out: &Out, store: &Store, directory: &str) -> CliResult {
+    let mut dirs = share_list(&store.config);
+    let before = dirs.len();
+    dirs.retain(|existing| existing != directory);
+    if dirs.len() == before {
+        return Err(CliError::no_results(format!(
+            "{directory} is not in the shared folders"
+        )));
+    }
+
+    let mut updated = store.config.clone();
+    updated.shared_dirs = Some(dirs);
+    updated.shared_dir = None;
+    store.save(&updated)?;
+    out.status(&format!("no longer sharing {directory}"));
+    Ok(())
+}
+
+/// Connect with the configured shares so the library scans them, then report
+/// what the network will actually see.
+pub fn shares_status(ctx: &Ctx) -> CliResult {
+    let session = Session::open(ctx)?;
+    let (folders, files) = session.client.shared_counts();
+    ctx.out.emit(&ShareStatusRecord {
+        folders,
+        files,
+        directories: ctx.settings.shared_directories.clone(),
+    });
+    Ok(())
+}
+
+/// Re-scan the configured folders in a live session, so files added since the
+/// last run become visible without waiting for the next one.
+pub fn shares_reindex(ctx: &Ctx) -> CliResult {
+    let session = Session::open(ctx)?;
+    ctx.out.status("re-indexing the shared folders…");
+    session
+        .client
+        .set_shared_directories(ctx.settings.shared_directories.clone())
+        .map_err(|e| CliError::usage(format!("cannot re-index: {e}")))?;
+
+    let (folders, files) = session.client.shared_counts();
+    ctx.out.emit(&ShareStatusRecord {
+        folders,
+        files,
+        directories: ctx.settings.shared_directories.clone(),
+    });
+    Ok(())
+}
+
+/// The folders the config file asks for, falling back to what this run
+/// resolved (which includes `--shared-dir` and the download-folder default).
+fn configured_shares(store: &Store, resolved: &[String]) -> Vec<String> {
+    let configured = share_list(&store.config);
+    if configured.is_empty() {
+        return resolved.to_vec();
+    }
+    configured
+}
+
+/// Both config spellings, flattened: `shared_dir` is the single-folder form.
+fn share_list(config: &FileConfig) -> Vec<String> {
+    let mut dirs = config.shared_dirs.clone().unwrap_or_default();
+    if let Some(single) = &config.shared_dir
+        && !single.trim().is_empty()
+        && !dirs.iter().any(|existing| existing == single)
+    {
+        dirs.insert(0, single.clone());
+    }
+    dirs
+}
+
+pub fn config_path(out: &Out, store: &Store) -> CliResult {
+    let Some(path) = &store.path else {
+        return Err(CliError::no_results(
+            "no config file in use (running with --no-config)",
+        ));
+    };
+    out.emit(&ConfigRecord {
+        key: "config".to_string(),
+        value: Some(path.display().to_string()),
+    });
+    Ok(())
+}
+
+pub fn config_list(out: &Out, store: &Store) {
+    for key in FileConfig::KEYS {
+        out.emit(&ConfigRecord {
+            key: (*key).to_string(),
+            value: store.config.get(key),
+        });
+    }
+}
+
+pub fn config_get(out: &Out, store: &Store, key: &str) -> CliResult {
+    let value = store.config.get(key).ok_or_else(|| unknown_or_unset(key))?;
+    out.emit(&ConfigRecord {
+        key: key.to_string(),
+        value: Some(value),
+    });
+    Ok(())
+}
+
+pub fn config_set(
+    out: &Out,
+    store: &Store,
+    key: &str,
+    value: &str,
+) -> CliResult {
+    let mut updated = store.config.clone();
+    updated.set(key, value).map_err(CliError::usage)?;
+    store.save(&updated)?;
+    out.emit(&ConfigRecord {
+        key: key.to_string(),
+        value: updated.get(key),
+    });
+    Ok(())
+}
+
+fn unknown_or_unset(key: &str) -> CliError {
+    if FileConfig::KEYS.contains(&key) {
+        return CliError::no_results(format!("{key} is not set"));
+    }
+    CliError::usage(format!(
+        "unknown setting '{key}' — try one of: {}",
+        FileConfig::KEYS.join(", ")
+    ))
+}

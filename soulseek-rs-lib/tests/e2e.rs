@@ -1711,3 +1711,85 @@ fn a_third_party_client_browses_a_large_share() {
 
     let _ = std::fs::remove_dir_all(share_dir);
 }
+
+#[test]
+fn the_server_reports_another_users_status_and_share_counts() {
+    let server = server_or_skip!();
+
+    // A sharer with a known number of files, so the statistics are checkable.
+    let share_dir = unique_download_dir();
+    std::fs::create_dir_all(share_dir.join("album")).unwrap();
+    for name in ["one.flac", "two.flac"] {
+        std::fs::write(share_dir.join("album").join(name), b"xxxx").unwrap();
+    }
+    let mut subject = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.settings("e2e_info_subject", "pw")
+    });
+    subject.connect().expect("subject connect");
+    assert!(subject.login().expect("subject login"));
+
+    let mut asker =
+        Client::with_settings(server.settings("e2e_info_asker", "pw"));
+    asker.connect().expect("asker connect");
+    assert!(asker.login().expect("asker login"));
+
+    asker
+        .request_user_info("e2e_info_subject")
+        .expect("ask about the subject");
+
+    // Status and statistics arrive as two separate replies.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut info = None;
+    while Instant::now() < deadline {
+        match asker.user_info("e2e_info_subject") {
+            Some(found) if found.is_complete() => {
+                info = Some(found);
+                break;
+            }
+            _ => std::thread::sleep(Duration::from_millis(100)),
+        }
+    }
+    let info = info.expect("the server should answer with status and stats");
+
+    assert_eq!(info.username, "e2e_info_subject");
+    let presence = info.presence.expect("presence should have arrived");
+    assert!(
+        presence.status.is_reachable(),
+        "a logged-in user should not read as offline, got {}",
+        presence.status
+    );
+    let stats = info.stats.expect("stats should have arrived");
+    assert_eq!(stats.shared_files, 2, "the subject shares two files");
+    assert!(stats.shared_folders >= 1, "and at least one folder");
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+#[test]
+fn a_user_who_never_logged_in_reads_as_offline() {
+    let server = server_or_skip!();
+    let mut asker =
+        Client::with_settings(server.settings("e2e_info_asker_b", "pw"));
+    asker.connect().expect("asker connect");
+    assert!(asker.login().expect("asker login"));
+
+    asker.request_user_info("nobody_by_this_name").expect("ask");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut info = None;
+    while Instant::now() < deadline && info.is_none() {
+        info = asker
+            .user_info("nobody_by_this_name")
+            .filter(|found| found.presence.is_some());
+        if info.is_none() {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    let presence = info
+        .expect("the server should answer for an unknown user")
+        .presence
+        .expect("with a presence");
+    assert!(!presence.status.is_reachable(), "got {}", presence.status);
+}

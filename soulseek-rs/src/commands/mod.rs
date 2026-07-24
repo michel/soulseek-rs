@@ -3,6 +3,8 @@
 //! Each command opens a [`Session`], does one job, writes records to stdout
 //! and progress to stderr, and returns an exit code through [`CliError`].
 
+pub mod peer;
+pub mod settings;
 pub mod social;
 pub mod transfer;
 
@@ -171,6 +173,9 @@ pub fn run(ctx: &Ctx, command: Commands) -> CliResult {
         Commands::Room(RoomCommand::Say { room, message }) => {
             social::room_say(ctx, &room, &message)
         }
+        Commands::Room(RoomCommand::Users { room, timeout }) => {
+            social::room_users(ctx, &room, Duration::from_secs(timeout))
+        }
         Commands::Room(RoomCommand::Listen {
             room,
             duration,
@@ -182,8 +187,15 @@ pub fn run(ctx: &Ctx, command: Commands) -> CliResult {
         Commands::Message(MessageCommand::Read { duration, follow }) => {
             social::message_read(ctx, listen_span(duration, follow))
         }
-        // Handled before credentials are required; see main.rs.
+        Commands::Serve(args) => peer::serve(ctx, &args),
+        Commands::User(args) => peer::user(ctx, &args),
+        Commands::Whoami => peer::whoami(ctx),
+        // These need no account, so main.rs answers them before asking for
+        // credentials; the arms exist only to keep the match exhaustive.
         Commands::Portmap => portmap(&ctx.out, ctx.settings.listen_port),
+        Commands::Config(_) | Commands::Shares(_) => {
+            Err(CliError::usage("handled without a session; see main::run"))
+        }
     }
 }
 

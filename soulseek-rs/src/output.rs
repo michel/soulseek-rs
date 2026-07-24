@@ -174,6 +174,9 @@ pub struct SearchRecord {
     pub bitrate: Option<u32>,
     pub duration: Option<u32>,
     pub free_slot: bool,
+    /// The peer's free upload slots as it reported them, for a picker that
+    /// wants to rank rather than just filter.
+    pub slots: u8,
     pub speed: u32,
 }
 
@@ -279,6 +282,147 @@ impl Record for PrivateMessageRecord {
     }
 }
 
+/// One upload being served to a peer, reported by `serve` as it changes.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct UploadRecord {
+    pub user: String,
+    pub path: String,
+    pub size: u64,
+    pub bytes_sent: u64,
+    pub speed: f64,
+    /// `queued`, `uploading`, `completed`, `cancelled`, or `failed`.
+    pub status: String,
+    /// Why it failed, when it did.
+    pub reason: Option<String>,
+}
+
+impl Record for UploadRecord {
+    fn text(&self) -> String {
+        format!(
+            "{}\t{}\t{}/{}\t{}",
+            self.status,
+            sanitize(&self.user),
+            self.bytes_sent,
+            self.size,
+            sanitize(&self.path)
+        )
+    }
+}
+
+/// Who we are and what this session offers the network.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WhoamiRecord {
+    pub user: String,
+    pub server: String,
+    pub listening: bool,
+    pub listen_port: u16,
+    pub shared_folders: u32,
+    pub shared_files: u32,
+    pub download_dir: String,
+}
+
+impl Record for WhoamiRecord {
+    fn text(&self) -> String {
+        format!(
+            "{}\t{}\t{}\t{}",
+            sanitize(&self.user),
+            sanitize(&self.server),
+            self.shared_folders,
+            self.shared_files
+        )
+    }
+}
+
+/// What the server knows about another user.
+/// Each field is `None` when the server has not answered that half yet, so a
+/// consumer never reads "offline" or "shares nothing" from a missing reply.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UserRecord {
+    pub user: String,
+    /// `online`, `away`, or `offline`.
+    pub status: Option<String>,
+    pub privileged: Option<bool>,
+    pub average_speed: Option<u32>,
+    pub shared_files: Option<u32>,
+    pub shared_folders: Option<u32>,
+}
+
+impl Record for UserRecord {
+    fn text(&self) -> String {
+        let unknown = || "-".to_string();
+        format!(
+            "{}\t{}\t{}\t{}",
+            sanitize(&self.user),
+            self.status.clone().unwrap_or_else(unknown),
+            self.average_speed.map_or_else(unknown, |v| v.to_string()),
+            self.shared_files.map_or_else(unknown, |v| v.to_string())
+        )
+    }
+}
+
+/// One member of a chat room.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RoomMemberRecord {
+    pub room: String,
+    pub user: String,
+}
+
+impl Record for RoomMemberRecord {
+    fn text(&self) -> String {
+        sanitize(&self.user)
+    }
+}
+
+/// One configured share folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ShareRecord {
+    pub directory: String,
+    /// False when the folder is configured but missing on disk.
+    pub usable: bool,
+}
+
+impl Record for ShareRecord {
+    fn text(&self) -> String {
+        format!(
+            "{}\t{}",
+            if self.usable { "ok" } else { "missing" },
+            sanitize(&self.directory)
+        )
+    }
+}
+
+/// What the share index currently holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ShareStatusRecord {
+    pub folders: u32,
+    pub files: u32,
+    pub directories: Vec<String>,
+}
+
+impl Record for ShareStatusRecord {
+    fn text(&self) -> String {
+        format!("{}\t{}", self.folders, self.files)
+    }
+}
+
+/// One configuration setting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConfigRecord {
+    pub key: String,
+    pub value: Option<String>,
+}
+
+impl Record for ConfigRecord {
+    fn text(&self) -> String {
+        match &self.value {
+            Some(value) => {
+                format!("{}\t{}", sanitize(&self.key), sanitize(value))
+            }
+            None => format!("{}\t", sanitize(&self.key)),
+        }
+    }
+}
+
 /// The result of probing automatic port mapping.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PortmapRecord {
@@ -311,6 +455,7 @@ mod tests {
             bitrate: Some(320),
             duration: Some(210),
             free_slot: true,
+            slots: 1,
             speed: 1000,
         }
     }
@@ -359,6 +504,7 @@ mod tests {
         assert_eq!(json["bitrate"], 320);
         assert_eq!(json["duration"], 210);
         assert_eq!(json["free_slot"], true);
+        assert_eq!(json["slots"], 1);
         assert_eq!(json["speed"], 1000);
         assert_eq!(json["path"], "@@dir\\01 - Track.mp3");
     }

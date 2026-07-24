@@ -26,6 +26,111 @@ pub struct FileConfig {
 }
 
 impl FileConfig {
+    /// Every setting `config get`/`set` accepts, in the order `config list`
+    /// prints them. Keys match the TOML field names exactly, so what a script
+    /// reads back is what it would have written by hand.
+    pub const KEYS: &'static [&'static str] = &[
+        "username",
+        "server",
+        "listener_port",
+        "disable_listener",
+        "download_dir",
+        "shared_dirs",
+        "max_concurrent_downloads",
+        "search_timeout",
+        "password_cmd",
+    ];
+
+    /// The value of `key`, or `None` when it is unset or unknown. Lists are
+    /// rendered comma-separated, matching what [`Self::set`] accepts.
+    #[must_use]
+    pub fn get(&self, key: &str) -> Option<String> {
+        match key {
+            "username" => self.username.clone(),
+            "server" => self.server.clone(),
+            "listener_port" => self.listener_port.map(|v| v.to_string()),
+            "disable_listener" => self.disable_listener.map(|v| v.to_string()),
+            "download_dir" => self.download_dir.clone(),
+            "shared_dirs" => {
+                let dirs = self.shared_dirs.clone().unwrap_or_default();
+                (!dirs.is_empty()).then(|| dirs.join(","))
+            }
+            "max_concurrent_downloads" => {
+                self.max_concurrent_downloads.map(|v| v.to_string())
+            }
+            "search_timeout" => self.search_timeout.map(|v| v.to_string()),
+            "password_cmd" => self.password_cmd.clone(),
+            _ => None,
+        }
+    }
+
+    /// Set `key` to `value`, or clear it when `value` is empty.
+    ///
+    /// # Errors
+    /// Returns a message naming the problem when the key is unknown or the
+    /// value does not parse as that setting's type.
+    pub fn set(
+        &mut self,
+        key: &str,
+        value: &str,
+    ) -> std::result::Result<(), String> {
+        let value = value.trim();
+        let clear = value.is_empty();
+        let text = |target: &mut Option<String>| {
+            *target = (!clear).then(|| value.to_string());
+        };
+        match key {
+            "username" => text(&mut self.username),
+            "server" => text(&mut self.server),
+            "download_dir" => text(&mut self.download_dir),
+            "password_cmd" => text(&mut self.password_cmd),
+            "listener_port" => {
+                self.listener_port = parse_opt(value, clear, key)?;
+            }
+            "max_concurrent_downloads" => {
+                self.max_concurrent_downloads = parse_opt(value, clear, key)?;
+            }
+            "search_timeout" => {
+                self.search_timeout = parse_opt(value, clear, key)?;
+            }
+            "disable_listener" => {
+                self.disable_listener = if clear {
+                    None
+                } else {
+                    Some(match value {
+                        "true" | "1" | "yes" => true,
+                        "false" | "0" | "no" => false,
+                        other => {
+                            return Err(format!(
+                                "disable_listener wants true or false, got \
+                                 '{other}'"
+                            ));
+                        }
+                    })
+                };
+            }
+            "shared_dirs" => {
+                self.shared_dirs = (!clear).then(|| {
+                    value
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|dir| !dir.is_empty())
+                        .map(String::from)
+                        .collect()
+                });
+                // The single-folder spelling would otherwise shadow the list.
+                self.shared_dir = None;
+            }
+            other => {
+                return Err(format!(
+                    "unknown setting '{other}' — try one of: {}",
+                    Self::KEYS.join(", ")
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Load from `path`; a missing file is an empty config, a malformed file
     /// is an error (silently ignoring a typo'd config would be worse).
     pub fn load(path: &Path) -> Result<Self> {
@@ -54,6 +159,22 @@ impl FileConfig {
         std::fs::write(path, toml::to_string_pretty(self)?)?;
         Ok(())
     }
+}
+
+/// Parse a setting that is not a string, turning a bad value into a message
+/// naming the key rather than a bare parse error.
+fn parse_opt<T: std::str::FromStr>(
+    value: &str,
+    clear: bool,
+    key: &str,
+) -> std::result::Result<Option<T>, String> {
+    if clear {
+        return Ok(None);
+    }
+    value
+        .parse::<T>()
+        .map(Some)
+        .map_err(|_| format!("{key} does not accept '{value}'"))
 }
 
 /// Fully-resolved settings after layering CLI (which already includes env via
@@ -341,6 +462,97 @@ mod tests {
         assert_eq!(resolved.server, "cli-server:1");
         assert_eq!(resolved.listener_port, 1111);
         assert_eq!(resolved.download_dir, "/cli-dl");
+    }
+
+    #[test]
+    fn every_advertised_key_round_trips_through_get_and_set() {
+        let mut config = FileConfig::default();
+        for key in FileConfig::KEYS {
+            assert!(config.get(key).is_none(), "{key} should start unset");
+        }
+
+        for (key, value) in [
+            ("username", "alice"),
+            ("server", "localhost:2242"),
+            ("listener_port", "4321"),
+            ("disable_listener", "true"),
+            ("download_dir", "/music"),
+            ("shared_dirs", "/a,/b"),
+            ("max_concurrent_downloads", "3"),
+            ("search_timeout", "30"),
+            ("password_cmd", "pass show slsk"),
+        ] {
+            config.set(key, value).expect("should accept");
+            assert_eq!(
+                config.get(key).as_deref(),
+                Some(value),
+                "{key} should read back what was written"
+            );
+        }
+        assert_eq!(config.shared_dirs, Some(vec!["/a".into(), "/b".into()]));
+    }
+
+    #[test]
+    fn an_empty_value_clears_a_setting() {
+        let mut config = FileConfig {
+            username: Some("alice".into()),
+            listener_port: Some(2234),
+            ..FileConfig::default()
+        };
+        config.set("username", "").unwrap();
+        config.set("listener_port", "").unwrap();
+        assert_eq!(config.username, None);
+        assert_eq!(config.listener_port, None);
+    }
+
+    #[test]
+    fn a_value_of_the_wrong_type_is_rejected_by_name() {
+        let mut config = FileConfig::default();
+        let error = config.set("listener_port", "not-a-port").unwrap_err();
+        assert!(error.contains("listener_port"), "got {error}");
+        assert!(config.get("listener_port").is_none(), "must not be set");
+
+        let error = config.set("disable_listener", "maybe").unwrap_err();
+        assert!(error.contains("true or false"), "got {error}");
+    }
+
+    #[test]
+    fn an_unknown_key_lists_the_ones_that_exist() {
+        let mut config = FileConfig::default();
+        let error = config.set("colour", "blue").unwrap_err();
+        assert!(error.contains("unknown setting"), "got {error}");
+        assert!(error.contains("username"), "should suggest real keys");
+        assert!(config.get("colour").is_none());
+    }
+
+    #[test]
+    fn setting_the_share_list_drops_the_single_folder_spelling() {
+        // Both spellings surviving would make the effective share set depend
+        // on resolution order rather than on what was just written.
+        let mut config = FileConfig {
+            shared_dir: Some("/old".into()),
+            ..FileConfig::default()
+        };
+        config.set("shared_dirs", "/new").unwrap();
+        assert_eq!(config.shared_dir, None);
+        assert_eq!(config.shared_dirs, Some(vec!["/new".to_string()]));
+    }
+
+    #[test]
+    fn a_set_value_survives_a_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut config = FileConfig::default();
+        config.set("download_dir", "/music").unwrap();
+        config.set("max_concurrent_downloads", "2").unwrap();
+        config.save(&path).unwrap();
+
+        let loaded = FileConfig::load(&path).unwrap();
+        assert_eq!(loaded.get("download_dir").as_deref(), Some("/music"));
+        assert_eq!(
+            loaded.get("max_concurrent_downloads").as_deref(),
+            Some("2")
+        );
     }
 
     #[test]
