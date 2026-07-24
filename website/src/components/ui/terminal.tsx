@@ -1,7 +1,6 @@
 import { CopyButton } from '@/components/ui/copy-button'
 import { cn } from '@/lib/utils'
 
-/** `cmd` gets a prompt glyph; `cm` is a comment; `code` and `out` are plain. */
 export type TermLineKind = 'cmd' | 'cm' | 'code' | 'out'
 
 export interface TermLine {
@@ -19,16 +18,10 @@ const LINE_TONE: Record<TermLineKind, string> = {
 interface TerminalProps {
   label?: string
   lines: readonly TermLine[]
-  /** Overrides what the copy button yields. Defaults to the commands only. */
   copy?: string
   className?: string
 }
 
-/**
- * A terminal window. Paints from the `--tm-*` token set rather than the page
- * tokens, so it stays a dark terminal in light mode instead of dissolving
- * into the page.
- */
 export const Terminal = ({ label, lines, copy, className }: TerminalProps) => {
   const copyText =
     copy ??
@@ -53,7 +46,6 @@ export const Terminal = ({ label, lines, copy, className }: TerminalProps) => {
       <div className="overflow-x-auto px-4 py-4 text-[12.5px] leading-[1.75] text-[var(--tm-fg)] sm:text-[13.5px]">
         {lines.map((line, i) => (
           <span
-            // Lines are static content, never reordered — index is stable here.
             key={i}
             className={cn('block whitespace-pre', LINE_TONE[line.t])}
           >

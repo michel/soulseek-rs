@@ -37,9 +37,7 @@ const FeatureCommand = ({ text }: FeatureCommandProps) => {
 }
 
 interface FeatureCardProps {
-  /** A single glyph. Decorative — the title carries the meaning. */
   glyph?: string
-  /** A CSS colour for the glyph, from the semantic token set. */
   color?: string
   title: string
   children: React.ReactNode
@@ -61,9 +59,6 @@ export const FeatureCard = ({
       className,
     )}
   >
-    {/* The glyph sits in the line like a prompt marker, not in a chip. A
-        tinted rounded square around an icon is the stock feature-card
-        treatment; here the terminal already gives us a better idiom. */}
     <div className="flex items-center gap-2.5">
       {glyph !== undefined && (
         <span

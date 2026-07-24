@@ -3,8 +3,6 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- Root-relative on purpose: Vite rewrites this against `base`, so the
-         deploy path lives in vite.config.ts alone. -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 
     <title>soulseek-rs, a Soulseek client for your terminal</title>
@@ -12,7 +10,6 @@
       name="description"
       content="soulseek-rs is a keyboard-driven Soulseek client and a Rust protocol library. Search, share, browse, and chat from your terminal."
     />
-    <!-- Browser chrome follows the theme; one value would be wrong half the time. -->
     <meta name="theme-color" content="#14110F" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#F2EDE4" media="(prefers-color-scheme: light)" />
 
@@ -22,18 +19,10 @@
       property="og:description"
       content="A Soulseek client and protocol library for Rust. Search, share, browse, and chat from your terminal."
     />
-    <!-- og:url and canonical are rewritten per route by scripts/prerender.ts. -->
     <meta property="og:url" content="https://re-invention.nl/soulseek-rs/" />
     <link rel="canonical" href="https://re-invention.nl/soulseek-rs/" />
     <meta name="twitter:card" content="summary" />
 
-    <!-- IBM Plex Mono is the brand typeface. CDN rather than self-hosted
-         binaries, matching the design system's tokens/fonts.css. OFL 1.1.
-
-         Loaded non-blocking: as a plain stylesheet it sat on the critical
-         path, so first paint waited on a third-party DNS + TLS + fetch. It
-         buys nothing there — `display=swap` plus the ui-monospace fallback
-         means the first frame renders in the fallback either way. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -50,9 +39,6 @@
     </noscript>
 
     <script>
-      // Runs before first paint so the right theme is already on <html>.
-      // Without it the page flashes the wrong background on every load.
-      // Mirrors the resolution order in src/theme/theme-provider.tsx.
       ;(function () {
         try {
           var stored = localStorage.getItem('ssrs-theme')
@@ -64,7 +50,6 @@
           document.documentElement.dataset.theme = theme
           document.documentElement.style.colorScheme = theme
         } catch (e) {
-          // localStorage blocked; the dark default in the markup stands.
         }
       })()
     </script>

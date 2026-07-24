@@ -14,23 +14,13 @@ import { InfoPane, ResultsPane, SearchesPane, TransfersPane } from './panes'
 import { useFitScale } from './use-fit-scale'
 
 const DESIGN_WIDTH = 1360
-/*
- * Natural height of the terminal at DESIGN_WIDTH, measured in the browser.
- *
- * The layout is fixed — no content-driven heights — so the wrapper can hold
- * this ratio in CSS from the very first paint. Without it the prerendered
- * hero occupied its full unscaled height, then collapsed to the scaled one
- * once JS measured, shifting everything below it by ~145px.
- */
 const DESIGN_HEIGHT = 863
 const TICK_MS = 480
 const MAX_CONCURRENT = 2
-/** Where the scripted run leaves the cursor. */
 const RESTING_ROW = 5
 
 type Phase = 'searching' | 'results' | 'interactive'
 
-/** Pages are prerendered in Node, where there is no window. */
 const isBrowser = typeof window !== 'undefined'
 
 const matches = (query: string): boolean =>
@@ -43,12 +33,6 @@ const sizeMb = (size: string): number => {
   return Number.isNaN(parsed) || parsed === 0 ? 12 : parsed
 }
 
-/*
- * Deterministic on purpose: the id is derived from the filename and the rate
- * from its length, so queueing the same row twice is a no-op and nothing
- * random runs inside a state updater. Both matter under StrictMode, which
- * double-invokes updaters in development.
- */
 const toTransfer = (row: ResultRow): TransferRow => ({
   id: `t:${row.name}`,
   status: 'queued',
@@ -61,16 +45,6 @@ const toTransfer = (row: ResultRow): TransferRow => ({
   rateMbps: 1.4 + (row.name.length % 7) * 0.4,
 })
 
-/**
- * The hero: a working recreation of the TUI.
- *
- * It plays one scripted run (search → results → queue two files) and then
- * hands over to the keyboard. Only transfers carrying a `pct` are simulated;
- * the seeded rows stay put so the pane looks lived-in from the first frame.
- *
- * Under `prefers-reduced-motion` it starts at the end state instead, so the
- * page never animates at someone who asked it not to.
- */
 export const HeroTerminal = () => {
   const [searches, setSearches] = useState<readonly SearchRow[]>(SEARCHES)
   const [results, setResults] =
@@ -79,23 +53,11 @@ export const HeroTerminal = () => {
   const [transfers, setTransfers] = useState<readonly TransferRow[]>(TRANSFERS)
   const [focus, setFocus] = useState(2)
 
-  /*
-   * Both start where the prerendered HTML starts, whatever the OS says.
-   *
-   * Reading prefers-reduced-motion in the initialiser made the first client
-   * render disagree with the server for anyone who has it on: the server
-   * always serialises the searching state, the client painted the resting
-   * one, and React bailed out with a hydration mismatch (#418). The
-   * preference is applied a tick later instead, by the opening-run effect.
-   */
   const [phase, setPhase] = useState<Phase>('searching')
   const [selected, setSelected] = useState(0)
 
   const shellRef = useRef<HTMLDivElement>(null)
 
-  // Mirrors `results` so queueFrom can read the latest rows without taking a
-  // dependency on them. Synced after commit, which is soon enough: every
-  // reader is a timer or an event handler, never a render.
   const resultsRef = useRef(results)
   useEffect(() => {
     resultsRef.current = results
@@ -110,7 +72,6 @@ export const HeroTerminal = () => {
     return tally
   }, [transfers])
 
-  // Derived, not stored: the status bar is a pure function of what is moving.
   const pct = useMemo(() => {
     const live = transfers.filter(
       (t) => t.pct !== undefined && (t.status === 'active' || t.status === 'done'),
@@ -119,15 +80,11 @@ export const HeroTerminal = () => {
     return Math.round(live.reduce((sum, t) => sum + (t.pct ?? 0), 0) / live.length)
   }, [transfers])
 
-  /** True while any simulated transfer still has somewhere to go. */
   const hasWork = useMemo(
     () => transfers.some((t) => t.pct !== undefined && t.status !== 'done'),
     [transfers],
   )
 
-  // Stops once everything has finished. Without the `hasWork` gate the timer
-  // would tick twice a second for as long as the tab is open, re-rendering
-  // the whole TUI to produce identical output.
   useEffect(() => {
     if (!hasWork || prefersReducedMotion()) return
 
@@ -151,8 +108,6 @@ export const HeroTerminal = () => {
           }
           if (t.status !== 'active') return t
 
-          // Step size varies per file but is a pure function of it, so the
-          // updater stays free of side effects under StrictMode's double call.
           const step = 4 + ((t.name.length + Math.round(t.pct)) % 9)
           const pct = Math.min(100, t.pct + step)
           const finished = pct >= 100
@@ -167,9 +122,6 @@ export const HeroTerminal = () => {
           }
         })
 
-        // map() always allocates, so without this every tick would hand React
-        // a fresh array and force a re-render that produces identical output.
-        // Returning the original lets React bail out instead.
         const moved = next.some((t, i) => t !== list[i])
         return moved ? next : list
       })
@@ -180,13 +132,6 @@ export const HeroTerminal = () => {
     }
   }, [hasWork])
 
-  /*
-   * Queue rows by index within a named search.
-   *
-   * Reads the current rows through a ref rather than closing over `results`,
-   * so the callback identity never changes — the opening script can then
-   * depend on it without restarting itself every time state moves.
-   */
   const queueFrom = useCallback((searchId: string, indexes: readonly number[]) => {
     if (indexes.length === 0) return
 
@@ -291,17 +236,6 @@ export const HeroTerminal = () => {
     }
   }
 
-  /*
-   * The scripted opening run.
-   *
-   * No "has this already started" ref: the cleanup cancels every timer, so a
-   * StrictMode remount simply replays from the top. A ref guard would let the
-   * first cleanup cancel the run and the re-run skip scheduling it, leaving
-   * the demo frozen on its first frame in development.
-   *
-   * It targets 's1' directly rather than whatever is selected, because the
-   * script only ever describes the opening state.
-   */
   useEffect(() => {
     const timers: ReturnType<typeof setTimeout>[] = []
     const at = (fn: () => void, ms: number) => timers.push(setTimeout(fn, ms))
@@ -309,9 +243,6 @@ export const HeroTerminal = () => {
       for (const timer of timers) clearTimeout(timer)
     }
 
-    // Asked for no motion: cut to where the run would have ended. Deferred by
-    // a tick rather than decided in the state initialiser, so the first render
-    // still matches the prerendered HTML.
     if (prefersReducedMotion()) {
       at(() => {
         setSelected(RESTING_ROW)
@@ -385,8 +316,6 @@ export const HeroTerminal = () => {
     setPhase('interactive')
   }
 
-  // No floor: the terminal shrinks to whatever width it is given rather than
-  // holding a minimum size and scrolling sideways.
   const { wrapRef, innerRef, scale, height, ready } = useFitScale(DESIGN_WIDTH)
 
   const shownSearches = searches.map((search, i) =>
@@ -398,8 +327,6 @@ export const HeroTerminal = () => {
     <div
       ref={wrapRef}
       className="w-full overflow-hidden"
-      // aspect-ratio reserves the right box before JS runs; once measured the
-      // explicit height takes over and the two agree, so nothing moves.
       style={ready ? { height } : { aspectRatio: `${String(DESIGN_WIDTH)} / ${String(DESIGN_HEIGHT)}` }}
     >
       <div style={ready ? { width: DESIGN_WIDTH * scale, height } : undefined}>
@@ -413,12 +340,6 @@ export const HeroTerminal = () => {
           }}
         >
           <MacWindow>
-            {/*
-              role="application" is the ARIA escape hatch for a widget that
-              handles its own keys: it stops screen readers intercepting
-              j/k/arrows so the demo behaves like the real TUI. Every control
-              inside is still a native button or input.
-            */}
             <div
               ref={shellRef}
               tabIndex={0}

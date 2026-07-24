@@ -1,23 +1,12 @@
 import { cn } from '@/lib/utils'
 
 interface LogoProps {
-  /** Height in px. Width follows the artwork's aspect ratio. */
   size?: number
   className?: string
 }
 
-/** Native aspect ratio of the logo artwork (186.407 × 211). */
 const ASPECT = 186.407 / 211
 
-/*
- * Two assets rather than one recoloured file — the ink and light cuts differ
- * in more than colour — swapped by CSS.
- *
- * Painted as CSS background images rather than image elements: a hidden one
- * is still downloaded, so the two-element version fetched both cuts on every
- * visit (~12-23 kB gzip wasted above the fold). A background on a rule that
- * never paints is never requested.
- */
 export const Logo = ({ size = 180, className }: LogoProps) => (
   <div
     role="img"

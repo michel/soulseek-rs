@@ -25,7 +25,6 @@ const buttonVariants = cva(
 type ButtonVariants = VariantProps<typeof buttonVariants>
 
 interface ButtonProps extends ButtonVariants {
-  /** Internal route path, or an absolute URL for an off-site link. */
   href: string
   children: React.ReactNode
   className?: string
@@ -33,17 +32,6 @@ interface ButtonProps extends ButtonVariants {
 
 const isExternal = (href: string): boolean => /^https?:\/\//.test(href)
 
-/**
- * Every call to action on the site is a link, so this renders an anchor
- * rather than a `<button>`. External links open in a new tab and carry
- * `rel="noopener"`; internal ones route through React Router so navigation
- * stays client-side.
- *
- * The leaving-the-site mark is drawn by the component, never typed into a
- * label. Hand-written "GitHub ↗" put the same glyph in thirteen strings and
- * made it copy — it belongs to the control, so the control renders it, once,
- * and only when the link actually leaves.
- */
 export const Button = ({ href, variant, size, children, className }: ButtonProps) => {
   const classes = cn(buttonVariants({ variant, size }), className)
 

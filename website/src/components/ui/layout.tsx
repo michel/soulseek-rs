@@ -5,7 +5,6 @@ interface WrapProps {
   className?: string
 }
 
-/** The site's single content column. One max-width, one gutter, everywhere. */
 export const Wrap = ({ children, className }: WrapProps) => (
   <div className={cn('mx-auto w-full max-w-[1140px] px-[18px] sm:px-7', className)}>
     {children}
@@ -14,9 +13,7 @@ export const Wrap = ({ children, className }: WrapProps) => (
 
 interface SectionProps {
   children: React.ReactNode
-  /** Drops the top hairline — for the first section under the nav. */
   flush?: boolean
-  /** Panel background plus rules top and bottom. */
   band?: boolean
   id?: string
   className?: string
@@ -83,7 +80,6 @@ interface PageHeadProps {
   children: React.ReactNode
 }
 
-/** The h1 block every subpage opens with. */
 export const PageHead = ({ eyebrow, title, children }: PageHeadProps) => (
   <Section flush className="pt-10">
     <div className="flex max-w-[660px] flex-col gap-3.5">
@@ -98,13 +94,11 @@ export const PageHead = ({ eyebrow, title, children }: PageHeadProps) => (
 
 interface ColsProps {
   children: React.ReactNode
-  /** Aligns columns to their tops instead of stretching. */
   start?: boolean
   center?: boolean
   className?: string
 }
 
-/** The site's only multi-column layout: two up on desktop, stacked below. */
 export const Cols = ({ children, start, center, className }: ColsProps) => (
   <div
     className={cn(
@@ -123,7 +117,6 @@ interface ProseProps {
   className?: string
 }
 
-/** Body copy: secondary colour, generous leading, `+p` spacing. */
 export const Prose = ({ children, className }: ProseProps) => (
   <div
     className={cn(

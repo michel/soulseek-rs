@@ -5,7 +5,6 @@ interface CodeProps {
   className?: string
 }
 
-/** Anything typeable: flags, commands, env vars, crate names, paths. */
 export const Code = ({ children, className }: CodeProps) => (
   <code
     className={cn(

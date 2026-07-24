@@ -104,9 +104,6 @@ export const Home = () => {
       <section className="pt-5 pb-8 sm:pt-7 sm:pb-10">
         <Wrap>
           <div className="flex flex-col gap-[22px]">
-            {/* Eyebrow and sub are desktop-only: on a phone the headline and
-                the CTA should be all that stands between the top of the page
-                and the terminal. */}
             <Eyebrow className="max-md:hidden">Soulseek client · terminal · Rust</Eyebrow>
             <div className="flex items-start gap-3.5 sm:gap-6 md:gap-11">
               <Logo size={172} className="mt-2 max-md:!h-28 max-sm:!h-16" />
@@ -139,11 +136,6 @@ export const Home = () => {
 
       <section className="border-t border-hairline py-6">
         <Wrap>
-          {/*
-            Three layouts, narrowest first: under 520px the labels drop and it
-            becomes a centred row of icons; up to 820px each platform is a
-            full-width stacked row; above that they sit inline, rule-separated.
-          */}
           <div className="flex flex-wrap items-center gap-3.5 sm:gap-8">
             <Eyebrow className="max-[519px]:hidden">Runs on</Eyebrow>
             <ul className="flex w-full flex-nowrap justify-center min-[520px]:flex-wrap min-[520px]:justify-start sm:w-auto">
@@ -230,12 +222,6 @@ export const Home = () => {
           shell, so the same client works for scripting, cron jobs, and agents driving it
           programmatically.
         </SectionHead>
-        {/*
-          Three up, not four, with search spanning two of them: it's the thing
-          the client is for, and eight cards at identical weight said the
-          opposite. Eight items plus that one double = nine cells, so the grid
-          still comes out square.
-        */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {FEATURES.map((feature, i) => (
             <FeatureCard

@@ -251,9 +251,6 @@ export const Community = () => {
               </Button>
             </div>
           </div>
-          {/* Raised, not panel: this section is a band, which is itself
-              bg-panel — a panel-on-panel callout has only a 1.36:1 hairline
-              holding it together. */}
           <Callout className="bg-raised" title="two things that stay true">
             <p className="mb-1.5 !text-success">No telemetry. Ever.</p>
             <p className="font-forum text-xs !text-muted">

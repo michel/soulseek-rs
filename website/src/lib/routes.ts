@@ -1,23 +1,9 @@
 export interface RouteMeta {
-  /** Path without the base prefix, always leading-slashed. */
   path: string
   title: string
   description: string
 }
 
-/**
- * The single source of truth for what pages exist.
- *
- * Read three times: React Router matches against it, the layout applies the
- * meta on navigation, and scripts/prerender.ts walks it to decide which HTML
- * files to write. Adding a page means adding one entry here plus its route.
- */
-/*
- * `as const satisfies` rather than a plain annotation: the annotation widened
- * `path` to `string`, which is what let App.tsx's hand-written route list
- * drift from this one without failing the build. Literal paths make the
- * mapping in App.tsx exhaustive-checkable.
- */
 export const ROUTES = [
   {
     path: '/',
@@ -45,7 +31,6 @@ export const ROUTES = [
   },
 ] as const satisfies readonly RouteMeta[]
 
-/** Every path the site serves, as literals. */
 export type RoutePath = (typeof ROUTES)[number]['path']
 
 export const NOT_FOUND_META: RouteMeta = {

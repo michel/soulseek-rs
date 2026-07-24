@@ -25,8 +25,6 @@ export const ThemeProvider = ({ children }: ThemeProviderProps) => {
   useEffect(() => {
     const root = document.documentElement
     root.dataset['theme'] = resolvedTheme
-    // Paints native widgets (scrollbars, form controls) to match, which the
-    // attribute alone does not do.
     root.style.colorScheme = resolvedTheme
   }, [resolvedTheme])
 

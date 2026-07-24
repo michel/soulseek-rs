@@ -59,14 +59,6 @@ const PANES: readonly { num?: number; title: string; body: string }[] = [
   },
 ]
 
-/*
- * The keycap's heavier bottom edge is a shadow, not a thicker bottom border.
- *
- * A 2px border on one side of a rounded box thins out as it turns the corner,
- * so the edge tapers exactly where a real keycap looks solid. An unblurred
- * 1px shadow sits under the full curve instead, which is the look the design
- * system's `.key` rule is after.
- */
 const KeyRow = ({ combo, description }: { combo: string; description: string }) => (
   <div className="grid grid-cols-[120px_1fr] items-baseline gap-3 border-b border-hairline py-[7px]">
     <span>
@@ -204,13 +196,6 @@ export const Docs = () => {
       </Section>
 
       <Section band>
-        {/*
-          The only Panel on a band. Two consequences, both handled here:
-          its default bg-panel fill would match the band exactly, so it takes
-          bg-raised like the band callouts do; and the legend paints over the
-          top border to punch the gap, so it has to match the surface *behind*
-          the panel — the band — not the panel's own fill. See panel.tsx.
-        */}
         <Panel title="the rest" className="bg-raised [&>span]:bg-panel">
           <Cols center className="gap-6">
             <Prose>
