@@ -2,15 +2,27 @@
 //! parts of it). Live handles (channels, cancel flags) never leave the
 //! process; only plain data goes to disk.
 
-use super::state::PersistedDownload;
-use crate::models::{AppState, SearchEntry, SearchStatus};
+use super::state::{PersistedDownload, PersistedMessage};
+use crate::models::{
+    AppState, ChatMessage, MessageDirection, SearchEntry, SearchStatus,
+};
 use soulseek_rs::DownloadStatus;
+
+/// How much private-message history survives a restart.
+/// ponytail: a flat cap on the whole log rather than per conversation; make
+/// it per-peer if one chatty contact starts evicting everyone else.
+const MESSAGE_HISTORY_LIMIT: usize = 500;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Snapshot {
     pub downloads: Vec<PersistedDownload>,
     pub queries: Vec<String>,
     pub rooms: Vec<String>,
+    pub messages: Vec<PersistedMessage>,
+    /// Unread private-message count, so the badge survives a restart. Room
+    /// unread is deliberately not persisted: room chat logs are not saved, so
+    /// a restored room count would flag messages that no longer exist.
+    pub unread_messages: usize,
 }
 
 impl Snapshot {
@@ -48,11 +60,41 @@ impl Snapshot {
             .map(|room| room.name.clone())
             .collect();
 
+        // Keep the newest messages; older ones fall off the end.
+        let start = state.messages.len().saturating_sub(MESSAGE_HISTORY_LIMIT);
+        let messages = state.messages[start..]
+            .iter()
+            .map(|message| PersistedMessage {
+                peer: message.peer.clone(),
+                outgoing: message.direction == MessageDirection::Outgoing,
+                text: message.text.clone(),
+                at: message.at,
+            })
+            .collect();
+
         Self {
             downloads,
             queries,
             rooms,
+            messages,
+            unread_messages: state.unread_messages,
         }
+    }
+}
+
+/// Rebuild the private-message log from disk.
+pub fn restore_messages(state: &mut AppState, messages: &[PersistedMessage]) {
+    for message in messages {
+        state.messages.push(ChatMessage {
+            direction: if message.outgoing {
+                MessageDirection::Outgoing
+            } else {
+                MessageDirection::Incoming
+            },
+            peer: message.peer.clone(),
+            text: message.text.clone(),
+            at: message.at,
+        });
     }
 }
 
@@ -156,6 +198,13 @@ mod tests {
     }
 
     #[test]
+    fn capture_carries_the_unread_count() {
+        let mut state = AppState::new();
+        state.unread_messages = 3;
+        assert_eq!(Snapshot::capture(&state).unread_messages, 3);
+    }
+
+    #[test]
     fn capture_takes_open_room_names() {
         let mut state = AppState::new();
         state.rooms.focus_or_open("indie");
@@ -178,6 +227,48 @@ mod tests {
         assert_eq!(state.searches[0].query, "beatles");
         assert_eq!(state.searches[0].status, SearchStatus::Completed);
         assert!(state.searches[0].results.is_empty());
+    }
+
+    #[test]
+    fn messages_round_trip_through_a_snapshot() {
+        let mut state = AppState::new();
+        state.messages.push(ChatMessage {
+            direction: MessageDirection::Incoming,
+            peer: "alice".into(),
+            text: "hey".into(),
+            at: chrono::Local::now(),
+        });
+        state.messages.push(ChatMessage {
+            direction: MessageDirection::Outgoing,
+            peer: "alice".into(),
+            text: "hey yourself".into(),
+            at: chrono::Local::now(),
+        });
+
+        let snapshot = Snapshot::capture(&state);
+        let mut restored = AppState::new();
+        restore_messages(&mut restored, &snapshot.messages);
+
+        assert_eq!(Snapshot::capture(&restored).messages, snapshot.messages);
+        assert_eq!(restored.messages[1].text, "hey yourself");
+        assert_eq!(restored.messages[1].direction, MessageDirection::Outgoing);
+        assert_eq!(restored.active_chat_peer(), Some("alice"));
+    }
+
+    #[test]
+    fn capture_keeps_only_the_newest_messages() {
+        let mut state = AppState::new();
+        for i in 0..MESSAGE_HISTORY_LIMIT + 10 {
+            state.messages.push(ChatMessage {
+                direction: MessageDirection::Incoming,
+                peer: "alice".into(),
+                text: i.to_string(),
+                at: chrono::Local::now(),
+            });
+        }
+        let snapshot = Snapshot::capture(&state);
+        assert_eq!(snapshot.messages.len(), MESSAGE_HISTORY_LIMIT);
+        assert_eq!(snapshot.messages[0].text, "10", "oldest are dropped");
     }
 
     #[test]

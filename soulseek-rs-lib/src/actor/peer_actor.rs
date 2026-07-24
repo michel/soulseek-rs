@@ -80,7 +80,16 @@ pub struct PeerActor {
     /// Transfer tokens for uploads we are serving to this peer. A TransferResponse
     /// for one of these is our upload being accepted, not a download offer.
     serving_tokens: std::collections::HashSet<u32>,
+    /// Bytes queued for the peer that the socket would not take yet. The stream
+    /// is non-blocking (so socket reads never starve the mailbox), so a message
+    /// larger than the send buffer — a full share listing is easily megabytes —
+    /// only partly fits; the rest drains on later ticks.
+    pending_write: Vec<u8>,
 }
+
+/// Cap on queued outbound bytes. A peer that stops reading must not be able to
+/// grow this without bound; dropping that connection is the right answer.
+const MAX_PENDING_WRITE: usize = 32 * 1024 * 1024;
 
 impl PeerActor {
     #[must_use]
@@ -115,6 +124,7 @@ impl PeerActor {
             disconnect_reported: false,
             id,
             serving_tokens: std::collections::HashSet::new(),
+            pending_write: Vec::new(),
         }
     }
 
@@ -512,10 +522,10 @@ impl PeerActor {
 
     fn send_message(&mut self, message: Message) {
         let username = self.peer_username();
-        let Some(stream) = self.stream.as_mut() else {
+        if self.stream.is_none() {
             error!("Cannot send message: stream is None");
             return;
-        };
+        }
 
         trace!(
             "[peer:{}] ➡ {:?}",
@@ -530,7 +540,51 @@ impl PeerActor {
                 .map_err(|e| e.to_string())
         );
 
-        if let Err(e) = stream.write_all(&message.get_buffer()) {
+        // Queue then drain, so messages always leave in order even when an
+        // earlier one is still partly buffered.
+        self.pending_write.extend_from_slice(&message.get_buffer());
+        self.flush_pending_write();
+    }
+
+    /// Push as much of `pending_write` into the socket as it will take. A
+    /// non-blocking socket refuses the rest with `WouldBlock`; that is normal
+    /// backpressure, not a failure, so the remainder stays queued for the next
+    /// tick. Only a real I/O error disconnects.
+    fn flush_pending_write(&mut self) {
+        if self.pending_write.is_empty() {
+            return;
+        }
+
+        let username = self.peer_username();
+        let Some(stream) = self.stream.as_mut() else {
+            return;
+        };
+
+        let mut written = 0;
+        let outcome = loop {
+            match stream.write(&self.pending_write[written..]) {
+                Ok(0) => {
+                    break Err(Error::new(
+                        io::ErrorKind::WriteZero,
+                        "peer stopped accepting data",
+                    ));
+                }
+                Ok(n) => {
+                    written += n;
+                    if written == self.pending_write.len() {
+                        break Ok(());
+                    }
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    break Ok(());
+                }
+                Err(e) => break Err(e),
+            }
+        };
+        self.pending_write.drain(..written);
+
+        if let Err(e) = outcome {
             error!(
                 "[peer:{}] Error writing message: {}. Disconnecting.",
                 username, e
@@ -539,12 +593,17 @@ impl PeerActor {
             return;
         }
 
-        if let Err(e) = stream.flush() {
+        // Backpressure is normal, but what a peer has still not taken after we
+        // pushed everything we could is a peer that is not reading at all.
+        if self.pending_write.len() > MAX_PENDING_WRITE {
             error!(
-                "[peer:{}] Error flushing stream: {}. Disconnecting.",
-                username, e
+                "[peer:{}] Outbound queue stuck above {} bytes. Disconnecting.",
+                username, MAX_PENDING_WRITE
             );
-            self.disconnect_with_error(e);
+            self.disconnect_with_error(Error::new(
+                io::ErrorKind::WriteZero,
+                "peer is not draining our outbound queue",
+            ));
         }
     }
 
@@ -785,7 +844,13 @@ impl Actor for PeerActor {
             }
             ConnectionState::Connected => {
                 if self.stream.is_some() {
+                    // ponytail: a backlogged message drains one socket buffer
+                    // per 100ms tick. Enough for a share listing; if a future
+                    // message stream needs more throughput, wake the actor as
+                    // soon as the socket is writable instead of on the tick.
+                    self.flush_pending_write();
                     self.process_read();
+                    self.flush_pending_write();
                 }
             }
             ConnectionState::Disconnected => {}

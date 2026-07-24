@@ -1433,3 +1433,276 @@ fn browse_a_firewalled_peer_via_broker() {
 
     let _ = std::fs::remove_dir_all(share_dir);
 }
+
+/// Browse `sharer_addr` exactly the way a third-party client (SoulseekQt,
+/// Nicotine+) does: dial the peer's listener directly, announce with a
+/// `PeerInit(P)`, ask for the share list (peer code 4) and read the
+/// `SharedFileListResponse` (peer code 5) back off the same socket.
+fn third_party_browse(
+    sharer_addr: &str,
+    username: &str,
+    read_delay: Duration,
+    timeout: Duration,
+) -> std::io::Result<Vec<soulseek_rs::SharedDirectory>> {
+    let mut p = connect_retry(sharer_addr, Duration::from_secs(5))?;
+    p.set_read_timeout(Some(timeout))?;
+    p.write_all(&peer_init_bytes(username, "P", 0))?;
+    p.write_all(&MessageFactory::build_get_share_file_list().get_buffer())?;
+    p.flush()?;
+
+    // A real peer is not always ready to drain the socket the instant the
+    // response starts arriving; a slow reader must not cost us the listing.
+    std::thread::sleep(read_delay);
+
+    let mut response = expect_code(&mut p, 5, timeout)?;
+    response.set_pointer(8);
+    Ok(soulseek_rs::message::peer::parse_shared_file_list(
+        &mut response,
+    ))
+}
+
+// A third-party client browsing us over a direct connection — the scenario of
+// running soulseek-rs and SoulseekQt side by side. The other two browse tests
+// only prove soulseek-rs can talk to itself.
+#[test]
+fn a_third_party_client_browses_our_shares_directly() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    std::fs::create_dir_all(share_dir.join("album")).unwrap();
+    std::fs::write(share_dir.join("album").join("track.flac"), b"xxxx")
+        .unwrap();
+
+    let sharer_port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.listening_settings("e2e_qt_sharer", "pw", sharer_port)
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+
+    // The browsing client is a real logged-in user, as SoulseekQt would be.
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let _qt = login_raw(&server_addr, "e2e_qt_browser", "pw")
+        .expect("third-party client logs in");
+
+    let directories = third_party_browse(
+        &format!("127.0.0.1:{sharer_port}"),
+        "e2e_qt_browser",
+        Duration::ZERO,
+        Duration::from_secs(15),
+    )
+    .expect("third-party client should receive a SharedFileListResponse");
+
+    assert!(
+        directories
+            .iter()
+            .any(|d| d.files.iter().any(|(name, _)| name == "track.flac")),
+        "the listing should include the shared file, got {directories:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+// A third-party client that cannot dial us directly browses us through the
+// server broker: it asks the server to broker, we connect back with a
+// PierceFirewall, and it browses over that connection. This is the path a
+// second client on the same machine takes whenever the direct dial to our
+// advertised (public) address does not come back to us.
+#[test]
+fn a_third_party_client_browses_our_shares_via_the_server_broker() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    std::fs::create_dir_all(share_dir.join("album")).unwrap();
+    std::fs::write(share_dir.join("album").join("brokered.flac"), b"xxxx")
+        .unwrap();
+
+    // The sharer does not listen at all, so the browse can only be brokered.
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.settings("e2e_qt_brok_sharer", "pw")
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+
+    // The third-party client listens and advertises its port, then asks the
+    // server to broker a P connection from the sharer.
+    let listener =
+        std::net::TcpListener::bind("127.0.0.1:0").expect("browser listener");
+    let browser_port = listener.local_addr().unwrap().port();
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let mut srv = login_raw(&server_addr, "e2e_qt_brok_browser", "pw")
+        .expect("third-party client logs in");
+    srv.write_all(
+        &MessageFactory::build_set_wait_port_message(browser_port).get_buffer(),
+    )
+    .expect("set wait port");
+    srv.flush().expect("flush wait port");
+    std::thread::sleep(Duration::from_secs(1));
+
+    let token = 424_242_u32;
+    srv.write_all(
+        &MessageFactory::build_connect_to_peer(
+            token,
+            "e2e_qt_brok_sharer",
+            ConnectionType::P,
+        )
+        .get_buffer(),
+    )
+    .expect("ask the server to broker");
+    srv.flush().expect("flush ConnectToPeer");
+
+    // The sharer must dial us back, quoting our correlation token.
+    listener.set_nonblocking(true).expect("non-blocking accept");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut accepted = None;
+    while Instant::now() < deadline {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                accepted = Some(stream);
+                break;
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => panic!("accept failed: {e}"),
+        }
+    }
+    let mut p = accepted.expect("the sharer should connect back to us");
+    p.set_nonblocking(false).expect("blocking peer socket");
+    p.set_read_timeout(Some(Duration::from_secs(20)))
+        .expect("read timeout");
+
+    let mut pierce = read_framed(&mut p).expect("a PierceFirewall frame");
+    assert_eq!(
+        pierce.get_message_code(),
+        0,
+        "the brokered connect-back must start with a PierceFirewall"
+    );
+    pierce.set_pointer(5); // length prefix (4) + int8 code (1)
+    assert_eq!(
+        pierce.read_int32(),
+        token,
+        "the PierceFirewall must quote the token we brokered with"
+    );
+
+    p.write_all(&MessageFactory::build_get_share_file_list().get_buffer())
+        .expect("request the share list");
+    p.flush().expect("flush share list request");
+
+    let mut response = expect_code(&mut p, 5, Duration::from_secs(20))
+        .expect("a SharedFileListResponse over the brokered connection");
+    response.set_pointer(8);
+    let directories =
+        soulseek_rs::message::peer::parse_shared_file_list(&mut response);
+
+    assert!(
+        directories
+            .iter()
+            .any(|d| d.files.iter().any(|(name, _)| name == "brokered.flac")),
+        "the brokered listing should include the shared file, got {directories:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+// Real peers connect to our listener and go away again (a dropped dial, a port
+// scan, a client that gave up). None of that may cost us the listener: the next
+// client to come along must still be able to browse.
+#[test]
+fn a_stalled_peer_connection_does_not_wedge_the_listener() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    std::fs::create_dir_all(share_dir.join("album")).unwrap();
+    std::fs::write(share_dir.join("album").join("still.flac"), b"xxxx")
+        .unwrap();
+
+    let sharer_port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.listening_settings("e2e_wedge_sharer", "pw", sharer_port)
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+
+    let sharer_addr = format!("127.0.0.1:{sharer_port}");
+
+    // A peer that connects and hangs up without ever sending a PeerInit.
+    drop(
+        connect_retry(&sharer_addr, Duration::from_secs(5))
+            .expect("dial the listener"),
+    );
+    // A peer that connects and then just sits there, saying nothing.
+    let _silent = connect_retry(&sharer_addr, Duration::from_secs(5))
+        .expect("dial the listener");
+
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let _qt = login_raw(&server_addr, "e2e_wedge_browser", "pw")
+        .expect("third-party client logs in");
+
+    let directories = third_party_browse(
+        &sharer_addr,
+        "e2e_wedge_browser",
+        Duration::ZERO,
+        Duration::from_secs(15),
+    )
+    .expect("the listener must still serve browse requests");
+
+    assert!(
+        directories
+            .iter()
+            .any(|d| d.files.iter().any(|(name, _)| name == "still.flac")),
+        "the listing should include the shared file, got {directories:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+// The same direct browse against a share big enough that the response cannot
+// fit in one socket buffer. This is the realistic case: a shared music library
+// serialises to hundreds of KB, and the payload is zlib-STORED (not actually
+// compressed), so the listing goes out at full size.
+#[test]
+fn a_third_party_client_browses_a_large_share() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir().join("big");
+    let _ = std::fs::remove_dir_all(&share_dir);
+    std::fs::create_dir_all(&share_dir).unwrap();
+    // ~4000 entries with long names: well over any socket buffer once framed.
+    let padding = "x".repeat(150);
+    for i in 0..4000 {
+        std::fs::write(share_dir.join(format!("{padding}-{i:05}.flac")), b"z")
+            .unwrap();
+    }
+
+    let sharer_port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.listening_settings("e2e_qt_big_sharer", "pw", sharer_port)
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let _qt = login_raw(&server_addr, "e2e_qt_big_browser", "pw")
+        .expect("third-party client logs in");
+
+    let directories = third_party_browse(
+        &format!("127.0.0.1:{sharer_port}"),
+        "e2e_qt_big_browser",
+        Duration::from_secs(1),
+        Duration::from_secs(20),
+    )
+    .expect("third-party client should receive the full large listing");
+
+    let file_count: usize = directories.iter().map(|d| d.files.len()).sum();
+    assert_eq!(
+        file_count, 4000,
+        "the whole listing must arrive, not just what fit in one socket buffer"
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}

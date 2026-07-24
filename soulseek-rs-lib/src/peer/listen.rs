@@ -3,6 +3,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, RwLock};
 use std::thread;
+use std::time::Duration;
 
 use crate::client::{ClientContext, ClientOperation};
 
@@ -13,6 +14,9 @@ use crate::utils::lock::RwLockExt;
 use crate::{DownloadStatus, debug, error, info, trace};
 
 const PEER_INIT_MESSAGE_CODE: u8 = 1;
+
+/// How long an accepted peer gets to send its peer-init handshake.
+const PEER_INIT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 struct ConnectionContext {
@@ -31,13 +35,29 @@ fn read_peer_init_message(
     stream: &mut TcpStream,
     reader: &mut MessageReader,
 ) -> io::Result<Message> {
-    loop {
+    // An untrusted peer gets a bounded handshake. Without this a peer that
+    // connects and stays silent parks this read forever, and one that hangs up
+    // spins it (a zero-byte read is EOF, which `read_from_socket` reports as
+    // success) — either way pinning a thread that owes us a peer init.
+    stream.set_read_timeout(Some(PEER_INIT_TIMEOUT))?;
+    let message = loop {
+        let buffered = reader.buffer_len();
         reader.read_from_socket(stream)?;
+        if reader.buffer_len() == buffered {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "peer closed before sending a peer init",
+            ));
+        }
 
         if let Ok(Some(msg)) = reader.extract_message() {
-            return Ok(msg);
+            break msg;
         }
-    }
+    };
+
+    // Whatever this connection turns into reads on its own terms from here.
+    stream.set_read_timeout(None)?;
+    Ok(message)
 }
 
 fn parse_peer_init_message(mut message: Message) -> Option<PeerInitData> {
@@ -285,11 +305,15 @@ fn handle_incoming_connection(stream: TcpStream, context: ConnectionContext) {
     let mut stream = stream;
     let mut reader = MessageReader::new();
 
-    let Ok(message) = read_peer_init_message(&mut stream, &mut reader) else {
-        error!(
-            "[listener:{peer_ip}:{peer_port}] Failed to read peer init message"
-        );
-        return;
+    // A peer that dials and then goes away is routine, not an error.
+    let message = match read_peer_init_message(&mut stream, &mut reader) {
+        Ok(message) => message,
+        Err(e) => {
+            debug!(
+                "[listener:{peer_ip}:{peer_port}] no peer init message: {e}"
+            );
+            return;
+        }
     };
 
     // A firewalled peer brokered through the server connects back with a
@@ -330,22 +354,15 @@ fn handle_incoming_connection(stream: TcpStream, context: ConnectionContext) {
             peer, stream, reader, &context, &peer_ip, peer_port,
         ),
 
-        ConnectionType::F => {
-            thread::spawn(move || {
-                trace!(
-                    "[listener:{peer_ip}:{peer_port}] handling file connection in thread"
-                );
-                handle_file_connection(
-                    peer,
-                    stream,
-                    reader,
-                    init_data.token,
-                    &context,
-                    &peer_ip,
-                    peer_port,
-                );
-            });
-        }
+        ConnectionType::F => handle_file_connection(
+            peer,
+            stream,
+            reader,
+            init_data.token,
+            &context,
+            &peer_ip,
+            peer_port,
+        ),
         ConnectionType::D => {
             debug!(
                 "[listener:{peer_ip}:{peer_port}] connection type is D, not supported yet, closing connection. "
@@ -384,7 +401,10 @@ impl Listen {
             };
 
             let context = context.clone();
-            handle_incoming_connection(stream, context);
+            // One thread per connection: the peer-init handshake blocks, and a
+            // peer that is slow to send one must not stop us accepting anybody
+            // else — a wedged accept loop makes us unreachable to every peer.
+            thread::spawn(move || handle_incoming_connection(stream, context));
         }
     }
 }

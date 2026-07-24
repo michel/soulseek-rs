@@ -57,6 +57,9 @@ impl MainTui {
             let result = crate::persist::config::FileConfig::load(&path)
                 .and_then(|mut config| {
                     config.download_dir = Some(download_dir);
+                    // The singular `shared_dir` is merged with `shared_dirs` on
+                    // load, so leaving it would resurrect a removed folder.
+                    config.shared_dir = None;
                     config.shared_dirs = Some(share_dirs);
                     config.save(&path)
                 });

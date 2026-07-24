@@ -181,12 +181,20 @@ fn render_messages(
     let start = lines.len().saturating_sub(height.max(1));
     let rendered: Vec<Line> = lines[start..]
         .iter()
-        .map(|l| match &l.username {
-            Some(user) => Line::from(vec![
-                Span::styled(format!("<{user}> "), info_style()),
-                Span::styled(l.text.clone(), primary_style()),
-            ]),
-            None => Line::from(Span::styled(l.text.clone(), dimmed_style())),
+        .map(|l| {
+            let time =
+                Span::styled(l.at.format("%H:%M ").to_string(), dimmed_style());
+            match &l.username {
+                Some(user) => Line::from(vec![
+                    time,
+                    Span::styled(format!("<{user}> "), info_style()),
+                    Span::styled(l.text.clone(), primary_style()),
+                ]),
+                None => Line::from(vec![
+                    time,
+                    Span::styled(l.text.clone(), dimmed_style()),
+                ]),
+            }
         })
         .collect();
     frame.render_widget(Paragraph::new(rendered), area);

@@ -138,9 +138,16 @@ pub fn render_downloads_pane(
                     percent
                 )
             }
-            UploadStatus::Completed => format_bytes(upload.size),
+            UploadStatus::Completed => "Completed".to_string(),
             UploadStatus::Cancelled => "Cancelled".to_string(),
             UploadStatus::Failed(_) => "Failed".to_string(),
+        };
+        // Same rule as a download: a rate only while the transfer is running.
+        let speed_text = match &upload.status {
+            UploadStatus::InProgress => {
+                format_speed(upload.speed_bytes_per_sec)
+            }
+            _ => "-".to_string(),
         };
         let basename = upload
             .filename
@@ -152,7 +159,7 @@ pub fn render_downloads_pane(
             Cell::from(basename.to_string()).style(body_style()),
             Cell::from(upload.username.clone()).style(info_style()),
             Cell::from(progress_text).style(primary_style()),
-            Cell::from(String::new()),
+            Cell::from(speed_text).style(warning_style()),
         ])
     }));
 

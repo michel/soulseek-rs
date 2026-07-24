@@ -11,12 +11,9 @@ impl MainTui {
             return self.handle_command_bar_input(key);
         }
 
-        // Messages popup: any of i/Esc/q closes it.
+        // Chat popup takes over navigation while open.
         if self.state.show_messages {
-            if matches!(key.code, KeyCode::Char('i' | 'q') | KeyCode::Esc) {
-                self.state.show_messages = false;
-            }
-            return;
+            return self.handle_chat_input(key);
         }
 
         // Browse popup takes over navigation while open.
@@ -113,6 +110,57 @@ impl MainTui {
             FocusedPane::Searches => self.handle_searches_input(key),
             FocusedPane::Results => self.handle_results_input(key),
             FocusedPane::Downloads => self.handle_downloads_input(key),
+        }
+    }
+
+    /// Chat popup: composing captures typing, otherwise these are navigation
+    /// keys over the conversation list.
+    fn handle_chat_input(&mut self, key: KeyEvent) {
+        if self.state.chat_composing {
+            match key.code {
+                KeyCode::Enter => self.send_chat_message(),
+                KeyCode::Esc => {
+                    self.state.chat_composing = false;
+                    self.state.chat_input.clear();
+                }
+                KeyCode::Backspace => {
+                    self.state.chat_input.pop();
+                }
+                KeyCode::Char(c)
+                    if !key.modifiers.intersects(
+                        KeyModifiers::CONTROL | KeyModifiers::ALT,
+                    ) =>
+                {
+                    self.state.chat_input.push(c);
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        match key.code {
+            KeyCode::Char('i' | 'q') | KeyCode::Esc => {
+                self.state.show_messages = false;
+            }
+            // Move through the conversation list on the right.
+            KeyCode::Tab | KeyCode::Down | KeyCode::Char('j') => {
+                self.state.cycle_chat_peer(true);
+            }
+            KeyCode::BackTab | KeyCode::Up | KeyCode::Char('k') => {
+                self.state.cycle_chat_peer(false);
+            }
+            // Start a conversation with someone not in the list yet.
+            KeyCode::Char('m') => {
+                self.state.show_messages = false;
+                self.state.command_bar_active = true;
+                self.state.command_bar_mode = CommandBarMode::Message;
+                self.state.command_bar_input.clear();
+                self.state.command_bar_cursor_position = 0;
+            }
+            KeyCode::Enter if self.state.active_chat_peer().is_some() => {
+                self.state.chat_composing = true;
+            }
+            _ => {}
         }
     }
 

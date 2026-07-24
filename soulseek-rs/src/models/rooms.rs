@@ -1,3 +1,4 @@
+use chrono::{DateTime, Local};
 use soulseek_rs::types::{RoomEvent, RoomInfo};
 
 /// One line in a room's chat log. A `None` username marks a system line
@@ -6,19 +7,23 @@ use soulseek_rs::types::{RoomEvent, RoomInfo};
 pub struct RoomLine {
     pub username: Option<String>,
     pub text: String,
+    /// Local wall-clock time the line was appended.
+    pub at: DateTime<Local>,
 }
 
 impl RoomLine {
-    const fn chat(username: String, text: String) -> Self {
+    fn chat(username: String, text: String) -> Self {
         Self {
             username: Some(username),
             text,
+            at: Local::now(),
         }
     }
-    const fn system(text: String) -> Self {
+    fn system(text: String) -> Self {
         Self {
             username: None,
             text,
+            at: Local::now(),
         }
     }
 }

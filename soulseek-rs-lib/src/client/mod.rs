@@ -71,6 +71,30 @@ struct ActiveUpload {
     bytes_sent: Arc<std::sync::atomic::AtomicU64>,
     cancel: Arc<std::sync::atomic::AtomicBool>,
     status: crate::types::UploadStatus,
+    /// When streaming began, so a snapshot can report a transfer rate.
+    started: Instant,
+}
+
+/// Transfer rate of an in-progress upload, in bytes per second. Finished,
+/// cancelled and failed uploads report zero, matching how a download reports
+/// its speed only while running.
+///
+/// ponytail: an average over the whole transfer rather than the rolling window
+/// the download path samples. Enough to fill the Speed column; sample a window
+/// if the figure ever needs to track sudden stalls.
+fn upload_speed(
+    status: &crate::types::UploadStatus,
+    bytes_sent: u64,
+    started: Instant,
+) -> f64 {
+    if !matches!(status, crate::types::UploadStatus::InProgress) {
+        return 0.0;
+    }
+    let elapsed = started.elapsed().as_secs_f64();
+    if elapsed <= 0.0 {
+        return 0.0;
+    }
+    bytes_sent as f64 / elapsed
 }
 
 /// Build a `FileSearchResponse` for `query` against `shares`, or `None` if
@@ -662,6 +686,12 @@ impl Client {
         }
     }
 
+    /// The username we log in as, for attributing our own messages.
+    #[must_use]
+    pub fn username(&self) -> &str {
+        &self.username
+    }
+
     /// The directories whose files are currently shared with other peers.
     #[must_use]
     pub fn shared_directories(&self) -> Vec<String> {
@@ -692,13 +722,19 @@ impl Client {
                     .into_iter()
                     .map(|token| {
                         let upload = &ctx.active_uploads[token];
+                        let bytes_sent = upload
+                            .bytes_sent
+                            .load(std::sync::atomic::Ordering::Relaxed);
                         crate::types::UploadInfo {
                             username: upload.username.clone(),
                             filename: upload.filename.clone(),
                             size: upload.size,
-                            bytes_sent: upload
-                                .bytes_sent
-                                .load(std::sync::atomic::Ordering::Relaxed),
+                            bytes_sent,
+                            speed_bytes_per_sec: upload_speed(
+                                &upload.status,
+                                bytes_sent,
+                                upload.started,
+                            ),
                             status: upload.status.clone(),
                         }
                     })
@@ -773,3 +809,40 @@ mod operations;
 mod rooms;
 mod search;
 mod uploads;
+
+#[cfg(test)]
+mod tests {
+    use super::upload_speed;
+    use crate::types::UploadStatus;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn upload_speed_is_reported_only_while_running() {
+        let two_seconds_ago = Instant::now()
+            .checked_sub(Duration::from_secs(2))
+            .expect("clock supports a 2s offset");
+
+        // 1 KiB over ~2s is ~512 B/s.
+        let rate =
+            upload_speed(&UploadStatus::InProgress, 1024, two_seconds_ago);
+        assert!((rate - 512.0).abs() < 50.0, "unexpected rate {rate}");
+
+        // A finished upload reports no rate, exactly as a finished download
+        // does, so the Speed column renders "-" rather than a stale figure.
+        for status in [
+            UploadStatus::Completed,
+            UploadStatus::Cancelled,
+            UploadStatus::Failed("nope".to_string()),
+        ] {
+            let rate = upload_speed(&status, 1024, two_seconds_ago);
+            assert!(rate.abs() < f64::EPSILON, "unexpected rate {rate}");
+        }
+
+        // A just-started upload must not divide by a zero elapsed time.
+        let rate = upload_speed(&UploadStatus::InProgress, 0, Instant::now());
+        assert!(
+            rate.is_finite() && rate.abs() < f64::EPSILON,
+            "unexpected rate {rate}"
+        );
+    }
+}

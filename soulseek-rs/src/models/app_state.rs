@@ -1,4 +1,5 @@
 use crate::models::{BrowseTabs, FileDisplayData, RoomsState, SettingsState};
+use chrono::{DateTime, Local};
 use ratatui::{layout::Rect, widgets::TableState};
 use soulseek_rs::{DownloadStatus, types::Download};
 use std::sync::atomic::AtomicBool;
@@ -47,12 +48,14 @@ pub enum MessageDirection {
     Outgoing,
 }
 
-/// A private message shown in the inbox popup.
+/// A private message shown in the chat popup.
 pub struct ChatMessage {
     pub direction: MessageDirection,
     /// The other party: the sender for incoming, the recipient for outgoing.
     pub peer: String,
     pub text: String,
+    /// Local wall-clock time the message was sent or received.
+    pub at: DateTime<Local>,
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -93,6 +96,11 @@ pub struct AppState {
     pub show_messages: bool,
     /// Incoming private messages received while the inbox was closed.
     pub unread_messages: usize,
+    /// Conversation the chat popup is pinned to; unset follows the newest.
+    pub chat_peer: Option<String>,
+    /// Compose buffer for the active conversation.
+    pub chat_input: String,
+    pub chat_composing: bool,
 
     // Browse users' shared files (one tab per user)
     pub browse: BrowseTabs,
@@ -157,6 +165,9 @@ impl AppState {
             messages: Vec::new(),
             show_messages: false,
             unread_messages: 0,
+            chat_peer: None,
+            chat_input: String::new(),
+            chat_composing: false,
 
             browse: BrowseTabs::new(),
             show_browse: false,
@@ -176,6 +187,62 @@ impl AppState {
         }
     }
 
+    /// Open the chat popup on a conversation with `peer`, ready to type.
+    pub fn open_chat(&mut self, peer: String) {
+        self.chat_peer = Some(peer);
+        self.chat_input.clear();
+        self.chat_composing = true;
+        self.show_messages = true;
+        self.unread_messages = 0;
+    }
+
+    /// The conversation the chat popup shows: the pinned peer, else whoever
+    /// was last talked to.
+    #[must_use]
+    pub fn active_chat_peer(&self) -> Option<&str> {
+        self.chat_peer
+            .as_deref()
+            .or_else(|| self.messages.last().map(|m| m.peer.as_str()))
+    }
+
+    /// Conversation partners in first-contact order. ponytail: rescans every
+    /// message per frame; an inbox is never big enough to care.
+    #[must_use]
+    pub fn chat_peers(&self) -> Vec<&str> {
+        let mut peers: Vec<&str> = Vec::new();
+        for message in &self.messages {
+            if !peers.contains(&message.peer.as_str()) {
+                peers.push(&message.peer);
+            }
+        }
+        // A conversation opened but not yet written to has no messages.
+        if let Some(peer) = self.chat_peer.as_deref()
+            && !peers.contains(&peer)
+        {
+            peers.push(peer);
+        }
+        peers
+    }
+
+    /// Pin the chat popup to the next (or previous) conversation.
+    pub fn cycle_chat_peer(&mut self, forward: bool) {
+        let peers = self.chat_peers();
+        if peers.is_empty() {
+            return;
+        }
+        let current = self
+            .active_chat_peer()
+            .and_then(|active| peers.iter().position(|p| *p == active))
+            .unwrap_or(0);
+        let next = if forward {
+            (current + 1) % peers.len()
+        } else {
+            (current + peers.len() - 1) % peers.len()
+        };
+        let peer = peers[next].to_string();
+        self.chat_peer = Some(peer);
+    }
+
     #[allow(dead_code)]
     #[must_use]
     pub fn get_selected_search(&self) -> Option<&SearchEntry> {
@@ -193,5 +260,49 @@ impl AppState {
 impl Default for AppState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn say(state: &mut AppState, peer: &str) {
+        state.messages.push(ChatMessage {
+            direction: MessageDirection::Outgoing,
+            peer: peer.to_string(),
+            text: "hi".to_string(),
+            at: Local::now(),
+        });
+    }
+
+    #[test]
+    fn chat_defaults_to_the_newest_conversation_and_cycles() {
+        let mut state = AppState::new();
+        assert_eq!(state.active_chat_peer(), None);
+
+        say(&mut state, "alice");
+        say(&mut state, "bob");
+        say(&mut state, "alice");
+        assert_eq!(state.chat_peers(), vec!["alice", "bob"]);
+        assert_eq!(state.active_chat_peer(), Some("alice"));
+
+        state.cycle_chat_peer(true);
+        assert_eq!(state.active_chat_peer(), Some("bob"));
+        state.cycle_chat_peer(true); // wraps
+        assert_eq!(state.active_chat_peer(), Some("alice"));
+        state.cycle_chat_peer(false);
+        assert_eq!(state.active_chat_peer(), Some("bob"));
+    }
+
+    #[test]
+    fn opening_a_chat_pins_a_peer_with_no_messages_yet() {
+        let mut state = AppState::new();
+        say(&mut state, "alice");
+        state.open_chat("carol".to_string());
+        assert_eq!(state.active_chat_peer(), Some("carol"));
+        assert!(state.show_messages && state.chat_composing);
+        assert_eq!(state.unread_messages, 0);
+        assert_eq!(state.chat_peers(), vec!["alice", "carol"]);
     }
 }

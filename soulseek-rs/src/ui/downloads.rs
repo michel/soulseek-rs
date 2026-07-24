@@ -300,6 +300,32 @@ impl MultiDownloadProgress {
     }
 }
 
+/// Bytes transferred, bytes expected and combined speed across the downloads
+/// that are actually running — or `None` when none are, so the caller can hide
+/// the progress readout entirely.
+///
+/// Only `InProgress` downloads count. A queued download has not started and a
+/// failed one never will, so adding their size to the total just pins the bar
+/// near zero for the rest of the session.
+fn active_progress(downloads: &[DownloadEntry]) -> Option<(u64, u64, f64)> {
+    let mut transferred = 0;
+    let mut expected = 0;
+    let mut speed = 0.0;
+    let mut running = false;
+
+    for entry in downloads {
+        if !matches!(entry.download.status, DownloadStatus::InProgress { .. }) {
+            continue;
+        }
+        running = true;
+        transferred += entry.download.bytes_downloaded();
+        expected += entry.download.size;
+        speed += entry.download.speed_bytes_per_sec();
+    }
+
+    running.then_some((transferred, expected, speed))
+}
+
 /// Renders download statistics in a reusable way
 pub fn render_download_stats(
     frame: &mut Frame,
@@ -329,29 +355,7 @@ pub fn render_download_stats(
         .filter(|d| matches!(d.download.status, DownloadStatus::Paused { .. }))
         .count();
 
-    let total_downloaded: u64 = downloads
-        .iter()
-        .map(|d| d.download.bytes_downloaded())
-        .sum();
-    let total_size: u64 = downloads.iter().map(|d| d.download.size).sum();
-    let overall_progress = if total_size > 0 {
-        (total_downloaded as f64 / total_size as f64 * 100.0) as u8
-    } else {
-        0
-    };
-    let progress_ratio = if total_size > 0 {
-        total_downloaded as f64 / total_size as f64
-    } else {
-        0.0
-    };
-    let total_speed: f64 = downloads
-        .iter()
-        .filter(|d| {
-            matches!(d.download.status, DownloadStatus::InProgress { .. })
-        })
-        .map(|d| d.download.speed_bytes_per_sec())
-        .sum();
-    let speed_mb = (total_speed / BYTES_PER_MB * 100.0).round() / 100.0;
+    let active = active_progress(downloads);
 
     let block = pane_block(false).title(plain_title("Status", false));
 
@@ -386,6 +390,23 @@ pub fn render_download_stats(
 
     let stats_paragraph = Paragraph::new(stats_line);
     frame.render_widget(stats_paragraph, chunks[0]);
+
+    // Nothing is transferring, so there is no progress to draw: leave the
+    // right-hand half blank instead of showing an idle 0 B / 0 B bar.
+    let Some((total_downloaded, total_size, total_speed)) = active else {
+        return;
+    };
+    let overall_progress = if total_size > 0 {
+        (total_downloaded as f64 / total_size as f64 * 100.0) as u8
+    } else {
+        0
+    };
+    let progress_ratio = if total_size > 0 {
+        total_downloaded as f64 / total_size as f64
+    } else {
+        0.0
+    };
+    let speed_mb = (total_speed / BYTES_PER_MB * 100.0).round() / 100.0;
 
     let right_width = chunks[1].width as usize;
     let bar_width = right_width.saturating_sub(42).max(10);
@@ -452,4 +473,74 @@ pub fn show_multi_download_progress(
     soulseek_rs::utils::logger::flush_buffered_logs();
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DownloadEntry, DownloadStatus, active_progress};
+    use soulseek_rs::types::{Download, DownloadMetadata};
+
+    fn entry(size: u64, status: DownloadStatus) -> DownloadEntry {
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        DownloadEntry {
+            download: Download {
+                username: "peer".to_string(),
+                filename: "song.flac".to_string(),
+                token: 1,
+                size,
+                download_directory: "/tmp".to_string(),
+                status,
+                sender,
+                queue_position: None,
+                metadata: DownloadMetadata::default(),
+            },
+            receiver: None,
+        }
+    }
+
+    #[test]
+    fn only_running_downloads_count_towards_the_bar() {
+        let downloads = vec![
+            entry(
+                100,
+                DownloadStatus::InProgress {
+                    bytes_downloaded: 40,
+                    total_bytes: 100,
+                    speed_bytes_per_sec: 512.0,
+                },
+            ),
+            // None of these may reach the bar: a queued file has not started,
+            // and a failed or timed-out one never will. Counting their size
+            // would drag the bar down for the rest of the session.
+            entry(9_000, DownloadStatus::Queued),
+            entry(9_000, DownloadStatus::Failed(None)),
+            entry(9_000, DownloadStatus::TimedOut),
+        ];
+
+        let (transferred, expected, speed) =
+            active_progress(&downloads).expect("one download is running");
+        assert_eq!(transferred, 40);
+        assert_eq!(expected, 100, "queued and failed sizes must be excluded");
+        assert!((speed - 512.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn nothing_running_hides_the_bar() {
+        assert!(active_progress(&[]).is_none(), "no downloads at all");
+
+        // Completed and paused transfers are not processing either, so the
+        // readout stays hidden rather than showing a stale bar.
+        let idle = vec![
+            entry(100, DownloadStatus::Completed),
+            entry(100, DownloadStatus::Queued),
+            entry(
+                100,
+                DownloadStatus::Paused {
+                    bytes_downloaded: 50,
+                    total_bytes: 100,
+                },
+            ),
+        ];
+        assert!(active_progress(&idle).is_none());
+    }
 }
