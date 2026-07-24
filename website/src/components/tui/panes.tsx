@@ -47,6 +47,10 @@ export const SearchesPane = ({
       >
         <span className="text-[13px] text-[var(--color-oxide)]">/</span>
         <input
+          id="tui-search"
+          name="tui-search"
+          type="search"
+          autoComplete="off"
           value={query}
           onChange={(event) => {
             setQuery(event.target.value)

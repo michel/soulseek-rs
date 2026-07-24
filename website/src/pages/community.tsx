@@ -112,7 +112,7 @@ export const Community = () => {
     <>
       <PageHead
         eyebrow="community"
-        title="Help out, or go where you're better served."
+        title="Help out, or go where you’re better served."
       >
         It&rsquo;s mostly one person who&rsquo;s been on Soulseek since the early 2000s.
         Issues and pull requests are welcome, and if another client fits you better, use it.
@@ -207,7 +207,7 @@ export const Community = () => {
           title="Three good clients to point you elsewhere."
         >
           soulseek-rs has no GUI and no daemon mode yet. If one of these fits you better,
-          use it. Recommending them is the strongest trust signal there is.
+          use it.
         </SectionHead>
         <div className="grid grid-cols-1 gap-3.5">
           {ALTERNATIVES.map((alt) => (
@@ -251,7 +251,10 @@ export const Community = () => {
               </Button>
             </div>
           </div>
-          <Callout title="two things that stay true">
+          {/* Raised, not panel: this section is a band, which is itself
+              bg-panel — a panel-on-panel callout has only a 1.36:1 hairline
+              holding it together. */}
+          <Callout className="bg-raised" title="two things that stay true">
             <p className="mb-1.5 !text-success">No telemetry. Ever.</p>
             <p className="font-forum text-xs !text-muted">
               Not affiliated with or endorsed by the Soulseek project.
