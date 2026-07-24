@@ -150,11 +150,6 @@
   --tui-track: #2a2622;
   --tui-bezel: #000000;
 
-  /* tmux's own status bar. Emulator chrome, so it does not follow the theme. */
-  --tmux-bg: #0e0c0a;
-  --tmux-hl: #b9a6e8;
-  --tmux-hl-fg: #1a1526;
-
   color-scheme: dark;
 }
 
@@ -223,10 +218,6 @@
  * is what the Rust client does. Those names do not flip with the theme, so on
  * manila they would leave paper-on-paper. Light mode re-cuts the same names
  * darker, scoped to the terminal's content.
- *
- * Deliberately not applied to the tmux bar above it: that is the emulator's
- * own chrome, it keeps its near-black background in both themes, and needs
- * the bright phosphor to stay legible against it.
  */
 [data-theme='light'] .tui-content {
   --color-paper: #14110f;

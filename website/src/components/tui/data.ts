@@ -41,25 +41,7 @@ export interface TransferRow {
   rateMbps?: number
 }
 
-interface TmuxWindow {
-  n: number
-  name: string
-  active?: boolean
-}
-
-export const HOST = 'michels-macbook-pro-m4'
-export const CLOCK = '01:45 PM'
-export const DATE = '2026-07-24'
-export const SESSION = 'develop'
 export const SHARE = '/Users/micheldegraaf/Downloads/Soulseek'
-
-export const WINDOWS: readonly TmuxWindow[] = [
-  { n: 1, name: 'fish #' },
-  { n: 2, name: 'fish #' },
-  { n: 3, name: 'fish #' },
-  { n: 4, name: 'fish #-' },
-  { n: 5, name: 'fish *', active: true },
-]
 
 export const SEARCHES: readonly SearchRow[] = [
   { id: 's1', query: 'public domain field recordings', results: 606, status: 'Done' },
