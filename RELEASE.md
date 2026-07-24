@@ -41,11 +41,14 @@ Both crates always share one version, one tag, and one changelog — see `releas
 
 - A merge with no releasable commits (only `docs:`/`chore:`/`test:`) opens no release PR.
   That is intended.
-- The release PR does not run CI: GitHub does not trigger workflows for PRs opened with
-  `GITHUB_TOKEN`. It only touches `Cargo.toml`, `Cargo.lock`, and `CHANGELOG.md`; CI already
-  ran on the commits it is releasing.
-- If one target's build fails, the other five still upload (`fail-fast: false`). Re-run just
-  that matrix job from the Actions UI.
+- The release PR does not run CI on its own, because GitHub does not trigger workflows for
+  PRs opened with `GITHUB_TOKEN`. Pushing any commit to that branch yourself does start it —
+  handy if you want the version bump validated before merging.
+- If one target's build fails, the other five still upload (`fail-fast: false`). To retry,
+  run the **Release** workflow manually and set `tag` to the existing tag (e.g. `v6.0.0`);
+  it rebuilds and re-uploads every target for that tag. Re-running the failed job from the
+  Actions UI replays the *old* workflow file, so it is no use when the workflow is the thing
+  that needs fixing.
 - To skip a release for a commit that would otherwise trigger one, use a `chore:` type.
 
 ## Installing a release
