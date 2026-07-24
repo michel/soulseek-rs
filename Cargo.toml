@@ -9,6 +9,13 @@ edition = "2024"
 license = "MIT"
 repository = "https://github.com/michel/soulseek-rs"
 
+# The v6.0.0 release binaries shipped unstripped: the Linux archives were
+# roughly twice the size of the macOS ones purely because of debug symbols.
+# Doing it here rather than in the workflow covers every target at once,
+# including `cargo install`.
+[profile.release]
+strip = true
+
 [workspace.lints.rust]
 unused_lifetimes = "warn"
 unsafe_op_in_unsafe_fn = "warn"
