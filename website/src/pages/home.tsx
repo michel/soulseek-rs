@@ -111,14 +111,14 @@ export const Home = () => {
             <div className="flex items-start gap-3.5 sm:gap-6 md:gap-11">
               <Logo size={172} className="mt-2 max-md:!h-28 max-sm:!h-16" />
               <h1 className="text-[29px] leading-[37px] font-bold tracking-[-0.01em] text-balance sm:text-[34px] sm:leading-[42px] md:text-display md:leading-[var(--text-display--line-height)]">
-                Soulseek for the terminal. Built for agents and people who live there.
-                Blazingly fast, in Rust 🦀.
+                A soulseek client for the terminal. Built for agents and people who live
+                there.
               </h1>
             </div>
             <p className="text-lg leading-[29px] text-pretty text-secondary max-md:hidden">
               Search the network, share your files, browse someone&rsquo;s collection, join
-              a room. It runs over ssh on the machine where your music already lives, with
-              no window and no mouse, and it&rsquo;s blazingly fast Rust 🦀.
+              a room. It runs over ssh on the machine where your music already lives, and
+              it&rsquo;s blazingly fast Rust 🦀.
             </p>
             <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 sm:gap-y-4">
               <div className="flex flex-wrap items-center gap-2 max-md:w-full max-md:justify-center sm:gap-3">
