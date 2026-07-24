@@ -4,6 +4,11 @@ on:
   push:
     branches: [master]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to rebuild binaries for (e.g. v6.0.0). Leave empty for a normal release run.'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -68,16 +73,25 @@ jobs:
       # string on the runs where nothing was released, and fromJSON chokes on it.
       - name: Resolve tag
         id: tag
-        if: steps.release-plz.outputs.releases_created == 'true'
+        if: steps.release-plz.outputs.releases_created == 'true' || inputs.tag != ''
         env:
           RELEASES: ${{ steps.release-plz.outputs.releases }}
-        run: echo "tag=$(jq -r '.[0].tag' <<< "$RELEASES")" >> "$GITHUB_OUTPUT"
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          tag="${INPUT_TAG:-$(jq -r '.[0].tag' <<< "$RELEASES")}"
+          # This value is handed to actions/checkout as `ref:` and INPUT_TAG is
+          # attacker-shaped (anyone who can dispatch the workflow types it), so
+          # refuse anything that is not a literal version tag.
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::unexpected tag: $tag"; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-  # Attaches downloadable binaries to the release GitHub just created.
+  # Attaches downloadable binaries to the release GitHub just created, or to an
+  # existing tag when dispatched manually with `tag` (recovering a target that
+  # failed to upload needs a re-run of *this* file, not the old one).
   binaries:
     name: ${{ matrix.target }}
     needs: release
-    if: needs.release.outputs.created == 'true'
+    if: needs.release.outputs.created == 'true' || inputs.tag != ''
     runs-on: ${{ matrix.os }}
     strategy:
       # One flaky cross-linker must not hold back the five targets that built.
@@ -111,10 +125,17 @@ jobs:
 
       # Builds, strips, archives (.tar.gz / .zip on Windows), writes a .sha256
       # and uploads the lot to the release.
+      #
+      # build-tool is pinned to cargo because the action otherwise reaches for
+      # `cross` on any *-musl target. Every entry in the matrix builds on a
+      # runner of its own architecture — only the libc differs — so cross adds
+      # nothing, and on the native arm64 runner it hard-fails trying to install
+      # an x86_64 toolchain.
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           bin: soulseek-rs
           target: ${{ matrix.target }}
+          build-tool: cargo
           archive: $bin-$tag-$target
           include: README.md,LICENSE
           checksum: sha256
