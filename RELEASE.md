@@ -11,7 +11,9 @@ Releases are automated by [release-plz](https://release-plz.dev). You do not run
 2. `.github/workflows/release.yml` opens or updates a **`chore: release vX.Y.Z`** PR. It
    contains the semver bump in `[workspace.package]`, the refreshed `Cargo.lock`, and the
    generated `CHANGELOG.md` entry. Review it like any other PR.
-3. Merging that PR releases:
+3. Merging that PR releases, but only once CI has passed on the merge commit — a published
+   crates.io version can be yanked but never withdrawn, so the `Wait for CI` job blocks the
+   publish until the CI run for that exact commit is green:
    - tags `vX.Y.Z` and creates the GitHub release with the changelog as its notes,
    - publishes `soulseek-rs-lib` then `soulseek-rs` to crates.io (dependency order, waiting
      for the index between them),
@@ -50,6 +52,13 @@ Both crates always share one version, one tag, and one changelog — see `releas
   Actions UI replays the *old* workflow file, so it is no use when the workflow is the thing
   that needs fixing.
 - To skip a release for a commit that would otherwise trigger one, use a `chore:` type.
+- **If CI flakes on the release commit the publish is blocked, by design.** The e2e suite
+  talks to a real soulfind server over the network and does occasionally time out. To
+  recover: re-run the failed CI job, wait for that run to go green, then re-run the
+  **Release** workflow. The gate reads the *newest* CI run for the commit, so it will then
+  pass. Never work around it by publishing by hand.
+- Release binaries are stripped via `[profile.release] strip = true` in the workspace
+  `Cargo.toml`, so `cargo install` benefits too — not just the release archives.
 
 ## Installing a release
 
