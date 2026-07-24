@@ -15,11 +15,8 @@ interface FitScale {
  * looking like a terminal. So it renders at native width and gets a CSS
  * transform, and the wrapper is told the resulting height so the page below
  * does not sit under it.
- *
- * `minScale` stops the shrink at a floor on small screens — past that the
- * wrapper scrolls sideways instead, which beats unreadable 4px text.
  */
-export const useFitScale = (designWidth: number, minScale: number): FitScale => {
+export const useFitScale = (designWidth: number): FitScale => {
   const wrapRef = useRef<HTMLDivElement>(null)
   const innerRef = useRef<HTMLDivElement>(null)
   const [{ scale, height }, setState] = useState({ scale: 0, height: 0 })
@@ -36,7 +33,7 @@ export const useFitScale = (designWidth: number, minScale: number): FitScale => 
       const width = wrap.clientWidth
       if (width === 0) return
 
-      const next = Math.max(minScale, Math.min(1, width / designWidth))
+      const next = Math.min(1, width / designWidth)
       const nextHeight = inner.offsetHeight * next
       if (nextHeight === 0) return
 
@@ -58,7 +55,7 @@ export const useFitScale = (designWidth: number, minScale: number): FitScale => 
     return () => {
       observer.disconnect()
     }
-  }, [designWidth, minScale])
+  }, [designWidth])
 
   return { wrapRef, innerRef, scale, height, ready: scale > 0 }
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 
-import { MacWindow, ShortcutBar, StatusLine, TmuxBar, type StatusCounts } from './chrome'
+import { MacWindow, ShortcutBar, StatusLine, type StatusCounts } from './chrome'
 import {
   RESULTS,
   SEARCHES,
@@ -362,22 +362,9 @@ export const HeroTerminal = () => {
     setPhase('interactive')
   }
 
-  // Below 820px, stop shrinking at half size and let the wrapper scroll.
-  const [minScale, setMinScale] = useState(() =>
-    matches('(max-width: 820px)') ? 0.5 : 0,
-  )
-  useEffect(() => {
-    const query = window.matchMedia('(max-width: 820px)')
-    const sync = (event: MediaQueryListEvent) => {
-      setMinScale(event.matches ? 0.5 : 0)
-    }
-    query.addEventListener('change', sync)
-    return () => {
-      query.removeEventListener('change', sync)
-    }
-  }, [])
-
-  const { wrapRef, innerRef, scale, height, ready } = useFitScale(DESIGN_WIDTH, minScale)
+  // No floor: the terminal shrinks to whatever width it is given rather than
+  // holding a minimum size and scrolling sideways.
+  const { wrapRef, innerRef, scale, height, ready } = useFitScale(DESIGN_WIDTH)
 
   const shownSearches = searches.map((search, i) =>
     i === 0 && phase === 'searching' ? { ...search, status: '⋯', results: '—' } : search,
@@ -401,7 +388,6 @@ export const HeroTerminal = () => {
           }}
         >
           <MacWindow>
-            <TmuxBar />
             {/*
               role="application" is the ARIA escape hatch for a widget that
               handles its own keys: it stops screen readers intercepting

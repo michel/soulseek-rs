@@ -1,7 +1,7 @@
 import { VERSION } from '@/lib/links'
 import { cn } from '@/lib/utils'
 
-import { CLOCK, DATE, HOST, SESSION, SHORTCUTS, WINDOWS } from './data'
+import { SHORTCUTS } from './data'
 
 interface TuiPaneProps {
   title: string
@@ -54,32 +54,6 @@ export const MacWindow = ({ children }: { children: React.ReactNode }) => (
   </div>
 )
 
-export const TmuxBar = () => (
-  <div className="flex h-[26px] items-center border-b border-[color-mix(in_srgb,var(--color-dust)_25%,transparent)] bg-[var(--tmux-bg)] text-[12.5px] text-[var(--color-phosphor)]">
-    <span className="flex h-full items-center bg-[var(--color-phosphor)] px-2.5 font-bold text-[var(--tmux-bg)]">
-      {SESSION}
-    </span>
-    {WINDOWS.map((w) => (
-      <span
-        key={w.n}
-        className={cn(
-          'flex h-full items-center gap-1.5 px-3',
-          w.active === true
-            ? 'bg-[var(--tmux-hl)] font-bold text-[var(--tmux-hl-fg)]'
-            : 'text-[var(--color-phosphor)]',
-        )}
-      >
-        {w.n} <span className="opacity-55">›</span> {w.name}
-      </span>
-    ))}
-    <span className="ml-auto flex gap-4 px-3 text-[var(--color-paper)]">
-      <span className="bg-[var(--tmux-hl)] px-2 font-semibold text-[var(--tmux-hl-fg)]">
-        {DATE} · {CLOCK}
-      </span>
-      <span className="font-bold">{HOST}</span>
-    </span>
-  </div>
-)
 
 export interface StatusCounts {
   active: number
