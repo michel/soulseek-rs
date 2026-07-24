@@ -59,10 +59,18 @@ const PANES: readonly { num?: number; title: string; body: string }[] = [
   },
 ]
 
+/*
+ * The keycap's heavier bottom edge is a shadow, not a thicker bottom border.
+ *
+ * A 2px border on one side of a rounded box thins out as it turns the corner,
+ * so the edge tapers exactly where a real keycap looks solid. An unblurred
+ * 1px shadow sits under the full curve instead, which is the look the design
+ * system's `.key` rule is after.
+ */
 const KeyRow = ({ combo, description }: { combo: string; description: string }) => (
   <div className="grid grid-cols-[120px_1fr] items-baseline gap-3 border-b border-hairline py-[7px]">
     <span>
-      <span className="inline-block min-w-5 rounded-md border border-line border-b-2 px-[7px] text-center text-xs text-primary">
+      <span className="inline-block min-w-5 rounded-md border border-line px-[7px] text-center text-xs text-primary shadow-[0_1px_0_0_var(--border-default)]">
         {combo}
       </span>
     </span>
