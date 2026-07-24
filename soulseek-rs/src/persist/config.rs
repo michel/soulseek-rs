@@ -78,9 +78,9 @@ pub const DEFAULT_SEARCH_TIMEOUT: u64 = 10;
 
 /// Layer CLI/env values over the config file over defaults.
 ///
-/// The `--disable-listener` flag can only enable the disable (a bare flag
-/// has no "explicitly off" form), so file `disable_listener = true` wins
-/// unless the flag is passed.
+/// The listener has an explicit form in both directions: `--listener` beats
+/// `--no-listener` (and `SOULSEEK_NO_LISTENER`), which beats the file's
+/// `disable_listener`, so a config file can always be overridden per run.
 #[must_use]
 pub fn resolve(cli: &crate::cli::Cli, file: &FileConfig) -> Resolved {
     let download_dir = cli
@@ -99,8 +99,11 @@ pub fn resolve(cli: &crate::cli::Cli, file: &FileConfig) -> Resolved {
             .listener_port
             .or(file.listener_port)
             .unwrap_or(DEFAULT_LISTENER_PORT),
-        disable_listener: cli.disable_listener
-            || file.disable_listener.unwrap_or(false),
+        disable_listener: if cli.listener {
+            false
+        } else {
+            cli.no_listener || file.disable_listener.unwrap_or(false)
+        },
         download_dir: download_dir.clone(),
         shared_dirs: resolve_shared_dirs(cli, file, &download_dir),
         max_concurrent_downloads: cli
@@ -111,7 +114,10 @@ pub fn resolve(cli: &crate::cli::Cli, file: &FileConfig) -> Resolved {
             .search_timeout
             .or(file.search_timeout)
             .unwrap_or(DEFAULT_SEARCH_TIMEOUT),
-        password_cmd: file.password_cmd.clone(),
+        password_cmd: cli
+            .password_cmd
+            .clone()
+            .or_else(|| file.password_cmd.clone()),
     }
 }
 
@@ -125,7 +131,7 @@ fn resolve_shared_dirs(
     file: &FileConfig,
     download_dir: &str,
 ) -> Vec<String> {
-    if cli.shared_dir.is_none()
+    if cli.shared_dir.is_empty()
         && file.shared_dir.is_none()
         && file.shared_dirs.is_none()
     {
@@ -148,20 +154,7 @@ mod tests {
     use crate::cli::Cli;
 
     fn bare_cli() -> Cli {
-        Cli {
-            username: None,
-            password: None,
-            server: None,
-            disable_listener: false,
-            listener_port: None,
-            verbose: 0,
-            log_file: None,
-            command: None,
-            download_dir: None,
-            shared_dir: None,
-            max_concurrent_downloads: None,
-            search_timeout: None,
-        }
+        Cli::default()
     }
 
     #[test]
@@ -244,7 +237,7 @@ mod tests {
     #[test]
     fn cli_shared_dir_combines_with_file_list_and_dedupes() {
         let mut cli = bare_cli();
-        cli.shared_dir = Some("/a".into());
+        cli.shared_dir = vec!["/a".into()];
         let file = FileConfig {
             shared_dirs: Some(vec!["/a".into(), "/b".into()]),
             ..FileConfig::default()
@@ -254,6 +247,53 @@ mod tests {
             resolved.shared_dirs,
             vec!["/a".to_string(), "/b".to_string()]
         );
+    }
+
+    #[test]
+    fn repeated_cli_shared_dirs_are_all_kept() {
+        let mut cli = bare_cli();
+        cli.shared_dir = vec!["/a".into(), "/b".into()];
+        let resolved = resolve(&cli, &FileConfig::default());
+        assert_eq!(
+            resolved.shared_dirs,
+            vec!["/a".to_string(), "/b".to_string()]
+        );
+    }
+
+    #[test]
+    fn an_empty_cli_shared_dir_disables_sharing() {
+        let mut cli = bare_cli();
+        cli.shared_dir = vec![String::new()];
+        let resolved = resolve(&cli, &FileConfig::default());
+        assert!(resolved.shared_dirs.is_empty());
+    }
+
+    #[test]
+    fn no_listener_flag_disables_the_listener() {
+        let mut cli = bare_cli();
+        cli.no_listener = true;
+        assert!(resolve(&cli, &FileConfig::default()).disable_listener);
+    }
+
+    #[test]
+    fn listener_flag_overrides_the_config_file() {
+        let file = FileConfig {
+            disable_listener: Some(true),
+            ..FileConfig::default()
+        };
+        assert!(resolve(&bare_cli(), &file).disable_listener);
+
+        let mut cli = bare_cli();
+        cli.listener = true;
+        assert!(!resolve(&cli, &file).disable_listener);
+    }
+
+    #[test]
+    fn listener_flag_wins_over_no_listener() {
+        let mut cli = bare_cli();
+        cli.listener = true;
+        cli.no_listener = true;
+        assert!(!resolve(&cli, &FileConfig::default()).disable_listener);
     }
 
     #[test]
