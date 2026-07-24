@@ -1,122 +1,65 @@
-# Release Guide
+# Releasing
 
-This guide explains how to publish the `soulseek-rs-lib` and `soulseek-rs` crates to crates.io.
+Releases are automated by [release-plz](https://release-plz.dev). You do not run
+`cargo publish`, edit versions, write changelog entries, or push tags by hand.
 
-## Prerequisites
+## How it works
 
-1. Create an account on [crates.io](https://crates.io/)
-2. Generate an API token: https://crates.io/me
-3. Login to cargo: `cargo login <your-token>`
+1. Merge a PR to `master` using [conventional commits](https://www.conventionalcommits.org)
+   (`feat:`, `fix:`, `perf:`, `refactor:`, `docs:`, `chore:`, or a `!` / `BREAKING CHANGE:`
+   footer for a major bump).
+2. `.github/workflows/release.yml` opens or updates a **`chore: release vX.Y.Z`** PR. It
+   contains the semver bump in `[workspace.package]`, the refreshed `Cargo.lock`, and the
+   generated `CHANGELOG.md` entry. Review it like any other PR.
+3. Merging that PR releases:
+   - tags `vX.Y.Z` and creates the GitHub release with the changelog as its notes,
+   - publishes `soulseek-rs-lib` then `soulseek-rs` to crates.io (dependency order, waiting
+     for the index between them),
+   - builds and attaches binaries with `.sha256` checksums for six targets:
 
-## Publishing Process
+     | Archive                                          | Notes                          |
+     | ------------------------------------------------ | ------------------------------ |
+     | `soulseek-rs-vX.Y.Z-x86_64-unknown-linux-musl.tar.gz`  | static, any glibc        |
+     | `soulseek-rs-vX.Y.Z-aarch64-unknown-linux-musl.tar.gz` | static, any glibc        |
+     | `soulseek-rs-vX.Y.Z-x86_64-apple-darwin.tar.gz`        | Intel Mac                |
+     | `soulseek-rs-vX.Y.Z-aarch64-apple-darwin.tar.gz`       | Apple Silicon            |
+     | `soulseek-rs-vX.Y.Z-x86_64-pc-windows-msvc.zip`        |                          |
+     | `soulseek-rs-vX.Y.Z-aarch64-pc-windows-msvc.zip`       |                          |
 
-### Step 1: Publish the Library First
+Both crates always share one version, one tag, and one changelog — see `release-plz.toml`.
 
-The client depends on the library, so the library must be published first.
+## One-time repository setup
 
-```bash
-cd soulseek-rs-lib
-cargo publish --dry-run  # Test the publish
-cargo publish            # Actually publish
-```
+- **Settings → Actions → General → Workflow permissions**: enable *Allow GitHub Actions to
+  create and approve pull requests*. Without it the release PR is never opened.
+- **Settings → Secrets and variables → Actions**: add `CARGO_REGISTRY_TOKEN`, a
+  [crates.io token](https://crates.io/settings/tokens) scoped to `publish-new` and
+  `publish-update`. Without it the tag and GitHub release still happen, but the crates.io
+  publish fails.
 
-### Step 2: Wait for crates.io to Index
+## Notes
 
-After publishing the library, wait 1-2 minutes for crates.io to index it before publishing the client.
+- A merge with no releasable commits (only `docs:`/`chore:`/`test:`) opens no release PR.
+  That is intended.
+- The release PR does not run CI: GitHub does not trigger workflows for PRs opened with
+  `GITHUB_TOKEN`. It only touches `Cargo.toml`, `Cargo.lock`, and `CHANGELOG.md`; CI already
+  ran on the commits it is releasing.
+- If one target's build fails, the other five still upload (`fail-fast: false`). Re-run just
+  that matrix job from the Actions UI.
+- To skip a release for a commit that would otherwise trigger one, use a `chore:` type.
 
-### Step 3: Update Client Dependency (for releases)
-
-When publishing to crates.io, the client's `Cargo.toml` should reference the published library version, not the local path.
-
-Edit `soulseek-rs/Cargo.toml`:
-
-```toml
-[dependencies]
-# For local development:
-soulseek-rs-lib = { version = "0.1.0", path = "../soulseek-rs-lib" }
-
-# For publishing (comment out path):
-# soulseek-rs-lib = "0.1.0"
-```
-
-Or use both with optional features:
-
-```toml
-[dependencies]
-soulseek-rs-lib = "0.1.0"
-
-[dev-dependencies]
-soulseek-rs-lib = { version = "0.1.0", path = "../soulseek-rs-lib" }
-```
-
-### Step 4: Publish the Client
-
-```bash
-cd ../soulseek-rs
-cargo publish --dry-run  # Test the publish
-cargo publish            # Actually publish
-```
-
-## Version Management
-
-When bumping versions:
-
-1. Update the version in root `Cargo.toml` under `[workspace.package]`
-2. Both crates will inherit this version automatically
-3. Publish library first, then client
-
-## Automated Releases (Optional)
-
-You can automate this with GitHub Actions. Create `.github/workflows/release.yml`:
-
-```yaml
-name: Release
-
-on:
-  push:
-    tags:
-      - 'v*'
-
-jobs:
-  publish:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-
-      - name: Publish library
-        run: |
-          cd soulseek-rs-lib
-          cargo publish --token ${{ secrets.CARGO_TOKEN }}
-
-      - name: Wait for crates.io
-        run: sleep 60
-
-      - name: Publish client
-        run: |
-          cd soulseek-rs
-          cargo publish --token ${{ secrets.CARGO_TOKEN }}
-```
-
-## Testing Installation
-
-After publishing, test the installation:
+## Installing a release
 
 ```bash
 cargo install soulseek-rs
-soulseek-rs --help  # Should work
 ```
 
-## For Developers Building Custom Clients
+Or download an archive from the [releases page](https://github.com/michel/soulseek-rs/releases),
+verify it against the adjacent `.sha256`, and extract the binary.
 
-Developers can use the library by adding to their `Cargo.toml`:
+## Using the library
 
 ```toml
 [dependencies]
-soulseek-rs-lib = "0.1.0"
+soulseek-rs-lib = "5"
 ```
-
-They'll get access to all the types and functionality exported in `lib.rs`.

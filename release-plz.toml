@@ -1,0 +1,22 @@
+# Both crates inherit `version.workspace`, so they always move together. This
+# config makes release-plz treat them as one release: a single `vX.Y.Z` tag, one
+# GitHub release, one root CHANGELOG.md covering both. release-plz still
+# publishes them to crates.io in dependency order (lib first) and waits for the
+# index, which is what RELEASE.md used to ask you to do by hand.
+
+[workspace]
+git_tag_name = "v{{ version }}"
+git_release_name = "v{{ version }}"
+
+[[package]]
+name = "soulseek-rs"
+version_group = "workspace"
+changelog_path = "./CHANGELOG.md"
+changelog_include = ["soulseek-rs-lib"]
+
+[[package]]
+name = "soulseek-rs-lib"
+version_group = "workspace"
+changelog_update = false
+git_tag_enable = false
+git_release_enable = false

@@ -1,325 +1,122 @@
 name: Release
 
 on:
+  push:
+    branches: [master]
   workflow_dispatch:
-    inputs:
-      release_type:
-        description: 'Release type (patch, minor, major)'
-        required: false
-        default: 'auto'
-        type: choice
-        options:
-          - auto
-          - patch
-          - minor
-          - major
 
 permissions:
   contents: write
-  issues: write
   pull-requests: write
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check-release:
-    name: Check for Release
+  # Opens (or updates) a "chore: release vX.Y.Z" PR with the version bump and
+  # changelog derived from the conventional commits on master. Merging it is the
+  # release trigger.
+  release-pr:
+    name: Release PR
     runs-on: ubuntu-latest
-    outputs:
-      should_release: ${{ steps.check.outputs.should_release }}
-      version: ${{ steps.check.outputs.version }}
-      notes: ${{ steps.check.outputs.notes }}
+    concurrency:
+      group: release-pr-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: release-plz/action@v0.5
         with:
-          node-version: 'lts/*'
-
-      - name: Install semantic-release
-        run: |
-          npm install -g semantic-release@23 \
-            @semantic-release/commit-analyzer@13 \
-            @semantic-release/release-notes-generator@14
-
-      - name: Check if release needed
-        id: check
+          command: release-pr
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # If a specific release type is requested (not 'auto'), always proceed
-          if [ "${{ github.event.inputs.release_type }}" != "auto" ] && [ -n "${{ github.event.inputs.release_type }}" ]; then
-            echo "Manual release type specified: ${{ github.event.inputs.release_type }}"
-            echo "should_release=true" >> $GITHUB_OUTPUT
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-            # Get current version from Cargo.toml
-            CURRENT_VERSION=$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)
-            echo "Current version: $CURRENT_VERSION"
-
-            # Calculate next version based on release type
-            IFS='.' read -r major minor patch <<< "$CURRENT_VERSION"
-            case "${{ github.event.inputs.release_type }}" in
-              major)
-                VERSION="$((major + 1)).0.0"
-                ;;
-              minor)
-                VERSION="${major}.$((minor + 1)).0"
-                ;;
-              patch)
-                VERSION="${major}.${minor}.$((patch + 1))"
-                ;;
-            esac
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
-            echo "Manual version to release: $VERSION"
-          else
-            # Auto mode - use semantic-release to determine if release is needed
-            cat > .releaserc.json << 'EOF'
-            {
-              "branches": ["master"],
-              "plugins": [
-                "@semantic-release/commit-analyzer",
-                "@semantic-release/release-notes-generator"
-              ],
-              "dryRun": true
-            }
-          EOF
-
-            OUTPUT=$(npx semantic-release --dry-run 2>&1 || true)
-            echo "$OUTPUT"
-
-            if echo "$OUTPUT" | grep -q "There is no relevant changes"; then
-              echo "should_release=false" >> $GITHUB_OUTPUT
-              echo "No relevant changes found for automatic release"
-            else
-              VERSION=$(echo "$OUTPUT" | grep -oP "next release version is \K[0-9]+\.[0-9]+\.[0-9]+" | head -1)
-              if [ -n "$VERSION" ]; then
-                echo "should_release=true" >> $GITHUB_OUTPUT
-                echo "version=$VERSION" >> $GITHUB_OUTPUT
-                echo "Auto version to release: $VERSION"
-              else
-                echo "should_release=false" >> $GITHUB_OUTPUT
-                echo "Could not determine version for automatic release"
-              fi
-            fi
-          fi
-
-  build-binaries:
-    name: Build ${{ matrix.target }}
-    needs: check-release
-    if: needs.check-release.outputs.should_release == 'true'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            binary_name: soulseek-rs
-            tarball_name: soulseek-rs-linux-x86_64.tar.gz
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            binary_name: soulseek-rs
-            tarball_name: soulseek-rs-macos-x86_64.tar.gz
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            binary_name: soulseek-rs
-            tarball_name: soulseek-rs-macos-aarch64.tar.gz
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            binary_name: soulseek-rs.exe
-            tarball_name: soulseek-rs-windows-x86_64.zip
+  # No-op until the release PR lands; then tags, publishes both crates to
+  # crates.io in dependency order, and creates the GitHub release.
+  release:
+    name: Tag and publish
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
+    outputs:
+      created: ${{ steps.release-plz.outputs.releases_created }}
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: release-plz/action@v0.5
+        id: release-plz
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      # Read the tag out via jq rather than fromJSON: `releases` is an empty
+      # string on the runs where nothing was released, and fromJSON chokes on it.
+      - name: Resolve tag
+        id: tag
+        if: steps.release-plz.outputs.releases_created == 'true'
+        env:
+          RELEASES: ${{ steps.release-plz.outputs.releases }}
+        run: echo "tag=$(jq -r '.[0].tag' <<< "$RELEASES")" >> "$GITHUB_OUTPUT"
+
+  # Attaches downloadable binaries to the release GitHub just created.
+  binaries:
+    name: ${{ matrix.target }}
+    needs: release
+    if: needs.release.outputs.created == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One flaky cross-linker must not hold back the five targets that built.
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      - name: Install musl toolchain
+        if: endsWith(matrix.target, '-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      # Builds, strips, archives (.tar.gz / .zip on Windows), writes a .sha256
+      # and uploads the lot to the release.
+      - uses: taiki-e/upload-rust-binary-action@v1
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo index
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-${{ matrix.target }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Strip binary (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: strip target/${{ matrix.target }}/release/${{ matrix.binary_name }}
-
-      - name: Strip binary (macOS)
-        if: matrix.os == 'macos-latest'
-        run: strip target/${{ matrix.target }}/release/${{ matrix.binary_name }}
-
-      - name: Create tarball (Unix)
-        if: matrix.os != 'windows-latest'
-        shell: bash
-        run: |
-          cd target/${{ matrix.target }}/release
-          tar -czf ../../../${{ matrix.tarball_name }} ${{ matrix.binary_name }}
-
-      - name: Create zip (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: bash
-        run: |
-          cd target/${{ matrix.target }}/release
-          7z a -tzip ../../../${{ matrix.tarball_name }} ${{ matrix.binary_name }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.tarball_name }}
-          path: ${{ matrix.tarball_name }}
-
-  create-release:
-    name: Create Release
-    needs: [check-release, build-binaries]
-    if: needs.check-release.outputs.should_release == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: true
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 'lts/*'
-
-      - name: Install semantic-release
-        run: |
-          npm install -g semantic-release@23 \
-            @semantic-release/git@10 \
-            @semantic-release/changelog@6 \
-            @semantic-release/exec@6 \
-            @semantic-release/github@11
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Display artifact structure
-        run: ls -R artifacts
-
-      - name: Prepare artifacts for release
-        run: |
-          mkdir -p release-assets
-          find artifacts -type f -name "*.tar.gz" -exec cp {} release-assets/ \;
-          find artifacts -type f -name "*.zip" -exec cp {} release-assets/ \;
-          ls -lh release-assets/
-
-      - name: Create semantic-release config
-        run: |
-          # Check if we need to force a specific version for manual releases
-          if [ "${{ github.event.inputs.release_type }}" != "auto" ] && [ -n "${{ github.event.inputs.release_type }}" ]; then
-            # For manual releases, we'll bypass semantic-release version detection
-            cat > .releaserc.json << 'EOF'
-            {
-              "branches": ["master"],
-              "plugins": [
-                [
-                  "@semantic-release/commit-analyzer",
-                  {
-                    "releaseRules": [
-                      {"breaking": true, "release": "${{ github.event.inputs.release_type }}"},
-                      {"revert": true, "release": "patch"},
-                      {"type": "feat", "release": "${{ github.event.inputs.release_type }}"},
-                      {"type": "fix", "release": "${{ github.event.inputs.release_type }}"},
-                      {"type": "perf", "release": "${{ github.event.inputs.release_type }}"},
-                      {"scope": "no-release", "release": false}
-                    ]
-                  }
-                ],
-                "@semantic-release/release-notes-generator",
-                "@semantic-release/changelog",
-                [
-                  "@semantic-release/exec",
-                  {
-                    "prepareCmd": "sed -i 's/^version = \".*\"/version = \"${{ needs.check-release.outputs.version }}\"/' Cargo.toml"
-                  }
-                ],
-                [
-                  "@semantic-release/git",
-                  {
-                    "assets": ["CHANGELOG.md", "Cargo.toml"],
-                    "message": "chore(release): ${{ needs.check-release.outputs.version }} [skip ci]\n\n${nextRelease.notes}"
-                  }
-                ],
-                [
-                  "@semantic-release/github",
-                  {
-                    "assets": [
-                      {"path": "release-assets/*.tar.gz"},
-                      {"path": "release-assets/*.zip"}
-                    ]
-                  }
-                ]
-              ]
-            }
-          EOF
-          else
-            # For automatic releases, use standard semantic-release
-            cat > .releaserc.json << 'EOF'
-            {
-              "branches": ["master"],
-              "plugins": [
-                "@semantic-release/commit-analyzer",
-                "@semantic-release/release-notes-generator",
-                "@semantic-release/changelog",
-                [
-                  "@semantic-release/exec",
-                  {
-                    "prepareCmd": "sed -i 's/^version = \".*\"/version = \"${nextRelease.version}\"/' Cargo.toml"
-                  }
-                ],
-                [
-                  "@semantic-release/git",
-                  {
-                    "assets": ["CHANGELOG.md", "Cargo.toml"],
-                    "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
-                  }
-                ],
-                [
-                  "@semantic-release/github",
-                  {
-                    "assets": [
-                      {"path": "release-assets/*.tar.gz"},
-                      {"path": "release-assets/*.zip"}
-                    ]
-                  }
-                ]
-              ]
-            }
-          EOF
-          fi
-
-      - name: Run semantic-release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if [ "${{ github.event.inputs.release_type }}" != "auto" ] && [ -n "${{ github.event.inputs.release_type }}" ]; then
-            # For manual releases, we need to create the release directly
-            echo "Creating manual release version ${{ needs.check-release.outputs.version }}"
-            npx semantic-release --no-ci
-          else
-            npx semantic-release
-          fi
+          bin: soulseek-rs
+          target: ${{ matrix.target }}
+          archive: $bin-$tag-$target
+          include: README.md,LICENSE
+          checksum: sha256
+          ref: refs/tags/${{ needs.release.outputs.tag }}
+          token: ${{ secrets.GITHUB_TOKEN }}
