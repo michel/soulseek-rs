@@ -2,5 +2,5 @@
 .serena
 .
 
-# Impeccable: per-developer hook consent and private detector overrides.
-.impeccable/config.local.json
+# Impeccable design-detector state: hook consent and detector overrides.
+.impeccable/
