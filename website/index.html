@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Root-relative on purpose: Vite rewrites this against `base`, so the
+         deploy path lives in vite.config.ts alone. -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <title>soulseek-rs, a Soulseek client for your terminal</title>
+    <meta
+      name="description"
+      content="soulseek-rs is a keyboard-driven Soulseek client and a Rust protocol library. Search, share, browse, and chat from your terminal."
+    />
+    <!-- Browser chrome follows the theme; one value would be wrong half the time. -->
+    <meta name="theme-color" content="#14110F" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#F2EDE4" media="(prefers-color-scheme: light)" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="soulseek-rs" />
+    <meta
+      property="og:description"
+      content="A Soulseek client and protocol library for Rust. Search, share, browse, and chat from your terminal."
+    />
+    <!-- og:url and canonical are rewritten per route by scripts/prerender.ts. -->
+    <meta property="og:url" content="https://michel.github.io/soulseek-rs/" />
+    <link rel="canonical" href="https://michel.github.io/soulseek-rs/" />
+    <meta name="twitter:card" content="summary" />
+
+    <!-- IBM Plex Mono is the brand typeface. CDN rather than self-hosted
+         binaries, matching the design system's tokens/fonts.css. OFL 1.1. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&display=swap"
+    />
+
+    <script>
+      // Runs before first paint so the right theme is already on <html>.
+      // Without it the page flashes the wrong background on every load.
+      // Mirrors the resolution order in src/theme/theme-provider.tsx.
+      ;(function () {
+        try {
+          var stored = localStorage.getItem('ssrs-theme')
+          var dark =
+            stored === 'dark' ||
+            ((stored === null || stored === 'system') &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches)
+          var theme = dark ? 'dark' : 'light'
+          document.documentElement.dataset.theme = theme
+          document.documentElement.style.colorScheme = theme
+        } catch (e) {
+          // localStorage blocked; the dark default in the markup stands.
+        }
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

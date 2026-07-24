@@ -2,7 +2,10 @@ name: Release
 
 on:
   push:
+    # Must match ci.yml's paths-ignore exactly. A website-only push skips both
+    # workflows, so ci-gate is never left polling for an absent CI run.
     branches: [master]
+    paths-ignore: ['website/**']
   workflow_dispatch:
     inputs:
       tag:
@@ -48,7 +51,11 @@ jobs:
               2>/dev/null || echo "unreachable")
             case "$verdict" in
               success)          echo "CI passed for $GITHUB_SHA"; exit 0 ;;
-              absent|running|unreachable) ;;
+              # `cancelled` is what CI's own cancel-in-progress does to the
+              # older SHA when two pushes land back to back. Treating it as a
+              # failure turned every rapid push into a red release; keep
+              # waiting instead, and let the newer SHA's run decide.
+              absent|running|unreachable|cancelled) ;;
               *) echo "::error::CI concluded '$verdict' for $GITHUB_SHA - refusing to release"; exit 1 ;;
             esac
             sleep 20

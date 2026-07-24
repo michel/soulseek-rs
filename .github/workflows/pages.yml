@@ -1,0 +1,73 @@
+name: Pages
+
+# Only the website. The Rust workflows ignore this same path, so a site-only
+# push runs this alone and a code-only push never rebuilds the site.
+on:
+  push:
+    branches: [master]
+    paths: ['website/**', '.github/workflows/pages.yml']
+  pull_request:
+    branches: ['**']
+    paths: ['website/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # --frozen-lockfile so a drifted bun.lock fails here rather than
+      # silently shipping different dependency versions than were tested.
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      # Emits one static HTML file per route plus a 404, so direct links
+      # answer 200 with real markup instead of the SPA shell.
+      - name: Build
+        run: bun run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/dist
+
+  deploy:
+    name: Deploy
+    # Pull requests get the build as a check; only master publishes.
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Scoped to the deploy, not the workflow: a workflow-level group would
+    # queue PR builds behind an in-flight master deploy for no reason. Never
+    # cancel in flight — a half-uploaded artifact leaves the live site broken.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
