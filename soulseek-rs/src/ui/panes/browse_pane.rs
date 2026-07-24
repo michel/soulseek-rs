@@ -1,17 +1,14 @@
 use crate::models::{BrowseState, BrowseStatus, BrowseTabs};
 use crate::ui::{
-    HIGHLIGHT_SYMBOL, border_style, border_type, dimmed_style, error_style,
-    format_bytes, get_spinner_char, highlight_style, primary_style,
+    HIGHLIGHT_SYMBOL, dimmed_style, error_style, format_bytes,
+    get_spinner_char, highlight_style, pane_block, primary_style,
 };
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     style::Modifier,
     text::{Line, Span},
-    widgets::{
-        Block, Borders, Cell, HighlightSpacing, Paragraph, Row, Table,
-        TableState,
-    },
+    widgets::{Cell, HighlightSpacing, Paragraph, Row, Table, TableState},
 };
 
 /// Render the browse popup: a tab bar of browsed users (when more than one is
@@ -70,11 +67,7 @@ fn render_browse_one(
         ),
         _ => format!(" Browse {} ", browse.username),
     };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(border_style(true))
-        .border_type(border_type(true))
-        .title(title);
+    let block = pane_block(true).title(title);
 
     match browse.status {
         BrowseStatus::Loading => {

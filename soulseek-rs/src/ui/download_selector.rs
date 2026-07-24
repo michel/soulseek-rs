@@ -1,8 +1,8 @@
 use crate::models::FileDisplayData;
 use crate::ui::{
-    BYTES_PER_MB, HIGHLIGHT_SYMBOL, border_style, border_type, format_bytes,
-    format_shortcuts_styled, get_bitrate, get_spinner_char, header_style,
-    highlight_style, primary_style, success_style, warning_style,
+    BYTES_PER_MB, HIGHLIGHT_SYMBOL, format_bytes, format_shortcuts_styled,
+    get_bitrate, get_spinner_char, header_style, highlight_style, pane_block,
+    plain_title, primary_style, success_style, warning_style,
 };
 use color_eyre::Result;
 use ratatui::text::{Line, Span};
@@ -12,8 +12,8 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout},
     style::Style,
     widgets::{
-        Block, Borders, Cell, HighlightSpacing, Paragraph, Row, StatefulWidget,
-        Table, TableState, Wrap,
+        Cell, HighlightSpacing, Paragraph, Row, StatefulWidget, Table,
+        TableState, Wrap,
     },
 };
 use soulseek_rs::Client;
@@ -466,13 +466,7 @@ impl FileSelector {
 
         let table = Table::new(rows, widths)
             .header(header)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(border_style(true))
-                    .border_type(border_type(true))
-                    .title(title),
-            )
+            .block(pane_block(true).title(title))
             .column_spacing(1)
             .row_highlight_style(highlight_style())
             .highlight_symbol(HIGHLIGHT_SYMBOL)
@@ -538,12 +532,7 @@ impl FileSelector {
 
         let loading_widget = Paragraph::new(loading_message_line)
             .style(Style::default())
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(primary_style())
-                    .border_type(border_type(false)),
-            )
+            .block(pane_block(false))
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true });
 
@@ -578,12 +567,7 @@ impl FileSelector {
         };
 
         let info_widget = Paragraph::new(info_text)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(border_type(false))
-                    .title(title),
-            )
+            .block(pane_block(false).title(plain_title(title, false)))
             .style(style);
 
         frame.render_widget(info_widget, info_area);
@@ -617,12 +601,8 @@ impl FileSelector {
             ])
         };
 
-        let controls_widget = Paragraph::new(controls_line).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(border_type(false))
-                .title("Controls"),
-        );
+        let controls_widget = Paragraph::new(controls_line)
+            .block(pane_block(false).title(plain_title("Controls", false)));
 
         frame.render_widget(controls_widget, area);
     }

@@ -1,9 +1,10 @@
 use crate::models::DownloadEntry;
 use crate::ui::{
-    BYTES_PER_MB, COLOR_PRIMARY, HIGHLIGHT_SYMBOL, border_style, border_type,
-    error_style, format_bytes_progress, format_progress_bar,
-    format_shortcuts_styled, format_speed, header_style, highlight_style,
-    inactive_style, info_style, primary_style, warning_style,
+    BYTES_PER_MB, HIGHLIGHT_SYMBOL, accent_style, body_style, dimmed_style,
+    download_status_glyph, error_style, format_bytes_progress,
+    format_progress_bar, format_shortcuts_styled, format_speed, header_style,
+    highlight_style, info_style, pane_block, plain_title, primary_style,
+    success_style, warning_style,
 };
 use color_eyre::Result;
 use ratatui::{
@@ -13,8 +14,8 @@ use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, Borders, Cell, HighlightSpacing, Paragraph, Row, StatefulWidget,
-        Table, TableState,
+        Cell, HighlightSpacing, Paragraph, Row, StatefulWidget, Table,
+        TableState,
     },
 };
 use soulseek_rs::{Client, DownloadStatus};
@@ -221,14 +222,8 @@ impl MultiDownloadProgress {
             .iter()
             .map(|download_entry| {
                 let download = &download_entry.download;
-                let status_icon = match download.status {
-                    DownloadStatus::Queued => "⋯",
-                    DownloadStatus::InProgress { .. } => "⧗",
-                    DownloadStatus::Paused { .. } => "⏸",
-                    DownloadStatus::Completed => "✓",
-                    DownloadStatus::Failed(_) => "✗",
-                    DownloadStatus::TimedOut => "⏱",
-                };
+                let (status_icon, status_style) =
+                    download_status_glyph(&download.status);
 
                 let progress = if download.size > 0 {
                     download.bytes_downloaded() as f64 / download.size as f64
@@ -254,25 +249,15 @@ impl MultiDownloadProgress {
                 };
 
                 let cells = vec![
-                    Cell::from(status_icon),
-                    Cell::from(download.filename.clone()),
-                    Cell::from(download.username.clone()),
-                    Cell::from(size_str),
+                    Cell::from(status_icon).style(status_style),
+                    Cell::from(download.filename.clone()).style(body_style()),
+                    Cell::from(download.username.clone()).style(info_style()),
+                    Cell::from(size_str).style(warning_style()),
                     Cell::from(progress_bar),
-                    Cell::from(speed_str),
+                    Cell::from(speed_str).style(dimmed_style()),
                 ];
 
-                let style = match download.status {
-                    DownloadStatus::Queued => inactive_style(),
-                    DownloadStatus::InProgress { .. } => warning_style(),
-                    DownloadStatus::Paused { .. } => info_style(),
-                    DownloadStatus::Completed => primary_style(),
-                    DownloadStatus::Failed(_) | DownloadStatus::TimedOut => {
-                        error_style()
-                    }
-                };
-
-                Row::new(cells).style(style).height(1)
+                Row::new(cells).height(1)
             })
             .collect();
 
@@ -287,13 +272,7 @@ impl MultiDownloadProgress {
 
         let table = Table::new(rows, widths)
             .header(header)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(border_style(true))
-                    .border_type(border_type(true))
-                    .title("Downloads"),
-            )
+            .block(pane_block(true).title(plain_title("Downloads", true)))
             .column_spacing(1)
             .row_highlight_style(highlight_style())
             .highlight_symbol(HIGHLIGHT_SYMBOL)
@@ -314,12 +293,8 @@ impl MultiDownloadProgress {
             ("Esc/q", "cancel all"),
         ]);
 
-        let controls_widget = Paragraph::new(controls_line).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(border_type(false))
-                .title("Controls"),
-        );
+        let controls_widget = Paragraph::new(controls_line)
+            .block(pane_block(false).title(plain_title("Controls", false)));
 
         frame.render_widget(controls_widget, area);
     }
@@ -378,10 +353,7 @@ pub fn render_download_stats(
         .sum();
     let speed_mb = (total_speed / BYTES_PER_MB * 100.0).round() / 100.0;
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(border_type(false))
-        .title("Status");
+    let block = pane_block(false).title(plain_title("Status", false));
 
     let inner_area = block.inner(area);
     frame.render_widget(block, area);
@@ -393,52 +365,23 @@ pub fn render_download_stats(
     ])
     .split(inner_area);
 
-    // Left container: Statistics with styled values
+    let count = |value: usize, style: Style| {
+        Span::styled(value.to_string(), style.add_modifier(Modifier::BOLD))
+    };
     let stats_line = Line::from(vec![
-        Span::raw("soulseek-rs 🦀 "),
-        Span::styled(
-            format!("v{VERSION} "),
-            Style::default()
-                .fg(COLOR_PRIMARY)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" Downloads: "),
-        Span::styled(
-            active_count.to_string(),
-            Style::default()
-                .fg(COLOR_PRIMARY)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" active, "),
-        Span::styled(
-            completed.to_string(),
-            Style::default()
-                .fg(COLOR_PRIMARY)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" completed, "),
-        Span::styled(
-            failed.to_string(),
-            Style::default()
-                .fg(COLOR_PRIMARY)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" failed, "),
-        Span::styled(
-            queued.to_string(),
-            Style::default()
-                .fg(COLOR_PRIMARY)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" queued"),
-        Span::raw(", "),
-        Span::styled(
-            paused.to_string(),
-            Style::default()
-                .fg(COLOR_PRIMARY)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" paused"),
+        Span::styled("soulseek-rs", primary_style()),
+        Span::styled(format!(" 🦀 v{VERSION}"), dimmed_style()),
+        Span::styled("  Downloads: ", dimmed_style()),
+        count(active_count, accent_style()),
+        Span::styled(" active, ", dimmed_style()),
+        count(completed, success_style()),
+        Span::styled(" completed, ", dimmed_style()),
+        count(failed, error_style()),
+        Span::styled(" failed, ", dimmed_style()),
+        count(queued, warning_style()),
+        Span::styled(" queued, ", dimmed_style()),
+        count(paused, info_style()),
+        Span::styled(" paused", dimmed_style()),
     ]);
 
     let stats_paragraph = Paragraph::new(stats_line);
@@ -453,15 +396,13 @@ pub fn render_download_stats(
     let mut spans: Vec<Span> = Vec::new();
 
     spans.extend(data_str.spans);
-    spans.push(Span::raw(" • "));
+    spans.push(Span::styled(" · ", dimmed_style()));
     spans.push(Span::styled(
         format!("{speed_mb}"),
-        Style::default()
-            .fg(COLOR_PRIMARY)
-            .add_modifier(Modifier::BOLD),
+        warning_style().add_modifier(Modifier::BOLD),
     ));
-    spans.push(Span::raw(" MB/s"));
-    spans.push(Span::raw(" • "));
+    spans.push(Span::styled(" MB/s", dimmed_style()));
+    spans.push(Span::styled(" · ", dimmed_style()));
     spans.extend(progress_bar.spans);
 
     let progress_line = Line::from(spans);

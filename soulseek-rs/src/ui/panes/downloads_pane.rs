@@ -1,16 +1,14 @@
 use crate::models::DownloadEntry;
 use crate::ui::{
-    HIGHLIGHT_SYMBOL, border_style, border_type, error_style, format_bytes,
+    GLYPH_ACTIVE, GLYPH_DONE, GLYPH_FAILED, HIGHLIGHT_SYMBOL, accent_style,
+    body_style, dimmed_style, download_status_glyph, error_style, format_bytes,
     format_speed, header_style, highlight_style, inactive_style, info_style,
-    success_style, warning_style,
+    pane_block, pane_title, primary_style, success_style, warning_style,
 };
 use ratatui::{
     Frame,
     layout::Rect,
-    widgets::{
-        Block, Borders, Cell, HighlightSpacing, Paragraph, Row, Table,
-        TableState,
-    },
+    widgets::{Cell, HighlightSpacing, Paragraph, Row, Table, TableState},
 };
 use soulseek_rs::DownloadStatus;
 use soulseek_rs::types::{UploadInfo, UploadStatus};
@@ -24,15 +22,16 @@ pub fn render_downloads_pane(
     focused: bool,
 ) {
     if downloads.is_empty() && uploads.is_empty() {
-        let empty_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style(focused))
-            .border_type(border_type(focused))
-            .title("[3] Downloads/Uploads");
+        let empty_block = pane_block(focused).title(pane_title(
+            "3",
+            "Downloads/Uploads",
+            focused,
+        ));
 
         let paragraph = Paragraph::new(
-            "No transfers. Select files from Results and press Enter.",
+            "No transfers. Select files in [2] Results and press Enter.",
         )
+        .style(dimmed_style())
         .block(empty_block);
         frame.render_widget(paragraph, area);
         return;
@@ -51,14 +50,8 @@ pub fn render_downloads_pane(
         .iter()
         .map(|download_entry| {
             let download = &download_entry.download;
-            let (status_icon, status_style) = match &download.status {
-                DownloadStatus::Queued => ("⋯", inactive_style()),
-                DownloadStatus::InProgress { .. } => ("⧗", warning_style()),
-                DownloadStatus::Paused { .. } => ("⏸", info_style()),
-                DownloadStatus::Completed => ("✓", success_style()),
-                DownloadStatus::Failed(_) => ("✗", error_style()),
-                DownloadStatus::TimedOut => ("⏱", error_style()),
-            };
+            let (status_icon, status_style) =
+                download_status_glyph(&download.status);
 
             let progress_text = match &download.status {
                 DownloadStatus::Queued => "Queued".to_string(),
@@ -104,22 +97,31 @@ pub fn render_downloads_pane(
                 _ => "-".to_string(),
             };
 
+            let progress_style = match &download.status {
+                DownloadStatus::Completed => success_style(),
+                DownloadStatus::Failed(_) | DownloadStatus::TimedOut => {
+                    error_style()
+                }
+                DownloadStatus::Queued => inactive_style(),
+                _ => primary_style(),
+            };
+
             Row::new(vec![
                 Cell::from(status_icon).style(status_style),
-                Cell::from(download.filename.clone()),
-                Cell::from(download.username.clone()),
-                Cell::from(progress_text),
-                Cell::from(speed_text),
+                Cell::from(download.filename.clone()).style(body_style()),
+                Cell::from(download.username.clone()).style(info_style()),
+                Cell::from(progress_text).style(progress_style),
+                Cell::from(speed_text).style(warning_style()),
             ])
         })
         .collect();
 
     rows.extend(uploads.iter().map(|upload| {
         let (status_icon, status_style) = match &upload.status {
-            UploadStatus::InProgress => ("⧗", warning_style()),
-            UploadStatus::Completed => ("✓", success_style()),
-            UploadStatus::Cancelled => ("✗", inactive_style()),
-            UploadStatus::Failed(_) => ("✗", error_style()),
+            UploadStatus::InProgress => (GLYPH_ACTIVE, accent_style()),
+            UploadStatus::Completed => (GLYPH_DONE, success_style()),
+            UploadStatus::Cancelled => (GLYPH_FAILED, inactive_style()),
+            UploadStatus::Failed(_) => (GLYPH_FAILED, error_style()),
         };
         let progress_text = match &upload.status {
             UploadStatus::InProgress => {
@@ -147,9 +149,9 @@ pub fn render_downloads_pane(
             .unwrap_or(&upload.filename);
         Row::new(vec![
             Cell::from(format!("↑ {status_icon}")).style(status_style),
-            Cell::from(basename.to_string()),
-            Cell::from(upload.username.clone()),
-            Cell::from(progress_text),
+            Cell::from(basename.to_string()).style(body_style()),
+            Cell::from(upload.username.clone()).style(info_style()),
+            Cell::from(progress_text).style(primary_style()),
             Cell::from(String::new()),
         ])
     }));
@@ -167,13 +169,11 @@ pub fn render_downloads_pane(
         .row_highlight_style(highlight_style())
         .highlight_symbol(HIGHLIGHT_SYMBOL)
         .highlight_spacing(HighlightSpacing::Always)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(border_style(focused))
-                .border_type(border_type(focused))
-                .title("[3] Downloads/Uploads"),
-        );
+        .block(pane_block(focused).title(pane_title(
+            "3",
+            "Downloads/Uploads",
+            focused,
+        )));
 
     frame.render_stateful_widget(table, area, table_state);
 }

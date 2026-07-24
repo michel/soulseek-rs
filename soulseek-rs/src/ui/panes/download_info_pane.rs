@@ -1,7 +1,7 @@
 use crate::models::DownloadEntry;
 use crate::ui::{
-    border_style, border_type, dimmed_style, error_style, format_bytes,
-    format_progress_bar, format_speed, inactive_style, info_style,
+    accent_style, dimmed_style, error_style, format_bytes, format_progress_bar,
+    format_speed, inactive_style, info_style, pane_block, pane_title,
     primary_style, success_style, warning_style,
 };
 use ratatui::{
@@ -9,7 +9,7 @@ use ratatui::{
     layout::Rect,
     style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
 };
 use soulseek_rs::DownloadStatus;
 use soulseek_rs::utils::path::expand_tilde;
@@ -22,11 +22,7 @@ pub fn render_download_info_pane(
     selected: Option<&DownloadEntry>,
     focused: bool,
 ) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(border_style(focused))
-        .border_type(border_type(focused))
-        .title("[Info]");
+    let block = pane_block(focused).title(pane_title("Info", "", focused));
 
     let Some(entry) = selected else {
         let paragraph = Paragraph::new(Line::from(Span::styled(
@@ -55,15 +51,23 @@ fn build_info_lines(
 
     lines.push(Line::from(Span::styled(
         basename,
-        primary_style().add_modifier(ratatui::style::Modifier::BOLD),
+        accent_style().add_modifier(ratatui::style::Modifier::BOLD),
     )));
     if !parent_dir.is_empty() {
         lines.push(Line::from(Span::styled(parent_dir, dimmed_style())));
     }
     lines.push(Line::from(""));
 
-    lines.push(label_value("User", &download.username));
-    lines.push(label_value("Size", &format_bytes(download.size)));
+    lines.push(label_value_styled(
+        "User",
+        download.username.clone(),
+        info_style(),
+    ));
+    lines.push(label_value_styled(
+        "Size",
+        format_bytes(download.size),
+        warning_style(),
+    ));
 
     let (status_text, status_style) = match &download.status {
         DownloadStatus::Queued => ("Queued".to_string(), inactive_style()),
@@ -80,7 +84,7 @@ fn build_info_lines(
     let save_path = expand_tilde(&download.download_directory)
         .to_string_lossy()
         .to_string();
-    lines.push(label_value("Save to", &save_path));
+    lines.push(label_value_styled("Save to", save_path, info_style()));
 
     if let Some(bitrate) = download.metadata.bitrate {
         lines.push(label_value("Bitrate", &format!("{bitrate} kbps")));
