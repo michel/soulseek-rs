@@ -61,6 +61,10 @@ const FooterAnchor = ({ label, href }: FooterLink) =>
 export const Footer = () => (
   <footer className="border-t border-hairline bg-base pt-7 pb-6 sm:pt-11 sm:pb-10">
     <Wrap>
+      {/* Gives the three link groups a heading to sit under, so the document
+          outline stays nested instead of putting "Packages" on the same
+          level as the page's own sections. */}
+      <h2 className="sr-only">Site footer</h2>
       {/* Two columns even on the narrowest phone, with the brand spanning
           both — one column per link group makes the footer taller than the
           page it closes. */}
@@ -77,9 +81,9 @@ export const Footer = () => (
 
         {COLUMNS.map((column) => (
           <div key={column.heading}>
-            <h2 className="mb-2 text-label uppercase tracking-[var(--tracking-label)] text-secondary sm:mb-3.5">
+            <h3 className="mb-2 text-label uppercase tracking-[var(--tracking-label)] text-secondary sm:mb-3.5">
               {column.heading}
-            </h2>
+            </h3>
             <ul>
               {column.links.map((link) => (
                 <li key={link.label} className="mb-1.5 sm:mb-2.5">

@@ -45,7 +45,7 @@ interface EyebrowProps {
 export const Eyebrow = ({ children, className }: EyebrowProps) => (
   <span
     className={cn(
-      'text-label uppercase tracking-[var(--tracking-label)] text-accent',
+      'text-label uppercase tracking-[var(--tracking-label)] text-accent-text',
       className,
     )}
   >

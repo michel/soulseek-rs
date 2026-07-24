@@ -28,13 +28,26 @@
     <meta name="twitter:card" content="summary" />
 
     <!-- IBM Plex Mono is the brand typeface. CDN rather than self-hosted
-         binaries, matching the design system's tokens/fonts.css. OFL 1.1. -->
+         binaries, matching the design system's tokens/fonts.css. OFL 1.1.
+
+         Loaded non-blocking: as a plain stylesheet it sat on the critical
+         path, so first paint waited on a third-party DNS + TLS + fetch. It
+         buys nothing there — `display=swap` plus the ui-monospace fallback
+         means the first frame renders in the fallback either way. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      rel="stylesheet"
+      rel="preload"
+      as="style"
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&display=swap"
+      onload="this.onload=null;this.rel='stylesheet'"
     />
+    <noscript>
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&display=swap"
+      />
+    </noscript>
 
     <script>
       // Runs before first paint so the right theme is already on <html>.

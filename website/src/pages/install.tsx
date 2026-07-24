@@ -76,7 +76,7 @@ interface StepProps {
 
 const Step = ({ n, title, children }: StepProps) => (
   <div className="grid grid-cols-1 gap-3 sm:grid-cols-[auto_1fr] sm:gap-5">
-    <div className="flex size-[34px] items-center justify-center rounded-md border border-line text-sm text-accent">
+    <div className="flex size-[34px] items-center justify-center rounded-md border border-line text-sm text-accent-text">
       {n}
     </div>
     <div className="flex min-w-0 flex-col gap-3">

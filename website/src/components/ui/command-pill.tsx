@@ -22,7 +22,7 @@ export const CommandPill = ({ text, className }: CommandPillProps) => {
         className,
       )}
     >
-      <span aria-hidden="true" className="text-accent">
+      <span aria-hidden="true" className="text-accent-text">
         $
       </span>
       <code className="font-mono">{text}</code>

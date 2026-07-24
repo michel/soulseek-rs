@@ -41,20 +41,25 @@
   --color-primary: var(--text-primary);
   --color-secondary: var(--text-secondary);
   --color-muted: var(--text-muted);
-  --color-inverse: var(--text-inverse);
 
   --color-hairline: var(--border-hairline);
   --color-line: var(--border-default);
   --color-line-strong: var(--border-strong);
 
+  /*
+   * --accent fills; --accent-text writes.
+   *
+   * The oxide accent is a mid-tone: it clears 4.5:1 as a background behind
+   * white, but not as 11px text on vinyl. Splitting the two uses lets the
+   * fill keep the brand hue while the text cut earns its contrast.
+   */
   --color-accent: var(--accent);
+  --color-accent-text: var(--accent-text);
   --color-accent-hover: var(--accent-hover);
-  --color-accent-active: var(--accent-active);
 
   --color-success: var(--status-success);
   --color-warning: var(--status-warning);
   --color-info: var(--status-info);
-  --color-error: var(--status-error);
 
   --color-link: var(--link);
   --color-link-hover: var(--link-hover);
@@ -74,21 +79,12 @@
   --text-heading--line-height: 28px;
   --text-body: 14px;
   --text-body--line-height: 22px;
-  --text-caption: 12px;
-  --text-caption--line-height: 18px;
   --text-label: 11px;
   --text-label--line-height: 14px;
 
   --tracking-label: 0.06em;
 
-  /* Radii — favicon 16, panel card 8, cursor 3 */
-  --radius-sm: 3px;
   --radius-md: 8px;
-  --radius-lg: 16px;
-
-  /* Restrained. A desk, not a dashboard. */
-  --shadow-panel:
-    0 1px 0 rgb(0 0 0 / 0.35), 0 8px 24px rgb(0 0 0 / 0.35);
 
   --animate-cursor-blink: ss-cursor-blink 1.06s steps(1) infinite;
 
@@ -115,20 +111,19 @@
   --text-primary: #ffffff;
   --text-secondary: #e4dfd8;
   --text-muted: #bdb4a9;
-  --text-inverse: var(--color-sleeve);
 
   --border-hairline: rgb(138 129 120 / 0.35);
   --border-default: rgb(138 129 120 / 0.7);
   --border-strong: var(--color-dust);
 
   --accent: var(--color-oxide);
+  /* Raised off #c1502e, which reads 3.99:1 as small text on vinyl. */
+  --accent-text: #cd7155;
   --accent-hover: #d05f3c;
-  --accent-active: #a8431f;
 
   --status-warning: var(--color-tape);
   --status-success: var(--color-phosphor);
   --status-info: var(--color-signal);
-  --status-error: var(--color-alarm);
 
   --link: var(--color-signal);
   --link-hover: #8bb4dc;
@@ -144,8 +139,6 @@
   --tm-pr: #c1502e;
   --tm-cm: #aba298;
   --tm-ok: #7fb685;
-  --tm-fl: #d8a657;
-  --tm-sg: #6e9dc9;
   --cmd-bg: #0e0c0a;
   --tui-track: #2a2622;
   --tui-bezel: #000000;
@@ -160,26 +153,30 @@
   --bg-raised: var(--color-manila-3);
   --bg-selection: rgb(76 127 174 / 0.2);
 
+  /*
+   * Every value below clears 4.5:1 against --bg-raised, the darkest of the
+   * three light surfaces, so each one holds on base, panel and raised alike.
+   * The design's original cuts were tuned against the base only, which left
+   * links at 3.64:1 and the success green at 2.86:1.
+   */
   --text-primary: var(--color-sleeve);
   --text-secondary: #574e45;
-  --text-muted: #6f655b;
-  --text-inverse: var(--color-paper);
+  --text-muted: #645b52;
 
   --border-hairline: rgb(20 17 15 / 0.15);
   --border-default: rgb(20 17 15 / 0.28);
   --border-strong: #6b6259;
 
   --accent: #ae4728;
+  --accent-text: #9c3f23;
   --accent-hover: #c1502e;
-  --accent-active: #953b1f;
 
-  --status-warning: #c08e3d;
-  --status-success: #5e9a66;
-  --status-info: #4c7fae;
-  --status-error: #9a2f2f;
+  --status-warning: #755725;
+  --status-success: #3e6543;
+  --status-info: #395f82;
 
-  --link: #4c7fae;
-  --link-hover: #3b6a95;
+  --link: #395f82;
+  --link-hover: #24486a;
 
   --tm-bg: #e9e2d7;
   --tm-hd: #dcd3c4;
@@ -191,8 +188,6 @@
   --tm-pr: #9e3f22;
   --tm-cm: #6b6259;
   --tm-ok: #3f7147;
-  --tm-fl: #8f6420;
-  --tm-sg: #35648f;
   --cmd-bg: #dcd3c4;
   --tui-track: #cfc5b5;
   --tui-bezel: rgb(20 17 15 / 0.28);
@@ -201,9 +196,9 @@
 }
 
 /*
- * Only the cut that is actually shown gets fetched — a hidden <img> would
- * still be downloaded. url() is relative to this stylesheet, which Vite
- * rebases against `base`, so the deploy path stays in vite.config.ts.
+ * Only the cut that is actually shown gets fetched; a hidden image element
+ * would still be downloaded. url() is relative to this stylesheet, which
+ * Vite rebases against `base`, so the deploy path stays in vite.config.ts.
  */
 .logo-mark {
   background-image: url('/logo-ink.svg');
@@ -215,16 +210,25 @@
 
 /*
  * The TUI panes paint from the raw palette (paper, dust, oxide…) because that
- * is what the Rust client does. Those names do not flip with the theme, so on
- * manila they would leave paper-on-paper. Light mode re-cuts the same names
- * darker, scoped to the terminal's content.
+ * is what the Rust client does. Those names do not flip with the theme, so
+ * each theme re-cuts them, scoped to the terminal's content.
+ *
+ * Dark brightens two of them the way a real emulator brightens its palette
+ * against black: #b33a3a reads 3.21:1 on vinyl and #c1502e 3.99:1 — fine for
+ * a glyph, not for the "Failed" and progress text beside it.
  */
+.tui-content {
+  --color-alarm: #c26060;
+  --color-oxide: #c65f40;
+}
+
+/* Light would otherwise leave paper-on-paper: the whole set re-cuts dark. */
 [data-theme='light'] .tui-content {
   --color-paper: #14110f;
   --color-paper-dim: #3a332c;
   --color-dust: #645b52;
   --color-oxide: #9e3f22;
-  --color-tape: #8f6420;
+  --color-tape: #8d621f; /* 4.62:1 on manila; #8f6420 sat at 4.49 */
   --color-phosphor: #3f7147;
   --color-signal: #35648f;
   --color-alarm: #8f2626;
@@ -260,6 +264,19 @@
     outline-offset: 2px;
   }
 
+  /*
+   * Reduced motion, scoped rather than nuked.
+   *
+   * A blanket `*{animation-duration:0.01ms}` also kills the transitions that
+   * carry meaning — a button acknowledging a copy, a card answering a hover.
+   * Those are state changes a reduced-motion reader still wants; what they
+   * asked not to see is travel and looping.
+   *
+   * So: stop the looping cursor and smooth scrolling, cap the rest at a
+   * duration short enough to read as instant feedback rather than movement.
+   * The TUI goes further and skips its opening run entirely — see
+   * prefersReducedMotion() in components/tui/hero-terminal.tsx.
+   */
   @media (prefers-reduced-motion: reduce) {
     html {
       scroll-behavior: auto;
@@ -268,9 +285,13 @@
     *,
     *::before,
     *::after {
-      animation-duration: 0.01ms !important;
       animation-iteration-count: 1 !important;
-      transition-duration: 0.01ms !important;
+      transition-duration: 80ms !important;
+    }
+
+    /* Looping or travelling motion has no reduced-motion equivalent. */
+    [class*='animate-'] {
+      animation: none !important;
     }
   }
 }

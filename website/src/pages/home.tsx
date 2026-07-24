@@ -22,7 +22,7 @@ const PLATFORMS: readonly { name: OsName; note: string; anchor: string }[] = [
 const FEATURES = [
   {
     glyph: '→',
-    color: 'var(--accent)',
+    color: 'var(--accent-text)',
     title: 'Search & download',
     cmd: 'soulseek-rs "field recordings"',
     body: <>Search the network, pick results in the TUI, and queue downloads with pause, resume, and retry.</>,
@@ -86,7 +86,7 @@ const FEATURES = [
   },
   {
     glyph: '▮',
-    color: 'var(--accent)',
+    color: 'var(--accent-text)',
     title: 'TUI and CLI',
     cmd: 'soulseek-rs',
     body: (
@@ -165,7 +165,7 @@ export const Home = () => {
                   >
                     <OsIcon name={platform.name} className="max-[519px]:size-[26px]" />
                     <span className="flex flex-col leading-[1.35] max-[519px]:hidden">
-                      <b className="text-[13.5px] font-medium text-primary transition-colors group-hover:text-accent">
+                      <b className="text-[13.5px] font-medium text-primary transition-colors group-hover:text-accent-text">
                         {platform.name}
                       </b>
                       <span className="text-[11.5px] text-secondary">{platform.note}</span>
@@ -251,7 +251,7 @@ export const Home = () => {
           <div className="flex flex-col gap-3.5">
             <Eyebrow>get started</Eyebrow>
             <h2 className="text-[26px] leading-[34px] font-medium text-balance sm:text-title sm:leading-[var(--text-title--line-height)]">
-              Install it, then press <span className="text-accent">/</span> to search.
+              Install it, then press <span className="text-accent-text">/</span> to search.
             </h2>
             <p className="text-secondary">
               Needs a Rust toolchain. From there it&rsquo;s one command, then the TUI opens.

@@ -63,7 +63,7 @@ const CITIZENSHIP = [
   },
   {
     glyph: '∞',
-    color: 'var(--accent)',
+    color: 'var(--accent-text)',
     title: 'Stay online',
     body: (
       <>
