@@ -1,17 +1,11 @@
 import { cn } from '@/lib/utils'
 
 interface WordmarkProps {
-  /** Font size in px. */
   size?: number
   blink?: boolean
   className?: string
 }
 
-/**
- * The primary soulseek-rs mark: lowercase mono wordmark plus a solid block
- * cursor. Live text rather than an asset, so it blinks for free and stays
- * crisp at any size.
- */
 export const Wordmark = ({ size = 28, blink = false, className }: WordmarkProps) => (
   <span
     className={cn(

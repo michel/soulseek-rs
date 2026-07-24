@@ -6,8 +6,6 @@ interface CopyButtonProps {
   className?: string
 }
 
-/** The copy control in a terminal header. Styled against the terminal
- *  surface tokens, not the page ones, so it reads as part of the window. */
 export const CopyButton = ({ text, className }: CopyButtonProps) => {
   const { copied, copy } = useCopy()
 

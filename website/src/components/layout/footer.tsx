@@ -61,13 +61,7 @@ const FooterAnchor = ({ label, href }: FooterLink) =>
 export const Footer = () => (
   <footer className="border-t border-hairline bg-base pt-7 pb-6 sm:pt-11 sm:pb-10">
     <Wrap>
-      {/* Gives the three link groups a heading to sit under, so the document
-          outline stays nested instead of putting "Packages" on the same
-          level as the page's own sections. */}
       <h2 className="sr-only">Site footer</h2>
-      {/* Two columns even on the narrowest phone, with the brand spanning
-          both — one column per link group makes the footer taller than the
-          page it closes. */}
       <div className="grid grid-cols-2 gap-x-4 gap-y-5 sm:gap-8 md:grid-cols-[1.6fr_1fr_1fr_1fr]">
         <div className="col-span-2 flex max-w-[320px] flex-col gap-2 sm:gap-3.5 md:col-span-1">
           <Wordmark size={22} />

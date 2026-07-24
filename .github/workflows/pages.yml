@@ -1,7 +1,5 @@
 name: Pages
 
-# Only the website. The Rust workflows ignore this same path, so a site-only
-# push runs this alone and a code-only push never rebuilds the site.
 on:
   push:
     branches: [master]
@@ -29,8 +27,6 @@ jobs:
         with:
           bun-version: latest
 
-      # --frozen-lockfile so a drifted bun.lock fails here rather than
-      # silently shipping different dependency versions than were tested.
       - name: Install
         run: bun install --frozen-lockfile
 
@@ -40,8 +36,6 @@ jobs:
       - name: Lint
         run: bun run lint
 
-      # Emits one static HTML file per route plus a 404, so direct links
-      # answer 200 with real markup instead of the SPA shell.
       - name: Build
         run: bun run build
 
@@ -51,14 +45,10 @@ jobs:
 
   deploy:
     name: Deploy
-    # Pull requests get the build as a check; only master publishes.
     if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Scoped to the deploy, not the workflow: a workflow-level group would
-    # queue PR builds behind an in-flight master deploy for no reason. Never
-    # cancel in flight — a half-uploaded artifact leaves the live site broken.
     concurrency:
       group: pages
       cancel-in-progress: false

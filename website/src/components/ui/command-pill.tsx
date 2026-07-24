@@ -6,7 +6,6 @@ interface CommandPillProps {
   className?: string
 }
 
-/** The one-line install command, click-to-copy. */
 export const CommandPill = ({ text, className }: CommandPillProps) => {
   const { copied, copy } = useCopy()
 

@@ -1,39 +1,25 @@
 @import 'tailwindcss';
 
-/*
- * soulseek-rs — design tokens.
- *
- * Ported verbatim from the design system's tokens/{colors,typography,spacing}.css.
- * The same values back the TUI in soulseek-rs/src/ui/styles.rs, so the terminal
- * and the site stay one product. Dark is the native theme; light re-cuts the
- * semantic hues ~10% darker because phosphor and tape read on vinyl but wash
- * out on manila.
- *
- * Theme switching is driven by [data-theme] on <html>, matching the design's
- * own selector, rather than Tailwind's default `.dark` class.
- */
 @custom-variant light (&:where([data-theme='light'], [data-theme='light'] *));
 
 @theme {
-  /* ---- Raw palette (dark-native names) ---- */
-  --color-sleeve: #14110f; /* warm off-black — cardboard shadow, never #000 */
-  --color-vinyl: #1e1a17; /* panels / surfaces, one step up from base */
-  --color-vinyl-2: #26211d; /* raised surface / hover on panels */
-  --color-dust: #8a8178; /* muted warm grey — secondary text, borders */
-  --color-paper: #e8e1d6; /* aged insert card — primary text, never #FFF */
+  --color-sleeve: #14110f;
+  --color-vinyl: #1e1a17;
+  --color-vinyl-2: #26211d;
+  --color-dust: #8a8178;
+  --color-paper: #e8e1d6;
   --color-paper-dim: #c9c1b4;
 
-  --color-oxide: #c1502e; /* iron-oxide accent, deeper than Rust's own #CE422B */
-  --color-tape: #d8a657; /* cassette-shell amber — warnings, queued */
-  --color-phosphor: #7fb685; /* desaturated LCD green — success, connected */
-  --color-signal: #6e9dc9; /* softened windows-classic blue — links, info */
-  --color-alarm: #b33a3a; /* error red, distinguishable from oxide */
+  --color-oxide: #c1502e;
+  --color-tape: #d8a657;
+  --color-phosphor: #7fb685;
+  --color-signal: #6e9dc9;
+  --color-alarm: #b33a3a;
 
   --color-manila: #f2ede4;
   --color-manila-2: #e8e1d6;
   --color-manila-3: #ded5c7;
 
-  /* ---- Semantic aliases, wired to the runtime vars below ---- */
   --color-base: var(--bg-base);
   --color-panel: var(--bg-panel);
   --color-raised: var(--bg-raised);
@@ -46,13 +32,6 @@
   --color-line: var(--border-default);
   --color-line-strong: var(--border-strong);
 
-  /*
-   * --accent fills; --accent-text writes.
-   *
-   * The oxide accent is a mid-tone: it clears 4.5:1 as a background behind
-   * white, but not as 11px text on vinyl. Splitting the two uses lets the
-   * fill keep the brand hue while the text cut earns its contrast.
-   */
   --color-accent: var(--accent);
   --color-accent-text: var(--accent-text);
   --color-accent-hover: var(--accent-hover);
@@ -64,13 +43,11 @@
   --color-link: var(--link);
   --color-link-hover: var(--link-hover);
 
-  /* ---- Typography: monospace, non-negotiable. It's a terminal application. ---- */
   --font-mono:
     'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  /* the "earned wink" — the era's forum font. One surface only. */
+
   --font-forum: Verdana, Tahoma, sans-serif;
 
-  /* Scale, from the brandbook specimen (48/56, 32/40, 20/28, 14/22, 12/18) */
   --text-display: 48px;
   --text-display--line-height: 56px;
   --text-title: 32px;
@@ -100,14 +77,12 @@
   }
 }
 
-/* ---- DARK is the default theme ---- */
 :root {
   --bg-base: var(--color-sleeve);
   --bg-panel: var(--color-vinyl);
   --bg-raised: var(--color-vinyl-2);
   --bg-selection: rgb(110 157 201 / 0.22);
 
-  /* Brightened from the raw palette for web body contrast — still warm. */
   --text-primary: #ffffff;
   --text-secondary: #e4dfd8;
   --text-muted: #bdb4a9;
@@ -117,7 +92,7 @@
   --border-strong: var(--color-dust);
 
   --accent: var(--color-oxide);
-  /* Raised off #c1502e, which reads 3.99:1 as small text on vinyl. */
+
   --accent-text: #cd7155;
   --accent-hover: #d05f3c;
 
@@ -128,7 +103,6 @@
   --link: var(--color-signal);
   --link-hover: #8bb4dc;
 
-  /* Terminal surface — a real terminal, darker than the page around it. */
   --tm-bg: #1e1a17;
   --tm-hd: #181513;
   --tm-fg: #ffffff;
@@ -146,19 +120,12 @@
   color-scheme: dark;
 }
 
-/* ---- LIGHT: base becomes manila, sleeve becomes ink, accents darken ~10% ---- */
 [data-theme='light'] {
   --bg-base: var(--color-manila);
   --bg-panel: var(--color-manila-2);
   --bg-raised: var(--color-manila-3);
   --bg-selection: rgb(76 127 174 / 0.2);
 
-  /*
-   * Every value below clears 4.5:1 against --bg-raised, the darkest of the
-   * three light surfaces, so each one holds on base, panel and raised alike.
-   * The design's original cuts were tuned against the base only, which left
-   * links at 3.64:1 and the success green at 2.86:1.
-   */
   --text-primary: var(--color-sleeve);
   --text-secondary: #574e45;
   --text-muted: #645b52;
@@ -195,11 +162,6 @@
   color-scheme: light;
 }
 
-/*
- * Only the cut that is actually shown gets fetched; a hidden image element
- * would still be downloaded. url() is relative to this stylesheet, which
- * Vite rebases against `base`, so the deploy path stays in vite.config.ts.
- */
 .logo-mark {
   background-image: url('/logo-ink.svg');
 }
@@ -208,27 +170,17 @@
   background-image: url('/logo-light.svg');
 }
 
-/*
- * The TUI panes paint from the raw palette (paper, dust, oxide…) because that
- * is what the Rust client does. Those names do not flip with the theme, so
- * each theme re-cuts them, scoped to the terminal's content.
- *
- * Dark brightens two of them the way a real emulator brightens its palette
- * against black: #b33a3a reads 3.21:1 on vinyl and #c1502e 3.99:1 — fine for
- * a glyph, not for the "Failed" and progress text beside it.
- */
 .tui-content {
   --color-alarm: #c26060;
   --color-oxide: #c65f40;
 }
 
-/* Light would otherwise leave paper-on-paper: the whole set re-cuts dark. */
 [data-theme='light'] .tui-content {
   --color-paper: #14110f;
   --color-paper-dim: #3a332c;
   --color-dust: #645b52;
   --color-oxide: #9e3f22;
-  --color-tape: #8d621f; /* 4.62:1 on manila; #8f6420 sat at 4.49 */
+  --color-tape: #8d621f;
   --color-phosphor: #3f7147;
   --color-signal: #35648f;
   --color-alarm: #8f2626;
@@ -237,7 +189,7 @@
 @layer base {
   html {
     scroll-behavior: smooth;
-    /* Anchored headings clear the sticky nav instead of hiding under it. */
+
     scroll-padding-top: 5rem;
     -webkit-text-size-adjust: 100%;
   }
@@ -248,7 +200,7 @@
     font-family: var(--font-mono);
     font-size: var(--text-body);
     line-height: var(--text-body--line-height);
-    /* Tabular figures EVERYWHERE — speeds, sizes, queue positions, ETAs. */
+
     font-variant-numeric: tabular-nums;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
@@ -258,25 +210,11 @@
     background: var(--bg-selection);
   }
 
-  /* The design system's own focus treatment, applied once globally. */
   :focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
 
-  /*
-   * Reduced motion, scoped rather than nuked.
-   *
-   * A blanket `*{animation-duration:0.01ms}` also kills the transitions that
-   * carry meaning — a button acknowledging a copy, a card answering a hover.
-   * Those are state changes a reduced-motion reader still wants; what they
-   * asked not to see is travel and looping.
-   *
-   * So: stop the looping cursor and smooth scrolling, cap the rest at a
-   * duration short enough to read as instant feedback rather than movement.
-   * The TUI goes further and skips its opening run entirely — see
-   * prefersReducedMotion() in components/tui/hero-terminal.tsx.
-   */
   @media (prefers-reduced-motion: reduce) {
     html {
       scroll-behavior: auto;
@@ -289,7 +227,6 @@
       transition-duration: 80ms !important;
     }
 
-    /* Looping or travelling motion has no reduced-motion equivalent. */
     [class*='animate-'] {
       animation: none !important;
     }

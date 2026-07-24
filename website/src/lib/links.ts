@@ -1,4 +1,3 @@
-/** Every off-site destination, in one place. */
 export const LINKS = {
   gh: 'https://github.com/michel/soulseek-rs',
   issues: 'https://github.com/michel/soulseek-rs/issues',
@@ -15,8 +14,6 @@ export const LINKS = {
   slsknet: 'https://www.slsknet.org',
 } as const
 
-/** Injected from the workspace Cargo.toml at build time — see vite.config.ts. */
 export const VERSION = __APP_VERSION__
 
-/** Where the site is served from. Used for canonical and og:url. */
 export const SITE_URL = 'https://re-invention.nl/soulseek-rs/'

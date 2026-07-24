@@ -1,11 +1,6 @@
 import { useTheme } from '@/theme/use-theme'
 import type { Theme } from '@/theme/theme-context'
 
-/*
- * Cycles system → light → dark → system rather than a plain two-way flip, so
- * "follow the OS" stays reachable after the first click. The glyph shows what
- * is painted; the label says which mode is selected.
- */
 const NEXT: Record<Theme, Theme> = {
   system: 'light',
   light: 'dark',

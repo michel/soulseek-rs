@@ -15,7 +15,6 @@
     "resolveJsonModule": true,
     "noEmit": true,
 
-    /* Strictest. Every flag below is on deliberately — see README. */
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
@@ -31,7 +30,6 @@
 
     "skipLibCheck": true,
 
-    /* No baseUrl — deprecated in TS 6. `paths` resolves relative to this file. */
     "paths": {
       "@/*": ["./src/*"]
     }

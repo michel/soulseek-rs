@@ -5,17 +5,6 @@ import { Footer } from '@/components/layout/footer'
 import { Nav } from '@/components/layout/nav'
 import { usePageMeta } from '@/hooks/use-page-meta'
 
-/**
- * On navigation: jump to the anchor if the URL carries one, otherwise back to
- * the top, and move keyboard focus into the main landmark.
- *
- * That last part matters — without it focus stays on the link that was
- * clicked, so a screen reader never announces that the page changed.
- *
- * ponytail: replaces react-router's <ScrollRestoration>, which only works
- * under a data router. Restoring exact scroll offsets on back/forward would
- * mean adopting createBrowserRouter for four static pages.
- */
 const useNavigationEffects = () => {
   const { pathname, hash } = useLocation()
 

@@ -17,10 +17,6 @@ interface OsIconProps {
   className?: string
 }
 
-/*
- * Labelled rather than decorative: below 520px the adjacent text is hidden,
- * so the icon becomes the only thing naming the platform.
- */
 export const OsIcon = ({ name, className }: OsIconProps) => (
   <svg
     viewBox="0 0 24 24"

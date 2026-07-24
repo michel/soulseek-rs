@@ -1,11 +1,3 @@
-/*
- * Sample data for the TUI recreation in the hero.
- *
- * Everything here is invented, public-domain, or Creative Commons. No real
- * artist, album, or track names — see TONE-OF-VOICE.md §5 "Banned for legal
- * reasons". Anything added here has to keep that true.
- */
-
 export interface SearchRow {
   id: string
   query: string
@@ -20,9 +12,7 @@ export interface ResultRow {
   bitrate: string
   speed: string
   slots: number
-  /** Marked for download with Space, not yet queued. */
   marked?: boolean
-  /** Handed to the transfer list. */
   queued?: boolean
 }
 
@@ -35,7 +25,6 @@ export interface TransferRow {
   user: string
   progress: string
   speed: string
-  /** Present only on transfers the demo drives; the static rows leave it out. */
   pct?: number
   sizeMb?: number
   rateMbps?: number

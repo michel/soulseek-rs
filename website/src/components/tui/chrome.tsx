@@ -12,10 +12,6 @@ interface TuiPaneProps {
   bodyClassName?: string
 }
 
-/**
- * The TUI's bordered pane: a legend that breaks the top border, green when
- * the pane has focus. Mirrors `pane_block()` in the Rust client.
- */
 export const TuiPane = ({
   title,
   num,
@@ -44,7 +40,6 @@ export const TuiPane = ({
   </div>
 )
 
-/** The macOS window bezel the whole demo sits in. */
 export const MacWindow = ({ children }: { children: React.ReactNode }) => (
   <div
     className="w-[1360px] overflow-hidden rounded-xl border bg-base font-mono tabular-nums"
@@ -53,7 +48,6 @@ export const MacWindow = ({ children }: { children: React.ReactNode }) => (
     {children}
   </div>
 )
-
 
 export interface StatusCounts {
   active: number
