@@ -8,7 +8,7 @@ mod port_mapping;
 mod ui;
 
 use clap::Parser;
-use cli::{Cli, Commands, parse_server_address};
+use cli::{Cli, Commands, ConfigCommand, SharesCommand, parse_server_address};
 use commands::Ctx;
 use output::{CliError, CliResult, Exit, Out};
 use soulseek_rs::{ClientSettings, PeerAddress};
@@ -50,14 +50,56 @@ fn run(mut cli: Cli, out: &Out) -> CliResult {
         return run_default_tui(&cli, &resolved, config_path, &file_config);
     };
 
-    // A local network probe needs no account, so it runs before credentials
-    // are demanded.
-    if matches!(command, Commands::Portmap) {
-        return commands::portmap(out, resolved.listener_port);
+    // Anything that only reads the network stack or the config file runs
+    // before credentials are demanded: asking a script for a login it does not
+    // need would be a poor trade for a `config get`.
+    let store = commands::settings::Store {
+        path: config_path,
+        config: file_config,
+    };
+    match command {
+        Commands::Portmap => {
+            return commands::portmap(out, resolved.listener_port);
+        }
+        Commands::Config(ConfigCommand::Path) => {
+            return commands::settings::config_path(out, &store);
+        }
+        Commands::Config(ConfigCommand::List) => {
+            commands::settings::config_list(out, &store);
+            return Ok(());
+        }
+        Commands::Config(ConfigCommand::Get { ref key }) => {
+            return commands::settings::config_get(out, &store, key);
+        }
+        Commands::Config(ConfigCommand::Set { ref key, ref value }) => {
+            return commands::settings::config_set(out, &store, key, value);
+        }
+        Commands::Shares(SharesCommand::List) => {
+            return commands::settings::shares_list(
+                out,
+                &store,
+                &resolved.shared_dirs,
+            );
+        }
+        Commands::Shares(SharesCommand::Add { ref directory }) => {
+            return commands::settings::shares_add(out, &store, directory);
+        }
+        Commands::Shares(SharesCommand::Remove { ref directory }) => {
+            return commands::settings::shares_remove(out, &store, directory);
+        }
+        _ => {}
     }
 
     let ctx = context(&cli, &resolved, out)?;
-    commands::run(&ctx, command)
+    match command {
+        Commands::Shares(SharesCommand::Status) => {
+            commands::settings::shares_status(&ctx)
+        }
+        Commands::Shares(SharesCommand::Reindex) => {
+            commands::settings::shares_reindex(&ctx)
+        }
+        other => commands::run(&ctx, other),
+    }
 }
 
 /// Which config file to read: an explicit `--config`, the platform default,

@@ -13,11 +13,13 @@ use crate::message::server::MessageUser;
 use crate::message::server::ParentMinSpeedHandler;
 use crate::message::server::ParentSpeedRatioHandler;
 use crate::message::server::PrivilegedUsersHandler;
-use crate::message::server::RoomListHandler;
 use crate::message::server::SayChatroomHandler;
 use crate::message::server::UserJoinedRoomHandler;
 use crate::message::server::UserLeftRoomHandler;
 use crate::message::server::WishListIntervalHandler;
+use crate::message::server::{
+    GetUserStatsHandler, GetUserStatusHandler, RoomListHandler,
+};
 use crate::message::{Handlers, MessageType};
 use crate::message::{Message, MessageReader};
 use crate::peer::ConnectionType;
@@ -141,7 +143,10 @@ impl UserMessage {
     }
 }
 
+/// The server actor's mailbox. Marked non-exhaustive: each protocol message
+/// the client learns adds a variant, and that must not break callers.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ServerMessage {
     ProcessRead,
     LoginStatus(bool),
@@ -175,6 +180,19 @@ pub enum ServerMessage {
     },
     PrivateMessageReceived(UserMessage),
     RoomListReceived(Vec<RoomInfo>),
+    /// A `GetUserStatus` (code 7) reply.
+    UserStatusReceived {
+        username: String,
+        status: u32,
+        privileged: bool,
+    },
+    /// A `GetUserStats` (code 36) reply.
+    UserStatsReceived {
+        username: String,
+        average_speed: u32,
+        shared_files: u32,
+        shared_folders: u32,
+    },
     RoomJoined {
         room: String,
         users: Vec<String>,
@@ -354,6 +372,8 @@ impl ServerActor {
 
         handlers.register_handler(LoginHandler);
         handlers.register_handler(RoomListHandler);
+        handlers.register_handler(GetUserStatusHandler);
+        handlers.register_handler(GetUserStatsHandler);
         handlers.register_handler(JoinRoomHandler);
         handlers.register_handler(LeaveRoomHandler);
         handlers.register_handler(SayChatroomHandler);
@@ -451,6 +471,30 @@ impl ServerActor {
             }
             ServerMessage::RoomListReceived(rooms) => {
                 self.forward_room_event(RoomEvent::List(rooms));
+            }
+            ServerMessage::UserStatusReceived {
+                username,
+                status,
+                privileged,
+            } => {
+                self.forward_to_client(ClientOperation::UserStatusReceived {
+                    username,
+                    status,
+                    privileged,
+                });
+            }
+            ServerMessage::UserStatsReceived {
+                username,
+                average_speed,
+                shared_files,
+                shared_folders,
+            } => {
+                self.forward_to_client(ClientOperation::UserStatsReceived {
+                    username,
+                    average_speed,
+                    shared_files,
+                    shared_folders,
+                });
             }
             ServerMessage::RoomJoined { room, users } => {
                 self.forward_room_event(RoomEvent::Joined { room, users });
@@ -563,6 +607,14 @@ impl ServerActor {
                 "[server] Error forwarding GetPeerAddress response to client: {}",
                 e
             );
+        }
+    }
+
+    /// Hand an operation to the client loop, logging a dead channel rather
+    /// than unwinding the actor.
+    fn forward_to_client(&self, operation: ClientOperation) {
+        if let Err(e) = self.client_channel.send(operation) {
+            error!("[server] Error forwarding to client: {}", e);
         }
     }
 

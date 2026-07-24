@@ -122,6 +122,21 @@ impl MessageFactory {
             .clone()
     }
 
+    /// Ask the server (code 7) for a user's online status.
+    #[must_use]
+    pub fn build_get_user_status(username: &str) -> Message {
+        Message::new().write_int32(7).write_string(username).clone()
+    }
+
+    /// Ask the server (code 36) for a user's share statistics.
+    #[must_use]
+    pub fn build_get_user_stats(username: &str) -> Message {
+        Message::new()
+            .write_int32(36)
+            .write_string(username)
+            .clone()
+    }
+
     /// Ask the server (code 64) for the list of public chat rooms.
     #[must_use]
     pub fn build_room_list_request() -> Message {
@@ -226,6 +241,20 @@ impl MessageFactory {
             .write_int32(token)
             .clone()
     }
+}
+
+#[test]
+fn test_build_get_user_status() {
+    let message = MessageFactory::build_get_user_status("bob");
+    let expect: Vec<u8> = [7, 0, 0, 0, 3, 0, 0, 0, b'b', b'o', b'b'].to_vec();
+    assert_eq!(expect, message.get_data());
+}
+
+#[test]
+fn test_build_get_user_stats() {
+    let message = MessageFactory::build_get_user_stats("bob");
+    let expect: Vec<u8> = [36, 0, 0, 0, 3, 0, 0, 0, b'b', b'o', b'b'].to_vec();
+    assert_eq!(expect, message.get_data());
 }
 
 #[test]

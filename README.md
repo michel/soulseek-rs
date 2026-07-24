@@ -129,8 +129,18 @@ soulseek-rs room say <ROOM> <MESSAGE>     # post to a room
 soulseek-rs room listen <ROOM>            # stream room messages and joins
 soulseek-rs message send <USER> <TEXT>    # send a private message
 soulseek-rs message read                  # stream incoming private messages
+soulseek-rs room users <ROOM>             # who is in a room
+soulseek-rs serve [--follow]              # stay online sharing, stream uploads
+soulseek-rs whoami                        # confirm credentials and connection
+soulseek-rs user <NAME>                   # a peer's status and share counts
+soulseek-rs shares list|add|remove|status|reindex
+soulseek-rs config path|list|get|set
 soulseek-rs portmap                       # test automatic port mapping
 ```
+
+`whoami`, `config` and `shares list|add|remove` are the ones a script runs
+first: the config commands need no account at all, and `whoami` answers
+"are these credentials good and what am I offering" in one call.
 
 Every command emits records except the two that perform an action —
 `room say` and `message send` say nothing and answer with their exit code
@@ -180,7 +190,35 @@ fi
 
 # Log room chat as JSON until interrupted
 soulseek-rs room listen lobby --follow --json >> lobby.ndjson
+
+# Be a peer: share a folder and log every upload served
+soulseek-rs shares add ~/Music
+soulseek-rs serve --follow --json | tee -a uploads.ndjson
+
+# Decide whether a peer is worth queueing to before committing
+soulseek-rs user someuser --json | jq -e '.status != "offline"'
 ```
+
+### Sharing
+
+`serve` is the mode that makes this client a source: it stays logged in, keeps
+the listener and the share index alive, answers searches and browse requests
+from the network, and prints one record per upload as it changes state
+(`uploading`, `completed`, `cancelled`, `failed`). It ends after `--duration`
+seconds, or runs until interrupted with `--follow`.
+
+```bash
+soulseek-rs shares add ~/Music     # remembered in config.toml
+soulseek-rs shares status          # what the network will actually see
+soulseek-rs shares reindex         # after adding files on disk
+soulseek-rs serve --follow
+```
+
+Uploads are only visible inside a running `serve` — every other command is a
+short-lived process with nothing to serve — so there is no separate
+`uploads list`. Managing transfers across commands (pause, resume, a queue
+that outlives one invocation) needs the resident daemon that `serve` would
+grow into; it is not there yet.
 
 Downloads run under a deadline (`--timeout`, 300s by default) and
 `--max-concurrent-downloads` at a time, so an unattended run always ends.

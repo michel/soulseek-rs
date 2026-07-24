@@ -174,6 +174,95 @@ pub enum DownloadStatus {
     TimedOut,
 }
 
+/// Whether a user is reachable, as the server reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UserStatus {
+    #[default]
+    Offline,
+    Away,
+    Online,
+}
+
+impl UserStatus {
+    /// Map the wire value (`GetUserStatus`, code 7). Anything unrecognised is
+    /// treated as offline, which is the safe reading for "cannot be reached".
+    #[must_use]
+    pub const fn from_code(code: u32) -> Self {
+        match code {
+            1 => Self::Away,
+            2 => Self::Online,
+            _ => Self::Offline,
+        }
+    }
+
+    /// True when the user can be reached — online or away, but not offline.
+    #[must_use]
+    pub const fn is_reachable(self) -> bool {
+        matches!(self, Self::Away | Self::Online)
+    }
+}
+
+impl std::fmt::Display for UserStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Offline => "offline",
+            Self::Away => "away",
+            Self::Online => "online",
+        })
+    }
+}
+
+/// A user's presence, from `GetUserStatus`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UserPresence {
+    pub status: UserStatus,
+    /// Whether the server grants this user queue priority.
+    pub privileged: bool,
+}
+
+/// A user's sharing statistics, from `GetUserStats`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct UserStats {
+    /// Average upload speed in bytes per second, as the server records it.
+    pub average_speed: u32,
+    pub shared_files: u32,
+    pub shared_folders: u32,
+}
+
+/// What the server knows about another user.
+///
+/// The server answers presence and statistics as two separate messages, so
+/// each part is `None` until its reply lands. A snapshot therefore cannot
+/// report a status the server never sent — ask for
+/// [`UserInfo::presence`] and handle `None` rather than reading a default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct UserInfo {
+    pub username: String,
+    /// `None` until the status reply arrives.
+    pub presence: Option<UserPresence>,
+    /// `None` until the statistics reply arrives.
+    pub stats: Option<UserStats>,
+}
+
+impl UserInfo {
+    /// An empty snapshot for `username`, before any reply has arrived.
+    #[must_use]
+    pub const fn pending(username: String) -> Self {
+        Self {
+            username,
+            presence: None,
+            stats: None,
+        }
+    }
+
+    /// True once both replies have landed.
+    #[must_use]
+    pub const fn is_complete(&self) -> bool {
+        self.presence.is_some() && self.stats.is_some()
+    }
+}
+
 /// A public chat room advertised by the server (`RoomList`, code 64).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoomInfo {

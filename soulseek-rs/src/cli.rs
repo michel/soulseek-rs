@@ -24,6 +24,8 @@ Examples:
     | soulseek-rs download --stdin              filter, then fetch
   soulseek-rs browse someuser --json            list a peer's shares
   soulseek-rs room listen lobby --follow        stream room chat
+  soulseek-rs serve --follow --json             share files, stream upload events
+  soulseek-rs user someuser                     is this peer online and worth it
 
 Exit codes:
   0 success   2 usage/config   3 connect or login   4 no results
@@ -172,8 +174,102 @@ pub enum Commands {
     #[command(subcommand)]
     Message(MessageCommand),
 
+    /// Stay online sharing files, reporting each upload as it happens
+    Serve(ServeArgs),
+
+    /// What the server knows about another user
+    User(UserArgs),
+
+    /// Confirm the credentials and connection work
+    Whoami,
+
+    /// The folders this client shares
+    #[command(subcommand)]
+    Shares(SharesCommand),
+
+    /// Read and write the config file
+    #[command(subcommand)]
+    Config(ConfigCommand),
+
     /// Check whether the router opens the listen port (UPnP/NAT-PMP)
     Portmap,
+}
+
+#[derive(Args, Debug)]
+pub struct ServeArgs {
+    /// Seconds to stay online before exiting
+    #[arg(
+        long,
+        default_value_t = 3600,
+        value_parser = clap::value_parser!(u64).range(1..=MAX_WAIT_SECS)
+    )]
+    pub duration: u64,
+
+    /// Stay online until interrupted, ignoring --duration
+    #[arg(long, action = ArgAction::SetTrue)]
+    pub follow: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct UserArgs {
+    /// The user to ask the server about
+    pub user: String,
+
+    /// Seconds to wait for the server's answer
+    #[arg(
+        short,
+        long,
+        default_value_t = 10,
+        value_parser = clap::value_parser!(u64).range(1..=MAX_WAIT_SECS)
+    )]
+    pub timeout: u64,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SharesCommand {
+    /// List the configured share folders
+    List,
+
+    /// Add a folder to the shares and save it to the config file
+    Add {
+        /// Folder to start sharing
+        directory: String,
+    },
+
+    /// Stop sharing a folder and save that to the config file
+    Remove {
+        /// Folder to stop sharing
+        directory: String,
+    },
+
+    /// Re-index the shares and report what the network will see
+    Reindex,
+
+    /// Report how many folders and files are indexed
+    Status,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ConfigCommand {
+    /// Print the path of the config file in use
+    Path,
+
+    /// Print every setting and its effective value
+    List,
+
+    /// Print one setting
+    Get {
+        /// Setting name, as shown by `config list`
+        key: String,
+    },
+
+    /// Change one setting in the config file
+    Set {
+        /// Setting name, as shown by `config list`
+        key: String,
+        /// New value; an empty string clears it
+        value: String,
+    },
 }
 
 /// How to order search results.
@@ -317,6 +413,20 @@ pub enum RoomCommand {
         room: String,
         /// Message text
         message: String,
+    },
+
+    /// List who is currently in a room
+    Users {
+        /// Room whose members to list
+        room: String,
+        /// Seconds to wait for the membership list
+        #[arg(
+            short,
+            long,
+            default_value_t = 10,
+            value_parser = clap::value_parser!(u64).range(1..=MAX_WAIT_SECS)
+        )]
+        timeout: u64,
     },
 
     /// Stream messages and joins/leaves from a room
