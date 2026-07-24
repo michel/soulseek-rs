@@ -187,7 +187,7 @@ export const Docs = () => {
               <Code>portmap</Code> tests whether your router will let peers connect back,
               worth running once.{' '}
               <Link to="/install" className="text-link hover:text-link-hover">
-                More on being reachable →
+                More on being reachable
               </Link>
             </p>
           </Prose>
@@ -214,10 +214,10 @@ export const Docs = () => {
             </Prose>
             <div className="flex flex-wrap gap-2 sm:gap-3">
               <Button href={LINKS.gh} variant="accent">
-                README ↗
+                README
               </Button>
-              <Button href={LINKS.docsrs}>docs.rs ↗</Button>
-              <Button href={LINKS.changelog}>Changelog ↗</Button>
+              <Button href={LINKS.docsrs}>docs.rs</Button>
+              <Button href={LINKS.changelog}>Changelog</Button>
             </div>
           </Cols>
         </Panel>

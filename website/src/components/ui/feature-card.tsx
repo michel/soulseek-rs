@@ -61,15 +61,18 @@ export const FeatureCard = ({
       className,
     )}
   >
-    <div className="flex items-center gap-3">
+    {/* The glyph sits in the line like a prompt marker, not in a chip. A
+        tinted rounded square around an icon is the stock feature-card
+        treatment; here the terminal already gives us a better idiom. */}
+    <div className="flex items-center gap-2.5">
       {glyph !== undefined && (
-        <div
+        <span
           aria-hidden="true"
-          className="flex size-[34px] shrink-0 items-center justify-center rounded-md border border-hairline text-xl leading-none"
+          className="shrink-0 text-lg leading-none"
           style={color !== undefined ? { color } : undefined}
         >
           {glyph}
-        </div>
+        </span>
       )}
       <div className="text-[15px] font-medium text-primary">{title}</div>
     </div>
