@@ -11,6 +11,7 @@ import { OsIcon, type OsName } from '@/components/ui/os-icon'
 import { Callout } from '@/components/ui/panel'
 import { Terminal } from '@/components/ui/terminal'
 import { LINKS } from '@/lib/links'
+import { cn } from '@/lib/utils'
 
 const PLATFORMS: readonly { name: OsName; note: string; anchor: string }[] = [
   { name: 'macOS', note: 'Apple Keychain', anchor: 'macos' },
@@ -103,20 +104,24 @@ export const Home = () => {
       <section className="pt-5 pb-8 sm:pt-7 sm:pb-10">
         <Wrap>
           <div className="flex flex-col gap-[22px]">
-            <Eyebrow>Soulseek client · terminal · Rust</Eyebrow>
+            {/* Eyebrow and sub are desktop-only: on a phone the headline and
+                the CTA should be all that stands between the top of the page
+                and the terminal. */}
+            <Eyebrow className="max-md:hidden">Soulseek client · terminal · Rust</Eyebrow>
             <div className="flex items-start gap-3.5 sm:gap-6 md:gap-11">
-              <Logo size={172} className="mt-2 shrink-0 max-md:!h-28 max-sm:!h-16" />
+              <Logo size={172} className="mt-2 max-md:!h-28 max-sm:!h-16" />
               <h1 className="text-[29px] leading-[37px] font-bold tracking-[-0.01em] text-balance sm:text-[34px] sm:leading-[42px] md:text-display md:leading-[var(--text-display--line-height)]">
-                A Soulseek client for people who live in the terminal.
+                Soulseek for the terminal. Built for agents and people who live there.
+                Blazingly fast, in Rust 🦀.
               </h1>
             </div>
-            <p className="text-lg leading-[29px] text-pretty text-secondary">
+            <p className="text-lg leading-[29px] text-pretty text-secondary max-md:hidden">
               Search the network, share your files, browse someone&rsquo;s collection, join
               a room. It runs over ssh on the machine where your music already lives, with
-              no window and no mouse.
+              no window and no mouse, and it&rsquo;s blazingly fast Rust 🦀.
             </p>
             <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 sm:gap-y-4">
-              <div className="flex flex-wrap items-center gap-2 max-sm:w-full sm:gap-3">
+              <div className="flex flex-wrap items-center gap-2 max-md:w-full max-md:justify-center sm:gap-3">
                 <Button href="/install" variant="accent">
                   Install
                 </Button>
@@ -135,24 +140,31 @@ export const Home = () => {
 
       <section className="border-t border-hairline py-6">
         <Wrap>
+          {/*
+            Three layouts, narrowest first: under 520px the labels drop and it
+            becomes a centred row of icons; up to 820px each platform is a
+            full-width stacked row; above that they sit inline, rule-separated.
+          */}
           <div className="flex flex-wrap items-center gap-3.5 sm:gap-8">
-            <Eyebrow>Runs on</Eyebrow>
-            <ul className="flex w-full flex-wrap sm:w-auto">
+            <Eyebrow className="max-[519px]:hidden">Runs on</Eyebrow>
+            <ul className="flex w-full flex-nowrap justify-center min-[520px]:flex-wrap min-[520px]:justify-start sm:w-auto">
               {PLATFORMS.map((platform, i) => (
                 <li
                   key={platform.name}
-                  className={
+                  className={cn(
+                    'flex w-auto border-hairline px-[18px] first:border-l-0 first:pl-0 not-first:border-l',
+                    'min-[520px]:w-full min-[520px]:border-l-0 min-[520px]:px-0',
                     i === 0
-                      ? 'flex w-full sm:w-auto sm:pr-6.5'
-                      : 'flex w-full border-hairline sm:w-auto sm:border-l sm:px-6.5'
-                  }
+                      ? 'sm:w-auto sm:pr-6.5'
+                      : 'sm:w-auto sm:border-l sm:px-6.5',
+                  )}
                 >
                   <Link
                     to={`/install#${platform.anchor}`}
-                    className="group flex w-full items-center gap-2.5 border-t border-hairline py-2.5 first:border-t-0 sm:w-auto sm:border-t-0 sm:py-0"
+                    className="group flex min-h-11 w-auto items-center justify-center gap-2.5 border-hairline py-1.5 min-[520px]:w-full min-[520px]:justify-start min-[520px]:border-t min-[520px]:py-2.5 min-[520px]:first:border-t-0 sm:w-auto sm:border-t-0 sm:py-0"
                   >
-                    <OsIcon name={platform.name} />
-                    <span className="flex flex-col leading-[1.35]">
+                    <OsIcon name={platform.name} className="max-[519px]:size-[26px]" />
+                    <span className="flex flex-col leading-[1.35] max-[519px]:hidden">
                       <b className="text-[13.5px] font-medium text-primary transition-colors group-hover:text-accent">
                         {platform.name}
                       </b>
@@ -198,11 +210,15 @@ export const Home = () => {
                 </Link>
               </p>
             </Callout>
-            <Callout title="share back">
+            <Callout title="agents and automation">
               <p>
-                Point <Code>--shared-dir</Code> at your library and leave it running in a
-                tmux session on your share or headless box. The network only works because
-                people share, and users who share back tend to get queue slots faster.
+                Every command runs as a one-off from the shell: <Code>search</Code>,{' '}
+                <Code>browse</Code>, <Code>rooms</Code>, <Code>chat</Code>,{' '}
+                <Code>message</Code>, <Code>portmap</Code>. Point cron, a script, or an
+                agent at them and read the output back. No daemon, no API to stand up.{' '}
+                <Link to="/docs" className="text-link hover:text-link-hover">
+                  See the commands →
+                </Link>
               </p>
             </Callout>
           </div>

@@ -1,3 +1,5 @@
+import { cn } from '@/lib/utils'
+
 export type OsName = 'macOS' | 'Linux' | 'Windows'
 
 const PATHS: Record<Exclude<OsName, 'Windows'>, string> = {
@@ -10,12 +12,24 @@ const PATHS: Record<Exclude<OsName, 'Windows'>, string> = {
 const WINDOWS_PATH =
   'M2 3.6l8.5-1.2v9.1H2V3.6zm10 -1.35L22.5 1v10.5H12V2.25zM2 12.5h8.5v9.1L2 20.4v-7.9zm10 0h10.5V23L12 21.75V12.5z'
 
-/** Decorative — the adjacent label already names the platform. */
-export const OsIcon = ({ name }: { name: OsName }) => (
+interface OsIconProps {
+  name: OsName
+  className?: string
+}
+
+/*
+ * Labelled rather than decorative: below 520px the adjacent text is hidden,
+ * so the icon becomes the only thing naming the platform.
+ */
+export const OsIcon = ({ name, className }: OsIconProps) => (
   <svg
     viewBox="0 0 24 24"
-    aria-hidden="true"
-    className="block size-[22px] shrink-0 text-primary"
+    role="img"
+    aria-label={name}
+    className={cn(
+      'block size-[22px] shrink-0 text-primary transition-colors group-hover:text-accent',
+      className,
+    )}
   >
     <path fill="currentColor" d={name === 'Windows' ? WINDOWS_PATH : PATHS[name]} />
   </svg>

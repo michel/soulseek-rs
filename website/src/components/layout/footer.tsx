@@ -45,7 +45,7 @@ const COLUMNS: readonly FooterColumn[] = [
   },
 ]
 
-const LINK_CLASS = 'text-[13px] text-secondary hover:text-primary'
+const LINK_CLASS = 'text-[12.5px] text-secondary hover:text-primary sm:text-[13px]'
 
 const FooterAnchor = ({ label, href }: FooterLink) =>
   href.startsWith('/') ? (
@@ -59,12 +59,15 @@ const FooterAnchor = ({ label, href }: FooterLink) =>
   )
 
 export const Footer = () => (
-  <footer className="border-t border-hairline bg-base pt-11 pb-10">
+  <footer className="border-t border-hairline bg-base pt-7 pb-6 sm:pt-11 sm:pb-10">
     <Wrap>
-      <div className="grid grid-cols-1 gap-8 min-[520px]:grid-cols-2 md:grid-cols-[1.6fr_1fr_1fr_1fr]">
-        <div className="flex max-w-[320px] flex-col gap-3.5">
+      {/* Two columns even on the narrowest phone, with the brand spanning
+          both — one column per link group makes the footer taller than the
+          page it closes. */}
+      <div className="grid grid-cols-2 gap-x-4 gap-y-5 sm:gap-8 md:grid-cols-[1.6fr_1fr_1fr_1fr]">
+        <div className="col-span-2 flex max-w-[320px] flex-col gap-2 sm:gap-3.5 md:col-span-1">
           <Wordmark size={22} />
-          <p className="text-[13px] leading-[22px] text-secondary">
+          <p className="text-xs leading-[19px] text-secondary sm:text-[13px] sm:leading-[22px]">
             A Soulseek client and protocol library for Rust.
           </p>
           <p className="font-forum text-xs text-muted">
@@ -74,12 +77,12 @@ export const Footer = () => (
 
         {COLUMNS.map((column) => (
           <div key={column.heading}>
-            <h2 className="mb-3.5 text-label uppercase tracking-[var(--tracking-label)] text-secondary">
+            <h2 className="mb-2 text-label uppercase tracking-[var(--tracking-label)] text-secondary sm:mb-3.5">
               {column.heading}
             </h2>
             <ul>
               {column.links.map((link) => (
-                <li key={link.label} className="mb-2.5">
+                <li key={link.label} className="mb-1.5 sm:mb-2.5">
                   <FooterAnchor {...link} />
                 </li>
               ))}
@@ -88,10 +91,10 @@ export const Footer = () => (
         ))}
       </div>
 
-      <div className="mt-11 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-hairline pt-5.5 text-[12.5px] text-muted">
+      <div className="mt-5.5 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-hairline pt-4 text-[11.5px] text-muted sm:mt-11 sm:gap-x-6 sm:gap-y-2 sm:pt-5.5 sm:text-[12.5px]">
         <span>MIT · © 2026 Michel de Graaf</span>
         <span className="text-success">No telemetry. Ever.</span>
-        <span className="ml-auto">{VERSION}</span>
+        <span className="sm:ml-auto">{VERSION}</span>
       </div>
     </Wrap>
   </footer>

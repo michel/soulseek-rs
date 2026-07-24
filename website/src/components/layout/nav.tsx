@@ -26,7 +26,7 @@ export const Nav = () => (
 
       <nav
         aria-label="Main"
-        className="order-3 flex w-full items-center gap-0.5 overflow-x-auto border-t border-hairline py-1 [-ms-overflow-style:none] [scrollbar-width:none] sm:order-none sm:w-auto sm:border-t-0 sm:py-0 [&::-webkit-scrollbar]:hidden"
+        className="order-3 flex w-full items-center justify-center gap-0.5 overflow-x-auto border-t border-hairline py-1 [-ms-overflow-style:none] [scrollbar-width:none] sm:order-none sm:w-auto sm:justify-start sm:border-t-0 sm:py-0 [&::-webkit-scrollbar]:hidden"
       >
         {ITEMS.map((item) => (
           <NavLink
