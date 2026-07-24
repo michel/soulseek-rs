@@ -1,7 +1,7 @@
 use crate::models::{RoomsState, RoomsView};
 use crate::ui::{
-    HIGHLIGHT_SYMBOL, accent_style, border_style, border_type, dimmed_style,
-    highlight_style, info_style, primary_style,
+    HIGHLIGHT_SYMBOL, PANE_PADDING, accent_style, dimmed_style,
+    highlight_style, info_style, pane_block, plain_title, primary_style,
 };
 use ratatui::{
     Frame,
@@ -43,11 +43,7 @@ fn render_list(
         " Rooms  (Enter: join, /: filter, Tab: open rooms, Esc: close) "
             .to_string()
     };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(border_style(true))
-        .border_type(border_type(true))
-        .title(title);
+    let block = pane_block(true).title(title);
 
     let filtered = rooms.filtered_rooms();
     if filtered.is_empty() {
@@ -98,13 +94,9 @@ fn render_list(
 }
 
 fn render_chat(frame: &mut Frame, area: Rect, rooms: &RoomsState) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(border_style(true))
-        .border_type(border_type(true))
-        .title(
-            " Chat rooms  (Tab: switch, l: room list, x: leave, Esc: back) ",
-        );
+    let block = pane_block(true).title(
+        " Chat rooms  (Tab: switch, l: room list, x: leave, Esc: back) ",
+    );
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -209,7 +201,8 @@ fn render_users(
     let block = Block::default()
         .borders(Borders::LEFT)
         .border_style(dimmed_style())
-        .title(format!(" Users ({}) ", users.len()));
+        .padding(PANE_PADDING)
+        .title(plain_title(format!("Users ({})", users.len()), false));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 

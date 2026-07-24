@@ -1,12 +1,12 @@
 use crate::models::{SearchEntry, SearchStatus};
 use crate::ui::{
-    HIGHLIGHT_SYMBOL, border_style, border_type, header_style, highlight_style,
-    success_style, warning_style,
+    HIGHLIGHT_SYMBOL, body_style, dimmed_style, header_style, highlight_style,
+    pane_block, pane_title, success_style, warning_style,
 };
 use ratatui::{
     Frame,
     layout::Rect,
-    widgets::{Block, Borders, Cell, HighlightSpacing, Row, Table, TableState},
+    widgets::{Cell, HighlightSpacing, Row, Table, TableState},
 };
 
 pub fn render_searches_pane(
@@ -46,8 +46,8 @@ pub fn render_searches_pane(
 
             Row::new(vec![
                 status_cell,
-                Cell::from(search.query.clone()),
-                Cell::from(results_text),
+                Cell::from(search.query.clone()).style(body_style()),
+                Cell::from(results_text).style(dimmed_style()),
             ])
         })
         .collect();
@@ -63,13 +63,7 @@ pub fn render_searches_pane(
         .row_highlight_style(highlight_style())
         .highlight_symbol(HIGHLIGHT_SYMBOL)
         .highlight_spacing(HighlightSpacing::Always)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(border_style(focused))
-                .border_type(border_type(focused))
-                .title("[1] Searches"),
-        );
+        .block(pane_block(focused).title(pane_title("1", "Searches", focused)));
 
     frame.render_stateful_widget(table, area, table_state);
 }

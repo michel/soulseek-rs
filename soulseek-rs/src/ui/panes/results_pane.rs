@@ -1,15 +1,14 @@
 use crate::models::FileDisplayData;
 use crate::ui::{
-    BYTES_PER_MB, HIGHLIGHT_SYMBOL, border_style, border_type, format_bytes,
-    header_style, highlight_style,
+    BYTES_PER_MB, HIGHLIGHT_SYMBOL, body_style, dimmed_style, format_bytes,
+    header_style, highlight_style, info_style, pane_block, pane_title,
+    success_style, warning_style,
 };
 use ratatui::{
     Frame,
     layout::Rect,
-    widgets::{
-        Block, Borders, Cell, HighlightSpacing, Paragraph, Row, Table,
-        TableState,
-    },
+    text::{Line, Span},
+    widgets::{Cell, HighlightSpacing, Paragraph, Row, Table, TableState},
 };
 use std::collections::HashSet;
 
@@ -62,26 +61,32 @@ pub fn render_results_pane(
         active_search_query,
     } = params;
     if items.is_empty() {
-        let title = if let Some(query) = active_search_query {
-            format!("[2] Results: {query}")
-        } else {
-            "[2] Results".to_string()
+        let title = match active_search_query {
+            Some(query) => format!("Results: {query}"),
+            None => "Results".to_string(),
         };
 
-        let empty_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style(focused))
-            .border_type(border_type(focused))
-            .title(title);
+        let empty_block =
+            pane_block(focused).title(pane_title("2", &title, focused));
 
         let message = if is_filtering {
-            format!("No results match filter: '{filter_query}'")
+            vec![Line::from(Span::styled(
+                format!("No results match filter: '{filter_query}'"),
+                dimmed_style(),
+            ))]
         } else {
-            format!(
-                "soulseek-rs ðŸ¦€ v{VERSION}
-Michel de Graaf 2026\n
-No results. Select a search from the Searches pane [1]. Or start new search [s â†’ search] \n"
-            )
+            vec![
+                Line::from(vec![
+                    Span::styled("soulseek-rs", body_style()),
+                    Span::styled(format!(" v{VERSION}"), dimmed_style()),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled("No results yet.", body_style())),
+                Line::from(Span::styled(
+                    "Pick a search in [1] Searches, or start a new one.",
+                    dimmed_style(),
+                )),
+            ]
         };
 
         let paragraph = Paragraph::new(message).block(empty_block);
@@ -124,14 +129,20 @@ No results. Select a search from the Searches pane [1]. Or start new search [s â
                 "-".to_string()
             };
 
+            let checkbox_style = if checkbox == "[âœ“]" {
+                success_style()
+            } else {
+                dimmed_style()
+            };
+
             Row::new(vec![
-                Cell::from(checkbox),
-                Cell::from(file.filename.clone()),
-                Cell::from(format_bytes(file.size)),
-                Cell::from(file.username.clone()),
-                Cell::from(bitrate_str),
-                Cell::from(speed_str),
-                Cell::from(file.slots.to_string()),
+                Cell::from(checkbox).style(checkbox_style),
+                Cell::from(file.filename.clone()).style(body_style()),
+                Cell::from(format_bytes(file.size)).style(warning_style()),
+                Cell::from(file.username.clone()).style(info_style()),
+                Cell::from(bitrate_str).style(dimmed_style()),
+                Cell::from(speed_str).style(dimmed_style()),
+                Cell::from(file.slots.to_string()).style(dimmed_style()),
             ])
         })
         .collect();
@@ -147,11 +158,11 @@ No results. Select a search from the Searches pane [1]. Or start new search [s â
     ];
 
     let title = if is_filtering {
-        format!("[2] Results - Filter: '{filter_query}'")
+        format!("Results Â· filter: '{filter_query}'")
     } else if let Some(query) = active_search_query {
-        format!("[2] Results: {query}")
+        format!("Results: {query}")
     } else {
-        "[2] Results".to_string()
+        "Results".to_string()
     };
 
     let table = Table::new(rows, widths)
@@ -159,13 +170,7 @@ No results. Select a search from the Searches pane [1]. Or start new search [s â
         .row_highlight_style(highlight_style())
         .highlight_symbol(HIGHLIGHT_SYMBOL)
         .highlight_spacing(HighlightSpacing::Always)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(border_style(focused))
-                .border_type(border_type(focused))
-                .title(title),
-        );
+        .block(pane_block(focused).title(pane_title("2", &title, focused)));
 
     frame.render_stateful_widget(table, area, table_state);
 }

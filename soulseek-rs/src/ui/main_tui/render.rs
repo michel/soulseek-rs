@@ -6,12 +6,14 @@ use crate::ui::panes::{
     render_searches_pane,
 };
 use crate::ui::{
-    border_style, border_type, format_shortcuts_styled, render_download_stats,
+    accent_style, format_shortcuts_styled, pane_block, plain_title,
+    primary_style, render_download_stats,
 };
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Position, Rect},
-    widgets::{Block, Borders, Paragraph},
+    text::{Line, Span},
+    widgets::Paragraph,
 };
 
 const COMMAND_BAR_PREFIX: &str = "search: ";
@@ -239,9 +241,7 @@ impl MainTui {
             lines.push(ratatui::text::Line::from(status.clone()));
         }
 
-        let block = ratatui::widgets::Block::default()
-            .borders(ratatui::widgets::Borders::ALL)
-            .title(" Settings ");
+        let block = pane_block(true).title(plain_title("Settings", true));
         frame.render_widget(
             ratatui::widgets::Paragraph::new(lines)
                 .block(block)
@@ -275,13 +275,11 @@ impl MainTui {
                 .collect()
         };
 
-        let popup = Paragraph::new(lines).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(border_style(true))
-                .border_type(border_type(true))
-                .title(" Messages  (m: compose, i/Esc: close) "),
-        );
+        let popup =
+            Paragraph::new(lines).block(pane_block(true).title(plain_title(
+                "Messages · m: compose · i/Esc: close",
+                true,
+            )));
 
         frame.render_widget(ratatui::widgets::Clear, area);
         frame.render_widget(popup, area);
@@ -436,45 +434,39 @@ impl MainTui {
             more => format!("{} folders", more.len()),
         };
         let title = format!("Shortcuts · Sharing: {sharing}");
-        let shortcuts_widget = Paragraph::new(shortcuts_line).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(border_type(false))
-                .title(title),
-        );
+        let shortcuts_widget = Paragraph::new(shortcuts_line)
+            .block(pane_block(false).title(plain_title(title, false)));
 
         frame.render_widget(shortcuts_widget, area);
     }
 
     fn render_command_bar(&self, frame: &mut Frame, area: Rect) {
         let prefix = command_bar_prefix(self.state.command_bar_mode);
-        let content_width = area.width.saturating_sub(2);
+        let block = pane_block(true);
+        // Derive from the block's inner rect so borders and padding stay in
+        // one place; the cursor follows whatever the pane reserves.
+        let inner = block.inner(area);
         let prefix_width = prefix.chars().count() as u16;
-        let input_width = content_width.saturating_sub(prefix_width);
+        let input_width = inner.width.saturating_sub(prefix_width);
         let (visible_input, cursor_column) = visible_input_at_cursor(
             &self.state.command_bar_input,
             self.state.command_bar_cursor_position,
             input_width,
         );
-        let command_text = format!("{prefix}{visible_input}");
+        let command_line = Line::from(vec![
+            Span::styled(prefix, accent_style()),
+            Span::styled(visible_input, primary_style()),
+        ]);
 
-        let paragraph = Paragraph::new(command_text).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(border_style(true))
-                .border_type(border_type(true)),
-        );
+        frame.render_widget(Paragraph::new(command_line).block(block), area);
 
-        frame.render_widget(paragraph, area);
-
-        if area.width > 2 && area.height > 2 {
-            let cursor_x = area
+        if inner.width > 0 && inner.height > 0 {
+            let cursor_x = inner
                 .x
-                .saturating_add(1)
                 .saturating_add(prefix_width)
                 .saturating_add(cursor_column)
-                .min(area.x.saturating_add(area.width.saturating_sub(2)));
-            frame.set_cursor_position(Position::new(cursor_x, area.y + 1));
+                .min(inner.x.saturating_add(inner.width.saturating_sub(1)));
+            frame.set_cursor_position(Position::new(cursor_x, inner.y));
         }
     }
 }

@@ -5,14 +5,18 @@
 //! machine so it can be tested without a terminal; the IO loop
 //! ([`run_login_flow`]) drives it against a real terminal and client.
 
+use crate::ui::{
+    GLYPH_CURSOR, accent_style, dimmed_style, error_style, info_style,
+    pane_block, primary_style, title_style, warning_style,
+};
 use color_eyre::Result;
 use ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, poll},
     layout::{Constraint, Flex, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::Modifier,
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Clear, Paragraph},
 };
 use soulseek_rs::{Client, ClientSettings};
 use std::sync::mpsc::{Receiver, channel};
@@ -231,10 +235,10 @@ fn render(frame: &mut Frame, form: &LoginForm) {
     let area = centered(frame.area(), 52, 12);
     frame.render_widget(Clear, area);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Soulseek Login ")
-        .title_style(Style::default().add_modifier(Modifier::BOLD));
+    let block = pane_block(true).title(Line::from(vec![
+        Span::styled(" soulseek-rs", primary_style()),
+        Span::styled(" login ", title_style(true)),
+    ]));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -249,16 +253,19 @@ fn render(frame: &mut Frame, form: &LoginForm) {
     .split(inner);
 
     let field = |label: &str, value: String, focused: bool| {
-        let marker = if focused { "> " } else { "  " };
+        let marker = if focused { "› " } else { "  " };
         let style = if focused {
-            Style::default().add_modifier(Modifier::BOLD)
+            info_style().add_modifier(Modifier::BOLD)
         } else {
-            Style::default()
+            dimmed_style()
         };
         Paragraph::new(Line::from(vec![
             Span::styled(format!("{marker}{label:<10}"), style),
-            Span::raw(value),
-            Span::raw(if focused { "▏" } else { "" }),
+            Span::styled(value, primary_style()),
+            Span::styled(
+                if focused { GLYPH_CURSOR } else { "" },
+                accent_style(),
+            ),
         ]))
     };
 
@@ -284,10 +291,10 @@ fn render(frame: &mut Frame, form: &LoginForm) {
         LoginPhase::Editing => Paragraph::new(""),
         LoginPhase::Connecting => Paragraph::new(Line::from(Span::styled(
             "Connecting…",
-            Style::default().fg(Color::Yellow),
+            warning_style(),
         ))),
         LoginPhase::Failed(message) => Paragraph::new(Line::from(
-            Span::styled(message.clone(), Style::default().fg(Color::Red)),
+            Span::styled(message.clone(), error_style()),
         ))
         .wrap(ratatui::widgets::Wrap { trim: true }),
     };
@@ -298,7 +305,7 @@ fn render(frame: &mut Frame, form: &LoginForm) {
             "New usernames are registered automatically.\n\
              Tab: switch · Enter: log in · Esc: quit",
         )
-        .style(Style::default().fg(Color::DarkGray)),
+        .style(dimmed_style()),
         rows[5],
     );
 }
