@@ -1,10 +1,16 @@
 name: CI
 
+# Branch pushes are covered by the pull_request trigger. Listening to both for
+# every branch ran the whole matrix twice per PR.
 on:
   push:
-    branches: ['**']
+    branches: [master]
   pull_request:
     branches: ['**']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
