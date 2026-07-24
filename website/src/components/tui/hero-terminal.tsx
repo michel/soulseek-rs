@@ -79,14 +79,17 @@ export const HeroTerminal = () => {
   const [transfers, setTransfers] = useState<readonly TransferRow[]>(TRANSFERS)
   const [focus, setFocus] = useState(2)
 
-  // Reduced motion skips the performance, so the resting state is the initial
-  // state. Resolved once, in the initialiser, to keep it out of an effect.
-  const [phase, setPhase] = useState<Phase>(() =>
-    prefersReducedMotion() ? 'interactive' : 'searching',
-  )
-  const [selected, setSelected] = useState(() =>
-    prefersReducedMotion() ? RESTING_ROW : 0,
-  )
+  /*
+   * Both start where the prerendered HTML starts, whatever the OS says.
+   *
+   * Reading prefers-reduced-motion in the initialiser made the first client
+   * render disagree with the server for anyone who has it on: the server
+   * always serialises the searching state, the client painted the resting
+   * one, and React bailed out with a hydration mismatch (#418). The
+   * preference is applied a tick later instead, by the opening-run effect.
+   */
+  const [phase, setPhase] = useState<Phase>('searching')
+  const [selected, setSelected] = useState(0)
 
   const shellRef = useRef<HTMLDivElement>(null)
 
@@ -300,10 +303,23 @@ export const HeroTerminal = () => {
    * script only ever describes the opening state.
    */
   useEffect(() => {
-    if (prefersReducedMotion()) return
-
     const timers: ReturnType<typeof setTimeout>[] = []
     const at = (fn: () => void, ms: number) => timers.push(setTimeout(fn, ms))
+    const cancel = () => {
+      for (const timer of timers) clearTimeout(timer)
+    }
+
+    // Asked for no motion: cut to where the run would have ended. Deferred by
+    // a tick rather than decided in the state initialiser, so the first render
+    // still matches the prerendered HTML.
+    if (prefersReducedMotion()) {
+      at(() => {
+        setSelected(RESTING_ROW)
+        setPhase('interactive')
+      }, 0)
+      return cancel
+    }
+
     const mark = (i: number) => {
       setResults((prev) => ({
         ...prev,
@@ -343,9 +359,7 @@ export const HeroTerminal = () => {
       setPhase('interactive')
     }, 5050)
 
-    return () => {
-      for (const timer of timers) clearTimeout(timer)
-    }
+    return cancel
   }, [queueFrom])
 
   const submitSearch = (query: string) => {

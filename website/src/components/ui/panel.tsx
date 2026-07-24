@@ -42,6 +42,11 @@ interface CalloutProps {
  *
  * The tone lives in the label, not in a coloured left rule — one ribbon per
  * card is decoration, and the label was already saying the same thing twice.
+ *
+ * But hue alone cannot carry it: in the light theme --status-warning and
+ * --accent-text are exactly isoluminant (5.14:1 each on --bg-panel, 1.00:1
+ * against each other), so a red-green deficient reader sees one colour. The
+ * "!" is the second channel the left rule used to provide by sheer area.
  */
 export const Callout = ({ title, tone = 'accent', children, className }: CalloutProps) => (
   <div
@@ -58,6 +63,7 @@ export const Callout = ({ title, tone = 'accent', children, className }: Callout
           tone === 'warn' ? 'text-warning' : 'text-accent-text',
         )}
       >
+        {tone === 'warn' && <span aria-hidden="true">! </span>}
         {title}
       </div>
     )}

@@ -255,7 +255,13 @@ export const Install = () => {
               <h3 className="mb-4 text-heading leading-[var(--text-heading--line-height)] font-medium">
                 {platform.name}
               </h3>
-              <dl className="grid grid-cols-1 gap-x-3.5 gap-y-0.5 sm:grid-cols-[auto_1fr] sm:gap-y-2">
+              {/*
+                Label beside value while the card is full width, label above it
+                once the cards go three up: at a third of the row the label
+                column ate enough of the line that every path broke mid-token
+                ("config.to / ml"). Stacking gives the path the whole card.
+              */}
+              <dl className="grid grid-cols-1 gap-x-3.5 gap-y-0.5 sm:grid-cols-[auto_1fr] sm:gap-y-2 lg:grid-cols-1 lg:gap-y-0.5">
                 {(
                   [
                     ['Password', platform.credentialStore, false],
@@ -265,7 +271,7 @@ export const Install = () => {
                   ] as const
                 ).map(([label, value, mono]) => (
                   <div key={label} className="contents">
-                    <dt className="pt-2 text-[11px] uppercase tracking-[var(--tracking-label)] text-secondary sm:pt-0.5">
+                    <dt className="pt-2 text-[11px] uppercase tracking-[var(--tracking-label)] text-secondary sm:pt-0.5 lg:pt-2">
                       {label}
                     </dt>
                     <dd className="min-w-0 text-[12.5px] leading-[19px] text-primary">
@@ -333,7 +339,10 @@ export const Install = () => {
           />
         </Cols>
         <div className="mt-5">
-          <Callout title="two things it will not touch">
+          {/* Raised, not panel: this section is a band, which is itself
+              bg-panel — a panel-on-panel callout has only a 1.36:1 hairline
+              holding it together. */}
+          <Callout className="bg-raised" title="two things it will not touch">
             <p>
               Your downloads and your shared directories are yours: they stay exactly where
               they are. On macOS, delete the keychain entry for <code>soulseek-rs</code> in

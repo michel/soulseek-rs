@@ -204,7 +204,14 @@ export const Docs = () => {
       </Section>
 
       <Section band>
-        <Panel title="the rest">
+        {/*
+          The only Panel on a band. Two consequences, both handled here:
+          its default bg-panel fill would match the band exactly, so it takes
+          bg-raised like the band callouts do; and the legend paints over the
+          top border to punch the gap, so it has to match the surface *behind*
+          the panel — the band — not the panel's own fill. See panel.tsx.
+        */}
+        <Panel title="the rest" className="bg-raised [&>span]:bg-panel">
           <Cols center className="gap-6">
             <Prose>
               <p>
