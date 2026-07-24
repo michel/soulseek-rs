@@ -2,9 +2,16 @@ name: CI
 
 # Branch pushes are covered by the pull_request trigger. Listening to both for
 # every branch ran the whole matrix twice per PR.
+#
+# website/ holds the GitHub Pages site and no Rust. Ignoring it here must stay
+# in lockstep with the same list in release.yml: the two skip together, so the
+# release ci-gate never waits for a CI run that was never queued. Deliberately
+# not applied to pull_request — CI is a required check there, and a skipped
+# required check leaves the PR permanently unmergeable.
 on:
   push:
     branches: [master]
+    paths-ignore: ['website/**']
   pull_request:
     branches: ['**']
 
