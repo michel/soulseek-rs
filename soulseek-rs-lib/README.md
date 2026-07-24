@@ -13,7 +13,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-soulseek-rs-lib = "0.1.0"
+soulseek-rs-lib = "6"
 ```
 
 ## Example

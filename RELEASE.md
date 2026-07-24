@@ -73,5 +73,5 @@ verify it against the adjacent `.sha256`, and extract the binary.
 
 ```toml
 [dependencies]
-soulseek-rs-lib = "5"
+soulseek-rs-lib = "6"
 ```
