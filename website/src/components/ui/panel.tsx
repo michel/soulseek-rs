@@ -37,12 +37,16 @@ interface CalloutProps {
   className?: string
 }
 
-/** An aside with a coloured left rule. `warn` carries the tape amber. */
+/**
+ * An aside. `warn` carries the tape amber.
+ *
+ * The tone lives in the label, not in a coloured left rule — one ribbon per
+ * card is decoration, and the label was already saying the same thing twice.
+ */
 export const Callout = ({ title, tone = 'accent', children, className }: CalloutProps) => (
   <div
     className={cn(
-      'rounded-md border border-hairline border-l-[3px] bg-panel px-[18px] py-5 sm:px-[22px]',
-      tone === 'warn' ? 'border-l-warning' : 'border-l-accent',
+      'rounded-md border border-hairline bg-panel px-[18px] py-5 sm:px-[22px]',
       '[&>p]:leading-[25px] [&>p]:text-secondary',
       className,
     )}

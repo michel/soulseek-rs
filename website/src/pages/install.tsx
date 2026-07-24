@@ -122,7 +122,7 @@ export const Install = () => {
               opens.
             </p>
             <div className="flex flex-wrap gap-2 sm:gap-3">
-              <Button href={LINKS.releases}>Prebuilt binaries ↗</Button>
+              <Button href={LINKS.releases}>Prebuilt binaries</Button>
             </div>
             <p className="text-[13px] text-muted">
               No Rust toolchain? Grab a prebuilt archive for your platform from the{' '}

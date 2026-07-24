@@ -117,8 +117,7 @@ export const Home = () => {
             </div>
             <p className="text-lg leading-[29px] text-pretty text-secondary max-md:hidden">
               Search the network, share your files, browse someone&rsquo;s collection, join
-              a room. It runs over ssh on the machine where your music already lives, and
-              it&rsquo;s blazingly fast Rust 🦀.
+              a room. It runs over ssh on the machine where your music already lives.
             </p>
             <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 sm:gap-y-4">
               <div className="flex flex-wrap items-center gap-2 max-md:w-full max-md:justify-center sm:gap-3">
@@ -126,7 +125,7 @@ export const Home = () => {
                   Install
                 </Button>
                 <Button href="/docs">Read the docs</Button>
-                <Button href={LINKS.gh}>GitHub ↗</Button>
+                <Button href={LINKS.gh}>GitHub</Button>
               </div>
               <CommandPill text="cargo install soulseek-rs" />
             </div>
@@ -206,7 +205,7 @@ export const Home = () => {
                 Reach for <Code>soulseek-rs-lib</Code> to build a custom client or an agent
                 on the protocol directly.{' '}
                 <Link to="/install" className="text-link hover:text-link-hover">
-                  Use the library →
+                  Use the library
                 </Link>
               </p>
             </Callout>
@@ -217,7 +216,7 @@ export const Home = () => {
                 <Code>message</Code>, <Code>portmap</Code>. Point cron, a script, or an
                 agent at them and read the output back. No daemon, no API to stand up.{' '}
                 <Link to="/docs" className="text-link hover:text-link-hover">
-                  See the commands →
+                  See the commands
                 </Link>
               </p>
             </Callout>
@@ -231,14 +230,21 @@ export const Home = () => {
           shell, so the same client works for scripting, cron jobs, and agents driving it
           programmatically.
         </SectionHead>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {FEATURES.map((feature) => (
+        {/*
+          Three up, not four, with search spanning two of them: it's the thing
+          the client is for, and eight cards at identical weight said the
+          opposite. Eight items plus that one double = nine cells, so the grid
+          still comes out square.
+        */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {FEATURES.map((feature, i) => (
             <FeatureCard
               key={feature.title}
               glyph={feature.glyph}
               color={feature.color}
               title={feature.title}
               cmd={feature.cmd}
+              className={i === 0 ? 'lg:col-span-2' : ''}
             >
               {feature.body}
             </FeatureCard>

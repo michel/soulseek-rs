@@ -54,7 +54,10 @@ export const Nav = () => (
           rel="noopener noreferrer"
           className="inline-flex h-[38px] items-center gap-1.5 rounded-md border border-hairline px-2.5 font-mono text-xs text-secondary hover:border-line hover:bg-[var(--bg-selection)] hover:text-primary sm:h-8"
         >
-          GitHub <span aria-hidden="true">↗</span>
+          GitHub
+          <span aria-hidden="true" className="text-[0.85em] opacity-60">
+            ↗
+          </span>
         </a>
         <ThemeToggle />
       </div>

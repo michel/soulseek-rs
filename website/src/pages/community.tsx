@@ -159,9 +159,9 @@ export const Community = () => {
             </p>
             <div className="mt-1 flex flex-wrap gap-2 sm:gap-3">
               <Button href={LINKS.issues} variant="accent">
-                Open an issue ↗
+                Open an issue
               </Button>
-              <Button href={LINKS.gh}>GitHub ↗</Button>
+              <Button href={LINKS.gh}>GitHub</Button>
             </div>
           </Prose>
           <Terminal
@@ -226,7 +226,7 @@ export const Community = () => {
               <div className="flex flex-wrap gap-2 sm:gap-3">
                 {alt.links.map((link) => (
                   <Button key={link.label} href={link.href}>
-                    {link.label} ↗
+                    {link.label}
                   </Button>
                 ))}
               </div>
@@ -247,7 +247,7 @@ export const Community = () => {
             </p>
             <div className="mt-1 flex flex-wrap gap-2 sm:gap-3">
               <Button href={LINKS.license} variant="accent">
-                Read the license ↗
+                Read the license
               </Button>
             </div>
           </div>
