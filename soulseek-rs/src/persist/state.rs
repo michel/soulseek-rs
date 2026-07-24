@@ -1,4 +1,5 @@
-//! Versioned JSON state files (downloads, search queries, open rooms).
+//! Versioned JSON state files (downloads, search queries, open rooms,
+//! private-message history).
 //!
 //! Each file is an envelope `{ "version": N, "data": ... }`. On load the
 //! data passes through the migration chain from its stored version up to
@@ -22,6 +23,16 @@ pub struct PersistedDownload {
     pub size: u64,
     pub download_directory: String,
     pub completed: bool,
+}
+
+/// One line of private-message history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct PersistedMessage {
+    pub peer: String,
+    /// True when we sent it, false when the peer did.
+    pub outgoing: bool,
+    pub text: String,
+    pub at: chrono::DateTime<chrono::Local>,
 }
 
 pub struct StateStore {
@@ -72,6 +83,31 @@ impl StateStore {
             &rooms,
         )
     }
+
+    pub fn load_messages(&self) -> Vec<PersistedMessage> {
+        load(&self.dir.join("messages.json"), MESSAGES_MIGRATIONS)
+    }
+
+    pub fn save_messages(&self, messages: &[PersistedMessage]) -> Result<()> {
+        save(
+            &self.dir.join("messages.json"),
+            MESSAGES_MIGRATIONS.len() as u32,
+            &messages,
+        )
+    }
+
+    /// The unread private-message count, so the badge survives a restart.
+    pub fn load_unread(&self) -> usize {
+        load(&self.dir.join("unread.json"), UNREAD_MIGRATIONS)
+    }
+
+    pub fn save_unread(&self, unread: usize) -> Result<()> {
+        save(
+            &self.dir.join("unread.json"),
+            UNREAD_MIGRATIONS.len() as u32,
+            &unread,
+        )
+    }
 }
 
 /// Per-file migration chains. `data` at version `i` is upgraded by
@@ -80,6 +116,8 @@ impl StateStore {
 const DOWNLOADS_MIGRATIONS: &[Migration] = &[];
 const SEARCHES_MIGRATIONS: &[Migration] = &[];
 const ROOMS_MIGRATIONS: &[Migration] = &[];
+const MESSAGES_MIGRATIONS: &[Migration] = &[];
+const UNREAD_MIGRATIONS: &[Migration] = &[];
 
 /// Load `data` from an envelope file, migrating old versions forward.
 /// Missing, corrupt, or newer-than-known files all yield `T::default()`.
@@ -176,6 +214,28 @@ mod tests {
         let downloads = vec![sample_download()];
         store.save_downloads(&downloads).unwrap();
         assert_eq!(store.load_downloads(), downloads);
+    }
+
+    #[test]
+    fn messages_round_trip_including_the_timestamp() {
+        let (_tmp, store) = store();
+        let messages = vec![PersistedMessage {
+            peer: "alice".into(),
+            outgoing: true,
+            text: "hey".into(),
+            at: chrono::Local::now(),
+        }];
+        store.save_messages(&messages).unwrap();
+        assert_eq!(store.load_messages(), messages);
+    }
+
+    #[test]
+    fn unread_count_round_trips_and_defaults_to_zero() {
+        let (_tmp, store) = store();
+        // Missing file → no unread, so a fresh install shows no badge.
+        assert_eq!(store.load_unread(), 0);
+        store.save_unread(4).unwrap();
+        assert_eq!(store.load_unread(), 4);
     }
 
     #[test]

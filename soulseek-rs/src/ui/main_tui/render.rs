@@ -1,17 +1,18 @@
 use super::MainTui;
-use crate::models::{CommandBarMode, FocusedPane, MessageDirection, RoomsView};
+use crate::models::{CommandBarMode, FocusedPane, RoomsView};
 use crate::ui::panes::{
-    ResultsPaneParams, render_browse_pane, render_download_info_pane,
-    render_downloads_pane, render_results_pane, render_rooms_pane,
-    render_searches_pane,
+    ResultsPaneParams, render_browse_pane, render_chat_pane,
+    render_download_info_pane, render_downloads_pane, render_results_pane,
+    render_rooms_pane, render_searches_pane, selected_transfer,
 };
 use crate::ui::{
-    accent_style, format_shortcuts_styled, pane_block, plain_title,
-    primary_style, render_download_stats,
+    accent_style, dimmed_style, format_shortcuts_styled, pane_block,
+    plain_title, primary_style, render_download_stats, warning_style,
 };
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Position, Rect},
+    layout::{Alignment, Constraint, Layout, Position, Rect},
+    style::Modifier,
     text::{Line, Span},
     widgets::Paragraph,
 };
@@ -141,15 +142,15 @@ impl MainTui {
             self.state.focused_pane == FocusedPane::Downloads,
         );
 
-        let selected_download = self
-            .state
-            .downloads_table_state
-            .selected()
-            .and_then(|idx| self.state.downloads.get(idx));
+        let selected_transfer = selected_transfer(
+            self.state.downloads_table_state.selected(),
+            &self.state.downloads,
+            &self.state.uploads,
+        );
         render_download_info_pane(
             frame,
             downloads_chunks[1],
-            selected_download,
+            selected_transfer,
             self.state.focused_pane == FocusedPane::Downloads,
         );
     }
@@ -251,38 +252,11 @@ impl MainTui {
     }
 
     fn render_messages_popup(&self, frame: &mut Frame) {
+        // The per-conversation chat box supersedes the old flat message list;
+        // it renders the messages and the compose line itself.
         let area = centered_rect(70, 60, frame.area());
-
-        let lines: Vec<ratatui::text::Line> = if self.state.messages.is_empty()
-        {
-            vec![ratatui::text::Line::from(
-                "No messages yet. Press 'm' to send one.",
-            )]
-        } else {
-            self.state
-                .messages
-                .iter()
-                .map(|m| {
-                    let (arrow, who) = match m.direction {
-                        MessageDirection::Incoming => ("⇦ from", &m.peer),
-                        MessageDirection::Outgoing => ("⇨ to  ", &m.peer),
-                    };
-                    ratatui::text::Line::from(format!(
-                        "{arrow} {who}: {}",
-                        m.text
-                    ))
-                })
-                .collect()
-        };
-
-        let popup =
-            Paragraph::new(lines).block(pane_block(true).title(plain_title(
-                "Messages · m: compose · i/Esc: close",
-                true,
-            )));
-
         frame.render_widget(ratatui::widgets::Clear, area);
-        frame.render_widget(popup, area);
+        render_chat_pane(frame, area, &self.state, self.client.username());
     }
 
     /// Context shortcuts for the chat-rooms popup.
@@ -325,19 +299,6 @@ impl MainTui {
     }
 
     fn render_shortcuts(&self, frame: &mut Frame, area: Rect) {
-        // Unread badges for the inbox and chat shortcuts.
-        let inbox_label = if self.state.unread_messages > 0 {
-            format!("inbox ({})", self.state.unread_messages)
-        } else {
-            "inbox".to_string()
-        };
-        let chat_unread = self.state.rooms.total_unread();
-        let chat_label = if chat_unread > 0 {
-            format!("chat ({chat_unread})")
-        } else {
-            "chat".to_string()
-        };
-
         let shortcuts = if self.state.settings.is_some() {
             vec![
                 ("↑↓", "move"),
@@ -347,6 +308,21 @@ impl MainTui {
                 ("r", "re-index"),
                 ("Esc", "close"),
             ]
+        } else if self.state.show_messages {
+            if self.state.chat_composing {
+                vec![
+                    ("Type", "message"),
+                    ("Enter", "send"),
+                    ("Esc", "stop typing"),
+                ]
+            } else {
+                vec![
+                    ("Enter", "type"),
+                    ("↑↓/Tab", "switch chat"),
+                    ("m", "new chat"),
+                    ("i/Esc", "close"),
+                ]
+            }
         } else if self.state.show_rooms {
             self.rooms_shortcuts()
         } else if self.state.show_browse {
@@ -385,8 +361,8 @@ impl MainTui {
                 FocusedPane::Searches => vec![
                     ("s", "search"),
                     ("m", "message"),
-                    ("i", inbox_label.as_str()),
-                    ("c", chat_label.as_str()),
+                    ("i", "inbox"),
+                    ("c", "chat"),
                     ("b", "browse user"),
                     ("1-3", "focus pane"),
                     ("↑↓", "navigate"),
@@ -405,7 +381,7 @@ impl MainTui {
                     ("Space", "select"),
                     ("Enter", "download"),
                     ("b", "browse owner"),
-                    ("c", chat_label.as_str()),
+                    ("c", "chat"),
                     ("/", "filter"),
                     ("a/A", "select all/none"),
                     ("1-3", "focus pane"),
@@ -434,10 +410,37 @@ impl MainTui {
             more => format!("{} folders", more.len()),
         };
         let title = format!("Shortcuts · Sharing: {sharing}");
-        let shortcuts_widget = Paragraph::new(shortcuts_line)
-            .block(pane_block(false).title(plain_title(title, false)));
+        // Themed block (master's design system), but we take its inner area so
+        // the unread badge can be split off to the right below.
+        let block = pane_block(false).title(plain_title(title, false));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
 
-        frame.render_widget(shortcuts_widget, area);
+        // A prominent unread badge, right-aligned so the context shortcuts on
+        // the left never crowd it out. It rides in the always-visible shortcuts
+        // bar, so unread mail/chat shows in every pane, not just some. The
+        // spinner tick (0..10, ~100ms each) drives a ~1s blink: bright for the
+        // first half of the cycle, dim for the second.
+        let unread = unread_indicator(
+            self.state.unread_messages,
+            self.state.rooms.total_unread(),
+            self.spinner_state < 5,
+        );
+        if unread.spans.is_empty() {
+            frame.render_widget(Paragraph::new(shortcuts_line), inner);
+        } else {
+            let badge_width = unread.width() as u16;
+            let cols = Layout::horizontal([
+                Constraint::Fill(1),
+                Constraint::Length(badge_width),
+            ])
+            .split(inner);
+            frame.render_widget(Paragraph::new(shortcuts_line), cols[0]);
+            frame.render_widget(
+                Paragraph::new(unread).alignment(Alignment::Right),
+                cols[1],
+            );
+        }
     }
 
     fn render_command_bar(&self, frame: &mut Frame, area: Rect) {
@@ -487,6 +490,38 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     .split(vertical[1])[1]
 }
 
+/// Build the shortcuts-bar unread badge: `✉ N` for unread private messages and
+/// `💬 N` for unread chat-room messages. Returns an empty line when nothing is
+/// unread so the caller can skip it.
+///
+/// `bright` drives a self-drawn blink: the caller flips it on a timer so the
+/// badge pulses between bold warning colour and dim. We do the blink ourselves
+/// rather than lean on the terminal's SLOW_BLINK attribute, which tmux and most
+/// macOS terminals silently drop. The text is identical in both phases, so the
+/// badge keeps its width and the bar never reflows.
+fn unread_indicator(
+    messages: usize,
+    rooms: usize,
+    bright: bool,
+) -> Line<'static> {
+    let mut counts: Vec<String> = Vec::new();
+    if messages > 0 {
+        counts.push(format!("✉ {messages}"));
+    }
+    if rooms > 0 {
+        counts.push(format!("💬 {rooms}"));
+    }
+    if counts.is_empty() {
+        return Line::from(Vec::new());
+    }
+    let style = if bright {
+        warning_style().add_modifier(Modifier::BOLD)
+    } else {
+        dimmed_style()
+    };
+    Line::from(Span::styled(format!("⟨ {} ⟩", counts.join("  ")), style))
+}
+
 fn visible_input_at_cursor(
     input: &str,
     cursor_position: usize,
@@ -512,4 +547,47 @@ fn visible_input_at_cursor(
         .min(max_cursor_column);
 
     (visible_input, cursor_column as u16)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unread_indicator;
+
+    fn text(messages: usize, rooms: usize) -> String {
+        unread_indicator(messages, rooms, true)
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect()
+    }
+
+    #[test]
+    fn unread_indicator_is_empty_when_nothing_is_unread() {
+        // Empty in both blink phases — no badge means no badge.
+        assert!(unread_indicator(0, 0, true).spans.is_empty());
+        assert!(unread_indicator(0, 0, false).spans.is_empty());
+    }
+
+    #[test]
+    fn unread_indicator_shows_each_source_and_both_together() {
+        // Bracketed so the badge reads as one distinct block.
+        assert_eq!(text(3, 0), "⟨ ✉ 3 ⟩");
+        assert_eq!(text(0, 2), "⟨ 💬 2 ⟩");
+        // Both present: DMs first, rooms second, separated so they don't run
+        // together.
+        assert_eq!(text(3, 2), "⟨ ✉ 3  💬 2 ⟩");
+    }
+
+    #[test]
+    fn blink_phases_share_text_but_differ_in_style() {
+        // The self-drawn blink must keep the same glyphs (so the bar never
+        // reflows) while changing style, or it would not read as blinking.
+        let bright = unread_indicator(1, 0, true);
+        let dim = unread_indicator(1, 0, false);
+        assert_eq!(bright.spans[0].content, dim.spans[0].content);
+        assert_ne!(
+            bright.spans[0].style, dim.spans[0].style,
+            "bright and dim phases must look different"
+        );
+    }
 }

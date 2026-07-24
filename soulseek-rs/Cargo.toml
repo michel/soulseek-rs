@@ -39,6 +39,7 @@ directories = "6"
 # + async-io + crypto-rust) instead of sync-secret-service, which links the
 # system libdbus and breaks builds without libdbus-1-dev.
 keyring = { version = "3", features = ["apple-native", "windows-native", "async-secret-service", "async-io", "crypto-rust"] }
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -8,7 +8,7 @@ mod settings;
 
 use crate::models::AppState;
 use crate::persist::{
-    snapshot::{Snapshot, restore_searches},
+    snapshot::{Snapshot, restore_messages, restore_searches},
     state::StateStore,
 };
 use color_eyre::Result;
@@ -61,6 +61,10 @@ impl MainTui {
         let Some(store) = &self.store else { return };
 
         restore_searches(&mut self.state, &store.load_search_queries());
+        restore_messages(&mut self.state, &store.load_messages());
+        // Restore the unread badge so messages left unread carry over. Set
+        // before the baseline snapshot below so it isn't seen as a change.
+        self.state.unread_messages = store.load_unread();
 
         for room in store.load_rooms() {
             if self.state.rooms.focus_or_open(&room)
@@ -138,6 +142,16 @@ impl MainTui {
             && let Err(e) = store.save_rooms(&snapshot.rooms)
         {
             soulseek_rs::warn!("Could not save room state: {e}");
+        }
+        if snapshot.messages != self.saved_snapshot.messages
+            && let Err(e) = store.save_messages(&snapshot.messages)
+        {
+            soulseek_rs::warn!("Could not save message history: {e}");
+        }
+        if snapshot.unread_messages != self.saved_snapshot.unread_messages
+            && let Err(e) = store.save_unread(snapshot.unread_messages)
+        {
+            soulseek_rs::warn!("Could not save unread count: {e}");
         }
         self.saved_snapshot = snapshot;
     }

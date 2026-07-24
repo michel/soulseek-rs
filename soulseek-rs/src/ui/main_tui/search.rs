@@ -3,6 +3,7 @@ use crate::models::{
     ChatMessage, FileDisplayData, FocusedPane, MessageDirection, SearchEntry,
     SearchStatus,
 };
+use chrono::Local;
 use std::{
     sync::{Arc, atomic::AtomicBool},
     thread,
@@ -105,6 +106,7 @@ impl MainTui {
                 direction: MessageDirection::Incoming,
                 peer: msg.username().to_string(),
                 text: msg.message().to_string(),
+                at: Local::now(),
             });
             // Badge the inbox when it isn't currently open.
             if !self.state.show_messages {
@@ -126,13 +128,43 @@ impl MainTui {
         }
 
         match self.client.send_private_message(recipient, text) {
+            Ok(()) => {
+                self.state.messages.push(ChatMessage {
+                    direction: MessageDirection::Outgoing,
+                    peer: recipient.to_string(),
+                    text: text.to_string(),
+                    at: Local::now(),
+                });
+                // Land in the chat box on the conversation just started.
+                self.state.open_chat(recipient.to_string());
+                self.state.chat_composing = false;
+            }
+            Err(e) => soulseek_rs::warn!("Failed to send message: {e}"),
+        }
+    }
+
+    /// Send the chat popup's compose buffer to the active conversation,
+    /// staying in compose mode so a reply can follow immediately.
+    pub(super) fn send_chat_message(&mut self) {
+        let Some(peer) = self.state.active_chat_peer().map(ToString::to_string)
+        else {
+            return;
+        };
+        let text = self.state.chat_input.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+
+        match self.client.send_private_message(&peer, &text) {
             Ok(()) => self.state.messages.push(ChatMessage {
                 direction: MessageDirection::Outgoing,
-                peer: recipient.to_string(),
-                text: text.to_string(),
+                peer,
+                text,
+                at: Local::now(),
             }),
             Err(e) => soulseek_rs::warn!("Failed to send message: {e}"),
         }
+        self.state.chat_input.clear();
     }
 
     pub(super) fn start_search(&mut self, query: String) {

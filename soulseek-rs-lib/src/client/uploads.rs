@@ -32,6 +32,7 @@ impl Client {
                 bytes_sent: bytes_sent.clone(),
                 cancel: cancel.clone(),
                 status: UploadStatus::InProgress,
+                started: std::time::Instant::now(),
             },
         );
         drop(ctx);

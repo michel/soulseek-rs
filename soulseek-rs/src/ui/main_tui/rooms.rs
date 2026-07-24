@@ -1,5 +1,5 @@
 use super::MainTui;
-use crate::models::{CommandBarMode, RoomsView};
+use crate::models::RoomsView;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl MainTui {
@@ -126,16 +126,11 @@ impl MainTui {
     }
 
     /// Compose a private message to the member highlighted in the active room.
-    /// Closes the rooms popup and opens the message command bar pre-filled with
-    /// the recipient.
+    /// Closes the rooms popup and opens the chat box on that conversation.
     fn message_selected_room_user(&mut self) {
         if let Some(user) = self.state.rooms.selected_user() {
             self.state.show_rooms = false;
-            self.state.command_bar_active = true;
-            self.state.command_bar_mode = CommandBarMode::Message;
-            self.state.command_bar_input = format!("{user} ");
-            self.state.command_bar_cursor_position =
-                self.state.command_bar_input.len();
+            self.state.open_chat(user);
         }
     }
 

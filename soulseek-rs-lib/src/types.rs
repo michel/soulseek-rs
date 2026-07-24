@@ -271,4 +271,7 @@ pub struct UploadInfo {
     pub size: u64,
     pub bytes_sent: u64,
     pub status: UploadStatus,
+    /// Transfer rate, so an upload row can fill the same Speed column a
+    /// download does. Zero unless the upload is in progress.
+    pub speed_bytes_per_sec: f64,
 }
