@@ -609,7 +609,10 @@ impl PeerActor {
 
     fn disconnect_with_error(&mut self, error: Error) {
         let username = self.peer_username();
-        debug!("[peer:{}] disconnect", username);
+        // Include the cause: a failed outbound dial reports nothing else, so
+        // without it an unreachable peer is indistinguishable from a clean
+        // disconnect in the logs.
+        debug!("[peer:{}] disconnect: {}", username, error);
 
         self.stream.take();
 

@@ -1528,8 +1528,13 @@ fn a_third_party_client_browses_our_shares_via_the_server_broker() {
 
     // The third-party client listens and advertises its port, then asks the
     // server to broker a P connection from the sharer.
+    //
+    // Bind every interface, not just loopback: the server brokers back the
+    // address it observed for this client, which is the host's routable IP
+    // (172.17.0.2 under Docker, 10.x on a CI runner), not 127.0.0.1. A
+    // loopback-only listener refuses that dial and the browse never arrives.
     let listener =
-        std::net::TcpListener::bind("127.0.0.1:0").expect("browser listener");
+        std::net::TcpListener::bind("0.0.0.0:0").expect("browser listener");
     let browser_port = listener.local_addr().unwrap().port();
     let server_addr = format!("{}:{}", server.host, server.port);
     let mut srv = login_raw(&server_addr, "e2e_qt_brok_browser", "pw")
