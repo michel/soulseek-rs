@@ -1,7 +1,7 @@
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="website/public/logo-ink.svg">
-    <img src="website/public/logo-light.svg" alt="soulseek-rs" width="132">
+    <source media="(prefers-color-scheme: dark)" srcset="website/public/wordmark-on-dark.svg">
+    <img src="website/public/wordmark-on-light.svg" alt="soulseek-rs" width="340">
   </picture>
 </div>
 
