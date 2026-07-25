@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.1.0](https://github.com/michel/soulseek-rs/compare/v7.0.0...v7.1.0) - 2026-07-25
+
+### Added
+
+- *(tui)* give the panes the colour the demo promised
+
+### Fixed
+
+- *(lib)* give the login verdict the wait the caller already allows
+
 ## [7.0.0](https://github.com/michel/soulseek-rs/compare/v6.0.0...v7.0.0) - 2026-07-25
 
 ### Added
