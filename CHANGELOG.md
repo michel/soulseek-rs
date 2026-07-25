@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.0.0](https://github.com/michel/soulseek-rs/compare/v7.1.0...v8.0.0) - 2026-07-25
+
+### Added
+
+- log in with soulseek-rs's own client major version (176) ([#13](https://github.com/michel/soulseek-rs/pull/13))
+
 ## [7.1.0](https://github.com/michel/soulseek-rs/compare/v7.0.0...v7.1.0) - 2026-07-25
 
 ### Added
