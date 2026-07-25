@@ -262,23 +262,12 @@ export const Home = () => {
           A CLI an agent can drive is not the same as a CLI an agent knows how to drive.
           <Code>skills install</Code> closes that gap in one command.
         </SectionHead>
-        <Cols start>
-          <Terminal
-            label="your agent, after skills install"
-            lines={[
-              { t: 'cm', text: '"get me Geogaddi in FLAC, only peers with a free slot"' },
-              {
-                t: 'cmd',
-                text: 'soulseek-rs search "boards of canada geogaddi" \\',
-              },
-              { t: 'code', text: '    --free-slots --json \\' },
-              { t: 'code', text: "    | jq -c 'select(.path | endswith(\".flac\"))' \\" },
-              { t: 'code', text: '    | soulseek-rs download --stdin --json' },
-              { t: 'out', text: '{"file":"~/Music/Soulseek/01 Ready Lets Go.flac",…}' },
-              { t: 'cm', text: '# 23 tracks. no wrapper script, no hand-holding.' },
-            ]}
-          />
-          <Prose>
+        <img
+          src={`${import.meta.env.BASE_URL}agent-demo.svg`}
+          alt="an agent loading the soulseek-rs skill and downloading tracks"
+          className="w-full"
+        />
+        <Prose className="mt-11 max-w-[660px]">
             <p>
               <Code>--help</Code> lists flags. It cannot say which JSON keys a record
               carries, that exit 4 means widen the query rather than retry it, that a
@@ -300,8 +289,7 @@ export const Home = () => {
                 See the commands
               </Link>
             </p>
-          </Prose>
-        </Cols>
+        </Prose>
       </Section>
 
       <Section band>
