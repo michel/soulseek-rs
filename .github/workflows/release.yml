@@ -135,7 +135,10 @@ jobs:
   binaries:
     name: ${{ matrix.target }}
     needs: release
-    if: needs.release.outputs.created == 'true' || inputs.tag != ''
+    # `github.event.inputs`, not `inputs`: the latter is empty in a job-level
+    # condition on workflow_dispatch, and `null != ''` coerces to false, which
+    # silently skipped this job on every manual recovery run.
+    if: needs.release.outputs.created == 'true' || github.event.inputs.tag != ''
     runs-on: ${{ matrix.os }}
     strategy:
       # One flaky cross-linker must not hold back the five targets that built.
@@ -192,7 +195,7 @@ jobs:
   homebrew:
     name: Homebrew tap
     needs: [release, binaries]
-    if: needs.release.outputs.created == 'true' || inputs.tag != ''
+    if: needs.release.outputs.created == 'true' || github.event.inputs.tag != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
