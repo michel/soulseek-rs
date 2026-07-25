@@ -6,7 +6,7 @@ interface WrapProps {
 }
 
 export const Wrap = ({ children, className }: WrapProps) => (
-  <div className={cn('mx-auto w-full max-w-[1140px] px-[18px] sm:px-7', className)}>
+  <div className={cn('mx-auto w-full max-w-[1140px] px-6 sm:px-7', className)}>
     {children}
   </div>
 )

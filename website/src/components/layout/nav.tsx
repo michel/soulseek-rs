@@ -14,7 +14,7 @@ const ITEMS = [
 
 export const Nav = () => (
   <header className="sticky top-0 z-50 border-b border-hairline bg-[color-mix(in_srgb,var(--bg-base)_88%,transparent)] backdrop-blur-[8px]">
-    <div className="mx-auto flex max-w-[1140px] flex-wrap items-center gap-x-4 gap-y-3 px-[18px] pt-2.5 sm:h-[60px] sm:flex-nowrap sm:gap-6 sm:px-7 sm:pt-0">
+    <div className="mx-auto flex max-w-[1140px] flex-wrap items-center gap-x-4 gap-y-3 px-6 pt-2.5 sm:h-[60px] sm:flex-nowrap sm:gap-6 sm:px-7 sm:pt-0">
       <NavLink
         to="/"
         aria-label="soulseek-rs home"
