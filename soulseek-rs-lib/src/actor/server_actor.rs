@@ -35,6 +35,11 @@ use std::time::{Duration, Instant};
 
 use crate::{SoulseekRs, debug, error, trace, warn};
 
+/// Ceiling on the wait for the server's login verdict. A loaded server can
+/// take seconds to answer, so this stays inside the caller's own 45s bound
+/// rather than undercutting it.
+const LOGIN_VERDICT_TIMEOUT: Duration = Duration::from_secs(30);
+
 #[derive(Debug, Clone)]
 pub struct PeerAddress {
     host: String,
@@ -642,12 +647,11 @@ impl ServerActor {
         ));
 
         let start = std::time::Instant::now();
-        let timeout = Duration::from_secs(5);
 
         let context = self.context.clone();
         std::thread::spawn(move || {
             loop {
-                if start.elapsed() >= timeout {
+                if start.elapsed() >= LOGIN_VERDICT_TIMEOUT {
                     let _ = response.send(Err(SoulseekRs::Timeout));
                     break;
                 }
