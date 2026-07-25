@@ -94,6 +94,7 @@ fn help_lists_every_scriptable_command() {
     let help = stdout(&output);
     for command in [
         "search", "download", "get", "browse", "room", "message", "portmap",
+        "skills",
     ] {
         assert!(help.contains(command), "--help should mention {command}");
     }
@@ -253,6 +254,82 @@ fn quiet_keeps_progress_off_stderr() {
         records(&loud).len(),
         records(&quiet).len(),
         "--quiet must not change the records"
+    );
+}
+
+/// What the first record says happened, parsed rather than matched as text.
+fn action(output: &Output) -> String {
+    let record: serde_json::Value =
+        serde_json::from_str(records(output).first().expect("one record"))
+            .expect("valid JSON");
+    record["action"]
+        .as_str()
+        .expect("a record carries an action")
+        .to_string()
+}
+
+#[test]
+fn installing_the_skill_is_repeatable_and_reversible() {
+    let target = Scratch::new("skills");
+    let dir = target.display();
+    let installed = target.path().join("soulseek-rs").join("SKILL.md");
+
+    let first = run(&["--json", "skills", "install", "--dir", &dir]);
+    assert_eq!(code(&first), EXIT_OK, "stderr: {}", stderr(&first));
+    assert_eq!(action(&first), "installed");
+    let written = std::fs::read_to_string(&installed).expect("a skill file");
+    assert!(written.contains("name: soulseek-rs"));
+    assert!(written.contains("--json"));
+
+    let second = run(&["--json", "skills", "install", "--dir", &dir]);
+    assert_eq!(
+        action(&second),
+        "unchanged",
+        "reinstalling is how you update"
+    );
+
+    // A neighbour in the same folder proves the sweep removes our file rather
+    // than the directory it happened to be sitting in.
+    let neighbour = installed.with_file_name("notes.md");
+    std::fs::write(&neighbour, "mine").expect("a neighbouring file");
+
+    let removed = run(&["--json", "skills", "uninstall", "--dir", &dir]);
+    assert_eq!(action(&removed), "removed");
+    assert!(!installed.exists());
+    assert!(neighbour.exists(), "a file we did not write must survive");
+
+    let again = run(&["--json", "skills", "uninstall", "--dir", &dir]);
+    assert_eq!(code(&again), EXIT_OK, "removing nothing is not a failure");
+    assert_eq!(action(&again), "absent");
+}
+
+/// A mistyped `--dir` names somebody else's directory far more often than it
+/// names one of ours, so uninstall has to leave it standing.
+#[test]
+fn uninstall_leaves_a_skill_it_did_not_write() {
+    let target = Scratch::new("skills-foreign");
+    let foreign = target.path().join("soulseek-rs").join("SKILL.md");
+    std::fs::create_dir_all(foreign.parent().expect("a parent"))
+        .expect("mkdir");
+    std::fs::write(&foreign, "---\nname: someone-else\n---\n").expect("write");
+
+    let output =
+        run(&["--json", "skills", "uninstall", "--dir", &target.display()]);
+    assert_eq!(code(&output), EXIT_OK);
+    assert_eq!(action(&output), "absent");
+    assert!(foreign.exists(), "a foreign skill must survive");
+}
+
+#[test]
+fn listing_skills_reports_without_writing_anything() {
+    let target = Scratch::new("skills-list");
+
+    let output = run(&["--json", "skills", "list", "--dir", &target.display()]);
+    assert_eq!(code(&output), EXIT_OK);
+    assert_eq!(action(&output), "absent");
+    assert!(
+        !target.path().join("soulseek-rs").exists(),
+        "list must not create anything"
     );
 }
 

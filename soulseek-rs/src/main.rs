@@ -61,6 +61,9 @@ fn run(mut cli: Cli, out: &Out) -> CliResult {
         Commands::Portmap => {
             return commands::portmap(out, resolved.listener_port);
         }
+        Commands::Skills(ref command) => {
+            return commands::skills::run(out, command);
+        }
         Commands::Config(ConfigCommand::Path) => {
             return commands::settings::config_path(out, &store);
         }

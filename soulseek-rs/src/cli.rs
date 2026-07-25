@@ -26,6 +26,7 @@ Examples:
   soulseek-rs room listen lobby --follow        stream room chat
   soulseek-rs serve --follow --json             share files, stream upload events
   soulseek-rs user someuser                     is this peer online and worth it
+  soulseek-rs skills install                    teach your coding agent this CLI
 
 Exit codes:
   0 success   2 usage/config   3 connect or login   4 no results
@@ -193,6 +194,32 @@ pub enum Commands {
 
     /// Check whether the router opens the listen port (UPnP/NAT-PMP)
     Portmap,
+
+    /// Teach a local coding agent this command surface
+    #[command(subcommand)]
+    Skills(SkillsCommand),
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SkillsCommand {
+    /// Write the skill into every agent found on this machine, replacing an
+    /// older copy
+    Install(SkillsArgs),
+
+    /// Remove the skill again
+    Uninstall(SkillsArgs),
+
+    /// Show where the skill goes and what is there now
+    List(SkillsArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct SkillsArgs {
+    /// Skills directory to use instead of the agents found on this machine;
+    /// repeat for several. Use `--dir .claude/skills` to commit the skill
+    /// alongside a project
+    #[arg(long, value_name = "PATH", action = ArgAction::Append)]
+    pub dir: Vec<PathBuf>,
 }
 
 #[derive(Args, Debug)]
@@ -586,6 +613,24 @@ mod tests {
             parse(&["soulseek-rs", "message", "read", "--follow"]).command,
             Some(Commands::Message(MessageCommand::Read { follow: true, .. }))
         ));
+    }
+
+    #[test]
+    fn skills_dir_repeats_into_a_list() {
+        let cli = parse(&[
+            "soulseek-rs",
+            "skills",
+            "install",
+            "--dir",
+            "/a",
+            "--dir",
+            "/b",
+        ]);
+        let Some(Commands::Skills(SkillsCommand::Install(args))) = cli.command
+        else {
+            panic!("expected skills install");
+        };
+        assert_eq!(args.dir, [PathBuf::from("/a"), PathBuf::from("/b")]);
     }
 
     #[test]
