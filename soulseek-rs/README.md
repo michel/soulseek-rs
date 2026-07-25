@@ -1,26 +1,66 @@
 # soulseek-rs
 
-A command-line client for the Soulseek peer-to-peer network.
+A Soulseek client for the terminal: a full-screen TUI, and a one-shot command
+surface built for scripts and agents.
 
 ## Installation
 
-`bash cargo install soulseek-rs `
-
-This will install the `soulseek-rs` binary to your system.
+```bash
+cargo install soulseek-rs
+```
 
 ## Usage
 
-The client provides a simple interface to search and download files from the
-Soulseek network.
+Run it with no subcommand for the interactive TUI:
+
+```bash
+soulseek-rs
+```
+
+Anything else is a one-shot command that runs headless. stdout carries records
+only, stderr carries progress, and the exit code carries the verdict:
+
+```bash
+soulseek-rs search <QUERY>                # print matching files
+soulseek-rs get <QUERY>                   # search, pick the best, download
+soulseek-rs download <USER> <PATH>        # fetch one known file
+soulseek-rs download --stdin              # fetch files listed on stdin
+soulseek-rs browse <USER>                 # list a user's shared files
+soulseek-rs serve [--follow]              # stay online sharing, stream uploads
+soulseek-rs whoami                        # confirm credentials and connection
+soulseek-rs user <NAME>                   # a peer's status and share counts
+soulseek-rs room list|say|users|listen
+soulseek-rs message send|read
+soulseek-rs shares list|add|remove|status|reindex
+soulseek-rs config path|list|get|set
+soulseek-rs portmap                       # test automatic port mapping
+```
+
+Add `--json` for newline-delimited JSON instead of tab-separated text, so
+commands compose:
+
+```bash
+soulseek-rs search "rjd2" --json \
+  | jq -c 'select(.size > 5000000 and .free_slot)' \
+  | soulseek-rs download --stdin
+```
+
+Exit codes: `0` success, `2` usage or config, `3` connect or login, `4` nothing
+found, `5` timed out, `6` transfer failed, `1` unexpected error.
+
+The [full README](https://github.com/michel/soulseek-rs#readme) documents every
+command, record shape, flag, environment variable and `config.toml` key.
 
 ## Building from Source
 
-````bash git clone https://github.com/yourusername/soulseek-rs cd soulseek-rs
-cargo build --release ```
+```bash
+git clone https://github.com/michel/soulseek-rs.git
+cd soulseek-rs
+cargo build --release
+```
 
 ## Library
 
-If you want to build your own Soulseek client, check out the
-[soulseek-rs-lib](https://crates.io/crates/soulseek-rs-lib) library crate.
-
-````
+To build your own Soulseek client, use the
+[soulseek-rs-lib](https://crates.io/crates/soulseek-rs-lib) crate: the protocol
+implementation this client is built on.

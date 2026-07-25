@@ -10,10 +10,10 @@ music enthusiasts around the world to share niche music.
 
 ## Features
 
-- **Search & download** — search the network, pick results in the TUI, and
-  queue downloads with pause, resume, and retry
-- **Sharing** — point `--shared-dir` at a directory and your files show up in
-  searches; peers can browse and download them
+- **Search & download** — search the network and queue downloads in the TUI,
+  or fetch a track in one command with `get`
+- **Sharing** — `shares add` a directory and your files show up in searches;
+  `serve` stays online so peers can browse and download them
 - **Browse** — list any user's shared files and download straight from the tree
 - **Chat rooms** — list, join, and talk in public rooms, several open at once
 - **Private messages** — send and receive messages, with an inbox in the TUI
@@ -136,16 +136,25 @@ soulseek-rs user <NAME>                   # a peer's status and share counts
 soulseek-rs shares list|add|remove|status|reindex
 soulseek-rs config path|list|get|set
 soulseek-rs portmap                       # test automatic port mapping
+soulseek-rs skills install|uninstall|list # teach a coding agent this CLI
 ```
 
 `whoami`, `config` and `shares list|add|remove` are the ones a script runs
 first: the config commands need no account at all, and `whoami` answers
 "are these credentials good and what am I offering" in one call.
 
-Every command emits records except the two that perform an action —
-`room say` and `message send` say nothing and answer with their exit code
-alone. `room listen` and `message read` stream records as they arrive, until
-`--duration` seconds pass or, with `--follow`, until they are interrupted.
+Eleven of these need no credentials, because they never touch the network:
+`config path|list|get|set`, `shares list|add|remove`, `portmap` and
+`skills install|uninstall|list`. Note that
+`shares status` and `shares reindex` are not among them — they report what the
+network will actually see, which means logging in and letting the library scan
+the folders.
+
+Every command emits records except the four that perform an action —
+`room say`, `message send`, `shares add` and `shares remove` say nothing on
+stdout and answer with their exit code alone. `room listen`, `message read`
+and `serve` stream records as they arrive, until `--duration` seconds pass or,
+with `--follow`, until they are interrupted.
 
 #### Record shapes
 
@@ -154,11 +163,36 @@ a path may contain anything except a tab (tabs and newlines in peer-supplied
 text are replaced with spaces so a record is always exactly one line):
 
 ```
-search   user  size  bitrate  path
-browse   user  size  path
-room     users room
-download local-path
+search           user   size    bitrate         path
+browse           user   size    path
+download / get   local-path
+room list        users  room
+room users       user
+room listen      type   room    user            message
+message read     timestamp      user            message
+serve            status user    sent/size       path
+user             user   status  average-speed   shared-files
+whoami           user   server  shared-folders  shared-files
+shares list      ok|missing     directory
+shares status    folders        files
+config get|set|list|path        key             value
+portmap          ok|failed      backend         external
 ```
+
+`room listen`'s `type` is `message`, `join` or `leave`; a join or leave leaves
+the message field empty. `serve`'s `status` is `uploading`, `completed`,
+`cancelled` or `failed`. `user`'s `status` is `online`, `away` or `offline`,
+and any field the server did not answer prints as `-`.
+
+`--json` carries more than text does, because an object has room for fields a
+column layout does not: `search` adds `duration`, `slots`, `speed` and
+`free_slot`; `browse` adds `directory`; `download` adds the `user`, remote
+`path` and `size` alongside the local `file`; `whoami` adds `listening`,
+`listen_port` and `download_dir`; `user` adds `privileged` and
+`shared_folders`; `shares status` adds the `directories` array; `serve` adds
+`bytes_sent`, `size`, `speed` and a `reason` on failure; `portmap` adds
+`port`. Fields the server never answered are `null` rather than absent, so a
+missing reply cannot be misread as a zero.
 
 `download --stdin` reads back either shape it emits — a JSON object per line,
 or tab-separated text whose first field is the user and last field is the
@@ -199,13 +233,46 @@ soulseek-rs serve --follow --json | tee -a uploads.ndjson
 soulseek-rs user someuser --json | jq -e '.status != "offline"'
 ```
 
+### Agent skills
+
+The scriptable surface above is meant to be driven by coding agents as much as
+by shell scripts, but `--help` cannot tell an agent which JSON keys a record
+carries or what exit 4 means. That lives in a skill file shipped inside the
+binary, so a `cargo install` is all you need to hand it to your agent:
+
+```bash
+soulseek-rs skills install
+```
+
+That writes `SKILL.md` into every agent it finds in your home directory —
+currently Claude Code (`~/.claude/skills`) and opencode
+(`~/.config/opencode/skill`) — and prints one record per target:
+
+```
+installed   claude     /home/you/.claude/skills/soulseek-rs/SKILL.md
+unchanged   opencode   /home/you/.config/opencode/skill/soulseek-rs/SKILL.md
+```
+
+Running it again is how you update after upgrading the binary; an identical
+copy reports `unchanged` rather than rewriting it. `skills list` shows what is
+there without touching anything, and `skills uninstall` removes it again —
+only when the file it finds is the one this binary wrote.
+
+For an agent this table does not cover, name the directory yourself, or commit
+the skill next to a project so everyone working on it gets the same brief:
+
+```bash
+soulseek-rs skills install --dir ~/.config/some-agent/skills
+soulseek-rs skills install --dir .claude/skills   # commit it with the repo
+```
+
 ### Sharing
 
 `serve` is the mode that makes this client a source: it stays logged in, keeps
 the listener and the share index alive, answers searches and browse requests
 from the network, and prints one record per upload as it changes state
 (`uploading`, `completed`, `cancelled`, `failed`). It ends after `--duration`
-seconds, or runs until interrupted with `--follow`.
+seconds (an hour by default), or runs until interrupted with `--follow`.
 
 ```bash
 soulseek-rs shares add ~/Music     # remembered in config.toml
@@ -228,26 +295,37 @@ Downloads run under a deadline (`--timeout`, 300s by default) and
 Every setting can come from a flag, an environment variable, or the config
 file, in that order of precedence. Flags work before or after the subcommand.
 
-| Flag | Environment variable | `config.toml` key |
-| ---- | -------------------- | ----------------- |
-| `--username` | `SOULSEEK_USERNAME` | `username` |
-| `--password` | `SOULSEEK_PASSWORD` | — (never stored in the file) |
-| `--password-cmd` | `SOULSEEK_PASSWORD_CMD` | `password_cmd` |
-| `--server` | `SOULSEEK_SERVER` | `server` |
-| `--download-dir` | `SOULSEEK_DOWNLOAD_DIR` | `download_dir` |
-| `--shared-dir` (repeatable) | `SOULSEEK_SHARED_DIR` | `shared_dir` / `shared_dirs` |
-| `--listener-port` | `SOULSEEK_LISTENER_PORT` | `listener_port` |
-| `--no-listener` / `--listener` | `SOULSEEK_NO_LISTENER` | `disable_listener` |
-| `--max-concurrent-downloads` | `SOULSEEK_MAX_CONCURRENT_DOWNLOADS` | `max_concurrent_downloads` |
-| `--search-timeout` | `SOULSEEK_SEARCH_TIMEOUT` | `search_timeout` |
-| `--log-file` | `SOULSEEK_LOG_FILE` | — |
+| Flag | Environment variable | `config.toml` key | Default |
+| ---- | -------------------- | ----------------- | ------- |
+| `--username` | `SOULSEEK_USERNAME` | `username` | — (required) |
+| `--password` | `SOULSEEK_PASSWORD` | — (never stored in the file) | — (required) |
+| `--password-cmd` | `SOULSEEK_PASSWORD_CMD` | `password_cmd` | — |
+| `--server` | `SOULSEEK_SERVER` | `server` | `server.slsknet.org:2416` |
+| `--download-dir` | `SOULSEEK_DOWNLOAD_DIR` | `download_dir` | `<Downloads>/Soulseek` |
+| `--shared-dir` (repeatable) | `SOULSEEK_SHARED_DIR` | `shared_dir` / `shared_dirs` | the download dir |
+| `--listener-port` | `SOULSEEK_LISTENER_PORT` | `listener_port` | `2234` |
+| `--no-listener` / `--listener` | `SOULSEEK_NO_LISTENER` | `disable_listener` | listener on |
+| `--max-concurrent-downloads` | `SOULSEEK_MAX_CONCURRENT_DOWNLOADS` | `max_concurrent_downloads` | `5` |
+| `--search-timeout` | `SOULSEEK_SEARCH_TIMEOUT` | `search_timeout` | `10` |
+| `--log-file` | `SOULSEEK_LOG_FILE` | — | stderr |
 
 Boolean environment variables accept the usual `1`/`0`/`true`/`false`/`yes`/`no`.
 `--config <FILE>` (or `SOULSEEK_CONFIG`) reads a different config file and
 `--no-config` ignores it entirely, which is what an isolated or containerised
 run wants. The config file lives at `~/.config/soulseek-rs/config.toml` on
 macOS and Linux; `SOULSEEK_CONFIG_DIR` and `SOULSEEK_STATE_DIR` relocate the
-config and state directories wholesale.
+config and state directories wholesale. Every variable above is also read from
+a `.env` file in the working directory, which is often the tidiest way to hand
+a container its credentials.
+
+`config get` and `config set` cover the nine settings the file can hold —
+`username`, `server`, `listener_port`, `disable_listener`, `download_dir`,
+`shared_dirs`, `max_concurrent_downloads`, `search_timeout`, `password_cmd` —
+and name the lot back at you when you ask for something else. Setting a key to
+an empty string clears it, and `shared_dirs` takes a comma-separated list.
+Every wait expressed in seconds (`--search-timeout`, each `--timeout`, each
+`--duration`) is bounded to one day, so a mistyped flag is rejected rather than
+hanging until the heat death of the universe.
 
 #### Credentials for unattended runs
 
