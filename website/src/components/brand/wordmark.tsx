@@ -18,7 +18,9 @@ export const Wordmark = ({ size = 28, blink = false, className }: WordmarkProps)
     <span
       aria-hidden="true"
       className={cn(
-        'ml-[0.06em] inline-block h-[1.02em] w-[0.58em] translate-y-[0.04em] rounded-[1.5px] bg-accent',
+        // The gap matches the wordmark SVG, where the cursor sits 15.4 units
+        // after a 27-unit-wide block: 0.57 cursor widths.
+        'ml-[0.33em] inline-block h-[1.02em] w-[0.58em] translate-y-[0.04em] rounded-[1.5px] bg-accent',
         blink && 'motion-safe:animate-cursor-blink',
       )}
     />
