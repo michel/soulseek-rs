@@ -15,6 +15,7 @@ import { Terminal } from '@/components/ui/terminal'
 import { LINKS } from '@/lib/links'
 
 const GLOBAL_KEYS: readonly (readonly [string, string])[] = [
+  ['s', 'search the network'],
   ['Space', 'select a result'],
   ['Enter', 'download / send'],
   ['b', "browse the owner's files"],
@@ -41,7 +42,7 @@ const PANES: readonly { num?: number; title: string; body: string }[] = [
   {
     num: 1,
     title: 'Searches',
-    body: 'Your queries and how many results each returned. Type / to search the network; each search keeps its own result set.',
+    body: 'Your queries and how many results each returned. Press s to search the network; each search keeps its own result set.',
   },
   {
     num: 2,
@@ -153,27 +154,40 @@ export const Docs = () => {
           eyebrow="4 · from the shell"
           title="Every command also runs as a one-off."
         >
-          Skip the TUI when you&rsquo;re scripting or mid-task.
+          Skip the TUI when you&rsquo;re scripting or mid-task. stdout is data, stderr is
+          progress, and the exit code is the verdict.
         </SectionHead>
         <Cols start>
           <Terminal
             label="shell"
             lines={[
-              { t: 'cmd', text: 'soulseek-rs "public domain field recordings"' },
-              { t: 'cm', text: '# open the TUI straight onto a search' },
-              { t: 'cmd', text: 'soulseek-rs message <username> "hello there"' },
-              { t: 'cmd', text: 'soulseek-rs rooms' },
-              { t: 'cm', text: '# list public rooms, busiest first' },
-              { t: 'cmd', text: 'soulseek-rs chat <room> "hello room"' },
-              { t: 'cmd', text: 'soulseek-rs portmap' },
+              { t: 'cmd', text: 'soulseek-rs get "public domain field recordings"' },
+              { t: 'cm', text: '# search, pick the best, download it' },
+              { t: 'cmd', text: 'soulseek-rs search "netlabel 2004" --min-bitrate 320' },
+              { t: 'cmd', text: 'soulseek-rs browse <username> --json' },
+              { t: 'cmd', text: 'soulseek-rs room list' },
+              { t: 'cm', text: '# public rooms, busiest first' },
+              { t: 'cmd', text: 'soulseek-rs room say <room> "hello room"' },
+              { t: 'cmd', text: 'soulseek-rs message send <username> "hello there"' },
+              { t: 'cmd', text: 'soulseek-rs serve --follow' },
+              { t: 'cm', text: '# stay online sharing; every upload as it happens' },
+              { t: 'cmd', text: 'soulseek-rs skills install' },
+              { t: 'cm', text: '# hand all of the above to your coding agent' },
             ]}
           />
           <Prose>
             <p>
-              The subcommands mirror the TUI: <Code>search</Code>, <Code>message</Code>,{' '}
-              <Code>browse</Code>, <Code>rooms</Code>, <Code>chat</Code>, and{' '}
-              <Code>portmap</Code>. Pass a room and a message to <Code>chat</Code> to say
-              one thing and exit.
+              The command groups: <Code>search</Code>, <Code>get</Code>,{' '}
+              <Code>download</Code>, <Code>browse</Code>, <Code>room</Code>,{' '}
+              <Code>message</Code>, <Code>serve</Code>, <Code>user</Code>,{' '}
+              <Code>whoami</Code>, <Code>shares</Code>, <Code>config</Code>,{' '}
+              <Code>portmap</Code>, <Code>skills</Code>. Records are tab-separated fields,
+              one per line, or NDJSON with <Code>--json</Code>.
+            </p>
+            <p>
+              No TTY, no daemon. <Code>search --json</Code> pipes through <Code>jq</Code>{' '}
+              into <Code>download --stdin</Code>. Every ending has its own exit code: 4 found
+              nothing, 3 could not reach the server, 6 the transfer died.
             </p>
             <p>
               <Code>portmap</Code> tests whether your router will let peers connect back,
@@ -185,6 +199,18 @@ export const Docs = () => {
           </Prose>
         </Cols>
         <div className="mt-6">
+          <Callout title="give it to your agent">
+            <p>
+              <Code>soulseek-rs skills install</Code> writes a <Code>SKILL.md</Code> into
+              every coding agent on the machine — Claude Code and opencode today,{' '}
+              <Code>--dir</Code> for anything else. It carries what <Code>--help</Code>{' '}
+              cannot: the JSON keys of every record, what each exit code means, and the
+              idioms worth reaching for. Run it again after an upgrade to update it, and{' '}
+              <Code>skills uninstall</Code> takes it back out.
+            </p>
+          </Callout>
+        </div>
+        <div className="mt-4">
           <Callout tone="warn" title="the one limit worth knowing up front">
             <p>
               If both you and a peer are behind routers with no forwarded port, browsing

@@ -21,21 +21,40 @@ const PLATFORMS: readonly { name: OsName; note: string; anchor: string }[] = [
 
 const FEATURES = [
   {
+    glyph: '✦',
+    color: 'var(--accent-text)',
+    title: 'Agent native',
+    cmd: 'soulseek-rs skills install',
+    body: (
+      <>
+        One command hands your coding agent the whole surface: the JSON keys every record
+        carries, what each exit code means, and the rule that it always asks for{' '}
+        <code>--json</code>. The skill ships inside the binary, so there is nothing to
+        clone and nothing to configure — it finds Claude Code and opencode on its own.
+      </>
+    ),
+  },
+  {
     glyph: '→',
     color: 'var(--accent-text)',
     title: 'Search & download',
-    cmd: 'soulseek-rs "field recordings"',
-    body: <>Search the network, pick results in the TUI, and queue downloads with pause, resume, and retry.</>,
+    cmd: 'soulseek-rs get "field recordings"',
+    body: (
+      <>
+        Queue downloads in the TUI with pause, resume, and retry, or let <code>get</code>{' '}
+        search, pick the best, and download in one command.
+      </>
+    ),
   },
   {
     glyph: '↑',
     color: 'var(--status-success)',
     title: 'Sharing',
-    cmd: 'soulseek-rs --shared-dir ~/Music',
+    cmd: 'soulseek-rs shares add ~/Music',
     body: (
       <>
-        Point <code>--shared-dir</code> at a directory and your files show up in searches;
-        peers browse and download them.
+        Point <code>shares add</code> at a directory and your files show up in searches;{' '}
+        <code>serve</code> stays online so peers can browse and download them.
       </>
     ),
   },
@@ -50,14 +69,14 @@ const FEATURES = [
     glyph: '#',
     color: 'var(--status-warning)',
     title: 'Chat rooms',
-    cmd: 'soulseek-rs rooms',
+    cmd: 'soulseek-rs room list',
     body: <>List, join, and talk in public rooms, several open at once as tabs.</>,
   },
   {
     glyph: '@',
     color: 'var(--status-info)',
     title: 'Private messages',
-    cmd: 'soulseek-rs message <user> "hi"',
+    cmd: 'soulseek-rs message send <user> "hi"',
     body: <>Send and receive PMs, with an inbox and an unread counter in the TUI.</>,
   },
   {
@@ -88,11 +107,11 @@ const FEATURES = [
     glyph: '▮',
     color: 'var(--accent-text)',
     title: 'TUI and CLI',
-    cmd: 'soulseek-rs',
+    cmd: 'soulseek-rs search "rjd2" --json',
     body: (
       <>
-        A full terminal interface, plus scriptable subcommands: search, message, browse,
-        rooms, chat, portmap.
+        A full terminal interface, plus scriptable subcommands: stdout is data, stderr is
+        progress, the exit code is the verdict.
       </>
     ),
   },
@@ -203,10 +222,10 @@ export const Home = () => {
             </Callout>
             <Callout title="agents and automation">
               <p>
-                Every command runs as a one-off from the shell: <Code>search</Code>,{' '}
-                <Code>browse</Code>, <Code>rooms</Code>, <Code>chat</Code>,{' '}
-                <Code>message</Code>, <Code>portmap</Code>. Point cron, a script, or an
-                agent at them and read the output back. No daemon, no API to stand up.{' '}
+                Every command runs as a one-off from the shell. Point cron, a script, or an
+                agent at them and read JSON records back off stdout. No daemon, no API to
+                stand up — and <Code>skills install</Code> teaches the agent the surface
+                for you.{' '}
                 <Link to="/docs" className="text-link hover:text-link-hover">
                   See the commands
                 </Link>
@@ -243,7 +262,7 @@ export const Home = () => {
           <div className="flex flex-col gap-3.5">
             <Eyebrow>get started</Eyebrow>
             <h2 className="text-[26px] leading-[34px] font-medium text-balance sm:text-title sm:leading-[var(--text-title--line-height)]">
-              Install it, then press <span className="text-accent-text">/</span> to search.
+              Install it, then press <span className="text-accent-text">s</span> to search.
             </h2>
             <p className="text-secondary">
               Needs a Rust toolchain. From there it&rsquo;s one command, then the TUI opens.
