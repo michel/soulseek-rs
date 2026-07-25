@@ -138,7 +138,13 @@ jobs:
     # `github.event.inputs`, not `inputs`: the latter is empty in a job-level
     # condition on workflow_dispatch, and `null != ''` coerces to false, which
     # silently skipped this job on every manual recovery run.
-    if: needs.release.outputs.created == 'true' || github.event.inputs.tag != ''
+    # Gate on the resolved tag, not on the dispatch input: neither `inputs.tag`
+    # nor `github.event.inputs.tag` evaluates in a job-level `if`, so both
+    # spellings skipped this job on every manual recovery run. `Resolve tag`
+    # already runs exactly when there is something to build (a fresh release or
+    # a hand-typed tag), and its output is a plain `needs` value that does work
+    # here.
+    if: needs.release.outputs.tag != ''
     runs-on: ${{ matrix.os }}
     strategy:
       # One flaky cross-linker must not hold back the five targets that built.
@@ -195,7 +201,13 @@ jobs:
   homebrew:
     name: Homebrew tap
     needs: [release, binaries]
-    if: needs.release.outputs.created == 'true' || github.event.inputs.tag != ''
+    # Gate on the resolved tag, not on the dispatch input: neither `inputs.tag`
+    # nor `github.event.inputs.tag` evaluates in a job-level `if`, so both
+    # spellings skipped this job on every manual recovery run. `Resolve tag`
+    # already runs exactly when there is something to build (a fresh release or
+    # a hand-typed tag), and its output is a plain `needs` value that does work
+    # here.
+    if: needs.release.outputs.tag != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
