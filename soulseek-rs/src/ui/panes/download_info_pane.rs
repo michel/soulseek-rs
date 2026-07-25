@@ -199,12 +199,16 @@ fn build_info_lines(
             lines.push(label_value("Queue position", &position_text));
 
             if let Some(slots) = download.metadata.peer_free_slots {
-                let slot_text = if slots > 0 {
-                    format!("{slots} available")
+                let (slot_text, slot_style) = if slots > 0 {
+                    (format!("{slots} available"), success_style())
                 } else {
-                    "all busy".to_string()
+                    ("all busy".to_string(), inactive_style())
                 };
-                lines.push(label_value("Free slots", &slot_text));
+                lines.push(label_value_styled(
+                    "Free slots",
+                    slot_text,
+                    slot_style,
+                ));
             }
 
             if let Some(speed) = download.metadata.peer_upload_speed {

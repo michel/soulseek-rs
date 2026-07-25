@@ -1,7 +1,7 @@
 use crate::models::{SearchEntry, SearchStatus};
 use crate::ui::{
-    HIGHLIGHT_SYMBOL, body_style, dimmed_style, header_style, highlight_style,
-    pane_block, pane_title, success_style, warning_style,
+    HIGHLIGHT_SYMBOL, body_style, dimmed_style, header_style, pane_block,
+    pane_title, row_highlight_style, success_style, warning_style,
 };
 use ratatui::{
     Frame,
@@ -60,7 +60,7 @@ pub fn render_searches_pane(
 
     let table = Table::new(rows, widths)
         .header(header)
-        .row_highlight_style(highlight_style())
+        .row_highlight_style(row_highlight_style())
         .highlight_symbol(HIGHLIGHT_SYMBOL)
         .highlight_spacing(HighlightSpacing::Always)
         .block(pane_block(focused).title(pane_title("1", "Searches", focused)));

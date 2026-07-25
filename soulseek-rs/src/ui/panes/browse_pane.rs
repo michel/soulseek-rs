@@ -1,7 +1,8 @@
 use crate::models::{BrowseState, BrowseStatus, BrowseTabs};
 use crate::ui::{
-    HIGHLIGHT_SYMBOL, dimmed_style, error_style, format_bytes,
+    HIGHLIGHT_SYMBOL, body_style, dimmed_style, error_style, format_bytes,
     get_spinner_char, highlight_style, pane_block, primary_style,
+    row_highlight_style, warning_style,
 };
 use ratatui::{
     Frame,
@@ -76,11 +77,17 @@ fn render_browse_one(
                 get_spinner_char(spinner_state),
                 browse.username
             );
-            frame.render_widget(Paragraph::new(text).block(block), area);
+            frame.render_widget(
+                Paragraph::new(text).style(dimmed_style()).block(block),
+                area,
+            );
         }
         BrowseStatus::Empty => {
             let text = format!("{} is not sharing any files.", browse.username);
-            frame.render_widget(Paragraph::new(text).block(block), area);
+            frame.render_widget(
+                Paragraph::new(text).style(dimmed_style()).block(block),
+                area,
+            );
         }
         BrowseStatus::TimedOut => {
             let text = vec![
@@ -89,11 +96,12 @@ fn render_browse_one(
                     error_style(),
                 ),
                 Line::raw(""),
-                Line::raw(
+                Line::styled(
                     "They may be offline, or their connection can't be \
                      reached (both of you may be behind a router/firewall).",
+                    body_style(),
                 ),
-                Line::raw("Press r to try again."),
+                Line::styled("Press r to try again.", dimmed_style()),
             ];
             frame.render_widget(Paragraph::new(text).block(block), area);
         }
@@ -107,15 +115,20 @@ fn render_browse_one(
                         let glyph = if row.expanded { "▾" } else { "▸" };
                         (
                             Cell::from(format!("{indent}{glyph} {}", row.name))
-                                .style(primary_style()),
+                                .style(
+                                    primary_style()
+                                        .add_modifier(Modifier::BOLD),
+                                ),
                             Cell::from(String::new()),
                         )
                     } else {
                         (
-                            Cell::from(format!("{indent}  {}", row.name)),
+                            Cell::from(format!("{indent}  {}", row.name))
+                                .style(body_style()),
                             Cell::from(
                                 row.size.map(format_bytes).unwrap_or_default(),
-                            ),
+                            )
+                            .style(warning_style()),
                         )
                     };
                     Row::new(vec![label, size])
@@ -124,7 +137,7 @@ fn render_browse_one(
 
             let table =
                 Table::new(rows, [Constraint::Fill(1), Constraint::Length(12)])
-                    .row_highlight_style(highlight_style())
+                    .row_highlight_style(row_highlight_style())
                     .highlight_symbol(HIGHLIGHT_SYMBOL)
                     .highlight_spacing(HighlightSpacing::Always)
                     .block(block);

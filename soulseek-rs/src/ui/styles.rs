@@ -11,6 +11,9 @@ use soulseek_rs::DownloadStatus;
 pub const PANE_PADDING: Padding = Padding::horizontal(1);
 
 pub const VINYL_2: Color = Color::Rgb(0x26, 0x21, 0x1D);
+/// A warm oxide wash for the cursor row — dark enough that every column keeps
+/// its own colour on top of it.
+pub const SELECTION: Color = Color::Rgb(0x30, 0x1B, 0x14);
 pub const DUST: Color = Color::Rgb(0x8A, 0x81, 0x78);
 pub const PAPER: Color = Color::Rgb(0xE8, 0xE1, 0xD6);
 pub const PAPER_DIM: Color = Color::Rgb(0xC9, 0xC1, 0xB4);
@@ -45,9 +48,15 @@ pub fn header_style() -> Style {
 
 pub fn highlight_style() -> Style {
     Style::default()
-        .bg(VINYL_2)
+        .bg(SELECTION)
         .fg(PAPER)
         .add_modifier(Modifier::BOLD)
+}
+
+/// The cursor row in a table. No foreground: a table row already colours its
+/// own cells, and setting one here would flatten them all to a single tone.
+pub fn row_highlight_style() -> Style {
+    Style::default().bg(SELECTION).add_modifier(Modifier::BOLD)
 }
 
 pub fn success_style() -> Style {
@@ -250,6 +259,13 @@ mod tests {
             assert_eq!(got_glyph, glyph);
             assert_eq!(style.fg, Some(color));
         }
+    }
+
+    #[test]
+    fn table_cursor_row_tints_the_background_without_recolouring_cells() {
+        let cursor = row_highlight_style();
+        assert_eq!(cursor.fg, None);
+        assert_eq!(cursor.bg, Some(SELECTION));
     }
 
     #[test]

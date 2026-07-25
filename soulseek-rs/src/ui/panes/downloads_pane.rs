@@ -2,8 +2,9 @@ use crate::models::DownloadEntry;
 use crate::ui::{
     GLYPH_ACTIVE, GLYPH_DONE, GLYPH_FAILED, HIGHLIGHT_SYMBOL, accent_style,
     body_style, dimmed_style, download_status_glyph, error_style, format_bytes,
-    format_speed, header_style, highlight_style, inactive_style, info_style,
-    pane_block, pane_title, primary_style, success_style, warning_style,
+    format_speed, header_style, inactive_style, info_style, pane_block,
+    pane_title, primary_style, row_highlight_style, success_style,
+    warning_style,
 };
 use ratatui::{
     Frame,
@@ -173,7 +174,7 @@ pub fn render_downloads_pane(
 
     let table = Table::new(rows, widths)
         .header(header)
-        .row_highlight_style(highlight_style())
+        .row_highlight_style(row_highlight_style())
         .highlight_symbol(HIGHLIGHT_SYMBOL)
         .highlight_spacing(HighlightSpacing::Always)
         .block(pane_block(focused).title(pane_title(
