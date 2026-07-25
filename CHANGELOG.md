@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.0.0](https://github.com/michel/soulseek-rs/compare/v6.0.0...v7.0.0) - 2026-07-25
+
+### Added
+
+- *(cli)* ship the agent skill inside the binary
+- *(cli)* expose sharing, peer lookup and settings as one-shot commands
+- *(cli)* [**breaking**] replace the one-shot commands with a scriptable surface
+- *(ui)* theme the TUI with the soulseek-rs design system
+
+### Fixed
+
+- *(peer)* serve full browse listings + harden the listener; TUI transfer/UX work
+- *(persist)* use XDG paths on macOS
+- *(peer)* log disconnect cause; bind e2e browse listener on all interfaces
+
+### Other
+
+- link the website from the crates and the READMEs
+- clear the quality-scan findings
+- document the skills command and the scriptable surface
+- pin soulseek-rs-lib install snippets to 6
+
 ## [6.0.0](https://github.com/michel/soulseek-rs/compare/v5.0.0...v6.0.0) - 2026-07-24
 
 ### Breaking changes
