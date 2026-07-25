@@ -185,7 +185,7 @@ mod tests {
     use super::*;
 
     fn store() -> (tempfile::TempDir, StateStore) {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().expect("a temporary state directory");
         let store = StateStore::new(dir.path().join("state"));
         (dir, store)
     }
@@ -254,25 +254,32 @@ mod tests {
     fn corrupt_file_loads_as_empty_and_is_kept_as_bak() {
         let (tmp, store) = store();
         let path = tmp.path().join("state").join("downloads.json");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, "{ not json").unwrap();
+        std::fs::create_dir_all(path.parent().expect("a parent"))
+            .expect("the state directory");
+        std::fs::write(&path, "{ not json").expect("the corrupt file");
         assert_eq!(store.load_downloads(), vec![]);
         // The bad file is set aside, not left to be overwritten.
         assert!(!path.exists());
         let bak = path.with_extension("json.bak");
-        assert_eq!(std::fs::read_to_string(bak).unwrap(), "{ not json");
+        assert_eq!(
+            std::fs::read_to_string(bak).expect("the .bak"),
+            "{ not json"
+        );
     }
 
     #[test]
     fn a_second_corrupt_file_replaces_the_previous_bak() {
         let (tmp, store) = store();
         let path = tmp.path().join("state").join("downloads.json");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path.with_extension("json.bak"), "old bak").unwrap();
-        std::fs::write(&path, "{ newer corruption").unwrap();
+        std::fs::create_dir_all(path.parent().expect("a parent"))
+            .expect("the state directory");
+        std::fs::write(path.with_extension("json.bak"), "old bak")
+            .expect("the previous .bak");
+        std::fs::write(&path, "{ newer corruption").expect("the corrupt file");
         assert_eq!(store.load_downloads(), vec![]);
         assert_eq!(
-            std::fs::read_to_string(path.with_extension("json.bak")).unwrap(),
+            std::fs::read_to_string(path.with_extension("json.bak"))
+                .expect("the .bak"),
             "{ newer corruption"
         );
     }
@@ -281,8 +288,10 @@ mod tests {
     fn file_from_a_newer_build_loads_as_empty_and_is_kept_as_bak() {
         let (tmp, store) = store();
         let path = tmp.path().join("state").join("rooms.json");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, r#"{"version": 99, "data": ["x"]}"#).unwrap();
+        std::fs::create_dir_all(path.parent().expect("a parent"))
+            .expect("the state directory");
+        std::fs::write(&path, r#"{"version": 99, "data": ["x"]}"#)
+            .expect("the newer-version file");
         assert_eq!(store.load_rooms(), Vec::<String>::new());
         assert!(!path.exists());
         assert!(path.with_extension("json.bak").exists());
