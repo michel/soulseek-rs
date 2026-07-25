@@ -84,13 +84,13 @@ export const Docs = () => {
 
       <Section>
         <SectionHead eyebrow="1 · first run" title="Two commands to a running client.">
-          You need a Rust toolchain. After <Code>cargo install</Code>, the binary is on your
-          PATH.
+          Homebrew puts the binary on your PATH. With a Rust toolchain,{' '}
+          <Code>cargo install soulseek-rs</Code> does the same.
         </SectionHead>
         <Cols start>
           <Terminal
             lines={[
-              { t: 'cmd', text: 'cargo install soulseek-rs' },
+              { t: 'cmd', text: 'brew install michel/tap/soulseek-rs' },
               { t: 'cmd', text: 'soulseek-rs' },
               { t: 'cm', text: '# the TUI opens; log in or register on first run' },
             ]}

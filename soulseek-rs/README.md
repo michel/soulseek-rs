@@ -8,7 +8,8 @@ Website: <https://re-invention.nl/soulseek-rs/>
 ## Installation
 
 ```bash
-cargo install soulseek-rs
+brew install michel/tap/soulseek-rs   # macOS and Linux, prebuilt
+cargo install soulseek-rs             # anywhere with a Rust toolchain
 ```
 
 ## Usage
