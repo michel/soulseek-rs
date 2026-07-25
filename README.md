@@ -5,8 +5,6 @@
   </picture>
 </div>
 
-# Soulseek-rs 🦀
-
 **A soulseek client for the terminal. Built for agents and people who live
 there.**
 
@@ -23,7 +21,7 @@ does, how to install it, and every `config.toml` setting.
 
 ## 🎥 Demo
 
-![CLI Demo](fixtures/demo.gif)
+[![soulseek-rs TUI demo](fixtures/demo.svg)](https://re-invention.nl/soulseek-rs/)
 
 ## Features
 
@@ -131,15 +129,15 @@ The one-shot commands follow three rules, so they compose with other tools:
   records are tab-separated fields with no header and no decoration.
 - **The exit code is the verdict.** No output plus exit 0 never means failure.
 
-| Code | Meaning |
-| ---- | ------- |
-| 0 | success |
-| 1 | unexpected error |
-| 2 | bad arguments, missing credentials, unusable configuration |
-| 3 | could not reach the server, or the login was rejected |
-| 4 | the command worked but found nothing |
-| 5 | timed out waiting for a response or a transfer |
-| 6 | a transfer started but did not finish |
+| Code | Meaning                                                    |
+| ---- | ---------------------------------------------------------- |
+| 0    | success                                                    |
+| 1    | unexpected error                                           |
+| 2    | bad arguments, missing credentials, unusable configuration |
+| 3    | could not reach the server, or the login was rejected      |
+| 4    | the command worked but found nothing                       |
+| 5    | timed out waiting for a response or a transfer             |
+| 6    | a transfer started but did not finish                      |
 
 #### Commands
 
@@ -320,19 +318,19 @@ Downloads run under a deadline (`--timeout`, 300s by default) and
 Every setting can come from a flag, an environment variable, or the config
 file, in that order of precedence. Flags work before or after the subcommand.
 
-| Flag | Environment variable | `config.toml` key | Default |
-| ---- | -------------------- | ----------------- | ------- |
-| `--username` | `SOULSEEK_USERNAME` | `username` | required |
-| `--password` | `SOULSEEK_PASSWORD` | never stored in the file | required |
-| `--password-cmd` | `SOULSEEK_PASSWORD_CMD` | `password_cmd` | unset |
-| `--server` | `SOULSEEK_SERVER` | `server` | `server.slsknet.org:2416` |
-| `--download-dir` | `SOULSEEK_DOWNLOAD_DIR` | `download_dir` | `<Downloads>/Soulseek` |
-| `--shared-dir` (repeatable) | `SOULSEEK_SHARED_DIR` | `shared_dir` / `shared_dirs` | the download dir |
-| `--listener-port` | `SOULSEEK_LISTENER_PORT` | `listener_port` | `2234` |
-| `--no-listener` / `--listener` | `SOULSEEK_NO_LISTENER` | `disable_listener` | listener on |
-| `--max-concurrent-downloads` | `SOULSEEK_MAX_CONCURRENT_DOWNLOADS` | `max_concurrent_downloads` | `5` |
-| `--search-timeout` | `SOULSEEK_SEARCH_TIMEOUT` | `search_timeout` | `10` |
-| `--log-file` | `SOULSEEK_LOG_FILE` | not a config key | stderr |
+| Flag                           | Environment variable                | `config.toml` key            | Default                   |
+| ------------------------------ | ----------------------------------- | ---------------------------- | ------------------------- |
+| `--username`                   | `SOULSEEK_USERNAME`                 | `username`                   | required                  |
+| `--password`                   | `SOULSEEK_PASSWORD`                 | never stored in the file     | required                  |
+| `--password-cmd`               | `SOULSEEK_PASSWORD_CMD`             | `password_cmd`               | unset                     |
+| `--server`                     | `SOULSEEK_SERVER`                   | `server`                     | `server.slsknet.org:2416` |
+| `--download-dir`               | `SOULSEEK_DOWNLOAD_DIR`             | `download_dir`               | `<Downloads>/Soulseek`    |
+| `--shared-dir` (repeatable)    | `SOULSEEK_SHARED_DIR`               | `shared_dir` / `shared_dirs` | the download dir          |
+| `--listener-port`              | `SOULSEEK_LISTENER_PORT`            | `listener_port`              | `2234`                    |
+| `--no-listener` / `--listener` | `SOULSEEK_NO_LISTENER`              | `disable_listener`           | listener on               |
+| `--max-concurrent-downloads`   | `SOULSEEK_MAX_CONCURRENT_DOWNLOADS` | `max_concurrent_downloads`   | `5`                       |
+| `--search-timeout`             | `SOULSEEK_SEARCH_TIMEOUT`           | `search_timeout`             | `10`                      |
+| `--log-file`                   | `SOULSEEK_LOG_FILE`                 | not a config key             | stderr                    |
 
 Boolean environment variables accept the usual `1`/`0`/`true`/`false`/`yes`/`no`.
 `--config <FILE>` (or `SOULSEEK_CONFIG`) reads a different config file and
