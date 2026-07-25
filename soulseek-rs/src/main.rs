@@ -11,7 +11,7 @@ use clap::Parser;
 use cli::{Cli, Commands, ConfigCommand, SharesCommand, parse_server_address};
 use commands::Ctx;
 use output::{CliError, CliResult, Exit, Out};
-use soulseek_rs::{ClientSettings, PeerAddress};
+use soulseek_rs::{ClientSettings, ClientVersion, PeerAddress};
 use std::io::{BufRead, IsTerminal};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -146,6 +146,7 @@ fn context(
             enable_listen: !resolved.disable_listener,
             listen_port: resolved.listener_port,
             shared_directories: shared_directories(resolved, out),
+            version: ClientVersion::REFERENCE_CLIENT,
         },
         download_dir: resolved.download_dir.clone(),
         max_concurrent_downloads: resolved.max_concurrent_downloads,
@@ -281,6 +282,7 @@ fn run_default_tui(
             enable_listen,
             listen_port,
             shared_directories: shared_directories.clone(),
+            version: ClientVersion::REFERENCE_CLIENT,
         };
 
     // Clear screen and enable mouse capture before initializing TUI

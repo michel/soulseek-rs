@@ -1,5 +1,8 @@
 use crate::{
-    message::Message, peer::ConnectionType, types::Transfer, utils::md5::md5,
+    message::Message,
+    peer::ConnectionType,
+    types::{ClientVersion, Transfer},
+    utils::md5::md5,
 };
 
 pub struct MessageFactory;
@@ -13,23 +16,11 @@ impl MessageFactory {
         message
     }
     #[must_use]
-    pub fn build_login_message(username: &str, password: &str) -> Message {
-        // Message::new_with_data(
-        //     [
-        //         1, 0, 0, 0, 20, 0, 0, 0, 105, 110, 115, 97, 110, 101, 95, 105, 110, 95, 116, 104, 101,
-        //         95, 98, 114, 97, 105, 110, 50, 8, 0, 0, 0, 49, 51, 51, 55, 53, 49, 51, 55, 160, 0, 0,
-        //         0, 32, 0, 0, 0, 50, 101, 100, 102, 53, 49, 100, 48, 51, 55, 57, 52, 51, 55, 56, 102,
-        //         56, 98, 98, 54, 51, 49, 48, 100, 52, 54, 48, 99, 50, 50, 98, 49, 17, 0, 0,
-        //         0,
-        //         //0, // 84, 0, 0, 0, 1, 0, 0, 0, 20, 0, 0, 0, 105, 110, 115, 97, 110, 101, 95, 105, 110, 95,
-        //         // 116, 104, 101, 95, 98, 114, 97, 105, 110, 50, 8, 0, 0, 0, 49, 51, 51, 55, 53, 49, 51,
-        //         // 55, 160, 0, 0, 0, 32, 0, 0, 0, 50, 101, 100, 102, 53, 49, 100, 48, 51, 55, 57, 52, 51,
-        //         // 55, 56, 102, 56, 98, 98, 54, 51, 49, 48, 100, 52, 54, 48, 99, 50, 50, 98, 49, 17, 0, 0,
-        //         // 0,
-        //     ]
-        //     .to_vec(),
-        // )
-        // .clone()fac
+    pub fn build_login_message(
+        username: &str,
+        password: &str,
+        version: ClientVersion,
+    ) -> Message {
         let hash = md5([username, password].join("").as_str());
 
         let mut message = Message::new();
@@ -38,9 +29,9 @@ impl MessageFactory {
             .write_int32(1)
             .write_string(username)
             .write_string(password)
-            .write_int32(157) // version
+            .write_int32(version.major)
             .write_string(&hash)
-            .write_int32(100)
+            .write_int32(version.minor)
             .clone()
     }
 
@@ -268,15 +259,18 @@ fn test_build_watch_user() {
 
 #[test]
 fn test_build_login_message() {
-    let message =
-        MessageFactory::build_login_message("insane_in_the_brain2", "13375137");
+    let message = MessageFactory::build_login_message(
+        "insane_in_the_brain2",
+        "13375137",
+        ClientVersion::default(),
+    );
 
     let expect: Vec<u8> = [
         1, 0, 0, 0, 20, 0, 0, 0, 105, 110, 115, 97, 110, 101, 95, 105, 110, 95,
         116, 104, 101, 95, 98, 114, 97, 105, 110, 50, 8, 0, 0, 0, 49, 51, 51,
-        55, 53, 49, 51, 55, 157, 0, 0, 0, 32, 0, 0, 0, 50, 101, 100, 102, 53,
+        55, 53, 49, 51, 55, 176, 0, 0, 0, 32, 0, 0, 0, 50, 101, 100, 102, 53,
         49, 100, 48, 51, 55, 57, 52, 51, 55, 56, 102, 56, 98, 98, 54, 51, 49,
-        48, 100, 52, 54, 48, 99, 50, 50, 98, 49, 100, 0, 0, 0,
+        48, 100, 52, 54, 48, 99, 50, 50, 98, 49, 1, 0, 0, 0,
     ]
     .to_vec();
 

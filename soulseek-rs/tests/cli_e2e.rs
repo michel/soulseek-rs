@@ -442,6 +442,7 @@ impl TestServer {
             enable_listen: true,
             listen_port: port,
             shared_directories: shares,
+            version: soulseek_rs::ClientVersion::default(),
         });
         client.connect().expect("peer connect");
         assert!(client.login().expect("peer login"), "peer should log in");

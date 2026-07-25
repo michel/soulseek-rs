@@ -10,6 +10,39 @@ pub struct File {
     pub size: u64,
     pub attribs: HashMap<u32, u32>,
 }
+/// The client version sent to the server on login.
+///
+/// Major versions identify client projects on the Soulseek network and are
+/// reserved per project for the project's lifetime:
+/// <https://nicotine-plus.org/doc/SLSKPROTOCOL.html#major-versions>.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClientVersion {
+    pub major: u32,
+    pub minor: u32,
+}
+
+impl ClientVersion {
+    /// The major version reserved for the soulseek-rs project. Clients and
+    /// bots built on this library keep this major and pick their own non-zero
+    /// minor version.
+    pub const MAJOR: u32 = 176;
+
+    /// The version the soulseek-rs reference client (CLI/TUI) logs in with.
+    pub const REFERENCE_CLIENT: Self = Self {
+        major: Self::MAJOR,
+        minor: 100,
+    };
+}
+
+impl Default for ClientVersion {
+    fn default() -> Self {
+        Self {
+            major: Self::MAJOR,
+            minor: 1,
+        }
+    }
+}
+
 pub struct UploadFailed {
     pub filename: String,
 }
