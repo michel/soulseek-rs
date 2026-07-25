@@ -341,9 +341,9 @@ export const Install = () => {
               label="Cargo.toml"
               lines={[
                 { t: 'cm', text: '[dependencies]' },
-                { t: 'code', text: 'soulseek-rs-lib = "6.0.0"' },
+                { t: 'code', text: 'soulseek-rs-lib = "7"' },
               ]}
-              copy={'[dependencies]\nsoulseek-rs-lib = "6.0.0"'}
+              copy={'[dependencies]\nsoulseek-rs-lib = "7"'}
             />
             <Terminal label="src/main.rs" lines={LIB_LINES} copy={LIB_SRC} />
             <p className="text-[13px] text-muted">
