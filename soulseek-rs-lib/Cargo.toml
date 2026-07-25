@@ -5,6 +5,7 @@ authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "Library for Soulseek protocol implementation in Rust"
 keywords = ["soulseek", "p2p", "protocol", "file-sharing"]
 categories = ["network-programming"]

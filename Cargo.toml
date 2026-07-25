@@ -8,6 +8,7 @@ authors = ["Michel de Graaf"]
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/michel/soulseek-rs"
+homepage = "https://re-invention.nl/soulseek-rs/"
 
 # The v6.0.0 release binaries shipped unstripped: the Linux archives were
 # roughly twice the size of the macOS ones purely because of debug symbols.

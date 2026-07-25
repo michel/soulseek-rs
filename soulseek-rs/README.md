@@ -3,6 +3,8 @@
 A Soulseek client for the terminal: a full-screen TUI, and a one-shot command
 surface built for scripts and agents.
 
+Website: <https://re-invention.nl/soulseek-rs/>
+
 ## Installation
 
 ```bash

@@ -4,6 +4,9 @@ Soulseek-rs is a Soulseek library and client built in Rust. Soulseek is a
 closed-source P2P file-sharing network from the 2000s. It's still used by
 music enthusiasts around the world to share niche music.
 
+**[re-invention.nl/soulseek-rs](https://re-invention.nl/soulseek-rs/)** — what it
+does, how to install it, and every `config.toml` setting.
+
 ## 🎥 Demo
 
 ![CLI Demo](fixtures/demo.gif)

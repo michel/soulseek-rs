@@ -2,6 +2,8 @@
 
 A Rust library for implementing the Soulseek peer-to-peer protocol.
 
+Website: <https://re-invention.nl/soulseek-rs/>
+
 ## About
 
 This library provides the core functionality for interacting with the Soulseek

@@ -5,6 +5,7 @@ authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "Command-line client for Soulseek protocol"
 keywords = ["soulseek", "p2p", "client", "file-sharing"]
 categories = ["command-line-utilities"]
