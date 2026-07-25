@@ -14,9 +14,9 @@ import { LINKS } from '@/lib/links'
 import { cn } from '@/lib/utils'
 
 const PLATFORMS: readonly { name: OsName; note: string; anchor: string }[] = [
-  { name: 'macOS', note: 'Apple Keychain', anchor: 'macos' },
-  { name: 'Linux', note: 'Secret Service', anchor: 'linux' },
-  { name: 'Windows', note: 'Credential Manager', anchor: 'windows' },
+  { name: 'macOS', note: 'brew or cargo', anchor: 'macos' },
+  { name: 'Linux', note: 'cargo install', anchor: 'linux' },
+  { name: 'Windows', note: 'cargo or .exe', anchor: 'windows' },
 ]
 
 const FEATURES = [
@@ -124,8 +124,8 @@ export const Home = () => {
         <Wrap>
           <div className="flex flex-col gap-[22px]">
             <Eyebrow className="max-md:hidden">Soulseek client · terminal · Rust</Eyebrow>
-            <div className="flex items-start gap-3.5 sm:gap-6 md:gap-11">
-              <Logo size={172} className="mt-2 max-md:!h-28 max-sm:!h-16" />
+            <div className="flex items-center gap-3.5 sm:gap-6 md:items-start md:gap-11">
+              <Logo size={172} className="max-md:!h-32 md:mt-2" />
               <h1 className="text-[29px] leading-[37px] font-bold tracking-[-0.01em] text-balance sm:text-[34px] sm:leading-[42px] md:text-display md:leading-[var(--text-display--line-height)]">
                 A soulseek client for the terminal. Built for agents and people who live
                 there.

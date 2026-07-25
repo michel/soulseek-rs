@@ -20,9 +20,10 @@ interface TerminalProps {
   lines: readonly TermLine[]
   copy?: string
   className?: string
+  wrap?: boolean
 }
 
-export const Terminal = ({ label, lines, copy, className }: TerminalProps) => {
+export const Terminal = ({ label, lines, copy, className, wrap }: TerminalProps) => {
   const copyText =
     copy ??
     lines
@@ -47,7 +48,11 @@ export const Terminal = ({ label, lines, copy, className }: TerminalProps) => {
         {lines.map((line, i) => (
           <span
             key={i}
-            className={cn('block whitespace-pre', LINE_TONE[line.t])}
+            className={cn(
+              'block',
+              wrap ? 'break-all whitespace-pre-wrap' : 'whitespace-pre',
+              LINE_TONE[line.t],
+            )}
           >
             {line.t === 'cmd' && (
               <>

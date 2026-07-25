@@ -12,6 +12,6 @@ export const Logo = ({ size = 180, className }: LogoProps) => (
     role="img"
     aria-label="soulseek-rs"
     className={cn('logo-mark shrink-0 bg-contain bg-no-repeat', className)}
-    style={{ height: size, width: size * ASPECT }}
+    style={{ height: size, aspectRatio: ASPECT }}
   />
 )

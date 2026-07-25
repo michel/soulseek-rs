@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button'
 import { FeatureCard } from '@/components/ui/feature-card'
 import { Code } from '@/components/ui/inline-code'
 import { Cols, PageHead, Prose, Section, SectionHead } from '@/components/ui/layout'
+import { OsIcon, type OsName } from '@/components/ui/os-icon'
 import { Callout } from '@/components/ui/panel'
 import { Terminal, type TermLine } from '@/components/ui/terminal'
 import { LINKS } from '@/lib/links'
@@ -26,6 +27,76 @@ const LIB_LINES: TermLine[] = LIB_SRC.split('\n').map((text) => ({
   t: 'code' as const,
   text,
 }))
+
+const ReleasesLink = ({ children }: { children: React.ReactNode }) => (
+  <a
+    href={LINKS.releases}
+    target="_blank"
+    rel="noopener noreferrer"
+    className="text-link hover:text-link-hover"
+  >
+    {children}
+  </a>
+)
+
+interface InstallRoute {
+  id: string
+  os: OsName
+  best: string
+  lines: readonly TermLine[]
+  alt: React.ReactNode
+}
+
+const INSTALLS: readonly InstallRoute[] = [
+  {
+    id: 'macos',
+    os: 'macOS',
+    best: 'Homebrew',
+    lines: [
+      { t: 'cmd', text: 'brew install michel/tap/soulseek-rs' },
+      { t: 'cmd', text: 'soulseek-rs' },
+    ],
+    alt: (
+      <>
+        A prebuilt binary for both Apple silicon and Intel, so no Rust toolchain. With one
+        installed, <Code>cargo install soulseek-rs</Code> builds it from crates.io instead.
+      </>
+    ),
+  },
+  {
+    id: 'linux',
+    os: 'Linux',
+    best: 'cargo',
+    lines: [
+      { t: 'cmd', text: 'cargo install soulseek-rs' },
+      { t: 'cmd', text: 'soulseek-rs' },
+    ],
+    alt: (
+      <>
+        Homebrew on Linux works the same as on macOS. Without either, the{' '}
+        <ReleasesLink>releases page</ReleasesLink> has static musl archives for x86-64 and
+        arm64 that run on any distribution.
+      </>
+    ),
+  },
+  {
+    id: 'windows',
+    os: 'Windows',
+    best: 'cargo or a prebuilt .exe',
+    lines: [
+      { t: 'cmd', text: 'cargo install soulseek-rs' },
+      { t: 'cmd', text: 'soulseek-rs.exe' },
+    ],
+    alt: (
+      <>
+        Cargo needs the MSVC build tools. To skip both, take the{' '}
+        <code>pc-windows-msvc</code> zip from the{' '}
+        <ReleasesLink>releases page</ReleasesLink>, unpack it, and put{' '}
+        <code>soulseek-rs.exe</code> on your PATH.
+      </>
+    ),
+  },
+]
 
 interface PlatformNote {
   id: string
@@ -191,16 +262,7 @@ export const Install = () => {
         <div className="flex flex-col gap-9">
           <Step n={1} title="Install the client">
             <p className="text-secondary">
-              Homebrew, on macOS or Linux. A prebuilt binary, so no Rust toolchain:
-            </p>
-            <Terminal
-              lines={[
-                { t: 'cmd', text: 'brew install michel/tap/soulseek-rs' },
-                { t: 'cmd', text: 'soulseek-rs' },
-              ]}
-            />
-            <p className="text-secondary">
-              With a Rust toolchain from{' '}
+              One command per platform. Cargo needs a Rust toolchain from{' '}
               <a
                 href={LINKS.rustup}
                 target="_blank"
@@ -209,29 +271,39 @@ export const Install = () => {
               >
                 rustup.rs
               </a>
-              , cargo works everywhere else:
+              ; the other routes don&rsquo;t.
             </p>
-            <Terminal lines={[{ t: 'cmd', text: 'cargo install soulseek-rs' }]} />
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+              {INSTALLS.map((route) => (
+                <div
+                  key={route.id}
+                  id={route.id}
+                  className="flex scroll-mt-20 flex-col gap-3.5 rounded-md border border-hairline bg-panel p-[18px] sm:p-[22px]"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <OsIcon name={route.os} />
+                    <h3 className="text-heading leading-[var(--text-heading--line-height)] font-medium">
+                      {route.os}
+                    </h3>
+                  </div>
+                  <span className="text-[11px] uppercase tracking-[var(--tracking-label)] text-secondary">
+                    {route.best}
+                  </span>
+                  <Terminal lines={route.lines} wrap />
+                  <p className="text-[12.5px] leading-5 text-secondary [&_code]:font-mono [&_code]:text-primary">
+                    {route.alt}
+                  </p>
+                </div>
+              ))}
+            </div>
             <p className="text-[13px] text-muted">
-              Either way the binary lands on your PATH. Run <Code>soulseek-rs</Code> in a
-              terminal and the TUI opens, in a script or a pipe it wants a subcommand
+              Every route puts the same binary on your PATH. Run <Code>soulseek-rs</Code> in
+              a terminal and the TUI opens, in a script or a pipe it wants a subcommand
               instead.
             </p>
             <div className="flex flex-wrap gap-2 sm:gap-3">
               <Button href={LINKS.releases}>Prebuilt binaries</Button>
             </div>
-            <p className="text-[13px] text-muted">
-              No Rust toolchain? Grab a prebuilt archive for your platform from the{' '}
-              <a
-                href={LINKS.releases}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-link hover:text-link-hover"
-              >
-                releases page
-              </a>
-              , unpack it, and put the binary somewhere on your PATH.
-            </p>
           </Step>
 
           <Step n={2} title="Build from source">
@@ -350,7 +422,7 @@ export const Install = () => {
           {PLATFORMS.map((platform) => (
             <div
               key={platform.id}
-              id={platform.id}
+              id={`${platform.id}-paths`}
               className="scroll-mt-20 rounded-md border border-hairline bg-panel p-[18px] sm:p-[22px]"
             >
               <h3 className="mb-4 text-heading leading-[var(--text-heading--line-height)] font-medium">
