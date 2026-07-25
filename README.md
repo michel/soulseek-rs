@@ -1,8 +1,22 @@
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="fixtures/logo-ink.svg">
+    <img src="fixtures/logo-light.svg" alt="soulseek-rs" width="132">
+  </picture>
+</div>
+
 # Soulseek-rs 🦀
 
-Soulseek-rs is a Soulseek library and client built in Rust. Soulseek is a
-closed-source P2P file-sharing network from the 2000s. It's still used by
-music enthusiasts around the world to share niche music.
+**A soulseek client for the terminal. Built for agents and people who live
+there.**
+
+Search the network, share your files, browse someone's collection, join a room.
+It runs over ssh on the machine where your music already lives.
+
+Soulseek is a closed-source P2P file-sharing network from the 2000s, still used
+by music enthusiasts around the world to share niche music. This repository is
+that client plus [`soulseek-rs-lib`](./soulseek-rs-lib), the protocol library it
+is built on.
 
 **[re-invention.nl/soulseek-rs](https://re-invention.nl/soulseek-rs/)** — what it
 does, how to install it, and every `config.toml` setting.
