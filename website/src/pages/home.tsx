@@ -27,10 +27,10 @@ const FEATURES = [
     cmd: 'soulseek-rs skills install',
     body: (
       <>
-        One command hands your coding agent the whole surface: the JSON keys every record
-        carries, what each exit code means, and the rule that it always asks for{' '}
-        <code>--json</code>. The skill ships inside the binary, so there is nothing to
-        clone and nothing to configure — it finds Claude Code and opencode on its own.
+        Run it once and asking beats scripting: your agent knows the record shapes, the
+        exit codes, and the filters, so &ldquo;find the 1998 pressing, lossless only&rdquo;
+        becomes a pipeline it writes itself. No MCP server, no wrapper — the skill ships
+        inside the binary and finds Claude Code and opencode on its own.
       </>
     ),
   },
@@ -255,6 +255,53 @@ export const Home = () => {
             </FeatureCard>
           ))}
         </div>
+      </Section>
+
+      <Section id="agents">
+        <SectionHead eyebrow="agent native" title="Ask for the record. Skip the pipeline.">
+          A CLI an agent can drive is not the same as a CLI an agent knows how to drive.
+          <Code>skills install</Code> closes that gap in one command.
+        </SectionHead>
+        <Cols start>
+          <Terminal
+            label="your agent, after skills install"
+            lines={[
+              { t: 'cm', text: '"get me Geogaddi in FLAC, only peers with a free slot"' },
+              {
+                t: 'cmd',
+                text: 'soulseek-rs search "boards of canada geogaddi" \\',
+              },
+              { t: 'code', text: '    --free-slots --json \\' },
+              { t: 'code', text: "    | jq -c 'select(.path | endswith(\".flac\"))' \\" },
+              { t: 'code', text: '    | soulseek-rs download --stdin --json' },
+              { t: 'out', text: '{"file":"~/Music/Soulseek/01 Ready Lets Go.flac",…}' },
+              { t: 'cm', text: '# 23 tracks. no wrapper script, no hand-holding.' },
+            ]}
+          />
+          <Prose>
+            <p>
+              <Code>--help</Code> lists flags. It cannot say which JSON keys a record
+              carries, that exit 4 means widen the query rather than retry it, that a
+              remote path is backslash-separated and has to go back byte-identical, or
+              that <Code>--follow</Code> never returns and an agent wants{' '}
+              <Code>--duration</Code> instead. An agent without that guesses, and guessing
+              against someone else&rsquo;s file server is how you get a hung job.
+            </p>
+            <p>
+              The skill is that missing half. Once it lands, the interesting requests stop
+              being pipelines you write: mirror a peer&rsquo;s FLAC folder overnight, watch
+              a room and save anything that mentions a label, check whether a user is worth
+              queueing behind before committing to a 2 GB transfer.
+            </p>
+            <p>
+              It stays a CLI — no daemon, no MCP server, no API key. Upgrading the binary
+              upgrades the skill; run <Code>skills install</Code> again to take it.{' '}
+              <Link to="/docs" className="text-link hover:text-link-hover">
+                See the commands
+              </Link>
+            </p>
+          </Prose>
+        </Cols>
       </Section>
 
       <Section band>
