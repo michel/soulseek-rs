@@ -200,46 +200,54 @@ impl MainTui {
         let area = centered_rect(70, 60, frame.area());
         frame.render_widget(ratatui::widgets::Clear, area);
 
-        let mut lines: Vec<ratatui::text::Line> = Vec::new();
+        let mut lines: Vec<Line> = Vec::new();
         let marker = |selected: bool| if selected { "> " } else { "  " };
-
-        let download_line = if settings.mode == SettingsMode::EditingDownloadDir
-        {
-            format!("> Download folder: {}▏", settings.input)
-        } else {
-            format!(
-                "{}Download folder: {}",
-                marker(settings.selected == 0),
-                settings.download_dir
-            )
+        let entry = |selected: bool, label: &str, value: String| {
+            Line::from(vec![
+                Span::styled(marker(selected).to_string(), accent_style()),
+                Span::styled(label.to_string(), dimmed_style()),
+                Span::styled(value, primary_style()),
+            ])
         };
-        lines.push(ratatui::text::Line::from(download_line));
-        lines.push(ratatui::text::Line::from(""));
-        lines.push(ratatui::text::Line::from(format!(
-            "Shared folders ({}):",
-            settings.share_dirs.len()
-        )));
+
+        lines.push(if settings.mode == SettingsMode::EditingDownloadDir {
+            Line::from(vec![
+                Span::styled("> ", accent_style()),
+                Span::styled("Download folder: ", dimmed_style()),
+                Span::styled(settings.input.clone(), primary_style()),
+                Span::styled("▏", accent_style()),
+            ])
+        } else {
+            entry(
+                settings.selected == 0,
+                "Download folder: ",
+                settings.download_dir.clone(),
+            )
+        });
+        lines.push(Line::from(""));
+        lines.push(Line::styled(
+            format!("Shared folders ({}):", settings.share_dirs.len()),
+            dimmed_style(),
+        ));
         for (i, dir) in settings.share_dirs.iter().enumerate() {
-            lines.push(ratatui::text::Line::from(format!(
-                "{}{}",
-                marker(settings.selected == i + 1),
-                dir
-            )));
+            lines.push(entry(settings.selected == i + 1, "", dir.clone()));
         }
         if settings.share_dirs.is_empty() {
-            lines.push(ratatui::text::Line::from(
+            lines.push(Line::styled(
                 "  (nothing shared — press 'a' to add a folder)",
+                dimmed_style(),
             ));
         }
         if settings.mode == SettingsMode::AddingShare {
-            lines.push(ratatui::text::Line::from(format!(
-                "  Add share: {}▏",
-                settings.input
-            )));
+            lines.push(Line::from(vec![
+                Span::styled("  Add share: ", dimmed_style()),
+                Span::styled(settings.input.clone(), primary_style()),
+                Span::styled("▏", accent_style()),
+            ]));
         }
         if let Some(status) = &settings.status {
-            lines.push(ratatui::text::Line::from(""));
-            lines.push(ratatui::text::Line::from(status.clone()));
+            lines.push(Line::from(""));
+            lines.push(Line::styled(status.clone(), warning_style()));
         }
 
         let block = pane_block(true).title(plain_title("Settings", true));

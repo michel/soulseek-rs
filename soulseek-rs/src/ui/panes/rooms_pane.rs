@@ -2,6 +2,7 @@ use crate::models::{RoomsState, RoomsView};
 use crate::ui::{
     HIGHLIGHT_SYMBOL, PANE_PADDING, accent_style, dimmed_style,
     highlight_style, info_style, pane_block, plain_title, primary_style,
+    row_highlight_style,
 };
 use ratatui::{
     Frame,
@@ -84,7 +85,7 @@ fn render_list(
     let table =
         Table::new(table_rows, [Constraint::Fill(1), Constraint::Length(8)])
             .header(header)
-            .row_highlight_style(highlight_style())
+            .row_highlight_style(row_highlight_style())
             .highlight_symbol(HIGHLIGHT_SYMBOL)
             .highlight_spacing(HighlightSpacing::Always)
             .block(block);

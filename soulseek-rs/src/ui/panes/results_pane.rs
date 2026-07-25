@@ -1,7 +1,7 @@
 use crate::models::FileDisplayData;
 use crate::ui::{
     BYTES_PER_MB, HIGHLIGHT_SYMBOL, body_style, dimmed_style, format_bytes,
-    header_style, highlight_style, info_style, pane_block, pane_title,
+    header_style, info_style, pane_block, pane_title, row_highlight_style,
     success_style, warning_style,
 };
 use ratatui::{
@@ -167,7 +167,7 @@ pub fn render_results_pane(
 
     let table = Table::new(rows, widths)
         .header(header)
-        .row_highlight_style(highlight_style())
+        .row_highlight_style(row_highlight_style())
         .highlight_symbol(HIGHLIGHT_SYMBOL)
         .highlight_spacing(HighlightSpacing::Always)
         .block(pane_block(focused).title(pane_title("2", &title, focused)));
