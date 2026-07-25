@@ -4,8 +4,8 @@ use crate::actor::server_actor::{
 };
 use crate::download_store::{DownloadStore, collect_failed_tokens};
 use crate::types::{
-    DownloadMetadata, DownloadStatus, RoomEvent, RoomInfo, UserInfo,
-    UserPresence, UserStats, UserStatus,
+    ClientVersion, DownloadMetadata, DownloadStatus, RoomEvent, RoomInfo,
+    UserInfo, UserPresence, UserStats, UserStatus,
 };
 use crate::utils::logger;
 use crate::{
@@ -139,6 +139,10 @@ pub struct ClientSettings {
     /// Directories whose files are shared with (uploaded to) other peers.
     /// Empty means nothing is shared.
     pub shared_directories: Vec<String>,
+    /// The version reported to the server on login. Defaults to the
+    /// soulseek-rs major version with minor version 1; clients and bots built
+    /// on this library should pick their own minor version.
+    pub version: ClientVersion,
 }
 
 impl ClientSettings {
@@ -166,6 +170,7 @@ impl Default for ClientSettings {
             enable_listen: true,
             listen_port: DEFAULT_LISTEN_PORT,
             shared_directories: Vec::new(),
+            version: ClientVersion::default(),
         }
     }
 }
@@ -762,6 +767,7 @@ pub struct Client {
     address: PeerAddress,
     username: String,
     password: String,
+    version: ClientVersion,
     shared_directories: Vec<String>,
     server_handle: Option<ActorHandle<ServerMessage>>,
     context: Arc<RwLock<ClientContext>>,
@@ -784,6 +790,7 @@ impl Client {
             address: settings.server_address,
             username: settings.username,
             password: settings.password,
+            version: settings.version,
             shared_directories: settings.shared_directories,
             context: Arc::new(RwLock::new(ClientContext::new())),
             server_handle: None,

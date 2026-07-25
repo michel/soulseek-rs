@@ -24,7 +24,7 @@ use crate::message::{Handlers, MessageType};
 use crate::message::{Message, MessageReader};
 use crate::peer::ConnectionType;
 use crate::peer::Peer;
-use crate::types::{RoomEvent, RoomInfo};
+use crate::types::{ClientVersion, RoomEvent, RoomInfo};
 use crate::utils::lock::RwLockExt;
 
 use std::io::{self, Error, Write};
@@ -159,6 +159,7 @@ pub enum ServerMessage {
     Login {
         username: String,
         password: String,
+        version: ClientVersion,
         response: std::sync::mpsc::Sender<Result<bool, SoulseekRs>>,
     },
     FileSearch {
@@ -533,9 +534,10 @@ impl ServerActor {
             ServerMessage::Login {
                 username,
                 password,
+                version,
                 response,
             } => {
-                self.handle_login(username, password, response);
+                self.handle_login(username, password, version, response);
             }
             ServerMessage::FileSearch { token, query } => {
                 self.file_search(token, &query);
@@ -640,10 +642,11 @@ impl ServerActor {
         &mut self,
         username: String,
         password: String,
+        version: ClientVersion,
         response: std::sync::mpsc::Sender<Result<bool, SoulseekRs>>,
     ) {
         self.queue_message(MessageFactory::build_login_message(
-            &username, &password,
+            &username, &password, version,
         ));
 
         let start = std::time::Instant::now();

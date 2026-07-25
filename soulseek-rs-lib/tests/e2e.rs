@@ -28,7 +28,9 @@ use std::time::{Duration, Instant};
 use soulseek_rs::message::Message;
 use soulseek_rs::message::server::MessageFactory;
 use soulseek_rs::peer::ConnectionType;
-use soulseek_rs::{Client, ClientSettings, DownloadStatus, PeerAddress};
+use soulseek_rs::{
+    Client, ClientSettings, ClientVersion, DownloadStatus, PeerAddress,
+};
 
 /// A Soulseek server to test against: either a child soulfind process we
 /// spawned, or an external server referenced by `SOULSEEK_TEST_SERVER`.
@@ -97,6 +99,7 @@ impl TestServer {
             enable_listen: false,
             listen_port: 0,
             shared_directories: Vec::new(),
+            version: ClientVersion::default(),
         }
     }
 
@@ -601,7 +604,12 @@ fn login_raw(
     let mut srv = connect_retry(server_addr, Duration::from_secs(5))?;
     srv.set_read_timeout(Some(Duration::from_secs(10)))?;
     srv.write_all(
-        &MessageFactory::build_login_message(username, password).get_buffer(),
+        &MessageFactory::build_login_message(
+            username,
+            password,
+            ClientVersion::default(),
+        )
+        .get_buffer(),
     )?;
     srv.flush()?;
     loop {
@@ -816,8 +824,12 @@ fn run_mock_direct_peer(cfg: &MockDirectUpload) -> std::io::Result<()> {
     let mut srv = connect_retry(&cfg.server_addr, Duration::from_secs(5))?;
     srv.set_read_timeout(Some(Duration::from_secs(10)))?;
     srv.write_all(
-        &MessageFactory::build_login_message(&cfg.username, &cfg.password)
-            .get_buffer(),
+        &MessageFactory::build_login_message(
+            &cfg.username,
+            &cfg.password,
+            ClientVersion::default(),
+        )
+        .get_buffer(),
     )?;
     srv.flush()?;
     loop {
