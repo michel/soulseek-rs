@@ -71,7 +71,7 @@ This project is organized as a Cargo workspace with two crates:
 This structure allows:
 
 - Other developers to build custom Soulseek clients using `soulseek-rs-lib`
-- Users to install the ready-made client via `cargo install soulseek-rs`
+- Users to install the ready-made client with Homebrew or `cargo install`
 - Clean separation of concerns between protocol implementation and user interface
 
 ## Installation
