@@ -143,7 +143,7 @@ export const Home = () => {
                 <Button href="/docs">Read the docs</Button>
                 <Button href={LINKS.gh}>GitHub</Button>
               </div>
-              <CommandPill text="cargo install soulseek-rs" />
+              <CommandPill text="brew install michel/tap/soulseek-rs" />
             </div>
           </div>
 
@@ -312,7 +312,7 @@ export const Home = () => {
               Install it, then press <span className="text-accent-text">s</span> to search.
             </h2>
             <p className="text-secondary">
-              Needs a Rust toolchain. From there it&rsquo;s one command, then the TUI opens.
+              One command on macOS or Linux, then the TUI opens. No Rust toolchain needed.
             </p>
             <div className="mt-1.5 flex flex-wrap gap-2 sm:gap-3">
               <Button href="/docs" variant="accent">
@@ -324,7 +324,7 @@ export const Home = () => {
           <Terminal
             label="quick start"
             lines={[
-              { t: 'cmd', text: 'cargo install soulseek-rs' },
+              { t: 'cmd', text: 'brew install michel/tap/soulseek-rs' },
               { t: 'cmd', text: 'soulseek-rs' },
             ]}
           />
