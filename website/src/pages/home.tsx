@@ -272,19 +272,19 @@ export const Home = () => {
               <Code>--help</Code> lists flags. It cannot say which JSON keys a record
               carries, that exit 4 means widen the query rather than retry it, that a
               remote path is backslash-separated and has to go back byte-identical, or
-              that <Code>--follow</Code> never returns and an agent wants{' '}
-              <Code>--duration</Code> instead. An agent without that guesses, and guessing
-              against someone else&rsquo;s file server is how you get a hung job.
+              that <Code>--follow</Code> never returns so an agent passes{' '}
+              <Code>--duration</Code>. An agent without that guesses, and guessing against
+              a stranger&rsquo;s file server hangs the job.
             </p>
             <p>
-              The skill is that missing half. Once it lands, the interesting requests stop
-              being pipelines you write: mirror a peer&rsquo;s FLAC folder overnight, watch
-              a room and save anything that mentions a label, check whether a user is worth
-              queueing behind before committing to a 2 GB transfer.
+              <Code>skills install</Code> fills that in. The requests stop being pipelines
+              you write: mirror a peer&rsquo;s FLAC folder overnight, watch a room and save
+              anything that mentions a label, check whether a user is worth queueing behind
+              before a 2 GB transfer.
             </p>
             <p>
-              It stays a CLI — no daemon, no MCP server, no API key. Upgrading the binary
-              upgrades the skill; run <Code>skills install</Code> again to take it.{' '}
+              It stays a CLI: no daemon, no MCP server, no API key. Upgrading the binary
+              upgrades the skill; rerun <Code>skills install</Code> to take it.{' '}
               <Link to="/docs" className="text-link hover:text-link-hover">
                 See the commands
               </Link>
