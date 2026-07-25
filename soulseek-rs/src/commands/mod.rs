@@ -1,10 +1,13 @@
 //! One-shot commands: everything the binary can do without a terminal.
 //!
-//! Each command opens a [`Session`], does one job, writes records to stdout
-//! and progress to stderr, and returns an exit code through [`CliError`].
+//! Each command does one job, writes records to stdout and progress to stderr,
+//! and returns an exit code through [`CliError`]. Most open a [`Session`]
+//! first; the ones that only read the config file or the local machine are
+//! dispatched by `main::run` before any credentials are demanded.
 
 pub mod peer;
 pub mod settings;
+pub mod skills;
 pub mod social;
 pub mod transfer;
 
@@ -193,7 +196,7 @@ pub fn run(ctx: &Ctx, command: Commands) -> CliResult {
         // These need no account, so main.rs answers them before asking for
         // credentials; the arms exist only to keep the match exhaustive.
         Commands::Portmap => portmap(&ctx.out, ctx.settings.listen_port),
-        Commands::Config(_) | Commands::Shares(_) => {
+        Commands::Config(_) | Commands::Shares(_) | Commands::Skills(_) => {
             Err(CliError::usage("handled without a session; see main::run"))
         }
     }

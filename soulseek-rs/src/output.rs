@@ -423,6 +423,28 @@ impl Record for ConfigRecord {
     }
 }
 
+/// What happened to one agent's copy of the skill.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SkillRecord {
+    /// The agent the directory belongs to, or `custom` for a `--dir`.
+    pub agent: String,
+    pub path: String,
+    /// `installed` (written), `unchanged` (already identical), `outdated`
+    /// (present but different, reported by `list`), `removed`, or `absent`.
+    pub action: String,
+}
+
+impl Record for SkillRecord {
+    fn text(&self) -> String {
+        format!(
+            "{}\t{}\t{}",
+            sanitize(&self.action),
+            sanitize(&self.agent),
+            sanitize(&self.path)
+        )
+    }
+}
+
 /// The result of probing automatic port mapping.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PortmapRecord {
