@@ -9,9 +9,13 @@ on:
   pull_request:
     branches: ['**']
 
+# Superseding a branch run saves the matrix from running twice, but a master run
+# must be allowed to finish: the release workflow gates on finding a completed
+# CI run for its own commit, and nothing ever pushes that commit again. A
+# cancelled run there strands the release until it times out.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 env:
   CARGO_TERM_COLOR: always
