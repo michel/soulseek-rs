@@ -258,6 +258,8 @@ soulseek-rs user someuser --json | jq -e '.status != "offline"'
 
 ### Agent skills
 
+[![an agent loading the soulseek-rs skill and downloading tracks](website/public/agent-demo.svg)](https://re-invention.nl/soulseek-rs/#agents)
+
 The scriptable surface above is meant to be driven by coding agents as much as
 by shell scripts, but `--help` cannot tell an agent which JSON keys a record
 carries or what exit 4 means. That lives in a skill file shipped inside the
