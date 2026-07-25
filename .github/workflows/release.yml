@@ -128,6 +128,14 @@ jobs:
           # refuse anything that is not a literal version tag.
           [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::unexpected tag: $tag"; exit 1; }
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "resolved tag: '$tag'"
+
+      # The downstream jobs gate on these, and a silent empty value here cost
+      # four release runs, so say them out loud.
+      - name: Report what the downstream jobs will see
+        run: |
+          echo "created = '${{ steps.release-plz.outputs.releases_created }}'"
+          echo "tag     = '${{ steps.tag.outputs.tag }}'"
 
   # Attaches downloadable binaries to the release GitHub just created, or to an
   # existing tag when dispatched manually with `tag` (recovering a target that
@@ -135,16 +143,13 @@ jobs:
   binaries:
     name: ${{ matrix.target }}
     needs: release
-    # `github.event.inputs`, not `inputs`: the latter is empty in a job-level
-    # condition on workflow_dispatch, and `null != ''` coerces to false, which
-    # silently skipped this job on every manual recovery run.
-    # Gate on the resolved tag, not on the dispatch input: neither `inputs.tag`
-    # nor `github.event.inputs.tag` evaluates in a job-level `if`, so both
-    # spellings skipped this job on every manual recovery run. `Resolve tag`
-    # already runs exactly when there is something to build (a fresh release or
-    # a hand-typed tag), and its output is a plain `needs` value that does work
-    # here.
-    if: needs.release.outputs.tag != ''
+    # `github.event_name` is the one context proven to evaluate here: ci-gate
+    # uses it and skips correctly on dispatch. `inputs.tag`,
+    # `github.event.inputs.tag` and `needs.release.outputs.tag` were all tried
+    # and all left this job skipped, which is how v7.0.0 shipped to crates.io
+    # with an empty homebrew tap. A dispatch without a tag now fails loudly in
+    # the checkout below rather than skipping in silence.
+    if: needs.release.outputs.created == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
     strategy:
       # One flaky cross-linker must not hold back the five targets that built.
@@ -201,13 +206,7 @@ jobs:
   homebrew:
     name: Homebrew tap
     needs: [release, binaries]
-    # Gate on the resolved tag, not on the dispatch input: neither `inputs.tag`
-    # nor `github.event.inputs.tag` evaluates in a job-level `if`, so both
-    # spellings skipped this job on every manual recovery run. `Resolve tag`
-    # already runs exactly when there is something to build (a fresh release or
-    # a hand-typed tag), and its output is a plain `needs` value that does work
-    # here.
-    if: needs.release.outputs.tag != ''
+    if: needs.release.outputs.created == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
