@@ -16,17 +16,13 @@ impl MainTui {
             return self.handle_chat_input(key);
         }
 
-        // Browse popup takes over navigation while open.
+        // An open popup owns the keyboard, so these come before pane routing.
         if self.state.show_browse {
             return self.handle_browse_input(key);
         }
-
-        // Rooms popup takes over navigation while open.
         if self.state.show_rooms {
             return self.handle_rooms_input(key);
         }
-
-        // Settings popup takes over navigation while open.
         if self.state.settings.is_some() {
             return self.handle_settings_input(key);
         }
@@ -149,7 +145,6 @@ impl MainTui {
             KeyCode::BackTab | KeyCode::Up | KeyCode::Char('k') => {
                 self.state.cycle_chat_peer(false);
             }
-            // Start a conversation with someone not in the list yet.
             KeyCode::Char('m') => {
                 self.state.show_messages = false;
                 self.state.command_bar_active = true;

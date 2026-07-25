@@ -298,8 +298,10 @@ impl MainTui {
         }
     }
 
-    fn render_shortcuts(&self, frame: &mut Frame, area: Rect) {
-        let shortcuts = if self.state.settings.is_some() {
+    /// Which shortcuts the bar offers, which is purely a question of what is
+    /// open and where the focus sits. Sibling of [`Self::rooms_shortcuts`].
+    fn shortcuts(&self) -> Vec<(&'static str, &'static str)> {
+        if self.state.settings.is_some() {
             vec![
                 ("↑↓", "move"),
                 ("Enter/e", "edit download dir"),
@@ -399,9 +401,11 @@ impl MainTui {
                     ]
                 }
             }
-        };
+        }
+    }
 
-        let shortcuts_line = format_shortcuts_styled(&shortcuts);
+    fn render_shortcuts(&self, frame: &mut Frame, area: Rect) {
+        let shortcuts_line = format_shortcuts_styled(&self.shortcuts());
         // Surface our own sharing status in the block title.
         let shared = self.client.shared_directories();
         let sharing = match shared.as_slice() {
