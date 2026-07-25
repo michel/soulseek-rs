@@ -108,6 +108,7 @@ impl Client {
             let _ = handle.send(ServerMessage::Login {
                 username: self.username.clone(),
                 password: self.password.clone(),
+                version: self.version,
                 response: tx,
             });
 
