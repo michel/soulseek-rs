@@ -64,6 +64,14 @@ This structure allows:
 
 ### For Users
 
+Homebrew, on macOS or Linux — a prebuilt binary, no Rust toolchain:
+
+```bash
+brew install michel/tap/soulseek-rs
+```
+
+Or with cargo:
+
 ```bash
 cargo install soulseek-rs
 ```

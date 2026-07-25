@@ -183,15 +183,24 @@ export const Install = () => {
   return (
     <>
       <PageHead eyebrow="install" title="Three ways in.">
-        One command if you have Rust. Build from source if you&rsquo;d rather. Or depend on
-        the library and write your own client.
+        One command with Homebrew or cargo. Build from source if you&rsquo;d rather. Or
+        depend on the library and write your own client.
       </PageHead>
 
       <Section>
         <div className="flex flex-col gap-9">
           <Step n={1} title="Install the client">
             <p className="text-secondary">
-              Needs a Rust toolchain, available from{' '}
+              Homebrew, on macOS or Linux. A prebuilt binary, so no Rust toolchain:
+            </p>
+            <Terminal
+              lines={[
+                { t: 'cmd', text: 'brew install michel/tap/soulseek-rs' },
+                { t: 'cmd', text: 'soulseek-rs' },
+              ]}
+            />
+            <p className="text-secondary">
+              With a Rust toolchain from{' '}
               <a
                 href={LINKS.rustup}
                 target="_blank"
@@ -200,17 +209,13 @@ export const Install = () => {
               >
                 rustup.rs
               </a>
-              . Then:
+              , cargo works everywhere else:
             </p>
-            <Terminal
-              lines={[
-                { t: 'cmd', text: 'cargo install soulseek-rs' },
-                { t: 'cmd', text: 'soulseek-rs' },
-              ]}
-            />
+            <Terminal lines={[{ t: 'cmd', text: 'cargo install soulseek-rs' }]} />
             <p className="text-[13px] text-muted">
-              Cargo puts the binary on your PATH. Run <Code>soulseek-rs</Code> in a terminal
-              and the TUI opens, in a script or a pipe it wants a subcommand instead.
+              Either way the binary lands on your PATH. Run <Code>soulseek-rs</Code> in a
+              terminal and the TUI opens, in a script or a pipe it wants a subcommand
+              instead.
             </p>
             <div className="flex flex-wrap gap-2 sm:gap-3">
               <Button href={LINKS.releases}>Prebuilt binaries</Button>
