@@ -11,7 +11,7 @@ use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = Client::new("username", "password");
-    client.connect();
+    client.connect()?;
     client.login()?;
 
     let results = client.search("public domain field recordings", Duration::from_secs(10))?;
@@ -117,8 +117,8 @@ export const Install = () => {
               ]}
             />
             <p className="text-[13px] text-muted">
-              Cargo puts the binary on your PATH. Run <Code>soulseek-rs</Code> and the TUI
-              opens.
+              Cargo puts the binary on your PATH. Run <Code>soulseek-rs</Code> in a terminal
+              and the TUI opens, in a script or a pipe it wants a subcommand instead.
             </p>
             <div className="flex flex-wrap gap-2 sm:gap-3">
               <Button href={LINKS.releases}>Prebuilt binaries</Button>
@@ -205,7 +205,7 @@ export const Install = () => {
       <Section>
         <SectionHead eyebrow="being reachable" title="Let peers connect back.">
           Browsing and downloading are peer-to-peer, so at least one side has to accept an
-          incoming connection.
+          incoming connection. <Code>serve</Code> refuses to start with the listener off.
         </SectionHead>
         <Cols start>
           <Prose>
@@ -218,13 +218,18 @@ export const Install = () => {
               yourself.
             </p>
             <p>
-              The port is your <Code>--listener-port</Code> (env <Code>LISTENER_PORT</Code>,
-              default <Code>2234</Code>); it&rsquo;s renewed automatically and removed on
-              exit. Pass <Code>--disable-listener</Code> to turn it off. Check your own
-              network without launching the client:
+              The port is your <Code>--listener-port</Code> (env{' '}
+              <Code>SOULSEEK_LISTENER_PORT</Code>, default <Code>2234</Code>); it&rsquo;s
+              renewed automatically and removed on exit. Pass <Code>--no-listener</Code> to
+              turn it off. Check your own network without launching the client:
             </p>
             <div className="mt-4">
-              <Terminal lines={[{ t: 'cmd', text: 'soulseek-rs portmap' }]} />
+              <Terminal
+                lines={[
+                  { t: 'cmd', text: 'soulseek-rs portmap' },
+                  { t: 'cm', text: "# exits 0 when it works, 4 when it doesn't" },
+                ]}
+              />
             </div>
           </Prose>
           <Callout tone="warn" title="honest about limits">
@@ -288,13 +293,17 @@ export const Install = () => {
           <FeatureCard title="Secrets">
             Your password goes to the OS keychain, never a plain-text file. If you would
             rather it never be stored at all, have <code>password_cmd</code> shell out to
-            your own password manager and print it on demand.
+            your own password manager and print it on demand. For CI and containers,{' '}
+            <code>--password-stdin</code> reads it off a pipe so it never reaches{' '}
+            <code>ps</code> or the environment.
           </FeatureCard>
           <FeatureCard title="Settings and state">
             <code>config.toml</code> is layered: flags beat environment variables, which
-            beat the file, which beats the defaults. State (searches, downloads, rooms) is
-            versioned JSON and restores on restart; anything unreadable is set aside as{' '}
-            <code>.bak</code> instead of being overwritten.
+            beat the file, which beats the defaults. <code>config get</code> and{' '}
+            <code>config set</code> read and write that file without opening an editor.
+            State (searches, downloads, rooms) is versioned JSON and restores on restart;
+            anything unreadable is set aside as <code>.bak</code> instead of being
+            overwritten.
           </FeatureCard>
         </Cols>
       </Section>
@@ -302,14 +311,15 @@ export const Install = () => {
       <Section band>
         <SectionHead eyebrow="uninstall" title="Removing it completely.">
           Three things exist on disk: the binary, the config, and the state. Nothing else is
-          written, and there is no telemetry to opt out of.
+          written unless you pointed <Code>--log-file</Code> at a file, and there is no
+          telemetry to opt out of.
         </SectionHead>
         <Cols start>
           <Terminal
             label="macOS · Linux"
             lines={[
               { t: 'cmd', text: 'cargo uninstall soulseek-rs' },
-              { t: 'cm', text: '# config, state and any cached shares' },
+              { t: 'cm', text: '# config and state: searches, downloads, rooms, messages' },
               {
                 t: 'cmd',
                 text: 'rm -rf ~/.config/soulseek-rs ~/.local/share/soulseek-rs',

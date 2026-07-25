@@ -32,8 +32,13 @@ const ALTERNATIVES: readonly Alternative[] = [
     links: [{ label: 'Nicotine+', href: LINKS.nicotine }],
   },
   {
-    question: 'Want to point automation at the network?',
-    answer: <>slskd does that today. Daemon mode here is unbuilt.</>,
+    question: 'Want a queue that outlives the command?',
+    answer: (
+      <>
+        Every command runs one-shot and exits: JSON on stdout, an exit code, nothing left
+        running. No resident queue to pause, resume, or drive remotely. slskd has that.
+      </>
+    ),
     links: [{ label: 'slskd', href: LINKS.slskd }],
   },
 ]
@@ -45,8 +50,8 @@ const CITIZENSHIP = [
     title: 'Share, and share real files',
     body: (
       <>
-        Point <code>--shared-dir</code> at the collection you actually listen to. Full
-        albums, honest bitrates, nothing transcoded up from a lossy source and relabelled.
+        Point <code>shares add</code> at the collection you actually listen to. Full albums,
+        honest bitrates, nothing transcoded up from a lossy source and relabelled.
       </>
     ),
   },
@@ -67,8 +72,8 @@ const CITIZENSHIP = [
     title: 'Stay online',
     body: (
       <>
-        Leave it running in a tmux session on the box that is already on. A share that
-        appears for an hour a week is close to no share at all.
+        Leave <code>serve --follow</code> running in a tmux session on the box that is
+        already on. A share that appears for an hour a week is close to no share at all.
       </>
     ),
   },
