@@ -78,7 +78,7 @@ This structure allows:
 
 ### For Users
 
-Homebrew, on macOS or Linux — a prebuilt binary, no Rust toolchain:
+Homebrew, on macOS or Linux. A prebuilt binary, so no Rust toolchain:
 
 ```bash
 brew install michel/tap/soulseek-rs
@@ -108,7 +108,7 @@ To build your own Soulseek client, add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-soulseek-rs-lib = "6"
+soulseek-rs-lib = "7"
 ```
 
 ## Usage
