@@ -18,7 +18,7 @@ by music enthusiasts around the world to share niche music. This repository is
 that client plus [`soulseek-rs-lib`](./soulseek-rs-lib), the protocol library it
 is built on.
 
-**[re-invention.nl/soulseek-rs](https://re-invention.nl/soulseek-rs/)** — what it
+**[re-invention.nl/soulseek-rs](https://re-invention.nl/soulseek-rs/)**: what it
 does, how to install it, and every `config.toml` setting.
 
 ## 🎥 Demo
@@ -27,20 +27,20 @@ does, how to install it, and every `config.toml` setting.
 
 ## Features
 
-- **Search & download** — search the network and queue downloads in the TUI,
+- **Search & download**: search the network and queue downloads in the TUI,
   or fetch a track in one command with `get`
-- **Sharing** — `shares add` a directory and your files show up in searches;
+- **Sharing**: `shares add` a directory and your files show up in searches;
   `serve` stays online so peers can browse and download them
-- **Browse** — list any user's shared files and download straight from the tree
-- **Chat rooms** — list, join, and talk in public rooms, several open at once
-- **Private messages** — send and receive messages, with an inbox in the TUI
-- **Firewalled peers** — downloads and browsing fall back to server-brokered
+- **Browse**: list any user's shared files and download straight from the tree
+- **Chat rooms**: list, join, and talk in public rooms, several open at once
+- **Private messages**: send and receive messages, with an inbox in the TUI
+- **Firewalled peers**: downloads and browsing fall back to server-brokered
   connections when a peer can't be reached directly
-- **Automatic port mapping** — opens your listen port via UPnP-IGD and
+- **Automatic port mapping**: opens your listen port via UPnP-IGD and
   NAT-PMP, with a `portmap` subcommand to test your router
-- **TUI and CLI** — a full terminal interface, plus a one-shot command surface
-  built for scripts and agents: every feature is reachable without a terminal,
-  stdout carries records only, and the exit code says what happened
+- **TUI and CLI**: a full terminal interface, plus a one-shot command surface
+  built for scripts and agents, where every feature is reachable without a
+  terminal, stdout carries records only, and the exit code says what happened
 
 ## Project Goals
 
@@ -163,11 +163,11 @@ first: the config commands need no account at all, and `whoami` answers
 Eleven of these need no credentials, because they never touch the network:
 `config path|list|get|set`, `shares list|add|remove`, `portmap` and
 `skills install|uninstall|list`. Note that
-`shares status` and `shares reindex` are not among them — they report what the
-network will actually see, which means logging in and letting the library scan
-the folders.
+`shares status` and `shares reindex` are not among them, because they report
+what the network will actually see, which means logging in and letting the
+library scan the folders.
 
-Every command emits records except the four that perform an action —
+Every command emits records except the four that perform an action.
 `room say`, `message send`, `shares add` and `shares remove` say nothing on
 stdout and answer with their exit code alone. `room listen`, `message read`
 and `serve` stream records as they arrive, until `--duration` seconds pass or,
@@ -211,9 +211,9 @@ column layout does not: `search` adds `duration`, `slots`, `speed` and
 `port`. Fields the server never answered are `null` rather than absent, so a
 missing reply cannot be misread as a zero.
 
-`download --stdin` reads back either shape it emits — a JSON object per line,
+`download --stdin` reads back either shape it emits: a JSON object per line,
 or tab-separated text whose first field is the user and last field is the
-path — so `search` and `browse` pipe straight into it.
+path. That is why `search` and `browse` pipe straight into it.
 
 #### Recipes
 
@@ -261,9 +261,9 @@ binary, so a `cargo install` is all you need to hand it to your agent:
 soulseek-rs skills install
 ```
 
-That writes `SKILL.md` into every agent it finds in your home directory —
+That writes `SKILL.md` into every agent it finds in your home directory,
 currently Claude Code (`~/.claude/skills`) and opencode
-(`~/.config/opencode/skill`) — and prints one record per target:
+(`~/.config/opencode/skill`), and prints one record per target:
 
 ```
 installed   claude     /home/you/.claude/skills/soulseek-rs/SKILL.md
@@ -272,7 +272,7 @@ unchanged   opencode   /home/you/.config/opencode/skill/soulseek-rs/SKILL.md
 
 Running it again is how you update after upgrading the binary; an identical
 copy reports `unchanged` rather than rewriting it. `skills list` shows what is
-there without touching anything, and `skills uninstall` removes it again —
+there without touching anything, and `skills uninstall` removes it again, but
 only when the file it finds is the one this binary wrote.
 
 For an agent this table does not cover, name the directory yourself, or commit
@@ -298,8 +298,8 @@ soulseek-rs shares reindex         # after adding files on disk
 soulseek-rs serve --follow
 ```
 
-Uploads are only visible inside a running `serve` — every other command is a
-short-lived process with nothing to serve — so there is no separate
+Uploads are only visible inside a running `serve`, because every other command
+is a short-lived process with nothing to serve, so there is no separate
 `uploads list`. Managing transfers across commands (pause, resume, a queue
 that outlives one invocation) needs the resident daemon that `serve` would
 grow into; it is not there yet.
@@ -314,9 +314,9 @@ file, in that order of precedence. Flags work before or after the subcommand.
 
 | Flag | Environment variable | `config.toml` key | Default |
 | ---- | -------------------- | ----------------- | ------- |
-| `--username` | `SOULSEEK_USERNAME` | `username` | — (required) |
-| `--password` | `SOULSEEK_PASSWORD` | — (never stored in the file) | — (required) |
-| `--password-cmd` | `SOULSEEK_PASSWORD_CMD` | `password_cmd` | — |
+| `--username` | `SOULSEEK_USERNAME` | `username` | required |
+| `--password` | `SOULSEEK_PASSWORD` | never stored in the file | required |
+| `--password-cmd` | `SOULSEEK_PASSWORD_CMD` | `password_cmd` | unset |
 | `--server` | `SOULSEEK_SERVER` | `server` | `server.slsknet.org:2416` |
 | `--download-dir` | `SOULSEEK_DOWNLOAD_DIR` | `download_dir` | `<Downloads>/Soulseek` |
 | `--shared-dir` (repeatable) | `SOULSEEK_SHARED_DIR` | `shared_dir` / `shared_dirs` | the download dir |
@@ -324,7 +324,7 @@ file, in that order of precedence. Flags work before or after the subcommand.
 | `--no-listener` / `--listener` | `SOULSEEK_NO_LISTENER` | `disable_listener` | listener on |
 | `--max-concurrent-downloads` | `SOULSEEK_MAX_CONCURRENT_DOWNLOADS` | `max_concurrent_downloads` | `5` |
 | `--search-timeout` | `SOULSEEK_SEARCH_TIMEOUT` | `search_timeout` | `10` |
-| `--log-file` | `SOULSEEK_LOG_FILE` | — | stderr |
+| `--log-file` | `SOULSEEK_LOG_FILE` | not a config key | stderr |
 
 Boolean environment variables accept the usual `1`/`0`/`true`/`false`/`yes`/`no`.
 `--config <FILE>` (or `SOULSEEK_CONFIG`) reads a different config file and
@@ -335,9 +335,9 @@ config and state directories wholesale. Every variable above is also read from
 a `.env` file in the working directory, which is often the tidiest way to hand
 a container its credentials.
 
-`config get` and `config set` cover the nine settings the file can hold —
-`username`, `server`, `listener_port`, `disable_listener`, `download_dir`,
-`shared_dirs`, `max_concurrent_downloads`, `search_timeout`, `password_cmd` —
+`config get` and `config set` cover the nine settings the file can hold
+(`username`, `server`, `listener_port`, `disable_listener`, `download_dir`,
+`shared_dirs`, `max_concurrent_downloads`, `search_timeout`, `password_cmd`),
 and name the lot back at you when you ask for something else. Setting a key to
 an empty string clears it, and `shared_dirs` takes a comma-separated list.
 Every wait expressed in seconds (`--search-timeout`, each `--timeout`, each
@@ -348,12 +348,12 @@ hanging until the heat death of the universe.
 
 Four ways to supply a password, in the order they are consulted:
 
-1. `--password-stdin` — read the first line of stdin, like `docker login`.
-2. `--password` / `SOULSEEK_PASSWORD` — convenient, but visible in `ps`.
+1. `--password-stdin`: read the first line of stdin, like `docker login`.
+2. `--password` / `SOULSEEK_PASSWORD`: convenient, but visible in `ps`.
 3. The **OS keychain** (macOS Keychain, Windows Credential Manager, Linux
    Secret Service), under service `soulseek-rs` and your username. The TUI
    stores your password here after a successful login.
-4. `password_cmd` / `--password-cmd` — a shell command whose stdout is the
+4. `password_cmd` / `--password-cmd`: a shell command whose stdout is the
    password, e.g. `pass show soulseek`. Best for headless boxes with no
    keychain.
 
@@ -377,7 +377,7 @@ soulseek-rs message read --duration 60      # or --follow to run until killed
 
 In the interactive TUI:
 
-- press `m` to compose — type `<recipient> <message>` and `Enter` to send;
+- press `m` to compose, then type `<recipient> <message>` and `Enter` to send;
 - press `i` to open the inbox popup listing sent and received messages
   (incoming messages arrive automatically while the TUI is open). The `i`
   shortcut shows an unread counter, e.g. `i inbox (3)`.
@@ -396,7 +396,7 @@ In the interactive TUI, press `c` to open the chat-rooms popup:
 
 - the **room list** is browsable and `/`-filterable and shows each room's
   user count (busiest first); press `Enter` to join the highlighted room;
-- several rooms can be **open at once** as tabs — `Tab`/`Shift-Tab` switch
+- several rooms can be **open at once** as tabs: `Tab`/`Shift-Tab` switch
   between them, `x` leaves the active room, `l` returns to the room list;
 - in a room, press `Enter` to type a message and `Enter` again to send;
 - the room's **member list** is selectable with `↑`/`↓`; press `b` to browse
@@ -434,7 +434,7 @@ verdict is in the exit code, `soulseek-rs portmap || notify-me` works as a
 health check.
 
 If both you and a peer are behind routers with no forwarded port, browsing that
-peer can't work — that's a fundamental Soulseek/peer-to-peer limitation, not a
+peer can't work. That's a fundamental Soulseek/peer-to-peer limitation, not a
 bug.
 
 ## Development
@@ -475,10 +475,10 @@ are **server-optional**: they run when a server is available and otherwise skip
 
 They locate a server in this order:
 
-1. `SOULSEEK_TEST_SERVER=host:port` — connect to an already-running server, or
+1. `SOULSEEK_TEST_SERVER=host:port`: connect to an already-running server, or
 2. `SOULFIND_BIN=/path/to/soulfind` (or a `soulfind/bin/soulfind` checkout in a
-   parent directory) — spawn soulfind on an ephemeral port with a throwaway
-   database.
+   parent directory), which spawns soulfind on an ephemeral port with a
+   throwaway database.
 
 ```bash
 # Build soulfind once (see its BUILDING.md), then:
@@ -487,7 +487,7 @@ SOULFIND_BIN=/path/to/soulfind/bin/soulfind \
 ```
 
 > On macOS, soulfind's `sqlite3_config` call is rejected by the system SQLite
-> and the server dies at startup with `SQLite error 7 (out of memory)` — which
+> and the server dies at startup with `SQLite error 7 (out of memory)`, which
 > the suite reports as a skip. Run the tests with
 > `DYLD_LIBRARY_PATH=/opt/homebrew/opt/sqlite/lib` so soulfind picks up
 > Homebrew's SQLite instead; no patching needed.
@@ -500,14 +500,14 @@ runs against a freshly built soulfind rather than silently skipping.
 
 `.github/workflows/ci.yml` runs on every push and pull request:
 
-- **Format & Clippy** — `cargo fmt --all --check` and
+- **Format & Clippy**: `cargo fmt --all --check` and
   `cargo clippy --workspace --all-targets -- -D warnings`.
-- **Test** — `cargo test --verbose` on Linux, macOS, and Windows.
-- **End-to-end** — builds soulfind from source (LDC + `dub build :server`),
+- **Test**: `cargo test --verbose` on Linux, macOS, and Windows.
+- **End-to-end**: builds soulfind from source (LDC + `dub build :server`),
   points `SOULFIND_BIN` at it, and runs both the library and CLI e2e suites
   with `SOULSEEK_E2E_REQUIRED=1`, so a missing server fails instead of skipping.
 
 ## License
 
-This project is licensed under the MIT License — see the [LICENSE](./LICENSE)
+This project is licensed under the MIT License. See the [LICENSE](./LICENSE)
 file for details.
