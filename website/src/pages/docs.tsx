@@ -203,9 +203,16 @@ export const Docs = () => {
             <p>
               <Code>soulseek-rs skills install</Code> writes a <Code>SKILL.md</Code> into
               every coding agent on the machine — Claude Code and opencode today,{' '}
-              <Code>--dir</Code> for anything else. It carries what <Code>--help</Code>{' '}
-              cannot: the JSON keys of every record, what each exit code means, and the
-              idioms worth reaching for. Run it again after an upgrade to update it, and{' '}
+              <Code>--dir</Code> for anything else. After it lands you describe the
+              outcome instead of the pipeline: &ldquo;mirror that peer&rsquo;s FLAC
+              folder&rdquo;, &ldquo;watch this room for an hour and save anything
+              mentioning the label&rdquo;.
+            </p>
+            <p>
+              It carries what <Code>--help</Code> cannot: the JSON keys of every record,
+              that exit 4 means widen the query rather than retry it, that remote paths go
+              back byte-identical, and that <Code>--follow</Code> never returns so an agent
+              passes <Code>--duration</Code>. Run it again after an upgrade to update it;{' '}
               <Code>skills uninstall</Code> takes it back out.
             </p>
           </Callout>

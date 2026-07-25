@@ -67,6 +67,98 @@ const PLATFORMS: readonly PlatformNote[] = [
   },
 ]
 
+interface Setting {
+  key: string
+  fallback: string
+  body: React.ReactNode
+}
+
+const SETTINGS: readonly Setting[] = [
+  {
+    key: 'username',
+    fallback: 'unset',
+    body: <>Your Soulseek account name. The TUI writes it here after a first login.</>,
+  },
+  {
+    key: 'server',
+    fallback: 'server.slsknet.org:2416',
+    body: <>The server to log in to, as host:port.</>,
+  },
+  {
+    key: 'listener_port',
+    fallback: '2234',
+    body: (
+      <>
+        The TCP port peers connect back on. Forward it, or let <code>portmap</code> ask
+        your router.
+      </>
+    ),
+  },
+  {
+    key: 'disable_listener',
+    fallback: 'false',
+    body: (
+      <>
+        <code>true</code> refuses incoming peer connections. You can still download from
+        reachable peers, but firewalled ones can no longer reach you.
+      </>
+    ),
+  },
+  {
+    key: 'download_dir',
+    fallback: 'the Downloads path above',
+    body: <>Where finished transfers land.</>,
+  },
+  {
+    key: 'shared_dirs',
+    fallback: 'the download folder',
+    body: (
+      <>
+        Folders offered to the network, as a list. An explicitly empty list shares
+        nothing. <code>shared_dir</code> is the older single-folder spelling and still
+        reads; <code>shares add</code> writes the list form.
+      </>
+    ),
+  },
+  {
+    key: 'max_concurrent_downloads',
+    fallback: '5',
+    body: <>Transfers allowed to run at once. The rest queue.</>,
+  },
+  {
+    key: 'search_timeout',
+    fallback: '10',
+    body: (
+      <>
+        Seconds a search collects replies before reporting. Results trickle in from
+        separate peers, so a short window finds less.
+      </>
+    ),
+  },
+  {
+    key: 'password_cmd',
+    fallback: 'unset',
+    body: (
+      <>
+        A shell command whose stdout is the password, used when the keychain has none.
+        The password itself never belongs in this file.
+      </>
+    ),
+  },
+]
+
+const CONFIG_EXAMPLE: TermLine[] = [
+  'username = "your-name"',
+  'download_dir = "~/Music/Soulseek"',
+  'shared_dirs = ["~/Music/Soulseek", "~/Music/Library"]',
+  'max_concurrent_downloads = 3',
+  'search_timeout = 15',
+  'listener_port = 2234',
+  '',
+  '# never store the password itself; shell out for it instead',
+  'password_cmd = "pass show soulseek"',
+].map((text) => ({ t: 'code' as const, text }))
+
 interface StepProps {
   n: number
   title: string
@@ -305,6 +397,48 @@ export const Install = () => {
             anything unreadable is set aside as <code>.bak</code> instead of being
             overwritten.
           </FeatureCard>
+        </Cols>
+      </Section>
+
+      <Section id="config">
+        <SectionHead eyebrow="config.toml" title="Nine settings, all optional.">
+          Every one has a working default, so an empty file — or no file — is valid. Flags
+          beat environment variables, which beat this file, which beats the defaults.{' '}
+          <Code>config list</Code> prints the effective value of each.
+        </SectionHead>
+        <Cols start>
+          <div className="flex flex-col">
+            {SETTINGS.map((setting) => (
+              <div
+                key={setting.key}
+                className="grid grid-cols-1 gap-x-4 border-t border-hairline py-3.5 first:border-t-0 first:pt-0 sm:grid-cols-[minmax(0,15rem)_1fr]"
+              >
+                <div className="flex min-w-0 flex-col gap-1">
+                  <code className="font-mono text-[12.5px] break-all text-primary">
+                    {setting.key}
+                  </code>
+                  <span className="text-[11px] uppercase tracking-[var(--tracking-label)] text-secondary">
+                    {setting.fallback}
+                  </span>
+                </div>
+                <p className="mt-1.5 text-[13px] leading-[21px] text-pretty text-secondary sm:mt-0 [&_code]:font-mono [&_code]:text-primary">
+                  {setting.body}
+                </p>
+              </div>
+            ))}
+          </div>
+          <div className="flex flex-col gap-4">
+            <Terminal label="config.toml" lines={CONFIG_EXAMPLE} />
+            <Callout title="editing it without an editor">
+              <p>
+                <Code>config path</Code> prints the file in use, <Code>config get</Code>{' '}
+                reads one setting and <Code>config set</Code> writes one. Unknown keys are
+                rejected rather than silently ignored, so a typo fails loudly instead of
+                quietly doing nothing. <Code>--no-config</Code> ignores the file entirely
+                and <Code>--config FILE</Code> points at another one.
+              </p>
+            </Callout>
+          </div>
         </Cols>
       </Section>
 
