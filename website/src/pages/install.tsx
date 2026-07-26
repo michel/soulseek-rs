@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { FeatureCard } from '@/components/ui/feature-card'
+import { ExtLink } from '@/components/ui/ext-link'
 import { Code } from '@/components/ui/inline-code'
 import { Cols, PageHead, Prose, Section, SectionHead } from '@/components/ui/layout'
 import { OsIcon, type OsName } from '@/components/ui/os-icon'
@@ -27,17 +28,6 @@ const LIB_LINES: TermLine[] = LIB_SRC.split('\n').map((text) => ({
   t: 'code' as const,
   text,
 }))
-
-const ReleasesLink = ({ children }: { children: React.ReactNode }) => (
-  <a
-    href={LINKS.releases}
-    target="_blank"
-    rel="noopener noreferrer"
-    className="text-link hover:text-link-hover"
-  >
-    {children}
-  </a>
-)
 
 interface InstallRoute {
   id: string
@@ -75,7 +65,7 @@ const INSTALLS: readonly InstallRoute[] = [
     alt: (
       <>
         Homebrew on Linux works the same as on macOS. Without either, the{' '}
-        <ReleasesLink>releases page</ReleasesLink> has static musl archives for x86-64 and
+        <ExtLink href={LINKS.releases}>releases page</ExtLink> has static musl archives for x86-64 and
         arm64 that run on any distribution.
       </>
     ),
@@ -92,7 +82,7 @@ const INSTALLS: readonly InstallRoute[] = [
       <>
         Cargo needs the MSVC build tools. To skip both, take the{' '}
         <code>pc-windows-msvc</code> zip from the{' '}
-        <ReleasesLink>releases page</ReleasesLink>, unpack it, and put{' '}
+        <ExtLink href={LINKS.releases}>releases page</ExtLink>, unpack it, and put{' '}
         <code>soulseek-rs.exe</code> on your PATH.
       </>
     ),
@@ -257,15 +247,7 @@ const Steps = () => (
       <Step n={1} title="Install the client">
         <p className="text-secondary">
           One command per platform. Cargo needs a Rust toolchain from{' '}
-          <a
-            href={LINKS.rustup}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-link hover:text-link-hover"
-          >
-            rustup.rs
-          </a>
-          ; the other routes don&rsquo;t.
+          <ExtLink href={LINKS.rustup}>rustup.rs</ExtLink>; the other routes don&rsquo;t.
         </p>
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           {INSTALLS.map((route) => (
@@ -320,15 +302,7 @@ const Steps = () => (
         <p className="text-[13px] text-muted">
           You&rsquo;ll find the binary at <Code>target/release/soulseek-rs</Code>.
           Prebuilt archives for tagged releases are on the{' '}
-          <a
-            href={LINKS.releases}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-link hover:text-link-hover"
-          >
-            releases page
-          </a>
-          .
+          <ExtLink href={LINKS.releases}>releases page</ExtLink>.
         </p>
       </Step>
 
@@ -347,25 +321,9 @@ const Steps = () => (
         />
         <Terminal label="src/main.rs" lines={LIB_LINES} copy={LIB_SRC} />
         <p className="text-[13px] text-muted">
-          Full API reference on{' '}
-          <a
-            href={LINKS.docsrs}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-link hover:text-link-hover"
-          >
-            docs.rs
-          </a>
-          . The lib API changes between majors, so check the{' '}
-          <a
-            href={LINKS.changelog}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-link hover:text-link-hover"
-          >
-            changelog
-          </a>{' '}
-          when you upgrade.
+          Full API reference on <ExtLink href={LINKS.docsrs}>docs.rs</ExtLink>. The lib API
+          changes between majors, so check the{' '}
+          <ExtLink href={LINKS.changelog}>changelog</ExtLink> when you upgrade.
         </p>
       </Step>
     </div>
@@ -534,6 +492,8 @@ const Uninstall = () => (
           { t: 'cm', text: '# while the binary is still there' },
           { t: 'cmd', text: 'soulseek-rs completions uninstall' },
           { t: 'cmd', text: 'soulseek-rs skills uninstall' },
+          { t: 'cm', text: '# whichever way you installed it' },
+          { t: 'cmd', text: 'brew uninstall soulseek-rs' },
           { t: 'cmd', text: 'cargo uninstall soulseek-rs' },
           { t: 'cm', text: '# config and state: searches, downloads, rooms, messages' },
           {

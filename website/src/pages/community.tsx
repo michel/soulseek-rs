@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { ExtLink } from '@/components/ui/ext-link'
 import { FeatureCard } from '@/components/ui/feature-card'
 import { Code } from '@/components/ui/inline-code'
 import { Cols, Eyebrow, PageHead, Prose, Section, SectionHead } from '@/components/ui/layout'
@@ -138,14 +139,7 @@ export const Community = () => {
             <p>
               Format and Clippy run clean on every push, and unit tests plus an end-to-end
               suite against{' '}
-              <a
-                href={LINKS.soulfind}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-link hover:text-link-hover"
-              >
-                soulfind
-              </a>{' '}
+              <ExtLink href={LINKS.soulfind}>soulfind</ExtLink>{' '}
               run in CI, so a green checkmark means it built and talked to a server.
             </p>
             <p>
