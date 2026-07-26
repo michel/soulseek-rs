@@ -24,5 +24,8 @@ jobs:
             GH_TOKEN="$value" gh workflow list --repo michel/homebrew-tap >/dev/null 2>&1 \
               && echo "  actions read ok" || echo "  actions read FAILED"
             GH_TOKEN="$value" gh workflow run formula.yml --repo michel/homebrew-tap \
-              && echo "  dispatch ok" || echo "  dispatch FAILED"
+              && echo "  workflow dispatch ok" || echo "  workflow dispatch FAILED"
+            GH_TOKEN="$value" gh api repos/michel/homebrew-tap/dispatches \
+              -f event_type=probe >/dev/null 2>&1 \
+              && echo "  repository_dispatch ok" || echo "  repository_dispatch FAILED"
           done
