@@ -26,6 +26,9 @@ pub enum Exit {
     Timeout = 5,
     /// A transfer started but did not complete.
     Transfer = 6,
+    /// The server session ended mid-command, so nothing this run saw (or did
+    /// not see) means anything. Retry rather than believe it.
+    SessionLost = 7,
 }
 
 impl Exit {
@@ -74,6 +77,10 @@ impl CliError {
 
     pub fn no_results(message: impl Into<String>) -> Self {
         Self::new(Exit::NoResults, message)
+    }
+
+    pub fn session_lost(message: impl Into<String>) -> Self {
+        Self::new(Exit::SessionLost, message)
     }
 }
 
@@ -528,6 +535,7 @@ mod tests {
         assert_eq!(Exit::NoResults.code(), 4);
         assert_eq!(Exit::Timeout.code(), 5);
         assert_eq!(Exit::Transfer.code(), 6);
+        assert_eq!(Exit::SessionLost.code(), 7);
     }
 
     #[test]

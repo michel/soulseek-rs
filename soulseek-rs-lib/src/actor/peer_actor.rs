@@ -481,6 +481,25 @@ impl PeerActor {
                         );
                     }
                 }
+                // A peer hanging up a control connection it had already
+                // established is ordinary: other clients close idle peer
+                // sockets while a transfer runs on its own connection. Report
+                // the clean disconnect it is — an error here fails every
+                // download queued with that peer, the one streaming included.
+                // A connection that never established is the other story: the
+                // peer accepted and vanished, which is what the server-brokered
+                // fallback exists for, so that one keeps the error path.
+                Err(ref e)
+                    if e.kind() == io::ErrorKind::UnexpectedEof
+                        && self.established =>
+                {
+                    debug!(
+                        "[peer:{}] peer closed the connection",
+                        self.peer_username()
+                    );
+                    self.disconnect();
+                    return;
+                }
                 Err(e) => {
                     let username = self.peer_username();
                     error!(

@@ -20,11 +20,14 @@ const PRIVILEGE_TIMEOUT: Duration = Duration::from_secs(5);
 pub fn whoami(ctx: &Ctx) -> CliResult {
     let session = Session::open(ctx)?;
     let (folders, files) = session.client.shared_counts();
+    // The bound port, not the configured one: a caller checking whether it is
+    // reachable needs what is true, not what was asked for.
+    let bound = session.client.listen_port();
     ctx.out.emit(&WhoamiRecord {
         user: ctx.settings.username.clone(),
         server: ctx.settings.server_address.to_string(),
-        listening: ctx.settings.enable_listen,
-        listen_port: ctx.settings.listen_port,
+        listening: bound.is_some(),
+        listen_port: bound.unwrap_or(0),
         shared_folders: folders,
         shared_files: files,
         download_dir: ctx.download_dir.clone(),
@@ -119,7 +122,7 @@ pub fn serve(
     let (folders, files) = session.client.shared_counts();
     ctx.out.status(&format!(
         "serving {files} files in {folders} folders on port {}",
-        ctx.settings.listen_port
+        session.client.listen_port().unwrap_or_default()
     ));
     if files == 0 {
         ctx.out

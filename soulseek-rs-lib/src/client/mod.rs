@@ -5,7 +5,7 @@ use crate::actor::server_actor::{
 use crate::download_store::{DownloadStore, collect_failed_tokens};
 use crate::types::{
     ClientVersion, DownloadMetadata, DownloadStatus, RoomEvent, RoomInfo,
-    UserInfo, UserPresence, UserStats, UserStatus,
+    SessionLoss, SessionWatch, UserInfo, UserPresence, UserStats, UserStatus,
 };
 use crate::utils::logger;
 use crate::{
@@ -811,6 +811,9 @@ impl ClientContext {
 pub struct Client {
     enable_listen: bool,
     listen_port: u16,
+    /// The port the listener actually holds, known once [`Client::connect`]
+    /// has bound it.
+    bound_port: Option<u16>,
     address: PeerAddress,
     username: String,
     password: String,
@@ -818,6 +821,7 @@ pub struct Client {
     shared_directories: Vec<String>,
     server_handle: Option<ActorHandle<ServerMessage>>,
     context: Arc<RwLock<ClientContext>>,
+    session: SessionWatch,
 }
 
 impl Client {
@@ -834,6 +838,7 @@ impl Client {
         Self {
             enable_listen: settings.enable_listen,
             listen_port: settings.listen_port,
+            bound_port: None,
             address: settings.server_address,
             username: settings.username,
             password: settings.password,
@@ -841,6 +846,7 @@ impl Client {
             shared_directories: settings.shared_directories,
             context: Arc::new(RwLock::new(ClientContext::new())),
             server_handle: None,
+            session: SessionWatch::default(),
         }
     }
 
@@ -848,6 +854,23 @@ impl Client {
     #[must_use]
     pub fn username(&self) -> &str {
         &self.username
+    }
+
+    /// The port peers can reach this client on, or `None` when it is not
+    /// listening (or has not connected yet). This is the port that was really
+    /// bound, which is not always the one that was configured.
+    #[must_use]
+    pub const fn listen_port(&self) -> Option<u16> {
+        self.bound_port
+    }
+
+    /// Why the server session ended, or `None` while it is alive.
+    ///
+    /// A lost session sees nothing on the network, so an empty result set from
+    /// one says nothing about what the network holds.
+    #[must_use]
+    pub fn session_loss(&self) -> Option<SessionLoss> {
+        self.session.loss()
     }
 
     /// The directories whose files are currently shared with other peers.

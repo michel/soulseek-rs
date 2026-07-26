@@ -50,7 +50,8 @@ soulseek-rs search "rjd2" --json \
 ```
 
 Exit codes: `0` success, `2` usage or config, `3` connect or login, `4` nothing
-found, `5` timed out, `6` transfer failed, `1` unexpected error.
+found, `5` timed out, `6` transfer failed, `7` session lost mid-command, `1`
+unexpected error.
 
 The [full README](https://github.com/michel/soulseek-rs#readme) documents every
 command, record shape, flag, environment variable and `config.toml` key.

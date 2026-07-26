@@ -26,6 +26,7 @@ const EXIT_OK: i32 = 0;
 const EXIT_USAGE: i32 = 2;
 const EXIT_CONNECTION: i32 = 3;
 const EXIT_NO_RESULTS: i32 = 4;
+const EXIT_SESSION_LOST: i32 = 7;
 
 /// Every environment variable the CLI reads, cleared for each run so a
 /// developer's shell (or a stray `.env`) cannot change what a test observes.
@@ -114,7 +115,7 @@ fn help_lists_every_scriptable_command() {
 fn help_documents_the_exit_codes_a_script_branches_on() {
     let help = stdout(&run(&["--help"]));
     assert!(help.contains("Exit codes"), "help should list exit codes");
-    for code in ["2", "3", "4", "5", "6"] {
+    for code in ["2", "3", "4", "5", "6", "7"] {
         assert!(help.contains(code), "exit code {code} should be documented");
     }
 }
@@ -552,6 +553,12 @@ impl TestServer {
     /// connection the *uploader* opens back to us, so a downloader without a
     /// listener never receives its file.
     fn args(&self, user: &str) -> Vec<String> {
+        self.args_on(user, free_port().expect("listener port"))
+    }
+
+    /// The same arguments on a chosen listener port, for the tests about what
+    /// happens when two runs want one port.
+    fn args_on(&self, user: &str, port: u16) -> Vec<String> {
         vec![
             "--no-config".to_string(),
             "--quiet".to_string(),
@@ -562,7 +569,7 @@ impl TestServer {
             "--password".to_string(),
             "pw".to_string(),
             "--listener-port".to_string(),
-            free_port().expect("listener port").to_string(),
+            port.to_string(),
         ]
     }
 
@@ -2798,5 +2805,185 @@ fn json_records_carry_every_extra_field_the_readme_names() {
             .expect("valid JSON");
     for key in ["ok", "backend", "external", "port"] {
         assert!(record.get(key).is_some(), "portmap should carry `{key}`");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Several invocations at once: what an agent driving this CLI actually does.
+// ---------------------------------------------------------------------------
+
+/// Spawn the binary as `user` with an explicit listener port, without waiting.
+fn spawn_cli(
+    server: &TestServer,
+    user: &str,
+    port: u16,
+    args: &[&str],
+) -> std::process::Child {
+    let mut all = server.args_on(user, port);
+    all.extend(args.iter().map(|a| (*a).to_string()));
+    let refs: Vec<&str> = all.iter().map(String::as_str).collect();
+    command(&refs)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the binary should start")
+}
+
+#[test]
+fn concurrent_searches_sharing_a_listener_port_all_find_the_file() {
+    let server = server_or_skip!();
+    let share = Scratch::new("share");
+    std::fs::write(share.path().join("cli_probe_multi.bin"), probe_bytes())
+        .expect("share file");
+    let _sharer = server.client("cli_e2e_sharer_multi", vec![share.display()]);
+    settle();
+
+    // One configured port between them, which is what a config file gives
+    // three agents started at the same moment. Losing the race for it used to
+    // cost that invocation its listener, and with it every search result.
+    let port = free_port().expect("shared listener port");
+    // Collected on purpose: all three have to be running before any is waited
+    // on, which is the whole point of the test.
+    #[allow(clippy::needless_collect)]
+    let running: Vec<_> = (0..3)
+        .map(|i| {
+            spawn_cli(
+                &server,
+                &format!("cli_e2e_par_{i}"),
+                port,
+                &["--search-timeout", "10", "search", "multi"],
+            )
+        })
+        .collect();
+
+    for (i, child) in running.into_iter().enumerate() {
+        let output = child.wait_with_output().expect("wait");
+        assert_eq!(
+            code(&output),
+            EXIT_OK,
+            "run {i} failed: {}",
+            stderr(&output)
+        );
+        assert!(
+            records(&output)
+                .iter()
+                .any(|line| line.contains("cli_probe_multi")),
+            "run {i} listed nothing"
+        );
+    }
+}
+
+#[test]
+fn a_session_taken_over_mid_search_is_not_reported_as_no_results() {
+    let server = server_or_skip!();
+    let name = "cli_e2e_evicted";
+
+    // Run it loud, so its own progress line says when it is logged in: the
+    // eviction has to land after that, or this test would race the login it is
+    // trying to interrupt.
+    let mut args = server.args_on(name, free_port().expect("listener port"));
+    args.retain(|arg| arg != "--quiet");
+    args.extend(
+        ["--search-timeout", "20", "search", "nothingmatchesthisqzx"]
+            .map(String::from),
+    );
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let mut searching = command(&refs)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the binary should start");
+
+    let (logged_in, wait_for_login) = std::sync::mpsc::channel();
+    let stderr = searching.stderr.take().expect("piped stderr");
+    let progress = std::thread::spawn(move || {
+        let mut seen = String::new();
+        for line in std::io::BufRead::lines(std::io::BufReader::new(stderr))
+            .map_while(Result::ok)
+        {
+            if line.contains("logged in as") {
+                let _ = logged_in.send(());
+            }
+            seen.push_str(&line);
+            seen.push('\n');
+        }
+        seen
+    });
+    wait_for_login
+        .recv_timeout(Duration::from_mins(1))
+        .expect("the search should log in");
+
+    // Now take the username away, the way a second invocation under one
+    // account does.
+    let _thief = server.client(name, Vec::new());
+
+    let status = searching.wait().expect("wait");
+    let seen = progress.join().expect("progress reader");
+    assert_eq!(
+        status.code(),
+        Some(EXIT_SESSION_LOST),
+        "a killed session must not look like an answered query: {seen}"
+    );
+
+    let mut written = String::new();
+    std::io::Read::read_to_string(
+        &mut searching.stdout.take().expect("piped stdout"),
+        &mut written,
+    )
+    .expect("read stdout");
+    assert!(written.trim().is_empty(), "stdout stays data-only");
+}
+
+#[test]
+fn concurrent_downloads_sharing_a_listener_port_all_land() {
+    let server = server_or_skip!();
+    let share = Scratch::new("share");
+    std::fs::write(share.path().join("cli_probe_dual.bin"), probe_bytes())
+        .expect("share file");
+    let _sharer = server.client("cli_e2e_sharer_dual", vec![share.display()]);
+    settle();
+
+    // A transfer arrives over a connection the *uploader* opens back to us, so
+    // a run without a listener never receives its file however well its search
+    // went. Two `get` runs, one configured port between them.
+    let port = free_port().expect("shared listener port");
+    let targets: Vec<Scratch> =
+        (0..2).map(|i| Scratch::new(&format!("dl{i}"))).collect();
+    // Collected on purpose: both have to be running before either is waited
+    // on, which is the whole point of the test.
+    #[allow(clippy::needless_collect)]
+    let running: Vec<_> = targets
+        .iter()
+        .enumerate()
+        .map(|(i, target)| {
+            spawn_cli(
+                &server,
+                &format!("cli_e2e_dual_{i}"),
+                port,
+                &[
+                    "--download-dir",
+                    &target.display(),
+                    "--search-timeout",
+                    "10",
+                    "get",
+                    "dual",
+                    "--timeout",
+                    "40",
+                ],
+            )
+        })
+        .collect();
+
+    for (i, (child, target)) in running.into_iter().zip(&targets).enumerate() {
+        let output = child.wait_with_output().expect("wait");
+        assert_eq!(
+            code(&output),
+            EXIT_OK,
+            "run {i} failed: {}",
+            stderr(&output)
+        );
+        let written = std::fs::read(target.path().join("cli_probe_dual.bin"))
+            .unwrap_or_else(|e| panic!("run {i} wrote no file: {e}"));
+        assert_eq!(written, probe_bytes(), "run {i} wrote the wrong bytes");
     }
 }

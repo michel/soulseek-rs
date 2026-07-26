@@ -14,6 +14,7 @@ use crate::message::server::MessageUser;
 use crate::message::server::ParentMinSpeedHandler;
 use crate::message::server::ParentSpeedRatioHandler;
 use crate::message::server::PrivilegedUsersHandler;
+use crate::message::server::ReloggedHandler;
 use crate::message::server::SayChatroomHandler;
 use crate::message::server::UserJoinedRoomHandler;
 use crate::message::server::UserLeftRoomHandler;
@@ -25,7 +26,9 @@ use crate::message::{Handlers, MessageType};
 use crate::message::{Message, MessageReader};
 use crate::peer::ConnectionType;
 use crate::peer::Peer;
-use crate::types::{ClientVersion, RoomEvent, RoomInfo};
+use crate::types::{
+    ClientVersion, RoomEvent, RoomInfo, SessionLoss, SessionWatch,
+};
 use crate::utils::lock::RwLockExt;
 
 use std::io::{self, Error, Write};
@@ -156,6 +159,9 @@ impl UserMessage {
 pub enum ServerMessage {
     ProcessRead,
     LoginStatus(bool),
+    /// The server is closing this connection: the same username logged in
+    /// elsewhere.
+    Relogged,
     SendMessage(Message),
     Login {
         username: String,
@@ -252,6 +258,7 @@ pub struct ServerActor {
     queued_messages: Vec<ServerMessage>,
     shared_folder_count: u32,
     shared_file_count: u32,
+    session: SessionWatch,
 }
 
 /// The messages a client sends right after a successful login: its shared-file
@@ -304,7 +311,13 @@ impl ServerActor {
             queued_messages: Vec::new(),
             shared_folder_count,
             shared_file_count,
+            session: SessionWatch::default(),
         }
+    }
+
+    /// Share the client's view of whether this session is still alive.
+    pub fn set_session_watch(&mut self, session: SessionWatch) {
+        self.session = session;
     }
 
     #[must_use]
@@ -392,6 +405,7 @@ impl ServerActor {
         let mut handlers = Handlers::new();
 
         handlers.register_handler(LoginHandler);
+        handlers.register_handler(ReloggedHandler);
         handlers.register_handler(RoomListHandler);
         handlers.register_handler(GetUserStatusHandler);
         handlers.register_handler(GetUserStatsHandler);
@@ -459,6 +473,7 @@ impl ServerActor {
             ServerMessage::LoginStatus(message) => {
                 self.handle_login_status(message);
             }
+            ServerMessage::Relogged => self.handle_relogged(),
             ServerMessage::PierceFirewall(token) => {
                 self.send_message(
                     MessageFactory::build_pierce_firewall_message(token),
@@ -866,9 +881,27 @@ impl ServerActor {
         }
     }
 
+    /// The server is closing this connection because the same account logged
+    /// in elsewhere. Nothing reconnects it, so the session is over.
+    fn handle_relogged(&mut self) {
+        error!(
+            "[server] another login took this username; this session has been \
+             closed by the server"
+        );
+        self.session.record(SessionLoss::Displaced);
+        self.connection_state = ConnectionState::Disconnected;
+        self.disconnect();
+    }
+
     fn disconnect_with_error(&mut self, _error: Error) {
         debug!("[server] disconnect");
 
+        // Losing an established connection ends the session: nothing reconnects
+        // it, so anything still waiting on the network is waiting for good.
+        if matches!(self.connection_state, ConnectionState::Connected) {
+            self.session.record(SessionLoss::Disconnected);
+            self.connection_state = ConnectionState::Disconnected;
+        }
         self.stream.take();
     }
 
