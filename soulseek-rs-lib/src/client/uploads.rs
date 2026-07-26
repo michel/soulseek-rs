@@ -1,11 +1,104 @@
 use super::{
-    ActiveUpload, Arc, Client, ClientContext, DownloadStatus, RwLock,
-    RwLockExt, collect_failed_tokens, error, thread,
+    ActiveUpload, Arc, Client, ClientContext, DownloadStatus, PeerMessage,
+    RwLock, RwLockExt, collect_failed_tokens, error, next_upload_token, thread,
 };
 use crate::types::UploadStatus;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 
+/// The peer behind a registry key, which may carry a `:direct` suffix the
+/// server never sees.
+pub fn downloader_of(requester_key: &str) -> &str {
+    requester_key
+        .strip_suffix(":direct")
+        .unwrap_or(requester_key)
+}
+
 impl Client {
+    /// Whether the server listed `username` as privileged. Privileged peers are
+    /// served before everyone else.
+    #[must_use]
+    pub fn is_privileged(&self, username: &str) -> bool {
+        self.context
+            .read_safe()
+            .is_ok_and(|ctx| ctx.is_privileged(username))
+    }
+
+    /// Ask the server how much of our own privilege time is left (code 92). The
+    /// answer arrives asynchronously; read it with
+    /// [`Client::own_privilege_seconds`].
+    ///
+    /// # Errors
+    /// [`crate::error::SoulseekRs::NotConnected`] without a server connection.
+    pub fn check_privileges(&self) -> crate::error::Result<()> {
+        let Some(handle) = &self.server_handle else {
+            return Err(crate::error::SoulseekRs::NotConnected);
+        };
+        let _ = handle.send(super::ServerMessage::CheckPrivileges);
+        Ok(())
+    }
+
+    /// Seconds of our own privileges left, or `None` until the server has
+    /// answered a [`Client::check_privileges`].
+    #[must_use]
+    pub fn own_privilege_seconds(&self) -> Option<u32> {
+        self.context
+            .read_safe()
+            .ok()
+            .and_then(|ctx| ctx.own_privileges)
+    }
+
+    /// How many uploads run at once. Lowering it does not interrupt transfers
+    /// already in flight; the queue simply refills more slowly.
+    pub fn set_upload_slots(&self, slots: usize) {
+        if let Ok(mut ctx) = self.context.write_safe() {
+            ctx.upload_slots = slots.max(1);
+        }
+    }
+
+    /// Drop everything `username` was queued or offered, then hand their slot to
+    /// whoever is next.
+    pub(crate) fn release_upload_slots(
+        client_context: &Arc<RwLock<ClientContext>>,
+        username: &str,
+    ) {
+        let freed = client_context
+            .write_safe()
+            .is_ok_and(|mut ctx| ctx.release_upload_slots(username));
+        if freed {
+            Self::pump_upload_queue(client_context);
+        }
+    }
+
+    /// Fill every free upload slot from the queue and send the offers.
+    ///
+    /// Called whenever the queue or the slot count could have changed: a new
+    /// request, a finished transfer, or a privileged list that re-ranked who is
+    /// waiting.
+    pub(crate) fn pump_upload_queue(
+        client_context: &Arc<RwLock<ClientContext>>,
+    ) {
+        let (registry, offers) = match client_context.write_safe() {
+            Ok(mut ctx) => ctx.pump_uploads(next_upload_token),
+            Err(e) => {
+                error!("[client] pump_upload_queue write: {}", e);
+                return;
+            }
+        };
+        let Some(registry) = registry else {
+            return;
+        };
+        for offer in offers {
+            let _ = registry.send_to_peer(
+                &offer.requester_key,
+                PeerMessage::ServeUpload {
+                    token: offer.token,
+                    filename: offer.virtual_path,
+                    size: offer.size,
+                },
+            );
+        }
+    }
+
     /// Consume the upload job for `token` and stream the file to `host:port`
     /// on a background thread.
     pub(crate) fn spawn_serve(
@@ -64,6 +157,9 @@ impl Client {
             {
                 upload.status = status;
             }
+            // The slot this transfer held is free now, so whoever is next in
+            // line gets it without waiting for another request to arrive.
+            Self::pump_upload_queue(&context);
         });
     }
 

@@ -1,10 +1,12 @@
+use super::uploads::downloader_of;
 use super::{
     Arc, BROKER_CONNECT_TIMEOUT, Client, ClientContext, ClientOperation,
     ConnectionType, Download, DownloadPeer, DownloadStatus, Peer, PeerMessage,
-    PeerRegistry, Receiver, RwLock, RwLockExt, ServerMessage, UploadJob,
-    build_search_response, debug, error, info, next_connect_token,
-    next_upload_token, sleep, thread, trace, warn,
+    PeerRegistry, Receiver, RwLock, RwLockExt, ServerMessage,
+    build_search_response, debug, error, info, next_connect_token, sleep,
+    thread, trace, warn,
 };
+use crate::message::server::MessageFactory;
 
 impl Client {
     pub(crate) fn listen_to_client_operations(
@@ -102,6 +104,14 @@ impl Client {
                                         None,
                                     );
                                 }
+                                // A peer that leaves must not keep occupying an
+                                // upload slot: with a slot cap, a couple of
+                                // departed peers would otherwise wedge uploads
+                                // shut for the rest of the session.
+                                Self::release_upload_slots(
+                                    &client_context,
+                                    &username,
+                                );
                             }
                             ClientOperation::PierceFireWall(peer) => {
                                 Self::pierce_firewall(
@@ -531,6 +541,12 @@ impl Client {
                                     ),
                                 }
                             }
+                            ClientOperation::WishlistInterval(seconds) => {
+                                if let Ok(mut ctx) = client_context.write_safe()
+                                {
+                                    ctx.wishlist_interval = Some(seconds);
+                                }
+                            }
                             ClientOperation::PeerConnected(username) => {
                                 // An outbound control connection just handshook.
                                 // Flush any downloads that were queued for this
@@ -655,16 +671,10 @@ impl Client {
                                 requester_key,
                                 filename,
                             } => {
-                                // A peer queued one of our shared files. Look it
-                                // up, mint an upload token, and offer it.
-                                let downloader = requester_key
-                                    .strip_suffix(":direct")
-                                    .unwrap_or(&requester_key)
-                                    .to_string();
-                                let token = next_upload_token();
-                                let (registry, size) = match client_context
-                                    .write_safe()
-                                {
+                                // The peer served next may not be this one.
+                                let downloader =
+                                    downloader_of(&requester_key).to_string();
+                                match client_context.write_safe() {
                                     Ok(mut ctx) => {
                                         let Some(file) =
                                             ctx.shares.get(&filename)
@@ -677,16 +687,13 @@ impl Client {
                                         };
                                         let size = file.size;
                                         let real_path = file.real_path.clone();
-                                        ctx.uploads.insert(
-                                            token,
-                                            UploadJob {
-                                                downloader: downloader.clone(),
-                                                real_path,
-                                                virtual_path: filename.clone(),
-                                                size,
-                                            },
+                                        ctx.enqueue_upload(
+                                            &requester_key,
+                                            &downloader,
+                                            &filename,
+                                            real_path,
+                                            size,
                                         );
-                                        (ctx.peer_registry.clone(), size)
                                     }
                                     Err(e) => {
                                         error!(
@@ -695,16 +702,57 @@ impl Client {
                                         );
                                         continue;
                                     }
-                                };
+                                }
+                                Self::pump_upload_queue(&client_context);
+                            }
+                            ClientOperation::PlaceInQueueRequested {
+                                requester_key,
+                                filename,
+                            } => {
+                                let downloader = downloader_of(&requester_key);
+                                let (registry, place) =
+                                    match client_context.read_safe() {
+                                        Ok(ctx) => (
+                                            ctx.peer_registry.clone(),
+                                            ctx.place_in_queue(
+                                                downloader, &filename,
+                                            ),
+                                        ),
+                                        Err(_) => continue,
+                                    };
+                                // Silence would leave the peer guessing; a file
+                                // no longer queued is being served, which is
+                                // place 0 by the same convention Nicotine+ uses.
                                 if let Some(registry) = registry {
                                     let _ = registry.send_to_peer(
                                         &requester_key,
-                                        PeerMessage::ServeUpload {
-                                            token,
-                                            filename,
-                                            size,
-                                        },
+                                        PeerMessage::SendMessage(
+                                            MessageFactory::build_place_in_queue_response(
+                                                &filename,
+                                                place.unwrap_or(0),
+                                            ),
+                                        ),
                                     );
+                                }
+                            }
+                            ClientOperation::PrivilegedUsers(users) => {
+                                if let Ok(mut ctx) = client_context.write_safe()
+                                {
+                                    debug!(
+                                        "[client] {} privileged users listed",
+                                        users.len()
+                                    );
+                                    ctx.set_privileged_users(users);
+                                }
+                                // Someone already waiting may have just been
+                                // outranked, but a slot that is free should
+                                // still be filled.
+                                Self::pump_upload_queue(&client_context);
+                            }
+                            ClientOperation::OwnPrivileges(seconds) => {
+                                if let Ok(mut ctx) = client_context.write_safe()
+                                {
+                                    ctx.own_privileges = Some(seconds);
                                 }
                             }
                             ClientOperation::StartUpload { token } => {

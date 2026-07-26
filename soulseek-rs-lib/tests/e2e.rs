@@ -30,7 +30,19 @@ use soulseek_rs::message::server::MessageFactory;
 use soulseek_rs::peer::ConnectionType;
 use soulseek_rs::{
     Client, ClientSettings, ClientVersion, DownloadStatus, PeerAddress,
+    UploadStatus,
 };
+
+/// Only one test at a time may drive a server.
+///
+/// Each of these tests runs its own soulfind plus real clients and, for the
+/// queue tests, peer sockets held open on purpose. Letting the harness start a
+/// handful of those at once starves them, and a login that goes unanswered
+/// fails a test for a reason that has nothing to do with the code under test:
+/// seen on CI as `login: Timeout` in two download tests that the change under
+/// test never went near. The CLI suite already carries this gate for the same
+/// reason.
+static SERVER_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// A Soulseek server to test against: either a child soulfind process we
 /// spawned, or an external server referenced by `SOULSEEK_TEST_SERVER`.
@@ -39,11 +51,18 @@ struct TestServer {
     port: u16,
     child: Option<Child>,
     db: Option<PathBuf>,
+    _gate: std::sync::MutexGuard<'static, ()>,
 }
 
 impl TestServer {
     /// Resolve a server to test against, or `None` if the suite should skip.
     fn resolve() -> Option<Self> {
+        // A test that panicked while holding the gate poisoned it; the lock
+        // guards nothing but scheduling, so take it back and carry on.
+        let gate = SERVER_GATE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
         if let Ok(addr) = std::env::var("SOULSEEK_TEST_SERVER") {
             let (host, port) = split_host_port(&addr)?;
             wait_until_listening(&host, port, Duration::from_secs(2))?;
@@ -52,13 +71,14 @@ impl TestServer {
                 port,
                 child: None,
                 db: None,
+                _gate: gate,
             });
         }
-        Self::spawn()
+        Self::spawn(gate)
     }
 
     /// Spawn a local soulfind on an ephemeral port with a throwaway database.
-    fn spawn() -> Option<Self> {
+    fn spawn(gate: std::sync::MutexGuard<'static, ()>) -> Option<Self> {
         let bin = soulfind_binary()?;
         let port = free_port()?;
         let db = std::env::temp_dir().join(format!("soulfind-e2e-{port}.db"));
@@ -88,6 +108,7 @@ impl TestServer {
             port,
             child: Some(child),
             db: Some(db),
+            _gate: gate,
         })
     }
 
@@ -1816,6 +1837,350 @@ fn the_server_reports_another_users_status_and_share_counts() {
     assert!(stats.shared_folders >= 1, "and at least one folder");
 
     let _ = std::fs::remove_dir_all(share_dir);
+}
+
+// --- upload slots and privilege recognition --------------------------------
+//
+// Soulseek's rules ask an alternative client to *recognise* privileges. That is
+// only observable if there is a queue to jump, so these tests hold the single
+// upload slot open with a peer that queues a file and then never answers the
+// TransferRequest — the same thing a stalled client does, and deterministic in
+// a way that racing real 4 KB transfers is not.
+
+/// A raw peer that logs in, dials our listener, queues `filename`, and then
+/// goes quiet. Returned so the caller can keep it alive: dropping the streams
+/// would release the slot it is holding.
+struct QueueingPeer {
+    _server: TcpStream,
+    peer: TcpStream,
+}
+
+impl QueueingPeer {
+    /// Wait for the upload offer (peer code 40) and deliberately not answer it.
+    ///
+    /// Receiving the offer is the only positive proof that this peer was given a
+    /// slot — an unaccepted offer never reaches `Client::uploads()`, and "has no
+    /// place in the queue" is also true of a peer that never asked, so polling
+    /// for that would pass against a completely broken pump.
+    fn takes_a_slot(&mut self) -> bool {
+        read_until_code(&mut self.peer, 40, Duration::from_secs(10)).is_some()
+    }
+}
+
+fn queue_as(
+    server_addr: &str,
+    listen_addr: &str,
+    username: &str,
+    filename: &str,
+) -> std::io::Result<QueueingPeer> {
+    let server = login_raw(server_addr, username, "pw")?;
+    let mut peer = connect_retry(listen_addr, Duration::from_secs(5))?;
+    peer.set_read_timeout(Some(Duration::from_secs(10)))?;
+    peer.write_all(&peer_init_bytes(username, "P", 0))?;
+    let mut queue = Message::new();
+    queue.write_int32(43).write_string(filename);
+    peer.write_all(&queue.get_buffer())?;
+    peer.flush()?;
+    Ok(QueueingPeer {
+        _server: server,
+        peer,
+    })
+}
+
+/// Wait for `check` to hold, polling the client's view of its own queue.
+fn wait_for(mut check: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if check() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    false
+}
+
+/// Where `username` sits in `sharer`'s upload queue, read the way the CLI reads
+/// it — through `uploads()` — rather than through a point query kept alive only
+/// for tests.
+fn place_of(sharer: &Client, username: &str, filename: &str) -> Option<u32> {
+    sharer.uploads().into_iter().find_map(|upload| {
+        match (upload.status, upload.username == username) {
+            (UploadStatus::Queued(place), true)
+                if upload.filename == filename =>
+            {
+                Some(place)
+            }
+            _ => None,
+        }
+    })
+}
+
+/// Give `username` privileges in soulfind's own database.
+///
+/// `false` means it could not be done — an external server, or no `sqlite3` on
+/// this machine — which the caller treats as a skip rather than a failure.
+fn grant_privileges(server: &TestServer, username: &str) -> bool {
+    let Some(db) = server.db.as_ref() else {
+        return false;
+    };
+    // soulfind stores privileges as the unix timestamp they expire at.
+    let expiry = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs() + 86_400);
+    Command::new("sqlite3")
+        .arg(db)
+        .arg(format!(
+            "UPDATE users SET privileges = {expiry} WHERE username = \
+             '{username}';"
+        ))
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// A share directory of its own, so the virtual paths a peer has to name are
+/// predictable: soulfind-facing paths are `<folder name>\<file>`.
+fn queue_share(label: &str, files: &[&str]) -> (PathBuf, String) {
+    // Keyed on the thread as well as the process, matching
+    // `unique_download_dir`: two tests are two threads, and a shared folder
+    // name would make their virtual paths collide.
+    let dir = std::env::temp_dir().join(format!(
+        "soulseek-e2e-queue-{label}-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("share dir");
+    for name in files {
+        std::fs::write(dir.join(name), vec![9u8; 4096]).expect("share file");
+    }
+    let folder = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .expect("utf-8 folder")
+        .to_string();
+    (dir, folder)
+}
+
+#[test]
+fn a_second_request_waits_when_the_only_upload_slot_is_taken() {
+    let server = server_or_skip!();
+    let (share, folder) =
+        queue_share("slots", &["blocker.mp3", "waiter.mp3", "third.mp3"]);
+    let server_addr = format!("{}:{}", server.host, server.port);
+
+    let sharer_port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share.display().to_string()],
+        ..server.listening_settings("e2e_q_sharer", "pw", sharer_port)
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+    sharer.set_upload_slots(1);
+    let listen_addr = format!("127.0.0.1:{sharer_port}");
+
+    let blocker_file = format!("{folder}\\blocker.mp3");
+    let mut blocker =
+        queue_as(&server_addr, &listen_addr, "e2e_q_blocker", &blocker_file)
+            .expect("blocker queues");
+    assert!(
+        blocker.takes_a_slot(),
+        "the first request should be offered the free slot"
+    );
+
+    let waiter_file = format!("{folder}\\waiter.mp3");
+    let _waiter =
+        queue_as(&server_addr, &listen_addr, "e2e_q_waiter", &waiter_file)
+            .expect("waiter queues");
+    assert!(
+        wait_for(|| place_of(&sharer, "e2e_q_waiter", &waiter_file) == Some(1)),
+        "with the slot held, the next request must wait at place 1, got {:?}",
+        place_of(&sharer, "e2e_q_waiter", &waiter_file)
+    );
+
+    let third_file = format!("{folder}\\third.mp3");
+    let _third =
+        queue_as(&server_addr, &listen_addr, "e2e_q_third", &third_file)
+            .expect("third queues");
+    assert!(
+        wait_for(|| place_of(&sharer, "e2e_q_third", &third_file) == Some(2)),
+        "and the one after that at place 2, got {:?}",
+        place_of(&sharer, "e2e_q_third", &third_file)
+    );
+
+    // Both waiters show up as queued uploads with their places, which is what
+    // `serve` reports to an operator.
+    let queued: Vec<(String, u32)> = sharer
+        .uploads()
+        .into_iter()
+        .filter_map(|upload| match upload.status {
+            UploadStatus::Queued(place) => Some((upload.username, place)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        queued,
+        [
+            ("e2e_q_waiter".to_string(), 1),
+            ("e2e_q_third".to_string(), 2)
+        ]
+    );
+
+    let _ = std::fs::remove_dir_all(share);
+}
+
+#[test]
+fn a_privileged_peer_overtakes_one_already_waiting_for_a_slot() {
+    let server = server_or_skip!();
+    let server_addr = format!("{}:{}", server.host, server.port);
+
+    // The account has to exist before it can be given privileges, and the
+    // privileges have to exist before we log in: the server sends the
+    // privileged-user list once, at login.
+    drop(
+        login_raw(&server_addr, "e2e_q_donor", "pw")
+            .expect("the donor registers"),
+    );
+    if !grant_privileges(&server, "e2e_q_donor") {
+        eprintln!(
+            "privilege e2e skipped: cannot write soulfind's database (needs a \
+             locally spawned server and sqlite3)"
+        );
+        return;
+    }
+
+    let (share, folder) =
+        queue_share("privileged", &["blocker.mp3", "plain.mp3", "donor.mp3"]);
+    let sharer_port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share.display().to_string()],
+        ..server.listening_settings("e2e_q_psharer", "pw", sharer_port)
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+    sharer.set_upload_slots(1);
+    let listen_addr = format!("127.0.0.1:{sharer_port}");
+
+    // Not every soulfind build answers login with a populated code-69 list, so
+    // a server that names nobody is a skip rather than a failure — the
+    // re-ranking itself is covered by `client::upload_queue::context_tests`.
+    if !wait_for(|| sharer.is_privileged("e2e_q_donor")) {
+        eprintln!(
+            "privilege ordering e2e skipped: this server declared no \
+             privileged users even after granting them in its database"
+        );
+        let _ = std::fs::remove_dir_all(share);
+        return;
+    }
+    assert!(!sharer.is_privileged("e2e_q_plain"), "and nobody else");
+
+    let blocker_file = format!("{folder}\\blocker.mp3");
+    let mut blocker =
+        queue_as(&server_addr, &listen_addr, "e2e_q_pblocker", &blocker_file)
+            .expect("blocker queues");
+    assert!(
+        blocker.takes_a_slot(),
+        "the blocker should be offered the only slot"
+    );
+
+    // A plain user asks first and is alone in the queue…
+    let plain_file = format!("{folder}\\plain.mp3");
+    let _plain =
+        queue_as(&server_addr, &listen_addr, "e2e_q_plain", &plain_file)
+            .expect("plain queues");
+    assert!(
+        wait_for(|| place_of(&sharer, "e2e_q_plain", &plain_file) == Some(1)),
+        "got {:?}",
+        place_of(&sharer, "e2e_q_plain", &plain_file)
+    );
+
+    // …and then the donor asks, and goes ahead of them.
+    let donor_file = format!("{folder}\\donor.mp3");
+    let _donor =
+        queue_as(&server_addr, &listen_addr, "e2e_q_donor", &donor_file)
+            .expect("donor queues");
+    assert!(
+        wait_for(|| place_of(&sharer, "e2e_q_donor", &donor_file) == Some(1)),
+        "the privileged peer should take place 1, got {:?}",
+        place_of(&sharer, "e2e_q_donor", &donor_file)
+    );
+    assert_eq!(
+        place_of(&sharer, "e2e_q_plain", &plain_file),
+        Some(2),
+        "and the plain user should be told they were overtaken"
+    );
+
+    let _ = std::fs::remove_dir_all(share);
+}
+
+#[test]
+fn a_peer_asking_where_it_sits_is_answered_with_its_place() {
+    let server = server_or_skip!();
+    let (share, folder) = queue_share("place", &["blocker.mp3", "asker.mp3"]);
+    let server_addr = format!("{}:{}", server.host, server.port);
+
+    let sharer_port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share.display().to_string()],
+        ..server.listening_settings("e2e_q_asharer", "pw", sharer_port)
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+    sharer.set_upload_slots(1);
+    let listen_addr = format!("127.0.0.1:{sharer_port}");
+
+    let blocker_file = format!("{folder}\\blocker.mp3");
+    let mut blocker =
+        queue_as(&server_addr, &listen_addr, "e2e_q_ablocker", &blocker_file)
+            .expect("blocker queues");
+    assert!(
+        blocker.takes_a_slot(),
+        "the blocker should be offered the only slot"
+    );
+
+    // The asker keeps its own connection so it can read the answer back.
+    // The asker keeps its connection so it can read the answer back.
+    let asker_file = format!("{folder}\\asker.mp3");
+    let mut asker =
+        queue_as(&server_addr, &listen_addr, "e2e_q_asker", &asker_file)
+            .expect("asker queues");
+
+    assert!(
+        wait_for(|| place_of(&sharer, "e2e_q_asker", &asker_file) == Some(1)),
+        "the asker should be waiting at place 1 first"
+    );
+
+    let mut request = Message::new();
+    request.write_int32(51).write_string(&asker_file);
+    asker.peer.write_all(&request.get_buffer()).expect("ask");
+    asker.peer.flush().expect("flush");
+
+    let mut answer = expect_code(&mut asker.peer, 44, Duration::from_secs(10))
+        .expect("a PlaceInQueueResponse should come back");
+    answer.set_pointer(8);
+    assert_eq!(answer.read_string(), asker_file);
+    assert_eq!(answer.read_int32(), 1, "and it should carry the real place");
+
+    let _ = std::fs::remove_dir_all(share);
+}
+
+#[test]
+fn the_server_answers_how_much_privilege_time_we_have() {
+    let server = server_or_skip!();
+    let mut client =
+        Client::with_settings(server.settings("e2e_priv_asker", "pw"));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login"));
+
+    client.check_privileges().expect("ask");
+    assert!(
+        wait_for(|| client.own_privilege_seconds().is_some()),
+        "the server should answer code 92"
+    );
+    assert_eq!(
+        client.own_privilege_seconds(),
+        Some(0),
+        "a fresh account has no privileges, which is zero rather than unknown"
+    );
 }
 
 #[test]

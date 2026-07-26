@@ -104,6 +104,7 @@ fn help_lists_every_scriptable_command() {
         "portmap",
         "skills",
         "completions",
+        "wish",
     ] {
         assert!(help.contains(command), "--help should mention {command}");
     }
@@ -387,6 +388,85 @@ fn installing_completions_is_repeatable_and_reversible() {
     assert_eq!(action(&again), "absent");
 }
 
+// --- wishlist, the half that only touches the config file ------------------
+
+#[test]
+fn a_wish_is_added_listed_and_removed_through_the_config_file() {
+    let dir = Scratch::new("wish");
+    let config = dir.path().join("config.toml");
+
+    let added = with_config(&config, &["wish", "add", "aphex twin"]);
+    assert_eq!(code(&added), EXIT_OK, "stderr: {}", stderr(&added));
+    assert_eq!(records(&added), ["aphex twin"]);
+
+    let listed = with_config(&config, &["wish", "list"]);
+    assert_eq!(code(&listed), EXIT_OK);
+    assert_eq!(records(&listed), ["aphex twin"]);
+
+    let removed = with_config(&config, &["wish", "remove", "APHEX TWIN"]);
+    assert_eq!(code(&removed), EXIT_OK, "stderr: {}", stderr(&removed));
+    assert!(stdout(&removed).is_empty(), "remove prints nothing");
+
+    let empty = with_config(&config, &["wish", "list"]);
+    assert_eq!(code(&empty), EXIT_NO_RESULTS);
+    assert!(stdout(&empty).is_empty(), "stdout must stay data-only");
+}
+
+#[test]
+fn adding_the_same_wish_twice_is_not_an_error_and_stores_it_once() {
+    let dir = Scratch::new("wish");
+    let config = dir.path().join("config.toml");
+
+    with_config(&config, &["wish", "add", "boards of canada"]);
+    let again = with_config(&config, &["wish", "add", "Boards Of Canada"]);
+    assert_eq!(code(&again), EXIT_OK, "a repeat is not a failure");
+
+    let listed = with_config(&config, &["wish", "list"]);
+    assert_eq!(records(&listed), ["boards of canada"]);
+}
+
+#[test]
+fn a_wish_holding_a_comma_survives_the_config_file() {
+    let dir = Scratch::new("wish");
+    let config = dir.path().join("config.toml");
+
+    with_config(&config, &["wish", "add", "autechre, incunabula"]);
+    let listed = with_config(&config, &["--json", "wish", "list"]);
+    let stored: Vec<serde_json::Value> = records(&listed)
+        .iter()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    assert_eq!(stored.len(), 1, "one wish, not two split on the comma");
+    assert_eq!(stored[0]["query"], "autechre, incunabula");
+}
+
+#[test]
+fn removing_a_wish_that_is_not_there_is_the_no_results_code() {
+    let dir = Scratch::new("wish");
+    let config = dir.path().join("config.toml");
+
+    let output = with_config(&config, &["wish", "remove", "never added"]);
+    assert_eq!(code(&output), EXIT_NO_RESULTS);
+    assert!(stdout(&output).is_empty());
+}
+
+#[test]
+fn an_empty_wish_query_is_a_usage_error() {
+    let dir = Scratch::new("wish");
+    let config = dir.path().join("config.toml");
+
+    let output = with_config(&config, &["wish", "add", "   "]);
+    assert_eq!(code(&output), EXIT_USAGE);
+    assert!(stdout(&output).is_empty());
+}
+
+#[test]
+fn wish_add_without_a_config_file_to_write_to_is_a_usage_error() {
+    let output = run(&["--no-config", "wish", "add", "nowhere to keep this"]);
+    assert_eq!(code(&output), EXIT_USAGE);
+    assert!(stdout(&output).is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // Server required (soulfind)
 // ---------------------------------------------------------------------------
@@ -625,6 +705,30 @@ fn settle() {
     std::thread::sleep(Duration::from_secs(1));
 }
 
+/// Like [`cli`], but keeping a config file so a command that reads or writes
+/// one (the wishlist) sees it.
+///
+/// `--no-config` is dropped for the obvious reason, and `--quiet` with it:
+/// these commands report the schedule the *server* chose on stderr, which is
+/// the only place a test can see it.
+fn cli_with_config(
+    server: &TestServer,
+    user: &str,
+    config: &Path,
+    args: &[&str],
+) -> Output {
+    let mut all: Vec<String> = server
+        .args(user)
+        .into_iter()
+        .filter(|arg| arg != "--no-config" && arg != "--quiet")
+        .collect();
+    all.push("--config".to_string());
+    all.push(config.to_str().expect("utf-8 path").to_string());
+    all.extend(args.iter().map(|a| (*a).to_string()));
+    let refs: Vec<&str> = all.iter().map(String::as_str).collect();
+    run(&refs)
+}
+
 #[test]
 fn a_wrong_password_is_a_connection_error() {
     let server = server_or_skip!();
@@ -724,6 +828,470 @@ fn a_search_with_no_matches_exits_with_the_no_results_code() {
     );
     assert_eq!(code(&output), EXIT_NO_RESULTS);
     assert!(stdout(&output).is_empty(), "stdout must stay data-only");
+}
+
+/// One share holding three files that differ in name, extension and size, so
+/// every result filter has something to keep and something to drop.
+///
+/// `flt_beta_skipme.flac` is deliberately the small one and
+/// `flt_gamma_keepme.ogg` the large one, so a size bound and an extension
+/// bound select different files and a combination of the two is a real test
+/// rather than two spellings of the same assertion.
+struct FilterFixture {
+    _share: Scratch,
+}
+
+impl FilterFixture {
+    const SMALL: usize = 128;
+    const MEDIUM: usize = 4096;
+    const LARGE: usize = 8192;
+
+    fn new(server: &TestServer, sharer: &str) -> (Self, Client) {
+        let share = Scratch::new("filter-share");
+        for (name, size) in [
+            ("flt_alpha_keepme.mp3", Self::MEDIUM),
+            ("flt_beta_skipme.flac", Self::SMALL),
+            ("flt_gamma_keepme.ogg", Self::LARGE),
+        ] {
+            std::fs::write(share.path().join(name), vec![7u8; size])
+                .expect("share file");
+        }
+        let client = server.client(sharer, vec![share.display()]);
+        settle();
+        (Self { _share: share }, client)
+    }
+}
+
+/// Search for the fixture as a fresh user and return the matching file names,
+/// sorted so the assertion does not depend on result order.
+///
+/// A new username per call matters: soulfind answers a repeat of the same
+/// search from the same user with nothing.
+fn filtered_names(
+    server: &TestServer,
+    seeker: &str,
+    filter: &[&str],
+) -> (i32, Vec<String>) {
+    let mut args = vec!["--search-timeout", "5", "search", "flt"];
+    args.extend_from_slice(filter);
+    let output = cli(server, seeker, &args);
+    let mut names: Vec<String> = records(&output)
+        .iter()
+        .filter_map(|line| line.split('\t').nth(3))
+        .filter_map(|path| path.rsplit(['/', '\\']).next())
+        .filter(|name| name.starts_with("flt_"))
+        .map(String::from)
+        .collect();
+    names.sort();
+    (code(&output), names)
+}
+
+#[test]
+fn exclude_drops_the_results_whose_path_contains_the_term() {
+    let server = server_or_skip!();
+    let (_fixture, _sharer) = FilterFixture::new(&server, "cli_e2e_flt_excl");
+
+    let (exit, names) =
+        filtered_names(&server, "cli_e2e_seek_excl", &["--exclude", "skipme"]);
+    assert_eq!(exit, EXIT_OK);
+    assert_eq!(names, ["flt_alpha_keepme.mp3", "flt_gamma_keepme.ogg"]);
+}
+
+#[test]
+fn extension_keeps_one_type_and_repeats_into_a_union() {
+    let server = server_or_skip!();
+    let (_fixture, _sharer) = FilterFixture::new(&server, "cli_e2e_flt_ext");
+
+    let (exit, one) = filtered_names(
+        &server,
+        "cli_e2e_seek_ext_one",
+        &["--extension", "mp3"],
+    );
+    assert_eq!(exit, EXIT_OK);
+    assert_eq!(one, ["flt_alpha_keepme.mp3"]);
+
+    let (exit, several) = filtered_names(
+        &server,
+        "cli_e2e_seek_ext_many",
+        &["--extension", ".flac", "--extension", "OGG"],
+    );
+    assert_eq!(exit, EXIT_OK);
+    assert_eq!(several, ["flt_beta_skipme.flac", "flt_gamma_keepme.ogg"]);
+}
+
+#[test]
+fn size_bounds_narrow_the_result_set_from_either_end() {
+    let server = server_or_skip!();
+    let (_fixture, _sharer) = FilterFixture::new(&server, "cli_e2e_flt_size");
+
+    let (exit, big) = filtered_names(
+        &server,
+        "cli_e2e_seek_size_min",
+        &["--min-size", &FilterFixture::MEDIUM.to_string()],
+    );
+    assert_eq!(exit, EXIT_OK);
+    assert_eq!(big, ["flt_alpha_keepme.mp3", "flt_gamma_keepme.ogg"]);
+
+    let (exit, small) = filtered_names(
+        &server,
+        "cli_e2e_seek_size_max",
+        &["--max-size", &FilterFixture::SMALL.to_string()],
+    );
+    assert_eq!(exit, EXIT_OK);
+    assert_eq!(small, ["flt_beta_skipme.flac"]);
+}
+
+#[test]
+fn filters_given_together_all_have_to_be_satisfied() {
+    let server = server_or_skip!();
+    let (_fixture, _sharer) = FilterFixture::new(&server, "cli_e2e_flt_comb");
+
+    let (exit, names) = filtered_names(
+        &server,
+        "cli_e2e_seek_comb",
+        &[
+            "--exclude",
+            "skipme",
+            "--min-size",
+            &FilterFixture::LARGE.to_string(),
+            "--extension",
+            "ogg",
+        ],
+    );
+    assert_eq!(exit, EXIT_OK);
+    assert_eq!(names, ["flt_gamma_keepme.ogg"]);
+}
+
+#[test]
+fn a_filter_that_matches_nothing_is_the_no_results_code() {
+    let server = server_or_skip!();
+    let (_fixture, _sharer) = FilterFixture::new(&server, "cli_e2e_flt_none");
+
+    let output = cli(
+        &server,
+        "cli_e2e_seek_none",
+        &[
+            "--search-timeout",
+            "5",
+            "search",
+            "flt",
+            "--extension",
+            "aiff",
+        ],
+    );
+    assert_eq!(
+        code(&output),
+        EXIT_NO_RESULTS,
+        "stderr: {}",
+        stderr(&output)
+    );
+    assert!(stdout(&output).is_empty(), "stdout must stay data-only");
+}
+
+#[test]
+fn get_honours_the_same_filters_search_does() {
+    let server = server_or_skip!();
+    let (_fixture, _sharer) = FilterFixture::new(&server, "cli_e2e_flt_get");
+    let target = Scratch::new("filter-downloads");
+
+    let output = cli(
+        &server,
+        "cli_e2e_seek_get",
+        &[
+            "--search-timeout",
+            "5",
+            "--download-dir",
+            &target.display(),
+            "get",
+            "flt",
+            "--extension",
+            "ogg",
+            "--timeout",
+            "30",
+        ],
+    );
+    assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+    assert!(
+        target.path().join("flt_gamma_keepme.ogg").exists(),
+        "the only .ogg should be what got fetched; stdout: {}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn wish_run_finds_a_shared_file_through_a_wishlist_search() {
+    let server = server_or_skip!();
+    let share = Scratch::new("wish-share");
+    std::fs::write(share.path().join("wisher_probe_krel.mp3"), probe_bytes())
+        .expect("share file");
+    let _sharer = server.client("cli_e2e_wish_sharer", vec![share.display()]);
+    let dir = Scratch::new("wish-config");
+    let config = dir.path().join("config.toml");
+    settle();
+
+    let added = with_config(&config, &["wish", "add", "krel"]);
+    assert_eq!(code(&added), EXIT_OK, "stderr: {}", stderr(&added));
+
+    let output = cli_with_config(
+        &server,
+        "cli_e2e_wish_seeker",
+        &config,
+        &["--search-timeout", "5", "wish", "run"],
+    );
+    assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+
+    let record = records(&output)
+        .into_iter()
+        .find(|line| line.contains("wisher_probe_krel"))
+        .expect("the wishlist search should find the sharer's file");
+    // The same four columns `search` prints, so this pipes into
+    // `download --stdin` with no reshaping.
+    let fields: Vec<&str> = record.split('\t').collect();
+    assert_eq!(fields.len(), 4, "record was {record:?}");
+    assert_eq!(fields[0], "cli_e2e_wish_sharer");
+    assert_eq!(fields[1], probe_bytes().len().to_string());
+}
+
+#[test]
+fn wish_run_output_feeds_download_stdin() {
+    let server = server_or_skip!();
+    let share = Scratch::new("wish-share");
+    std::fs::write(share.path().join("wisher_probe_vosk.mp3"), probe_bytes())
+        .expect("share file");
+    let _sharer = server.client("cli_e2e_wish_sharer_b", vec![share.display()]);
+    let dir = Scratch::new("wish-config");
+    let config = dir.path().join("config.toml");
+    let target = Scratch::new("wish-downloads");
+    settle();
+
+    with_config(&config, &["wish", "add", "vosk"]);
+    let found = cli_with_config(
+        &server,
+        "cli_e2e_wish_seeker_b",
+        &config,
+        &["--search-timeout", "5", "--json", "wish", "run"],
+    );
+    assert_eq!(code(&found), EXIT_OK, "stderr: {}", stderr(&found));
+
+    let mut child = command(&[
+        "--no-config",
+        "--quiet",
+        "--server",
+        &server.address(),
+        "--username",
+        "cli_e2e_wish_puller",
+        "--password",
+        "pw",
+        "--listener-port",
+        &free_port().expect("listener port").to_string(),
+        "--download-dir",
+        &target.display(),
+        "download",
+        "--stdin",
+        "--timeout",
+        "30",
+    ])
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .expect("download should start");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(stdout(&found).as_bytes())
+        .expect("feed the records back");
+    let pulled = child.wait_with_output().expect("download should finish");
+
+    assert_eq!(code(&pulled), EXIT_OK, "stderr: {}", stderr(&pulled));
+    assert!(
+        target.path().join("wisher_probe_vosk.mp3").exists(),
+        "the wished-for file should have landed; stdout: {}",
+        stdout(&pulled)
+    );
+}
+
+#[test]
+fn wish_run_with_an_empty_wishlist_is_the_no_results_code() {
+    let server = server_or_skip!();
+    let _peer = server.client("cli_e2e_wish_quiet", Vec::new());
+    let dir = Scratch::new("wish-config");
+    let config = dir.path().join("config.toml");
+
+    let output = cli_with_config(
+        &server,
+        "cli_e2e_wish_none",
+        &config,
+        &["wish", "run"],
+    );
+    assert_eq!(code(&output), EXIT_NO_RESULTS);
+    assert!(stdout(&output).is_empty(), "stdout must stay data-only");
+}
+
+#[test]
+fn wish_run_only_must_name_a_stored_wish() {
+    let server = server_or_skip!();
+    let _peer = server.client("cli_e2e_wish_quiet_b", Vec::new());
+    let dir = Scratch::new("wish-config");
+    let config = dir.path().join("config.toml");
+    with_config(&config, &["wish", "add", "stored one"]);
+
+    let unknown = cli_with_config(
+        &server,
+        "cli_e2e_wish_only_bad",
+        &config,
+        &["wish", "run", "--only", "not stored"],
+    );
+    assert_eq!(code(&unknown), EXIT_USAGE, "a typo is not an ad-hoc search");
+    assert!(stdout(&unknown).is_empty());
+}
+
+#[test]
+fn wish_run_only_narrows_the_sweep_to_that_wish() {
+    let server = server_or_skip!();
+    let share = Scratch::new("wish-share");
+    for name in ["wisher_probe_zant.mp3", "wisher_probe_hurl.mp3"] {
+        std::fs::write(share.path().join(name), probe_bytes())
+            .expect("share file");
+    }
+    let _sharer = server.client("cli_e2e_wish_sharer_c", vec![share.display()]);
+    let dir = Scratch::new("wish-config");
+    let config = dir.path().join("config.toml");
+    settle();
+
+    with_config(&config, &["wish", "add", "zant"]);
+    with_config(&config, &["wish", "add", "hurl"]);
+
+    let output = cli_with_config(
+        &server,
+        "cli_e2e_wish_only_ok",
+        &config,
+        &["--search-timeout", "5", "wish", "run", "--only", "ZANT"],
+    );
+    assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+
+    let paths = stdout(&output);
+    assert!(paths.contains("wisher_probe_zant"), "stdout was {paths:?}");
+    assert!(
+        !paths.contains("wisher_probe_hurl"),
+        "--only must not run the other wish; stdout was {paths:?}"
+    );
+}
+
+#[test]
+fn wish_run_filters_apply_to_a_wishlist_search_too() {
+    let server = server_or_skip!();
+    let share = Scratch::new("wish-share");
+    std::fs::write(share.path().join("wisher_probe_gleb.mp3"), probe_bytes())
+        .expect("share file");
+    std::fs::write(share.path().join("wisher_probe_gleb.flac"), probe_bytes())
+        .expect("share file");
+    let _sharer = server.client("cli_e2e_wish_sharer_d", vec![share.display()]);
+    let dir = Scratch::new("wish-config");
+    let config = dir.path().join("config.toml");
+    settle();
+
+    with_config(&config, &["wish", "add", "gleb"]);
+    let output = cli_with_config(
+        &server,
+        "cli_e2e_wish_filtered",
+        &config,
+        &[
+            "--search-timeout",
+            "5",
+            "wish",
+            "run",
+            "--extension",
+            "flac",
+        ],
+    );
+    assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+    let paths = stdout(&output);
+    assert!(paths.contains("wisher_probe_gleb.flac"), "{paths:?}");
+    assert!(!paths.contains("wisher_probe_gleb.mp3"), "{paths:?}");
+}
+
+#[test]
+fn serve_with_the_wishlist_sweeps_on_the_interval_the_server_announced() {
+    let server = server_or_skip!();
+    let their_share = Scratch::new("wish-their-share");
+    std::fs::write(
+        their_share.path().join("wisher_probe_yalt.mp3"),
+        probe_bytes(),
+    )
+    .expect("share file");
+    let _sharer =
+        server.client("cli_e2e_wish_sharer_e", vec![their_share.display()]);
+
+    // A serving client needs something of its own to share.
+    let our_share = Scratch::new("wish-our-share");
+    std::fs::write(our_share.path().join("ours.bin"), probe_bytes())
+        .expect("share file");
+    let dir = Scratch::new("wish-config");
+    let config = dir.path().join("config.toml");
+    settle();
+
+    with_config(&config, &["wish", "add", "yalt"]);
+    let output = cli_with_config(
+        &server,
+        "cli_e2e_wish_server",
+        &config,
+        &[
+            "--search-timeout",
+            "5",
+            "--shared-dir",
+            &our_share.display(),
+            "serve",
+            "--wishlist",
+            "--duration",
+            "12",
+        ],
+    );
+    assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+    assert!(
+        stdout(&output).contains("wisher_probe_yalt"),
+        "the first sweep happens at startup; stdout: {}",
+        stdout(&output)
+    );
+    // Soulfind announces 12 minutes for an unprivileged account, and the
+    // schedule is the server's to set — so that is what must be reported.
+    assert!(
+        stderr(&output).contains("next wishlist sweep in 720s"),
+        "the announced interval should drive the timer; stderr: {}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn serve_wishlist_with_nothing_wished_for_still_serves() {
+    let server = server_or_skip!();
+    let our_share = Scratch::new("wish-our-share");
+    std::fs::write(our_share.path().join("ours.bin"), probe_bytes())
+        .expect("share file");
+    let dir = Scratch::new("wish-config");
+    let config = dir.path().join("config.toml");
+
+    let output = cli_with_config(
+        &server,
+        "cli_e2e_wish_server_b",
+        &config,
+        &[
+            "--shared-dir",
+            &our_share.display(),
+            "serve",
+            "--wishlist",
+            "--duration",
+            "2",
+        ],
+    );
+    assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+    assert!(
+        stderr(&output).contains("nothing to look for"),
+        "an empty wishlist should be said once, not serve-and-be-silent; \
+         stderr: {}",
+        stderr(&output)
+    );
 }
 
 #[test]
@@ -1153,6 +1721,122 @@ fn whoami_confirms_the_login_and_reports_what_we_offer() {
     assert_eq!(record["user"], "cli_e2e_whoami");
     assert_eq!(record["shared_files"], 1, "the shared file is indexed");
     assert!(record["server"].as_str().is_some_and(|s| s.contains(':')));
+}
+
+#[test]
+fn whoami_reports_how_much_privilege_time_the_account_has() {
+    let server = server_or_skip!();
+    let _owner = server.client("cli_e2e_priv_owner", Vec::new());
+
+    let output = cli(&server, "cli_e2e_priv_owner", &["--json", "whoami"]);
+    assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+
+    let record: serde_json::Value =
+        serde_json::from_str(&records(&output)[0]).expect("valid JSON");
+    // Zero, not null: the server answered, and the answer is "no privileges".
+    // Null would mean it never said, which is a different fact.
+    assert_eq!(
+        record["privilege_seconds"], 0,
+        "a plain account should read as zero seconds, got {record}"
+    );
+}
+
+#[test]
+fn serve_reports_a_queued_upload_once_the_slots_are_full() {
+    let server = server_or_skip!();
+    let share = Scratch::new("queue-share");
+    for name in ["q_one.bin", "q_two.bin"] {
+        std::fs::write(share.path().join(name), probe_bytes())
+            .expect("share file");
+    }
+    let target_a = Scratch::new("queue-dl-a");
+    let target_b = Scratch::new("queue-dl-b");
+
+    let serving = command(&[
+        "--no-config",
+        "--server",
+        &server.address(),
+        "--username",
+        "cli_e2e_queue_server",
+        "--password",
+        "pw",
+        "--listener-port",
+        &free_port().expect("listener port").to_string(),
+        "--shared-dir",
+        &share.display(),
+        "--json",
+        "serve",
+        "--upload-slots",
+        "1",
+        "--duration",
+        "18",
+    ])
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .expect("serve should start");
+    settle();
+    settle();
+
+    // Two peers pull at once against a single slot, so one of them has to wait.
+    let mut pulls = Vec::new();
+    for (user, target) in [
+        ("cli_e2e_queue_a", &target_a),
+        ("cli_e2e_queue_b", &target_b),
+    ] {
+        pulls.push(
+            command(&[
+                "--no-config",
+                "--quiet",
+                "--server",
+                &server.address(),
+                "--username",
+                user,
+                "--password",
+                "pw",
+                "--listener-port",
+                &free_port().expect("listener port").to_string(),
+                "--download-dir",
+                &target.display(),
+                "--search-timeout",
+                "5",
+                "get",
+                "q_",
+                "--pick",
+                "all",
+                "--timeout",
+                "30",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("puller should start"),
+        );
+    }
+    for mut pull in pulls {
+        let _ = pull.wait();
+    }
+
+    let uploaded = serving.wait_with_output().expect("serve should finish");
+    let statuses: Vec<String> = stdout(&uploaded)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter_map(|value| {
+            value["status"]
+                .as_str()
+                .map(std::string::ToString::to_string)
+        })
+        .collect();
+    assert!(
+        statuses.iter().any(|status| status == "completed"),
+        "at least one upload should have gone through; stdout: {}",
+        stdout(&uploaded)
+    );
+    assert!(
+        statuses.iter().any(|status| status == "queued"),
+        "with one slot and two peers pulling, `serve` should report a queued \
+         upload; statuses were {statuses:?}"
+    );
 }
 
 #[test]
@@ -1658,6 +2342,11 @@ fn the_commands_advertised_as_credential_free_run_without_an_account() {
         vec!["shares", "add", &shared_path],
         vec!["shares", "list"],
         vec!["shares", "remove", &shared_path],
+        // The wishlist is stored, not searched, until `wish run` asks the
+        // network — so managing it must not demand an account either.
+        vec!["wish", "add", "something rare"],
+        vec!["wish", "list"],
+        vec!["wish", "remove", "something rare"],
         vec!["skills", "install", "--dir", &skills],
         vec!["skills", "list", "--dir", &skills],
         vec!["skills", "uninstall", "--dir", &skills],
