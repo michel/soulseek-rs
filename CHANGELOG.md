@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [9.1.0](https://github.com/michel/soulseek-rs/compare/v9.0.0...v9.1.0) - 2026-07-26
+
+### Added
+
+- resume an interrupted download instead of refetching it ([#18](https://github.com/michel/soulseek-rs/pull/18))
+
 ## [9.0.0](https://github.com/michel/soulseek-rs/compare/v8.0.0...v9.0.0) - 2026-07-26
 
 ### Added
