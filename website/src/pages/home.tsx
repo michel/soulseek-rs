@@ -27,10 +27,10 @@ const FEATURES = [
     cmd: 'soulseek-rs skills install',
     body: (
       <>
-        Run it once and asking beats scripting: your agent knows the record shapes, the
-        exit codes, and the filters, so &ldquo;find the 1998 pressing, lossless only&rdquo;
-        becomes a pipeline it writes itself. No MCP server, no wrapper — the skill ships
-        inside the binary and finds Claude Code and opencode on its own.
+        Run it once and your agent knows the record shapes, the exit codes, and the
+        filters: &ldquo;find the 1998 pressing, lossless only&rdquo; becomes a pipeline it
+        writes itself. No MCP server, no wrapper. The skill ships in the binary and finds
+        Claude Code and opencode on its own.
       </>
     ),
   },
@@ -205,16 +205,15 @@ export const Home = () => {
             </p>
             <p>
               soulseek-rs speaks that protocol. It&rsquo;s a third-party client, not the
-              official app, and not affiliated with the Soulseek project. It shares,
-              browses, and does rooms and private messages, because a client that only
-              downloads takes from the network without giving anything back.
+              official app. It shares, browses, and does rooms and private messages,
+              because a client that only downloads takes without giving anything back.
             </p>
           </Prose>
           <div className="flex flex-col gap-4">
             <Callout title="build your own">
               <p>
                 Reach for <Code>soulseek-rs-lib</Code> to build a custom client or an agent
-                on the protocol directly.{' '}
+                on the protocol.{' '}
                 <Link to="/install" className="text-link hover:text-link-hover">
                   Use the library
                 </Link>
@@ -224,8 +223,8 @@ export const Home = () => {
               <p>
                 Every command runs as a one-off from the shell. Point cron, a script, or an
                 agent at them and read JSON records back off stdout. No daemon, no API to
-                stand up — and <Code>skills install</Code> teaches the agent the surface
-                for you.{' '}
+                stand up. <Code>skills install</Code> teaches the agent the surface for
+                you.{' '}
                 <Link to="/docs" className="text-link hover:text-link-hover">
                   See the commands
                 </Link>
@@ -238,8 +237,7 @@ export const Home = () => {
       <Section id="features">
         <SectionHead eyebrow="features" title="What it does.">
           Everything happens in the TUI, and every command also runs as a one-off from the
-          shell, so the same client works for scripting, cron jobs, and agents driving it
-          programmatically.
+          shell.
         </SectionHead>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {FEATURES.map((feature, i) => (
@@ -259,8 +257,8 @@ export const Home = () => {
 
       <Section id="agents">
         <SectionHead eyebrow="agent native" title="Ask for the record. Skip the pipeline.">
-          A CLI an agent can drive is not the same as a CLI an agent knows how to drive.
-          <Code>skills install</Code> closes that gap in one command.
+          An agent can run any CLI. <Code>skills install</Code> teaches it to run this one
+          well.
         </SectionHead>
         <img
           src={`${import.meta.env.BASE_URL}agent-demo.svg`}
@@ -270,17 +268,14 @@ export const Home = () => {
         <Prose className="mt-11 max-w-[660px]">
             <p>
               <Code>--help</Code> lists flags. It cannot say which JSON keys a record
-              carries, that exit 4 means widen the query rather than retry it, that a
-              remote path is backslash-separated and has to go back byte-identical, or
-              that <Code>--follow</Code> never returns so an agent passes{' '}
-              <Code>--duration</Code>. An agent without that guesses, and guessing against
-              a stranger&rsquo;s file server hangs the job.
+              carries, or that exit 4 means widen the query rather than retry it. An agent
+              without that guesses, and guessing against a stranger&rsquo;s file server
+              hangs the job.
             </p>
             <p>
               <Code>skills install</Code> fills that in. The requests stop being pipelines
-              you write: mirror a peer&rsquo;s FLAC folder overnight, watch a room and save
-              anything that mentions a label, check whether a user is worth queueing behind
-              before a 2 GB transfer.
+              you write: mirror a peer&rsquo;s FLAC folder overnight, or check whether a
+              user is worth queueing behind before a 2 GB transfer.
             </p>
             <p>
               It stays a CLI: no daemon, no MCP server, no API key. Upgrading the binary

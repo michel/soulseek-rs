@@ -50,7 +50,7 @@ const CITIZENSHIP = [
     title: 'Share, and share real files',
     body: (
       <>
-        Point <code>shares add</code> at the collection you actually listen to. Full albums,
+        Point <code>shares add</code> at the collection you listen to. Full albums,
         honest bitrates, nothing transcoded up from a lossy source and relabelled.
       </>
     ),
@@ -146,20 +146,10 @@ export const Community = () => {
               >
                 soulfind
               </a>{' '}
-              run in CI, so a green checkmark means it genuinely built and talked to a
-              server.
+              run in CI, so a green checkmark means it built and talked to a server.
             </p>
             <p>
-              That server is{' '}
-              <a
-                href={LINKS.soulfind}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-link hover:text-link-hover"
-              >
-                soulfind-dev/soulfind
-              </a>
-              , an open-source Soulseek server. Run it locally and you can develop and test
+              soulfind is an open-source Soulseek server. Run it locally and you develop
               against a real protocol implementation without touching the public network.
             </p>
             <div className="mt-1 flex flex-wrap gap-2 sm:gap-3">
@@ -187,10 +177,9 @@ export const Community = () => {
           eyebrow="being a good member"
           title="The network is other people's hard drives."
         >
-          Soulseek is a gem for music enthusiasts. Decades of records, live sets, and
-          pressings that never made it anywhere else, kept online by people who care about
-          them. It works because someone left their collection up for you. None of this is
-          enforced. It is just how the network stays worth using.
+          Decades of records, live sets, and pressings that never made it anywhere else,
+          kept online by people who care about them. None of this is enforced. It is just
+          how the network stays worth using.
         </SectionHead>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {CITIZENSHIP.map((item) => (
