@@ -148,3 +148,26 @@ misuse — here, do not cache and do not serve against port 0 — rather than
 short-circuiting the whole path. And diff against an unmodified worktree at HEAD
 before concluding a test failure is pre-existing flakiness; I nearly did, and the
 baseline was green 25/25.
+
+## A sleep you delete may be load-bearing for something else's sampling
+
+**2026-07-26, upload throughput.** Removing a 500ms linger from `serve_file`
+was correct — it held an upload slot after the bytes were gone. It also broke
+`serve_reports_a_queued_upload_once_the_slots_are_full`, on CI only, because
+`serve` polls uploads every 500ms and that linger was what guaranteed a sample
+landed while later files were still queued. The test passed locally three times
+in a row after the change; only the slower CI runner lost the race.
+
+**Why it matters:** the failure looked like a flaky test to be re-run, and the
+tempting fix — widen the assertion, or shorten the poll — would have preserved
+a real defect: `serve --json` is a transfer log that silently drops any state
+shorter than its sampling window.
+
+**How to apply:** when deleting a delay, ask what else was reading the system on
+that timescale; grep for poll intervals of the same magnitude (the linger and
+`POLL` were both exactly 500ms, which is not a coincidence, it is a dependency).
+And when a removal makes something faster and a test starts failing, check
+whether the test was measuring a real property that the *reporting* can no
+longer observe — the fix belongs in the observer, not the assertion. Passing
+locally N times is not evidence here; the mechanism has to be made
+timing-independent, and then tested for that directly.

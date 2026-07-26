@@ -88,6 +88,15 @@ slots paid it about six times over. A half-close (`shutdown(Write)`) is the
 correct mechanism: the FIN says "that is the whole file", and TCP still delivers
 everything written before it. 64 uploads at 10 slots: 5.4s → 3.05s.
 
+### 7. `serve` lost upload states shorter than its poll interval
+
+Dropping the linger exposed it: `serve` samples `uploads()` every 500ms and
+emits what changed, so a peer that queued and was served between two samples
+never appeared in the log at all — and the linger had been exactly one poll
+long, which is what kept the queued state observable. The pump now retains
+whatever it left waiting and `serve` drains that alongside the snapshot, so the
+fact survives whenever the next sample lands.
+
 ## Results
 
 Default profile: 1024 peers, 128 searches, 512 downloads, 256 uploads,
