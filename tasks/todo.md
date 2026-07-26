@@ -68,6 +68,26 @@ browse tests — the failing dial is exactly what makes an unreachable peer fall
 back to the server-brokered path. The fix is narrower: do not cache port 0 and
 do not serve against it, but leave the connect attempt alone.
 
+### 5. Conservative defaults throttled a modern connection
+
+Rebasing master in brought an upload slot queue defaulting to 2 slots, and the
+CLI already capped downloads at 5. Both are the numbers you pick when bandwidth
+is the scarce resource — but on Soulseek a transfer is paced by the *other*
+peer, so concurrency is what fills a modern link, not per-transfer speed.
+Measured with 64 waiting peers: 2 slots took 24.2s, 8 took 6.2s, 32 took 3.1s.
+
+Upload slots 2 → 10, max concurrent downloads 5 → 20. The queue itself stays:
+privileged users jumping it is a condition of being a tolerated third-party
+client.
+
+### 6. Every upload slept half a second after sending
+
+`serve_file` lingered 500ms so the downloader could drain before the socket
+closed. With a slot cap that is time no other peer can use — 64 uploads over 10
+slots paid it about six times over. A half-close (`shutdown(Write)`) is the
+correct mechanism: the FIN says "that is the whole file", and TCP still delivers
+everything written before it. 64 uploads at 10 slots: 5.4s → 3.05s.
+
 ## Results
 
 Default profile: 1024 peers, 128 searches, 512 downloads, 256 uploads,
@@ -81,12 +101,13 @@ Default profile: 1024 peers, 128 searches, 512 downloads, 256 uploads,
 | Aggregate throughput | 7.9 MiB/s | 400–850 MiB/s |
 | Wall time | 60 s timeout | ~7 s |
 
-Score **97.39/100**, stable across 8 consecutive runs (97.7–98.9). Every
+Score **97.78/100**, stable across repeated runs (97.2–98.9). Every
 functional dimension is at 100%; the remainder is throughput headroom against a
 deliberately generous 500 MiB/s target.
 
-All 486 tests pass, including the 25 soulfind-backed e2e tests (verified against
-an unmodified worktree at HEAD after an earlier regression).
+All 569 tests pass after rebasing master in, including the soulfind-backed e2e
+suites (verified against an unmodified worktree at HEAD after an earlier
+regression).
 
 ## Not done
 

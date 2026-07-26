@@ -83,8 +83,11 @@ pub fn serve_file(
     }
     stream.flush()?;
 
-    // Linger so the downloader drains everything before the socket closes.
-    std::thread::sleep(Duration::from_millis(500));
+    // Half-close instead of lingering: the FIN tells the downloader it has the
+    // whole file, and TCP still delivers everything written before it. Sleeping
+    // here held an upload slot for an extra half-second per transfer, which with
+    // a slot cap is time no other peer can use.
+    stream.shutdown(std::net::Shutdown::Write).ok();
     trace!("[upload] served {} to {}:{}", path.display(), host, port);
     Ok(())
 }

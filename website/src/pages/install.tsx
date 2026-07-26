@@ -184,7 +184,7 @@ const SETTINGS: readonly Setting[] = [
   },
   {
     key: 'max_concurrent_downloads',
-    fallback: '5',
+    fallback: '20',
     body: <>Transfers allowed to run at once. The rest queue.</>,
   },
   {

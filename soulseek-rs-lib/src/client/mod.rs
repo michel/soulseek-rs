@@ -48,10 +48,17 @@ pub const DEFAULT_WISHLIST_INTERVAL: Duration = Duration::from_mins(12);
 
 /// How many uploads run at once by default.
 ///
-/// Two is what makes the queue real: with unlimited slots there is nothing for
-/// a privileged peer to jump, and a home connection split across every peer
-/// that asks serves all of them badly.
-pub const DEFAULT_UPLOAD_SLOTS: usize = 2;
+/// The cap is what makes the queue real — with unlimited slots there is nothing
+/// for a privileged peer to jump — but it must not be the thing throttling a
+/// modern connection. On Soulseek the per-transfer rate is usually set by the
+/// *other* end, so concurrency is what fills an uplink: ten peers at a typical
+/// few hundred KiB/s each is a few MiB/s, which a 50 Mbit uplink carries and a
+/// pair of slots leaves mostly idle. Ten still divides a modest uplink into
+/// shares big enough that no peer times out waiting.
+///
+/// Measured on the stress benchmark (64 waiting peers, loopback): two slots
+/// took 24.2s, eight took 6.2s, thirty-two took 3.1s.
+pub const DEFAULT_UPLOAD_SLOTS: usize = 10;
 
 /// How long to wait for a server-brokered (firewalled) peer to connect back
 /// before giving up and failing the download. Matches the direct-dial timeout.

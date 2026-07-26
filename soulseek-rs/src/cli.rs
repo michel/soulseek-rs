@@ -275,7 +275,8 @@ pub struct ServeArgs {
     #[arg(long, action = ArgAction::SetTrue)]
     pub wishlist: bool,
 
-    /// How many uploads to run at once; the rest queue, privileged users first
+    /// How many uploads to run at once [default: 10]; the rest queue,
+    /// privileged users first
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(1..=64))]
     pub upload_slots: Option<u8>,
 }
