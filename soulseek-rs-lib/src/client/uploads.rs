@@ -49,6 +49,17 @@ impl Client {
 
     /// How many uploads run at once. Lowering it does not interrupt transfers
     /// already in flight; the queue simply refills more slowly.
+    /// Queued-upload states recorded since the last call, for a caller that
+    /// samples [`Client::uploads`] and would otherwise miss a peer that queued
+    /// and was served between two samples.
+    #[must_use]
+    pub fn take_upload_events(&self) -> Vec<crate::types::UploadInfo> {
+        self.context
+            .write_safe()
+            .map(|mut ctx| ctx.take_upload_events())
+            .unwrap_or_default()
+    }
+
     pub fn set_upload_slots(&self, slots: usize) {
         if let Ok(mut ctx) = self.context.write_safe() {
             ctx.upload_slots = slots.max(1);

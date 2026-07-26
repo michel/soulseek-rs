@@ -138,6 +138,18 @@ pub fn serve(
     let deadline = span.map(|span| Instant::now() + span);
     let mut reported: HashMap<(String, String), UploadRecord> = HashMap::new();
     while deadline.is_none_or(|deadline| Instant::now() < deadline) {
+        // Queued states first, and from the client's own record rather than
+        // this snapshot: with few slots and small files a peer can queue and be
+        // served well inside one poll, and "it had to wait" is precisely what a
+        // transfer log exists to report.
+        for queued in session.client.take_upload_events() {
+            let record = upload_record(&queued);
+            let key = (record.user.clone(), record.path.clone());
+            if reported.get(&key) != Some(&record) {
+                ctx.out.emit(&record);
+                reported.insert(key, record);
+            }
+        }
         for upload in session.client.uploads() {
             let record = upload_record(&upload);
             let key = (record.user.clone(), record.path.clone());
