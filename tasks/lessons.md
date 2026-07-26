@@ -1,5 +1,26 @@
 # Lessons
 
+## Adding slow tests to a parallel suite breaks tests you never touched
+
+**2026-07-26, library e2e on CI.** CI failed two *download* tests with
+`login: Timeout` — tests the change under review never went near, and which had
+passed on the previous run of the same branch. The cause was load: unlike
+`cli_e2e`, the library suite had no `SERVER_GATE`, so every test spawned its own
+soulfind concurrently. Survivable at 25 tests; the four queue tests added here
+are long-running and hold peer sockets open on purpose, which starved the
+servers enough to leave a login unanswered.
+
+**Why it matters:** the failure pointed at innocent code, so the tempting reads
+were "flake, re-run it" and "the download path regressed". Both are wrong, and
+the first one ships a suite that keeps failing on unrelated PRs.
+
+**How to apply:** when CI fails a test your diff does not touch, check what your
+diff did to the *shared* resources the suite competes for — wall-clock, ports,
+server processes, open sockets — before concluding flake or regression. And when
+a sibling suite already carries a gate, read its comment first:
+`cli_e2e::SERVER_GATE`'s comment described this exact failure mode, so the fix
+was to apply the same gate, not to invent one.
+
 ## A polling assertion that is true before the event is not an assertion
 
 **2026-07-26, upload-queue e2e.** Three tests waited for "the blocker took the
