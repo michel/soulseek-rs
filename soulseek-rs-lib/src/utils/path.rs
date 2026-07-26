@@ -1,5 +1,11 @@
 use std::path::PathBuf;
 
+/// Extension of the file a download streams into while it is still running.
+///
+/// Downloads usually land in a shared directory, so the transfer code that
+/// creates these and the share scanner that must skip them agree here.
+pub const PART_SUFFIX: &str = ".part";
+
 #[must_use]
 pub fn expand_tilde(path: &str) -> PathBuf {
     if let Some(stripped) = path.strip_prefix('~')

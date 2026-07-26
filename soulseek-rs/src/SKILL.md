@@ -51,7 +51,9 @@ Flags: `--min-bitrate <kbps>`, `--free-slots`, `-n/--limit` (0 means all),
 
 **`download <user> <path> [--size N]`** or **`download --stdin`** — one object
 per finished transfer: `user`, `path`, `size`, `file` (the local path written).
-`--stdin` consumes `search --json` output as-is.
+`--stdin` consumes `search --json` output as-is. A transfer that fails leaves a
+`<file>.part` behind; re-running the same command resumes from it rather than
+starting over, so retrying a failed download is cheap.
 
 **`get <query>`** — search, pick, and download in one step. `--pick
 best|first|all`, `-n/--limit`, `--min-bitrate`, `--free-slots`. Prefer this
