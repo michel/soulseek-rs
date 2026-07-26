@@ -495,6 +495,8 @@ const Uninstall = () => (
           { t: 'cm', text: '# whichever way you installed it' },
           { t: 'cmd', text: 'brew uninstall soulseek-rs' },
           { t: 'cmd', text: 'cargo uninstall soulseek-rs' },
+          { t: 'cm', text: '# brew only: drop the tap it came from' },
+          { t: 'cmd', text: 'brew untap michel/tap' },
           { t: 'cm', text: '# config and state: searches, downloads, rooms, messages' },
           {
             t: 'cmd',
