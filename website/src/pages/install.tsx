@@ -47,6 +47,7 @@ interface InstallRoute {
   alt: React.ReactNode
 }
 
+// aislop-ignore-file code-quality/duplicate-block -- three findings here, all data tables: the INSTALLS records repeat the field names InstallRoute requires, and the two uninstall `lines` arrays repeat the `{ t, text }` shape around different commands. The rule matches punctuation, not logic.
 const INSTALLS: readonly InstallRoute[] = [
   {
     id: 'macos',

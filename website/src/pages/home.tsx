@@ -19,6 +19,7 @@ const PLATFORMS: readonly { name: OsName; note: string; anchor: string }[] = [
   { name: 'Windows', note: 'cargo or .exe', anchor: 'windows' },
 ]
 
+// aislop-ignore-file code-quality/duplicate-block -- FEATURES is a data table; its entries repeat the field names the record shape requires, not logic. The rule matches the punctuation skeleton between entries. A factory would trade named fields for positional string args.
 const FEATURES = [
   {
     glyph: '✦',
