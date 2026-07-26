@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [11.0.0](https://github.com/michel/soulseek-rs/compare/v10.0.0...v11.0.0) - 2026-07-26
+
+### Fixed
+
+- [**breaking**] make concurrent invocations work instead of silently seeing nothing ([#22](https://github.com/michel/soulseek-rs/pull/22))
+
 ## [10.0.0](https://github.com/michel/soulseek-rs/compare/v9.1.0...v10.0.0) - 2026-07-26
 
 ### Added
