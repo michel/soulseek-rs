@@ -168,6 +168,10 @@ pub enum Commands {
     /// List the files a user shares
     Browse(BrowseArgs),
 
+    /// Standing searches the server re-runs on its own schedule
+    #[command(subcommand)]
+    Wish(WishCommand),
+
     /// Chat rooms
     #[command(subcommand)]
     Room(RoomCommand),
@@ -265,6 +269,15 @@ pub struct ServeArgs {
     /// Stay online until interrupted, ignoring --duration
     #[arg(long, action = ArgAction::SetTrue)]
     pub follow: bool,
+
+    /// Also re-run the wishlist on the interval the server sets, reporting
+    /// matches as they arrive
+    #[arg(long, action = ArgAction::SetTrue)]
+    pub wishlist: bool,
+
+    /// How many uploads to run at once; the rest queue, privileged users first
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(1..=64))]
+    pub upload_slots: Option<u8>,
 }
 
 #[derive(Args, Debug)]
@@ -353,11 +366,10 @@ pub enum Pick {
     All,
 }
 
-#[derive(Args, Debug)]
-pub struct SearchArgs {
-    /// What to search for
-    pub query: String,
-
+/// The result restrictions every command that searches accepts, so `search`,
+/// `get` and `wish run` all narrow a result set the same way.
+#[derive(Args, Debug, Default, Clone)]
+pub struct FilterArgs {
     /// Drop results below this bitrate in kbps
     #[arg(long, value_name = "KBPS")]
     pub min_bitrate: Option<u32>,
@@ -365,6 +377,31 @@ pub struct SearchArgs {
     /// Keep only peers advertising a free upload slot
     #[arg(long, action = ArgAction::SetTrue)]
     pub free_slots: bool,
+
+    /// Drop results whose path contains this term; repeat for several
+    #[arg(long, value_name = "TERM", action = ArgAction::Append)]
+    pub exclude: Vec<String>,
+
+    /// Keep only this file extension, with or without a dot; repeat for several
+    #[arg(long, value_name = "EXT", action = ArgAction::Append)]
+    pub extension: Vec<String>,
+
+    /// Drop results smaller than this many bytes
+    #[arg(long, value_name = "BYTES")]
+    pub min_size: Option<u64>,
+
+    /// Drop results larger than this many bytes
+    #[arg(long, value_name = "BYTES")]
+    pub max_size: Option<u64>,
+}
+
+#[derive(Args, Debug)]
+pub struct SearchArgs {
+    /// What to search for
+    pub query: String,
+
+    #[command(flatten)]
+    pub filter: FilterArgs,
 
     /// Print at most this many results (0 means all)
     #[arg(short = 'n', long, default_value_t = 0)]
@@ -417,13 +454,8 @@ pub struct GetArgs {
     #[arg(short = 'n', long, default_value_t = 0)]
     pub limit: usize,
 
-    /// Drop results below this bitrate in kbps
-    #[arg(long, value_name = "KBPS")]
-    pub min_bitrate: Option<u32>,
-
-    /// Keep only peers advertising a free upload slot
-    #[arg(long, action = ArgAction::SetTrue)]
-    pub free_slots: bool,
+    #[command(flatten)]
+    pub filter: FilterArgs,
 
     /// Seconds to wait for each transfer before giving up
     #[arg(
@@ -448,6 +480,45 @@ pub struct BrowseArgs {
         value_parser = clap::value_parser!(u64).range(1..=MAX_WAIT_SECS)
     )]
     pub timeout: u64,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum WishCommand {
+    /// Store a query and search for it from now on
+    Add {
+        /// What to keep looking for
+        query: String,
+    },
+
+    /// Stop looking for a query
+    Remove {
+        /// The wish to drop, as shown by `wish list`
+        query: String,
+    },
+
+    /// Print the stored queries
+    List,
+
+    /// Search every stored query once and print what came back
+    Run(WishRunArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct WishRunArgs {
+    /// Only run this wish instead of all of them
+    #[arg(long, value_name = "QUERY")]
+    pub only: Option<String>,
+
+    #[command(flatten)]
+    pub filter: FilterArgs,
+
+    /// Print at most this many results per wish (0 means all)
+    #[arg(short = 'n', long, default_value_t = 0)]
+    pub limit: usize,
+
+    /// Result order
+    #[arg(long, value_enum, default_value_t = SortKey::Best)]
+    pub sort: SortKey,
 }
 
 #[derive(Subcommand, Debug)]

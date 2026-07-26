@@ -11,6 +11,7 @@ pub mod settings;
 pub mod skills;
 pub mod social;
 pub mod transfer;
+pub mod wish;
 
 use crate::cli::{Commands, MessageCommand, RoomCommand};
 use crate::output::{CliError, CliResult, Exit, Out, PortmapRecord};
@@ -191,13 +192,16 @@ pub fn run(ctx: &Ctx, command: Commands) -> CliResult {
         Commands::Message(MessageCommand::Read { duration, follow }) => {
             social::message_read(ctx, listen_span(duration, follow))
         }
-        Commands::Serve(args) => peer::serve(ctx, &args),
         Commands::User(args) => peer::user(ctx, &args),
         Commands::Whoami => peer::whoami(ctx),
         // These need no account, so main.rs answers them before asking for
         // credentials; the arms exist only to keep the match exhaustive.
         Commands::Portmap => portmap(&ctx.out, ctx.settings.listen_port),
-        Commands::Config(_)
+        // These need the config file as well as a session, so main.rs runs
+        // them where the store is in scope.
+        Commands::Serve(_)
+        | Commands::Wish(_)
+        | Commands::Config(_)
         | Commands::Shares(_)
         | Commands::Skills(_)
         | Commands::Completions(_) => {

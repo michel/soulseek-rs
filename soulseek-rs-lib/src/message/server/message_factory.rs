@@ -87,6 +87,38 @@ impl MessageFactory {
             .clone()
     }
 
+    /// Ask the server (code 92) how much of our own privilege time is left.
+    #[must_use]
+    pub fn build_check_privileges() -> Message {
+        Message::new().write_int32(92).clone()
+    }
+
+    /// Tell a peer where their queued file sits (peer code 44). Place counts
+    /// from 1.
+    #[must_use]
+    pub fn build_place_in_queue_response(
+        filename: &str,
+        place: u32,
+    ) -> Message {
+        Message::new()
+            .write_int32(44)
+            .write_string(filename)
+            .write_int32(place)
+            .clone()
+    }
+
+    /// A wishlist search (server code 103). Same shape as a plain `FileSearch`,
+    /// but the server rate-limits it to the interval it announced in code 104
+    /// and does not count it against the normal search allowance.
+    #[must_use]
+    pub fn build_wishlist_search(token: u32, query: &str) -> Message {
+        Message::new()
+            .write_int32(103)
+            .write_int32(token)
+            .write_string(query)
+            .clone()
+    }
+
     #[must_use]
     pub fn build_set_status_message(status_code: u32) -> Message {
         Message::new()
@@ -366,6 +398,37 @@ fn test_build_say_chatroom() {
 fn test_build_room_list_request() {
     let message = MessageFactory::build_room_list_request();
     assert_eq!(vec![64, 0, 0, 0], message.get_data());
+}
+
+#[test]
+fn test_build_check_privileges() {
+    assert_eq!(
+        vec![92, 0, 0, 0],
+        MessageFactory::build_check_privileges().get_data()
+    );
+}
+
+#[test]
+fn test_build_place_in_queue_response() {
+    let message = MessageFactory::build_place_in_queue_response("song.mp3", 3);
+    let expect: Vec<u8> = [
+        44, 0, 0, 0, // code
+        8, 0, 0, 0, 115, 111, 110, 103, 46, 109, 112, 51, // "song.mp3"
+        3, 0, 0, 0, // place
+    ]
+    .to_vec();
+    assert_eq!(expect, message.get_data());
+}
+
+#[test]
+fn test_build_wishlist_search() {
+    let message = MessageFactory::build_wishlist_search(12, "trance wax");
+    let expect: Vec<u8> = [
+        103, 0, 0, 0, 12, 0, 0, 0, 10, 0, 0, 0, 116, 114, 97, 110, 99, 101, 32,
+        119, 97, 120,
+    ]
+    .to_vec();
+    assert_eq!(expect, message.get_data());
 }
 
 #[test]

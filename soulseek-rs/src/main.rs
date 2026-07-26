@@ -8,7 +8,10 @@ mod port_mapping;
 mod ui;
 
 use clap::Parser;
-use cli::{Cli, Commands, ConfigCommand, SharesCommand, parse_server_address};
+use cli::{
+    Cli, Commands, ConfigCommand, SharesCommand, WishCommand,
+    parse_server_address,
+};
 use commands::Ctx;
 use output::{CliError, CliResult, Exit, Out};
 use soulseek_rs::{ClientSettings, ClientVersion, PeerAddress};
@@ -93,6 +96,15 @@ fn run(mut cli: Cli, out: &Out) -> CliResult {
         Commands::Shares(SharesCommand::Remove { ref directory }) => {
             return commands::settings::shares_remove(out, &store, directory);
         }
+        Commands::Wish(WishCommand::Add { ref query }) => {
+            return commands::wish::add(out, &store, query);
+        }
+        Commands::Wish(WishCommand::Remove { ref query }) => {
+            return commands::wish::remove(out, &store, query);
+        }
+        Commands::Wish(WishCommand::List) => {
+            return commands::wish::list(out, &store);
+        }
         _ => {}
     }
 
@@ -103,6 +115,22 @@ fn run(mut cli: Cli, out: &Out) -> CliResult {
         }
         Commands::Shares(SharesCommand::Reindex) => {
             commands::settings::shares_reindex(&ctx)
+        }
+        Commands::Wish(WishCommand::Run(ref args)) => {
+            commands::wish::run(&ctx, &store, args)
+        }
+        Commands::Serve(ref args) => {
+            let sweeper = args
+                .wishlist
+                .then(|| commands::wish::Sweeper::new(store.config.wishes()))
+                .flatten();
+            if args.wishlist && sweeper.is_none() {
+                out.warn(
+                    "--wishlist has nothing to look for; add one with \
+                          `wish add QUERY`",
+                );
+            }
+            commands::peer::serve(&ctx, args, sweeper)
         }
         other => commands::run(&ctx, other),
     }

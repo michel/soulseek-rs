@@ -92,6 +92,9 @@ fn build_upload_info_lines(upload: &UploadInfo) -> Vec<Line<'static>> {
     lines.push(label_value("Size", &format_bytes(upload.size)));
 
     let (status_text, status_style) = match &upload.status {
+        UploadStatus::Queued(place) => {
+            (format!("Queued (#{place})"), inactive_style())
+        }
         UploadStatus::InProgress => {
             ("In progress".to_string(), warning_style())
         }
@@ -132,7 +135,9 @@ fn build_upload_info_lines(upload: &UploadInfo) -> Vec<Line<'static>> {
             )));
             lines.push(Line::from(Span::styled(reason.clone(), error_style())));
         }
-        UploadStatus::Completed | UploadStatus::Cancelled => {}
+        UploadStatus::Queued(_)
+        | UploadStatus::Completed
+        | UploadStatus::Cancelled => {}
     }
 
     lines

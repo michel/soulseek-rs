@@ -28,7 +28,7 @@ pub use message_factory::MessageFactory;
 pub use message_user::MessageUser;
 pub use parent_min_speed::ParentMinSpeedHandler;
 pub use parent_speed_ratio::ParentSpeedRatioHandler;
-pub use privileged_users::PrivilegedUsersHandler;
+pub use privileged_users::{CheckPrivilegesHandler, PrivilegedUsersHandler};
 pub use room_list::RoomListHandler;
 pub use say_chatroom::SayChatroomHandler;
 pub use user_info::{GetUserStatsHandler, GetUserStatusHandler};
