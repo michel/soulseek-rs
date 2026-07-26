@@ -95,7 +95,7 @@ To build your own Soulseek client, add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-soulseek-rs-lib = "7"
+soulseek-rs-lib = "8"
 ```
 
 ## Usage
