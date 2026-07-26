@@ -25,9 +25,15 @@ does, how to install it, and every `config.toml` setting.
 ## Features
 
 - **Search & download**: search the network and queue downloads in the TUI,
-  or fetch a track in one command with `get`
+  or fetch a track in one command with `get`; narrow results by bitrate, size,
+  file type, free slots, or terms to exclude
+- **Wishlist**: `wish add` something the network doesn't have today, and
+  `wish run` (or `serve --wishlist`) keeps looking for it on the interval the
+  server sets
 - **Sharing**: `shares add` a directory and your files show up in searches;
   `serve` stays online so peers can browse and download them
+- **Upload queue**: a slot cap with users the server lists as privileged served
+  first, and peers get a truthful answer when they ask their place in line
 - **Browse**: list any user's shared files and download straight from the tree
 - **Resumable downloads**: a transfer that dies leaves a `.part` file, and
   re-running the download asks the peer to send only what is missing
@@ -137,6 +143,8 @@ soulseek-rs search <QUERY>                # print matching files
 soulseek-rs download <USER> <PATH>        # fetch one known file
 soulseek-rs download --stdin              # fetch files listed on stdin
 soulseek-rs get <QUERY>                   # search, pick, and download
+soulseek-rs wish add|remove|list <QUERY>  # keep looking for something
+soulseek-rs wish run                      # search every stored wish once
 soulseek-rs browse <USER>                 # list a user's shared files
 soulseek-rs room list                     # public rooms and user counts
 soulseek-rs room say <ROOM> <MESSAGE>     # post to a room
@@ -235,6 +243,14 @@ elif [ $? -eq 4 ]; then
   echo "nobody has it"
 fi
 
+# Nobody has it today: keep looking, and fetch it the day someone does
+soulseek-rs wish add "some rare 12 inch"
+soulseek-rs wish run --json | soulseek-rs download --stdin
+
+# Only lossless, nothing from a bootleg folder, album-sized files only
+soulseek-rs search "boards of canada" \
+  --extension flac --exclude bootleg --min-size 20000000
+
 # Log room chat as JSON until interrupted
 soulseek-rs room listen lobby --follow --json >> lobby.ndjson
 
@@ -317,7 +333,7 @@ seconds (an hour by default), or runs until interrupted with `--follow`.
 soulseek-rs shares add ~/Music     # remembered in config.toml
 soulseek-rs shares status          # what the network will see
 soulseek-rs shares reindex         # after adding files on disk
-soulseek-rs serve --follow
+soulseek-rs serve --follow         # add --upload-slots N to widen the queue
 ```
 
 Uploads only show up inside a running `serve`; every other command is
