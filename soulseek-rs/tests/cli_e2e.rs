@@ -1614,10 +1614,6 @@ fn asking_about_an_unknown_user_succeeds_with_an_offline_record() {
     assert_eq!(record["shared_files"], 0);
 }
 
-// ---------------------------------------------------------------------------
-// The claims the README and the website make, checked against the binary
-// ---------------------------------------------------------------------------
-
 /// Assert that `output` succeeded and that its first record carries every key
 /// the documentation promises. `label` names the invocation in the failure.
 fn assert_record_keys(output: &Output, label: &str, keys: &[&str]) {
@@ -1639,7 +1635,7 @@ fn assert_record_keys(output: &Output, label: &str, keys: &[&str]) {
     }
 }
 
-/// "Eleven of these need no credentials, because they never touch the
+/// "Thirteen of these need no credentials, because they never touch the
 /// network." A script's first call is one of these, so an account must not be
 /// a prerequisite for any of them.
 #[test]
@@ -1650,6 +1646,9 @@ fn the_commands_advertised_as_credential_free_run_without_an_account() {
     let skills = target.display();
     let shared = Scratch::new("nocred-shared");
     let shared_path = shared.display();
+    // `completions` writes where the shell looks, which is under the home
+    // directory: give it a throwaway one rather than the developer's.
+    let home = Scratch::new("nocred-home");
 
     let cases: Vec<Vec<&str>> = vec![
         vec!["config", "path"],
@@ -1662,10 +1661,17 @@ fn the_commands_advertised_as_credential_free_run_without_an_account() {
         vec!["skills", "install", "--dir", &skills],
         vec!["skills", "list", "--dir", &skills],
         vec!["skills", "uninstall", "--dir", &skills],
+        vec!["completions", "install", "--shell", "fish"],
+        vec!["completions", "uninstall", "--shell", "fish"],
     ];
 
     for case in cases {
-        let output = with_config(&config, &case);
+        let mut all = vec!["--config", config.to_str().expect("utf-8 path")];
+        all.extend_from_slice(&case);
+        let mut invocation = command(&all);
+        invocation.env("HOME", home.path());
+        invocation.env("XDG_CONFIG_HOME", home.path().join("config"));
+        let output = invocation.output().expect("the binary should run");
         assert_eq!(
             code(&output),
             EXIT_OK,
@@ -1675,8 +1681,9 @@ fn the_commands_advertised_as_credential_free_run_without_an_account() {
         );
     }
 
-    // `portmap` is the eleventh: it talks to the router, never to the server,
-    // so it answers with its own verdict rather than a credentials error.
+    // `portmap` is the thirteenth: it talks to the router, never to the
+    // server, so it answers with its own verdict rather than a credentials
+    // error.
     let portmap = with_config(&config, &["portmap"]);
     assert!(
         matches!(code(&portmap), EXIT_OK | EXIT_NO_RESULTS),
@@ -1786,6 +1793,28 @@ fn the_offline_json_records_carry_the_keys_the_skill_file_names() {
     for (case, keys) in cases {
         let output = with_config(&config, &case);
         assert_record_keys(&output, &case.join(" "), &keys);
+    }
+
+    // `completions` writes into the shell's own directory, so it only ever
+    // runs against a throwaway home.
+    let home = Scratch::new("skill-keys-home");
+    for verb in ["install", "uninstall"] {
+        let mut invocation = command(&[
+            "--no-config",
+            "--json",
+            "completions",
+            verb,
+            "--shell",
+            "fish",
+        ]);
+        invocation.env("HOME", home.path());
+        invocation.env("XDG_CONFIG_HOME", home.path().join("config"));
+        let output = invocation.output().expect("the binary should run");
+        assert_record_keys(
+            &output,
+            &format!("completions {verb}"),
+            &["shell", "path", "action"],
+        );
     }
 }
 
