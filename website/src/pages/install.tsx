@@ -301,6 +301,12 @@ export const Install = () => {
               a terminal and the TUI opens, in a script or a pipe it wants a subcommand
               instead.
             </p>
+            <p className="text-[13px] text-muted">
+              <Code>soulseek-rs completions install</Code> then adds tab completion to
+              whichever of bash, zsh and fish this machine uses &mdash; generated from the
+              same definition the binary parses with, so it never drifts from{' '}
+              <Code>--help</Code>. Open a new shell to pick it up.
+            </p>
             <div className="flex flex-wrap gap-2 sm:gap-3">
               <Button href={LINKS.releases}>Prebuilt binaries</Button>
             </div>
@@ -519,13 +525,17 @@ export const Install = () => {
 
       <Section band>
         <SectionHead eyebrow="uninstall" title="Removing it completely.">
-          Three things exist on disk: the binary, the config, and the state. Nothing else,
+          Three things exist on disk: the binary, the config, and the state &mdash; plus
+          the completion scripts and the agent skill, if you asked for those. Nothing else,
           unless you point <Code>--log-file</Code> somewhere. No telemetry to opt out of.
         </SectionHead>
         <Cols start>
           <Terminal
             label="macOS · Linux"
             lines={[
+              { t: 'cm', text: '# while the binary is still there' },
+              { t: 'cmd', text: 'soulseek-rs completions uninstall' },
+              { t: 'cmd', text: 'soulseek-rs skills uninstall' },
               { t: 'cmd', text: 'cargo uninstall soulseek-rs' },
               { t: 'cm', text: '# config and state: searches, downloads, rooms, messages' },
               {
@@ -539,6 +549,7 @@ export const Install = () => {
           <Terminal
             label="Windows · PowerShell"
             lines={[
+              { t: 'cmd', text: 'soulseek-rs skills uninstall' },
               { t: 'cmd', text: 'cargo uninstall soulseek-rs' },
               {
                 t: 'cmd',

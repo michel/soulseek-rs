@@ -37,6 +37,7 @@ soulseek-rs message send|read
 soulseek-rs shares list|add|remove|status|reindex
 soulseek-rs config path|list|get|set
 soulseek-rs portmap                       # test automatic port mapping
+soulseek-rs completions install           # tab completion for bash/zsh/fish
 ```
 
 Add `--json` for newline-delimited JSON instead of tab-separated text, so

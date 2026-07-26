@@ -5,6 +5,7 @@
 //! first; the ones that only read the config file or the local machine are
 //! dispatched by `main::run` before any credentials are demanded.
 
+pub mod completions;
 pub mod peer;
 pub mod settings;
 pub mod skills;
@@ -196,7 +197,10 @@ pub fn run(ctx: &Ctx, command: Commands) -> CliResult {
         // These need no account, so main.rs answers them before asking for
         // credentials; the arms exist only to keep the match exhaustive.
         Commands::Portmap => portmap(&ctx.out, ctx.settings.listen_port),
-        Commands::Config(_) | Commands::Shares(_) | Commands::Skills(_) => {
+        Commands::Config(_)
+        | Commands::Shares(_)
+        | Commands::Skills(_)
+        | Commands::Completions(_) => {
             Err(CliError::usage("handled without a session; see main::run"))
         }
     }

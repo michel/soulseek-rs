@@ -181,13 +181,18 @@ export const Docs = () => {
               <Code>download</Code>, <Code>browse</Code>, <Code>room</Code>,{' '}
               <Code>message</Code>, <Code>serve</Code>, <Code>user</Code>,{' '}
               <Code>whoami</Code>, <Code>shares</Code>, <Code>config</Code>,{' '}
-              <Code>portmap</Code>, <Code>skills</Code>. Records are tab-separated fields,
-              one per line, or NDJSON with <Code>--json</Code>.
+              <Code>portmap</Code>, <Code>skills</Code>, <Code>completions</Code>. Records
+              are tab-separated fields, one per line, or NDJSON with <Code>--json</Code>.
             </p>
             <p>
               No TTY, no daemon. <Code>search --json</Code> pipes through <Code>jq</Code>{' '}
               into <Code>download --stdin</Code>. Every ending has its own exit code: 4 found
               nothing, 3 could not reach the server, 6 the transfer died.
+            </p>
+            <p>
+              <Code>completions install</Code> gives bash, zsh and fish tab completion for
+              all of it, generated from the same definition the binary parses with.{' '}
+              <Code>completions uninstall</Code> takes it back out.
             </p>
             <p>
               <Code>portmap</Code> tests whether your router will let peers connect back,
