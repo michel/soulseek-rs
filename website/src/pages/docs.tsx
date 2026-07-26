@@ -71,185 +71,192 @@ const KeyRow = ({ combo, description }: { combo: string; description: string }) 
   </div>
 )
 
-export const Docs = () => {
-  return (
-    <>
-      <PageHead
-        eyebrow="docs · quick start"
-        title="Install it, run it, drive it from the keyboard."
-      >
-        This is the short version. The full reference (every flag, every message) lives in
-        the README and on docs.rs.
-      </PageHead>
+const FirstRun = () => (
+  <Section>
+    <SectionHead eyebrow="1 · first run" title="Two commands to a running client.">
+      Homebrew puts the binary on your PATH. With a Rust toolchain,{' '}
+      <Code>cargo install soulseek-rs</Code> does the same.
+    </SectionHead>
+    <Cols start>
+      <Terminal
+        lines={[
+          { t: 'cmd', text: 'brew install michel/tap/soulseek-rs' },
+          { t: 'cmd', text: 'soulseek-rs' },
+          { t: 'cm', text: '# the TUI opens; log in or register on first run' },
+        ]}
+      />
+      <Prose>
+        <p>
+          On first run you get a login screen: sign in with an existing Soulseek account or
+          register a new one. Your password goes to the OS keychain, not a plain-text file.
+        </p>
+        <p>
+          Downloads land in a conventional folder, and TUI state (searches, downloads,
+          rooms) is restored across restarts.
+        </p>
+      </Prose>
+    </Cols>
+  </Section>
+)
 
-      <Section>
-        <SectionHead eyebrow="1 · first run" title="Two commands to a running client.">
-          Homebrew puts the binary on your PATH. With a Rust toolchain,{' '}
-          <Code>cargo install soulseek-rs</Code> does the same.
-        </SectionHead>
-        <Cols start>
-          <Terminal
-            lines={[
-              { t: 'cmd', text: 'brew install michel/tap/soulseek-rs' },
-              { t: 'cmd', text: 'soulseek-rs' },
-              { t: 'cm', text: '# the TUI opens; log in or register on first run' },
-            ]}
-          />
-          <Prose>
-            <p>
-              On first run you get a login screen: sign in with an existing Soulseek
-              account or register a new one. Your password goes to the OS keychain, not a
-              plain-text file.
-            </p>
-            <p>
-              Downloads land in a conventional folder, and TUI state (searches, downloads,
-              rooms) is restored across restarts.
-            </p>
-          </Prose>
-        </Cols>
-      </Section>
+const Layout = () => (
+  <Section>
+    <SectionHead eyebrow="2 · the layout" title="Four panes.">
+      The whole client is these four boxes. Press <Code>1</Code>–<Code>3</Code> to focus
+      one; the focused pane&rsquo;s legend turns green.
+    </SectionHead>
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      {PANES.map((pane) => (
+        <Panel key={pane.title} num={pane.num} title={pane.title}>
+          <p className="text-[13px] leading-[22px] text-secondary">{pane.body}</p>
+        </Panel>
+      ))}
+    </div>
+  </Section>
+)
 
-      <Section>
-        <SectionHead eyebrow="2 · the layout" title="Four panes.">
-          The whole client is these four boxes. Press <Code>1</Code>–<Code>3</Code> to focus
-          one; the focused pane&rsquo;s legend turns green.
-        </SectionHead>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {PANES.map((pane) => (
-            <Panel key={pane.title} num={pane.num} title={pane.title}>
-              <p className="text-[13px] leading-[22px] text-secondary">{pane.body}</p>
-            </Panel>
+const Keys = () => (
+  <Section>
+    <SectionHead eyebrow="3 · keys" title="It's all keyboard.">
+      The bottom bar always shows the keys for where you are. The essentials:
+    </SectionHead>
+    <Cols>
+      <div>
+        <Eyebrow className="mb-4 block">anywhere</Eyebrow>
+        <div className="flex flex-col">
+          {GLOBAL_KEYS.map(([combo, description]) => (
+            <KeyRow key={combo} combo={combo} description={description} />
           ))}
         </div>
-      </Section>
-
-      <Section>
-        <SectionHead eyebrow="3 · keys" title="It's all keyboard.">
-          The bottom bar always shows the keys for where you are. The essentials:
-        </SectionHead>
-        <Cols>
-          <div>
-            <Eyebrow className="mb-4 block">anywhere</Eyebrow>
-            <div className="flex flex-col">
-              {GLOBAL_KEYS.map(([combo, description]) => (
-                <KeyRow key={combo} combo={combo} description={description} />
-              ))}
-            </div>
-          </div>
-          <div>
-            <Eyebrow className="mb-4 block">
-              in the chat-rooms popup <span className="text-muted">(press c)</span>
-            </Eyebrow>
-            <div className="flex flex-col">
-              {ROOM_KEYS.map(([combo, description]) => (
-                <KeyRow key={combo} combo={combo} description={description} />
-              ))}
-            </div>
-          </div>
-        </Cols>
-      </Section>
-
-      <Section>
-        <SectionHead
-          eyebrow="4 · from the shell"
-          title="Every command also runs as a one-off."
-        >
-          Skip the TUI when you&rsquo;re scripting or mid-task. stdout is data, stderr is
-          progress, and the exit code is the verdict.
-        </SectionHead>
-        <Cols start>
-          <Terminal
-            label="shell"
-            lines={[
-              { t: 'cmd', text: 'soulseek-rs get "public domain field recordings"' },
-              { t: 'cm', text: '# search, pick the best, download it' },
-              { t: 'cmd', text: 'soulseek-rs search "netlabel 2004" --min-bitrate 320' },
-              { t: 'cmd', text: 'soulseek-rs browse <username> --json' },
-              { t: 'cmd', text: 'soulseek-rs room list' },
-              { t: 'cm', text: '# public rooms, busiest first' },
-              { t: 'cmd', text: 'soulseek-rs room say <room> "hello room"' },
-              { t: 'cmd', text: 'soulseek-rs message send <username> "hello there"' },
-              { t: 'cmd', text: 'soulseek-rs serve --follow' },
-              { t: 'cm', text: '# stay online sharing; every upload as it happens' },
-              { t: 'cmd', text: 'soulseek-rs skills install' },
-              { t: 'cm', text: '# hand all of the above to your coding agent' },
-            ]}
-          />
-          <Prose>
-            <p>
-              The command groups: <Code>search</Code>, <Code>get</Code>,{' '}
-              <Code>download</Code>, <Code>browse</Code>, <Code>room</Code>,{' '}
-              <Code>message</Code>, <Code>serve</Code>, <Code>user</Code>,{' '}
-              <Code>whoami</Code>, <Code>shares</Code>, <Code>config</Code>,{' '}
-              <Code>portmap</Code>, <Code>skills</Code>, <Code>completions</Code>. Records
-              are tab-separated fields, one per line, or NDJSON with <Code>--json</Code>.
-            </p>
-            <p>
-              No TTY, no daemon. <Code>search --json</Code> pipes through <Code>jq</Code>{' '}
-              into <Code>download --stdin</Code>. Every ending has its own exit code: 4 found
-              nothing, 3 could not reach the server, 6 the transfer died.
-            </p>
-            <p>
-              <Code>completions install</Code> gives bash, zsh and fish tab completion for
-              all of it, generated from the same definition the binary parses with.{' '}
-              <Code>completions uninstall</Code> takes it back out.
-            </p>
-            <p>
-              <Code>portmap</Code> tests whether your router will let peers connect back,
-              worth running once.{' '}
-              <Link to="/install" className="text-link hover:text-link-hover">
-                More on being reachable
-              </Link>
-            </p>
-          </Prose>
-        </Cols>
-        <div className="mt-6">
-          <Callout title="give it to your agent">
-            <p>
-              <Code>soulseek-rs skills install</Code> writes a <Code>SKILL.md</Code> into
-              every coding agent on the machine: Claude Code and opencode today,{' '}
-              <Code>--dir</Code> for anything else. After it lands you describe the
-              outcome instead of the pipeline: &ldquo;mirror that peer&rsquo;s FLAC
-              folder&rdquo;, &ldquo;watch this room for an hour and save anything
-              mentioning the label&rdquo;.
-            </p>
-            <p>
-              It carries what <Code>--help</Code> cannot: the JSON keys of every record,
-              and what each exit code means. Rerun it after an upgrade;{' '}
-              <Code>skills uninstall</Code> takes it back out.
-            </p>
-          </Callout>
+      </div>
+      <div>
+        <Eyebrow className="mb-4 block">
+          in the chat-rooms popup <span className="text-muted">(press c)</span>
+        </Eyebrow>
+        <div className="flex flex-col">
+          {ROOM_KEYS.map(([combo, description]) => (
+            <KeyRow key={combo} combo={combo} description={description} />
+          ))}
         </div>
-        <div className="mt-4">
-          <Callout tone="warn" title="the one limit worth knowing up front">
-            <p>
-              If both you and a peer are behind routers with no forwarded port, browsing
-              that peer can&rsquo;t work, that&rsquo;s a fundamental Soulseek/peer-to-peer
-              limitation, not a bug.
-            </p>
-          </Callout>
-        </div>
-      </Section>
+      </div>
+    </Cols>
+  </Section>
+)
 
-      <Section band>
-        <Panel title="the rest" className="bg-raised [&>span]:bg-panel">
-          <Cols center className="gap-6">
-            <Prose>
-              <p>
-                The README on GitHub and the library API reference on docs.rs stay current
-                with the code.
-              </p>
-            </Prose>
-            <div className="flex flex-wrap gap-2 sm:gap-3">
-              <Button href={LINKS.gh} variant="accent">
-                README
-              </Button>
-              <Button href={LINKS.docsrs}>docs.rs</Button>
-              <Button href={LINKS.changelog}>Changelog</Button>
-            </div>
-          </Cols>
-        </Panel>
-      </Section>
-    </>
-  )
-}
+const FromTheShell = () => (
+  <Section>
+    <SectionHead eyebrow="4 · from the shell" title="Every command also runs as a one-off.">
+      Skip the TUI when you&rsquo;re scripting or mid-task. stdout is data, stderr is
+      progress, and the exit code is the verdict.
+    </SectionHead>
+    <Cols start>
+      <Terminal
+        label="shell"
+        lines={[
+          { t: 'cmd', text: 'soulseek-rs get "public domain field recordings"' },
+          { t: 'cm', text: '# search, pick the best, download it' },
+          { t: 'cmd', text: 'soulseek-rs search "netlabel 2004" --min-bitrate 320' },
+          { t: 'cmd', text: 'soulseek-rs browse <username> --json' },
+          { t: 'cmd', text: 'soulseek-rs room list' },
+          { t: 'cm', text: '# public rooms, busiest first' },
+          { t: 'cmd', text: 'soulseek-rs room say <room> "hello room"' },
+          { t: 'cmd', text: 'soulseek-rs message send <username> "hello there"' },
+          { t: 'cmd', text: 'soulseek-rs serve --follow' },
+          { t: 'cm', text: '# stay online sharing; every upload as it happens' },
+          { t: 'cmd', text: 'soulseek-rs skills install' },
+          { t: 'cm', text: '# hand all of the above to your coding agent' },
+        ]}
+      />
+      <Prose>
+        <p>
+          The command groups: <Code>search</Code>, <Code>get</Code>, <Code>download</Code>,{' '}
+          <Code>browse</Code>, <Code>room</Code>, <Code>message</Code>, <Code>serve</Code>,{' '}
+          <Code>user</Code>, <Code>whoami</Code>, <Code>shares</Code>, <Code>config</Code>,{' '}
+          <Code>portmap</Code>, <Code>skills</Code>, <Code>completions</Code>. Records are
+          tab-separated fields, one per line, or NDJSON with <Code>--json</Code>.
+        </p>
+        <p>
+          No TTY, no daemon. <Code>search --json</Code> pipes through <Code>jq</Code> into{' '}
+          <Code>download --stdin</Code>. Every ending has its own exit code: 4 found
+          nothing, 3 could not reach the server, 6 the transfer died.
+        </p>
+        <p>
+          <Code>completions install</Code> gives bash, zsh and fish tab completion for all
+          of it, generated from the same definition the binary parses with.{' '}
+          <Code>completions uninstall</Code> takes it back out.
+        </p>
+        <p>
+          <Code>portmap</Code> tests whether your router will let peers connect back, worth
+          running once.{' '}
+          <Link to="/install" className="text-link hover:text-link-hover">
+            More on being reachable
+          </Link>
+        </p>
+      </Prose>
+    </Cols>
+    <div className="mt-6">
+      <Callout title="give it to your agent">
+        <p>
+          <Code>soulseek-rs skills install</Code> writes a <Code>SKILL.md</Code> into every
+          coding agent on the machine: Claude Code and opencode today, <Code>--dir</Code>{' '}
+          for anything else. After it lands you describe the outcome instead of the
+          pipeline: &ldquo;mirror that peer&rsquo;s FLAC folder&rdquo;, &ldquo;watch this
+          room for an hour and save anything mentioning the label&rdquo;.
+        </p>
+        <p>
+          It carries what <Code>--help</Code> cannot: the JSON keys of every record, and
+          what each exit code means. Rerun it after an upgrade;{' '}
+          <Code>skills uninstall</Code> takes it back out.
+        </p>
+      </Callout>
+    </div>
+    <div className="mt-4">
+      <Callout tone="warn" title="the one limit worth knowing up front">
+        <p>
+          If both you and a peer are behind routers with no forwarded port, browsing that
+          peer can&rsquo;t work, that&rsquo;s a fundamental Soulseek/peer-to-peer
+          limitation, not a bug.
+        </p>
+      </Callout>
+    </div>
+  </Section>
+)
+
+const TheRest = () => (
+  <Section band>
+    <Panel title="the rest" className="bg-raised [&>span]:bg-panel">
+      <Cols center className="gap-6">
+        <Prose>
+          <p>
+            The README on GitHub and the library API reference on docs.rs stay current with
+            the code.
+          </p>
+        </Prose>
+        <div className="flex flex-wrap gap-2 sm:gap-3">
+          <Button href={LINKS.gh} variant="accent">
+            README
+          </Button>
+          <Button href={LINKS.docsrs}>docs.rs</Button>
+          <Button href={LINKS.changelog}>Changelog</Button>
+        </div>
+      </Cols>
+    </Panel>
+  </Section>
+)
+
+export const Docs = () => (
+  <>
+    <PageHead
+      eyebrow="docs · quick start"
+      title="Install it, run it, drive it from the keyboard."
+    >
+      This is the short version. The full reference (every flag, every message) lives in the
+      README and on docs.rs.
+    </PageHead>
+    <FirstRun />
+    <Layout />
+    <Keys />
+    <FromTheShell />
+    <TheRest />
+  </>
+)

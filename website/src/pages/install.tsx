@@ -250,326 +250,334 @@ const Step = ({ n, title, children }: StepProps) => (
   </div>
 )
 
-export const Install = () => {
-  return (
-    <>
-      <PageHead eyebrow="install" title="Three ways in.">
-        One command with Homebrew or cargo. Build from source if you&rsquo;d rather. Or
-        depend on the library and write your own client.
-      </PageHead>
-
-      <Section>
-        <div className="flex flex-col gap-9">
-          <Step n={1} title="Install the client">
-            <p className="text-secondary">
-              One command per platform. Cargo needs a Rust toolchain from{' '}
-              <a
-                href={LINKS.rustup}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-link hover:text-link-hover"
-              >
-                rustup.rs
-              </a>
-              ; the other routes don&rsquo;t.
-            </p>
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-              {INSTALLS.map((route) => (
-                <div
-                  key={route.id}
-                  id={route.id}
-                  className="flex scroll-mt-20 flex-col gap-3.5 rounded-md border border-hairline bg-panel p-[18px] sm:p-[22px]"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <OsIcon name={route.os} />
-                    <h3 className="text-heading leading-[var(--text-heading--line-height)] font-medium">
-                      {route.os}
-                    </h3>
-                  </div>
-                  <span className="text-[11px] uppercase tracking-[var(--tracking-label)] text-secondary">
-                    {route.best}
-                  </span>
-                  <Terminal lines={route.lines} wrap />
-                  <p className="text-[12.5px] leading-5 text-secondary [&_code]:font-mono [&_code]:text-primary">
-                    {route.alt}
-                  </p>
-                </div>
-              ))}
-            </div>
-            <p className="text-[13px] text-muted">
-              Every route puts the same binary on your PATH. Run <Code>soulseek-rs</Code> in
-              a terminal and the TUI opens, in a script or a pipe it wants a subcommand
-              instead.
-            </p>
-            <p className="text-[13px] text-muted">
-              <Code>soulseek-rs completions install</Code> then adds tab completion to
-              whichever of bash, zsh and fish this machine uses &mdash; generated from the
-              same definition the binary parses with, so it never drifts from{' '}
-              <Code>--help</Code>. Open a new shell to pick it up.
-            </p>
-            <div className="flex flex-wrap gap-2 sm:gap-3">
-              <Button href={LINKS.releases}>Prebuilt binaries</Button>
-            </div>
-          </Step>
-
-          <Step n={2} title="Build from source">
-            <p className="text-secondary">
-              Clone the workspace and build a release binary.
-            </p>
-            <Terminal
-              lines={[
-                { t: 'cmd', text: 'git clone https://github.com/michel/soulseek-rs.git' },
-                { t: 'cmd', text: 'cd soulseek-rs' },
-                { t: 'cmd', text: 'cargo build --release' },
-              ]}
-            />
-            <p className="text-[13px] text-muted">
-              You&rsquo;ll find the binary at <Code>target/release/soulseek-rs</Code>.
-              Prebuilt archives for tagged releases are on the{' '}
-              <a
-                href={LINKS.releases}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-link hover:text-link-hover"
-              >
-                releases page
-              </a>
-              .
-            </p>
-          </Step>
-
-          <Step n={3} title="Build on the library">
-            <p className="text-secondary">
-              Write your own client or bot on <Code>soulseek-rs-lib</Code>: the protocol
-              implementation, separate from the TUI.
-            </p>
-            <Terminal
-              label="Cargo.toml"
-              lines={[
-                { t: 'cm', text: '[dependencies]' },
-                { t: 'code', text: 'soulseek-rs-lib = "8"' },
-              ]}
-              copy={'[dependencies]\nsoulseek-rs-lib = "8"'}
-            />
-            <Terminal label="src/main.rs" lines={LIB_LINES} copy={LIB_SRC} />
-            <p className="text-[13px] text-muted">
-              Full API reference on{' '}
-              <a
-                href={LINKS.docsrs}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-link hover:text-link-hover"
-              >
-                docs.rs
-              </a>
-              . The lib API changes between majors, so check the{' '}
-              <a
-                href={LINKS.changelog}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-link hover:text-link-hover"
-              >
-                changelog
-              </a>{' '}
-              when you upgrade.
-            </p>
-          </Step>
-        </div>
-      </Section>
-
-      <Section>
-        <SectionHead eyebrow="being reachable" title="Let peers connect back.">
-          Browsing and downloading are peer-to-peer, so at least one side has to accept an
-          incoming connection. <Code>serve</Code> refuses to start with the listener off.
-        </SectionHead>
-        <Cols start>
-          <Prose>
-            <p>
-              With the listener on (the default), soulseek-rs tries to open its listen port
-              on your router via{' '}
-              <b className="font-medium text-primary">UPnP-IGD</b> and{' '}
-              <b className="font-medium text-primary">NAT-PMP</b>. It&rsquo;s best-effort:
-              if your router has those disabled it&rsquo;s a no-op, and you forward the port
-              yourself.
-            </p>
-            <p>
-              The port is your <Code>--listener-port</Code> (env{' '}
-              <Code>SOULSEEK_LISTENER_PORT</Code>, default <Code>2234</Code>); soulseek-rs
-              renews it while it runs and removes it on exit. Pass{' '}
-              <Code>--no-listener</Code> to turn it off. Check your own network without
-              launching the client:
-            </p>
-            <div className="mt-4">
-              <Terminal
-                lines={[
-                  { t: 'cmd', text: 'soulseek-rs portmap' },
-                  { t: 'cm', text: "# exits 0 when it works, 4 when it doesn't" },
-                ]}
-              />
-            </div>
-          </Prose>
-          <Callout tone="warn" title="honest about limits">
-            <p>
-              If both you and a peer are behind routers with no forwarded port, browsing
-              that peer can&rsquo;t work, that&rsquo;s a fundamental Soulseek/peer-to-peer
-              limitation, not a bug. Forward <Code>--listener-port</Code>, or let{' '}
-              <Code>portmap</Code> try UPnP.
-            </p>
-          </Callout>
-        </Cols>
-      </Section>
-
-      <Section id="platforms">
-        <SectionHead eyebrow="platform notes" title="Where things live.">
-          Sensible defaults per OS, all overridable. Set <Code>SOULSEEK_CONFIG_DIR</Code> or{' '}
-          <Code>SOULSEEK_STATE_DIR</Code> to relocate either one, which also makes a
-          portable install possible.
-        </SectionHead>
+const Steps = () => (
+  <Section>
+    <div className="flex flex-col gap-9">
+      <Step n={1} title="Install the client">
+        <p className="text-secondary">
+          One command per platform. Cargo needs a Rust toolchain from{' '}
+          <a
+            href={LINKS.rustup}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-link hover:text-link-hover"
+          >
+            rustup.rs
+          </a>
+          ; the other routes don&rsquo;t.
+        </p>
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          {PLATFORMS.map((platform) => (
+          {INSTALLS.map((route) => (
             <div
-              key={platform.id}
-              id={`${platform.id}-paths`}
-              className="scroll-mt-20 rounded-md border border-hairline bg-panel p-[18px] sm:p-[22px]"
+              key={route.id}
+              id={route.id}
+              className="flex scroll-mt-20 flex-col gap-3.5 rounded-md border border-hairline bg-panel p-[18px] sm:p-[22px]"
             >
-              <h3 className="mb-4 text-heading leading-[var(--text-heading--line-height)] font-medium">
-                {platform.name}
-              </h3>
-              <dl className="grid grid-cols-1 gap-x-3.5 gap-y-0.5 sm:grid-cols-[auto_1fr] sm:gap-y-2 lg:grid-cols-1 lg:gap-y-0.5">
-                {(
-                  [
-                    ['Password', platform.credentialStore, false],
-                    ['Config', platform.config, true],
-                    ['State', platform.state, true],
-                    ['Downloads', platform.downloads, true],
-                  ] as const
-                ).map(([label, value, mono]) => (
-                  <div key={label} className="contents">
-                    <dt className="pt-2 text-[11px] uppercase tracking-[var(--tracking-label)] text-secondary sm:pt-0.5 lg:pt-2">
-                      {label}
-                    </dt>
-                    <dd className="min-w-0 text-[12.5px] leading-[19px] text-primary">
-                      {mono ? (
-                        <code className="font-mono text-xs break-all">{value}</code>
-                      ) : (
-                        value
-                      )}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-              <p className="mt-4 border-t border-hairline pt-3.5 text-[12.5px] leading-5 text-secondary">
-                {platform.note}
+              <div className="flex items-center gap-2.5">
+                <OsIcon name={route.os} />
+                <h3 className="text-heading leading-[var(--text-heading--line-height)] font-medium">
+                  {route.os}
+                </h3>
+              </div>
+              <span className="text-[11px] uppercase tracking-[var(--tracking-label)] text-secondary">
+                {route.best}
+              </span>
+              <Terminal lines={route.lines} wrap />
+              <p className="text-[12.5px] leading-5 text-secondary [&_code]:font-mono [&_code]:text-primary">
+                {route.alt}
               </p>
             </div>
           ))}
         </div>
+        <p className="text-[13px] text-muted">
+          Every route puts the same binary on your PATH. Run <Code>soulseek-rs</Code> in
+          a terminal and the TUI opens, in a script or a pipe it wants a subcommand
+          instead.
+        </p>
+        <p className="text-[13px] text-muted">
+          <Code>soulseek-rs completions install</Code> then adds tab completion to
+          whichever of bash, zsh and fish this machine uses &mdash; generated from the
+          same definition the binary parses with, so it never drifts from{' '}
+          <Code>--help</Code>. Open a new shell to pick it up.
+        </p>
+        <div className="flex flex-wrap gap-2 sm:gap-3">
+          <Button href={LINKS.releases}>Prebuilt binaries</Button>
+        </div>
+      </Step>
 
-        <Cols start className="mt-7">
-          <FeatureCard title="Secrets">
-            Your password goes to the OS keychain, never a plain-text file. Point{' '}
-            <code>password_cmd</code> at your own password manager and it is never stored
-            at all. For CI and containers,{' '}
-            <code>--password-stdin</code> reads it off a pipe so it never reaches{' '}
-            <code>ps</code> or the environment.
-          </FeatureCard>
-          <FeatureCard title="Settings and state">
-            <code>config.toml</code> is layered: flags beat environment variables, which
-            beat the file, which beats the defaults. State (searches, downloads, rooms) is
-            versioned JSON and restores on restart; soulseek-rs sets anything unreadable
-            aside as <code>.bak</code> rather than overwriting it.
-          </FeatureCard>
-        </Cols>
-      </Section>
+      <Step n={2} title="Build from source">
+        <p className="text-secondary">
+          Clone the workspace and build a release binary.
+        </p>
+        <Terminal
+          lines={[
+            { t: 'cmd', text: 'git clone https://github.com/michel/soulseek-rs.git' },
+            { t: 'cmd', text: 'cd soulseek-rs' },
+            { t: 'cmd', text: 'cargo build --release' },
+          ]}
+        />
+        <p className="text-[13px] text-muted">
+          You&rsquo;ll find the binary at <Code>target/release/soulseek-rs</Code>.
+          Prebuilt archives for tagged releases are on the{' '}
+          <a
+            href={LINKS.releases}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-link hover:text-link-hover"
+          >
+            releases page
+          </a>
+          .
+        </p>
+      </Step>
 
-      <Section id="config">
-        <SectionHead eyebrow="config.toml" title="Nine settings, all optional.">
-          Every one has a working default, so an empty file, or no file at all, is valid.{' '}
-          <Code>config list</Code> prints the effective value of each.
-        </SectionHead>
-        <Cols start>
-          <div className="flex flex-col">
-            {SETTINGS.map((setting) => (
-              <div
-                key={setting.key}
-                className="grid grid-cols-1 gap-x-4 border-t border-hairline py-3.5 first:border-t-0 first:pt-0 sm:grid-cols-[minmax(0,15rem)_1fr]"
-              >
-                <div className="flex min-w-0 flex-col gap-1">
-                  <code className="font-mono text-[12.5px] break-all text-primary">
-                    {setting.key}
-                  </code>
-                  <span className="text-[11px] uppercase tracking-[var(--tracking-label)] text-secondary">
-                    {setting.fallback}
-                  </span>
-                </div>
-                <p className="mt-1.5 text-[13px] leading-[21px] text-pretty text-secondary sm:mt-0 [&_code]:font-mono [&_code]:text-primary">
-                  {setting.body}
-                </p>
+      <Step n={3} title="Build on the library">
+        <p className="text-secondary">
+          Write your own client or bot on <Code>soulseek-rs-lib</Code>: the protocol
+          implementation, separate from the TUI.
+        </p>
+        <Terminal
+          label="Cargo.toml"
+          lines={[
+            { t: 'cm', text: '[dependencies]' },
+            { t: 'code', text: 'soulseek-rs-lib = "8"' },
+          ]}
+          copy={'[dependencies]\nsoulseek-rs-lib = "8"'}
+        />
+        <Terminal label="src/main.rs" lines={LIB_LINES} copy={LIB_SRC} />
+        <p className="text-[13px] text-muted">
+          Full API reference on{' '}
+          <a
+            href={LINKS.docsrs}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-link hover:text-link-hover"
+          >
+            docs.rs
+          </a>
+          . The lib API changes between majors, so check the{' '}
+          <a
+            href={LINKS.changelog}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-link hover:text-link-hover"
+          >
+            changelog
+          </a>{' '}
+          when you upgrade.
+        </p>
+      </Step>
+    </div>
+  </Section>
+)
+const Reachable = () => (
+  <Section>
+    <SectionHead eyebrow="being reachable" title="Let peers connect back.">
+      Browsing and downloading are peer-to-peer, so at least one side has to accept an
+      incoming connection. <Code>serve</Code> refuses to start with the listener off.
+    </SectionHead>
+    <Cols start>
+      <Prose>
+        <p>
+          With the listener on (the default), soulseek-rs tries to open its listen port
+          on your router via{' '}
+          <b className="font-medium text-primary">UPnP-IGD</b> and{' '}
+          <b className="font-medium text-primary">NAT-PMP</b>. It&rsquo;s best-effort:
+          if your router has those disabled it&rsquo;s a no-op, and you forward the port
+          yourself.
+        </p>
+        <p>
+          The port is your <Code>--listener-port</Code> (env{' '}
+          <Code>SOULSEEK_LISTENER_PORT</Code>, default <Code>2234</Code>); soulseek-rs
+          renews it while it runs and removes it on exit. Pass{' '}
+          <Code>--no-listener</Code> to turn it off. Check your own network without
+          launching the client:
+        </p>
+        <div className="mt-4">
+          <Terminal
+            lines={[
+              { t: 'cmd', text: 'soulseek-rs portmap' },
+              { t: 'cm', text: "# exits 0 when it works, 4 when it doesn't" },
+            ]}
+          />
+        </div>
+      </Prose>
+      <Callout tone="warn" title="honest about limits">
+        <p>
+          If both you and a peer are behind routers with no forwarded port, browsing
+          that peer can&rsquo;t work, that&rsquo;s a fundamental Soulseek/peer-to-peer
+          limitation, not a bug. Forward <Code>--listener-port</Code>, or let{' '}
+          <Code>portmap</Code> try UPnP.
+        </p>
+      </Callout>
+    </Cols>
+  </Section>
+)
+const Platforms = () => (
+  <Section id="platforms">
+    <SectionHead eyebrow="platform notes" title="Where things live.">
+      Sensible defaults per OS, all overridable. Set <Code>SOULSEEK_CONFIG_DIR</Code> or{' '}
+      <Code>SOULSEEK_STATE_DIR</Code> to relocate either one, which also makes a
+      portable install possible.
+    </SectionHead>
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      {PLATFORMS.map((platform) => (
+        <div
+          key={platform.id}
+          id={`${platform.id}-paths`}
+          className="scroll-mt-20 rounded-md border border-hairline bg-panel p-[18px] sm:p-[22px]"
+        >
+          <h3 className="mb-4 text-heading leading-[var(--text-heading--line-height)] font-medium">
+            {platform.name}
+          </h3>
+          <dl className="grid grid-cols-1 gap-x-3.5 gap-y-0.5 sm:grid-cols-[auto_1fr] sm:gap-y-2 lg:grid-cols-1 lg:gap-y-0.5">
+            {(
+              [
+                ['Password', platform.credentialStore, false],
+                ['Config', platform.config, true],
+                ['State', platform.state, true],
+                ['Downloads', platform.downloads, true],
+              ] as const
+            ).map(([label, value, mono]) => (
+              <div key={label} className="contents">
+                <dt className="pt-2 text-[11px] uppercase tracking-[var(--tracking-label)] text-secondary sm:pt-0.5 lg:pt-2">
+                  {label}
+                </dt>
+                <dd className="min-w-0 text-[12.5px] leading-[19px] text-primary">
+                  {mono ? (
+                    <code className="font-mono text-xs break-all">{value}</code>
+                  ) : (
+                    value
+                  )}
+                </dd>
               </div>
             ))}
-          </div>
-          <div className="flex flex-col gap-4">
-            <Terminal label="config.toml" lines={CONFIG_EXAMPLE} />
-            <Callout title="editing it without an editor">
-              <p>
-                <Code>config path</Code> prints the file in use, <Code>config get</Code>{' '}
-                reads one setting and <Code>config set</Code> writes one. It rejects
-                unknown keys, so a typo fails instead of doing nothing.{' '}
-                <Code>--no-config</Code> ignores the file entirely and{' '}
-                <Code>--config FILE</Code> points at another one.
-              </p>
-            </Callout>
-          </div>
-        </Cols>
-      </Section>
-
-      <Section band>
-        <SectionHead eyebrow="uninstall" title="Removing it completely.">
-          Three things exist on disk: the binary, the config, and the state &mdash; plus
-          the completion scripts and the agent skill, if you asked for those. Nothing else,
-          unless you point <Code>--log-file</Code> somewhere. No telemetry to opt out of.
-        </SectionHead>
-        <Cols start>
-          <Terminal
-            label="macOS · Linux"
-            lines={[
-              { t: 'cm', text: '# while the binary is still there' },
-              { t: 'cmd', text: 'soulseek-rs completions uninstall' },
-              { t: 'cmd', text: 'soulseek-rs skills uninstall' },
-              { t: 'cmd', text: 'cargo uninstall soulseek-rs' },
-              { t: 'cm', text: '# config and state: searches, downloads, rooms, messages' },
-              {
-                t: 'cmd',
-                text: 'rm -rf ~/.config/soulseek-rs ~/.local/share/soulseek-rs',
-              },
-              { t: 'cm', text: '# Linux: drop the saved password' },
-              { t: 'cmd', text: 'secret-tool clear service soulseek-rs' },
-            ]}
-          />
-          <Terminal
-            label="Windows · PowerShell"
-            lines={[
-              { t: 'cmd', text: 'soulseek-rs skills uninstall' },
-              { t: 'cmd', text: 'cargo uninstall soulseek-rs' },
-              {
-                t: 'cmd',
-                text: 'Remove-Item -Recurse -Force $env:APPDATA\\soulseek-rs',
-              },
-              { t: 'cm', text: '# then remove the soulseek-rs entry from' },
-              { t: 'cm', text: '# Credential Manager > Windows Credentials' },
-            ]}
-          />
-        </Cols>
-        <div className="mt-5">
-          <Callout className="bg-raised" title="two things it will not touch">
-            <p>
-              Your downloads and your shared directories are yours: they stay where they
-              are. On macOS, delete the keychain entry for <code>soulseek-rs</code> in
-              Keychain Access if you saved a password.
-            </p>
-          </Callout>
+          </dl>
+          <p className="mt-4 border-t border-hairline pt-3.5 text-[12.5px] leading-5 text-secondary">
+            {platform.note}
+          </p>
         </div>
-      </Section>
-    </>
-  )
-}
+      ))}
+    </div>
+
+    <Cols start className="mt-7">
+      <FeatureCard title="Secrets">
+        Your password goes to the OS keychain, never a plain-text file. Point{' '}
+        <code>password_cmd</code> at your own password manager and it is never stored
+        at all. For CI and containers,{' '}
+        <code>--password-stdin</code> reads it off a pipe so it never reaches{' '}
+        <code>ps</code> or the environment.
+      </FeatureCard>
+      <FeatureCard title="Settings and state">
+        <code>config.toml</code> is layered: flags beat environment variables, which
+        beat the file, which beats the defaults. State (searches, downloads, rooms) is
+        versioned JSON and restores on restart; soulseek-rs sets anything unreadable
+        aside as <code>.bak</code> rather than overwriting it.
+      </FeatureCard>
+    </Cols>
+  </Section>
+)
+const Config = () => (
+  <Section id="config">
+    <SectionHead eyebrow="config.toml" title="Nine settings, all optional.">
+      Every one has a working default, so an empty file, or no file at all, is valid.{' '}
+      <Code>config list</Code> prints the effective value of each.
+    </SectionHead>
+    <Cols start>
+      <div className="flex flex-col">
+        {SETTINGS.map((setting) => (
+          <div
+            key={setting.key}
+            className="grid grid-cols-1 gap-x-4 border-t border-hairline py-3.5 first:border-t-0 first:pt-0 sm:grid-cols-[minmax(0,15rem)_1fr]"
+          >
+            <div className="flex min-w-0 flex-col gap-1">
+              <code className="font-mono text-[12.5px] break-all text-primary">
+                {setting.key}
+              </code>
+              <span className="text-[11px] uppercase tracking-[var(--tracking-label)] text-secondary">
+                {setting.fallback}
+              </span>
+            </div>
+            <p className="mt-1.5 text-[13px] leading-[21px] text-pretty text-secondary sm:mt-0 [&_code]:font-mono [&_code]:text-primary">
+              {setting.body}
+            </p>
+          </div>
+        ))}
+      </div>
+      <div className="flex flex-col gap-4">
+        <Terminal label="config.toml" lines={CONFIG_EXAMPLE} />
+        <Callout title="editing it without an editor">
+          <p>
+            <Code>config path</Code> prints the file in use, <Code>config get</Code>{' '}
+            reads one setting and <Code>config set</Code> writes one. It rejects
+            unknown keys, so a typo fails instead of doing nothing.{' '}
+            <Code>--no-config</Code> ignores the file entirely and{' '}
+            <Code>--config FILE</Code> points at another one.
+          </p>
+        </Callout>
+      </div>
+    </Cols>
+  </Section>
+)
+const Uninstall = () => (
+  <Section band>
+    <SectionHead eyebrow="uninstall" title="Removing it completely.">
+      Three things exist on disk: the binary, the config, and the state &mdash; plus
+      the completion scripts and the agent skill, if you asked for those. Nothing else,
+      unless you point <Code>--log-file</Code> somewhere. No telemetry to opt out of.
+    </SectionHead>
+    <Cols start>
+      <Terminal
+        label="macOS · Linux"
+        lines={[
+          { t: 'cm', text: '# while the binary is still there' },
+          { t: 'cmd', text: 'soulseek-rs completions uninstall' },
+          { t: 'cmd', text: 'soulseek-rs skills uninstall' },
+          { t: 'cmd', text: 'cargo uninstall soulseek-rs' },
+          { t: 'cm', text: '# config and state: searches, downloads, rooms, messages' },
+          {
+            t: 'cmd',
+            text: 'rm -rf ~/.config/soulseek-rs ~/.local/share/soulseek-rs',
+          },
+          { t: 'cm', text: '# Linux: drop the saved password' },
+          { t: 'cmd', text: 'secret-tool clear service soulseek-rs' },
+        ]}
+      />
+      <Terminal
+        label="Windows · PowerShell"
+        lines={[
+          { t: 'cmd', text: 'soulseek-rs skills uninstall' },
+          { t: 'cmd', text: 'cargo uninstall soulseek-rs' },
+          {
+            t: 'cmd',
+            text: 'Remove-Item -Recurse -Force $env:APPDATA\\soulseek-rs',
+          },
+          { t: 'cm', text: '# then remove the soulseek-rs entry from' },
+          { t: 'cm', text: '# Credential Manager > Windows Credentials' },
+        ]}
+      />
+    </Cols>
+    <div className="mt-5">
+      <Callout className="bg-raised" title="two things it will not touch">
+        <p>
+          Your downloads and your shared directories are yours: they stay where they
+          are. On macOS, delete the keychain entry for <code>soulseek-rs</code> in
+          Keychain Access if you saved a password.
+        </p>
+      </Callout>
+    </div>
+  </Section>
+)
+export const Install = () => (
+  <>
+    <PageHead eyebrow="install" title="Three ways in.">
+      One command with Homebrew or cargo. Build from source if you&rsquo;d rather. Or depend
+      on the library and write your own client.
+    </PageHead>
+    <Steps />
+    <Reachable />
+    <Platforms />
+    <Config />
+    <Uninstall />
+  </>
+)
