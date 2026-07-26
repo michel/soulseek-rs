@@ -185,3 +185,18 @@ jobs:
           checksum: sha256
           ref: refs/tags/${{ needs.release.outputs.tag }}
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  # The tap regenerates its formula from whatever `gh release view` calls latest,
+  # so it only needs a nudge once every archive and .sha256 is on the release —
+  # hence `needs: binaries` rather than firing alongside it. The tap also polls
+  # hourly on its own; that cron stays as the recovery path for when this
+  # dispatch fails (expired token, tap outage) rather than as the mechanism.
+  tap:
+    name: Update Homebrew tap
+    needs: [release, binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch the tap's formula workflow
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: gh workflow run formula.yml --repo michel/homebrew-tap
