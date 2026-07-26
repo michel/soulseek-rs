@@ -95,7 +95,6 @@ jobs:
       group: release-${{ github.ref }}
       cancel-in-progress: false
     outputs:
-      created: ${{ steps.release-plz.outputs.releases_created }}
       tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
@@ -132,10 +131,16 @@ jobs:
   # Attaches downloadable binaries to the release GitHub just created, or to an
   # existing tag when dispatched manually with `tag` (recovering a target that
   # failed to upload needs a re-run of *this* file, not the old one).
+  #
+  # Gated on the resolved tag rather than on `created`/`inputs.tag`: the
+  # `inputs` context reads as empty in a job-level `if` (it only resolves inside
+  # a step), which silently skipped every manual rebuild. `Resolve tag` already
+  # folds both paths into one validated value, so this is also the single place
+  # that decides whether there is anything to build.
   binaries:
     name: ${{ matrix.target }}
     needs: release
-    if: needs.release.outputs.created == 'true' || inputs.tag != ''
+    if: needs.release.outputs.tag != ''
     runs-on: ${{ matrix.os }}
     strategy:
       # One flaky cross-linker must not hold back the five targets that built.
