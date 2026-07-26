@@ -97,3 +97,54 @@ the whole `needs` chain for a skipped ancestor before touching the expression.
 An intermediate `always()` rescues that job alone, not its descendants. Compare
 a working run against a failing one early — the diff pointed straight at it and
 would have saved two dispatch cycles.
+
+## Confirm a bottleneck hypothesis before doing surgery on it
+
+**2026-07-26, concurrency stress work.** Downloads stalled under mixed load. I
+reasoned my way to a confident cause — `wait_while_paused` taking a global read
+lock every 8 KiB, starving the single writer thread on a reader-preferring
+`RwLock` — and it was wrong. Throttling that check changed nothing. The real
+cause was a race two layers away: `TransferResponse` was sent before the client
+recorded the peer's transfer token, so the incoming file connection matched
+nothing.
+
+**Why it matters:** the wrong hypothesis was *plausible*, mechanically specific,
+and would have justified a real refactor of the download hot path. Shipping it
+would have added churn to code that was never the problem, and left the actual
+bug in place.
+
+**How to apply:** before restructuring anything, run the cheapest experiment
+that would falsify the hypothesis — here, two lines throttling the lock, which
+took one run to disprove. When that fails, stop theorising and get the trace: a
+debug log filtered to one stuck peer showed the file connection arriving 2 ms
+after the token update was queued, which named the bug outright. Grep a failing
+identifier through the log before guessing at the mechanism.
+
+## Report the load generator's own failures separately
+
+**Same session.** The mock swarm's peers sometimes failed to come online, and
+the upload metric counted only peers that made it — so `188/188` looked perfect
+while four peers had silently vanished from the denominator. A harness that
+drops its own failures reports a flattering score exactly when it is least
+earned.
+
+**How to apply:** count attempts, not survivors, and give harness-side failures
+their own line in the report. `mocks never online 2` next to `uploads 190/192`
+is what let me tell "the client dropped two uploads" apart from "the test rig
+never made the request" — a distinction I had been getting wrong for several
+runs, in the direction of blaming the client.
+
+## A defensive guard can delete a fallback path
+
+**Same session.** The server answers `GetPeerAddress` with port 0 when it does
+not know where a user listens. The client cached and dialled it, losing uploads,
+so I skipped the handler on port 0. That broke three browse tests: the *failing
+dial* is precisely what triggers the server-brokered fallback for firewalled
+peers. The bogus-looking behaviour was load-bearing.
+
+**How to apply:** when adding an early return for an invalid value, check what
+currently consumes that value further down. Scope the guard to the specific
+misuse — here, do not cache and do not serve against port 0 — rather than
+short-circuiting the whole path. And diff against an unmodified worktree at HEAD
+before concluding a test failure is pre-existing flakiness; I nearly did, and the
+baseline was green 25/25.

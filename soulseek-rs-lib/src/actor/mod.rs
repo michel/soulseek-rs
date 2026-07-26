@@ -1,9 +1,8 @@
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::trace;
-use crate::utils::thread_pool::ThreadPool;
+use crate::{error, trace};
 
 pub mod peer_actor;
 pub mod peer_registry;
@@ -58,36 +57,37 @@ pub(crate) enum ActorMessage<M> {
     Stop,
 }
 
-/// Actor system that manages actor lifecycle
-pub struct ActorSystem {
-    thread_pool: Arc<ThreadPool>,
-}
+/// Stack size for an actor thread. An actor loop parses messages into
+/// heap-allocated buffers and never recurses, so it needs a fraction of the
+/// 2 MiB default — and at a thousand concurrent peers that difference is the
+/// difference between 2 GiB of reserved address space and 256 MiB.
+const ACTOR_STACK_SIZE: usize = 256 * 1024;
+
+/// Actor system that manages actor lifecycle.
+///
+/// Each actor owns a thread for its whole lifetime. That is deliberate: an
+/// actor loop blocks in `recv_timeout` until it is stopped, so running actors
+/// on a fixed-size pool would make the pool a semaphore capping the client at
+/// one peer per core — and every peer past the cap would silently never start.
+#[derive(Default)]
+pub struct ActorSystem;
 
 impl ActorSystem {
     #[must_use]
-    pub const fn new(thread_pool: Arc<ThreadPool>) -> Self {
-        Self { thread_pool }
+    pub const fn new() -> Self {
+        Self
     }
 
     /// Spawn a new actor and return its handle
-    pub fn spawn<A: Actor>(&self, mut actor: A) -> ActorHandle<A::Message> {
-        let (sender, receiver) = channel::<ActorMessage<A::Message>>();
-        let handle = ActorHandle { sender };
-
-        self.thread_pool.execute(move || {
-            actor.on_start();
-            Self::run_actor_loop(&mut actor, receiver);
-            actor.on_stop();
-        });
-
-        handle
+    pub fn spawn<A: Actor>(&self, actor: A) -> ActorHandle<A::Message> {
+        self.spawn_with_handle(actor, |_, _| {})
     }
 
     /// Spawn a new actor with initialization callback and return its handle
     /// The callback receives the actor handle before `on_start` is called
     pub fn spawn_with_handle<A: Actor, F>(
         &self,
-        mut actor: A,
+        actor: A,
         init: F,
     ) -> ActorHandle<A::Message>
     where
@@ -96,13 +96,21 @@ impl ActorSystem {
         let (sender, receiver) = channel::<ActorMessage<A::Message>>();
         let handle = ActorHandle { sender };
         let handle_for_init = handle.clone();
+        let mut actor = actor;
 
-        self.thread_pool.execute(move || {
-            init(&mut actor, handle_for_init);
-            actor.on_start();
-            Self::run_actor_loop(&mut actor, receiver);
-            actor.on_stop();
-        });
+        let spawned = thread::Builder::new()
+            .name("soulseek-actor".to_string())
+            .stack_size(ACTOR_STACK_SIZE)
+            .spawn(move || {
+                init(&mut actor, handle_for_init);
+                actor.on_start();
+                Self::run_actor_loop(&mut actor, receiver);
+                actor.on_stop();
+            });
+
+        if let Err(e) = spawned {
+            error!("[actor_system] failed to spawn actor thread: {}", e);
+        }
 
         handle
     }
@@ -153,6 +161,7 @@ impl ActorSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct CounterActor {
@@ -177,8 +186,7 @@ mod tests {
 
     #[test]
     fn test_actor_system() {
-        let thread_pool = Arc::new(ThreadPool::new(4));
-        let system = ActorSystem::new(thread_pool.clone());
+        let system = ActorSystem::new();
 
         let count = Arc::new(AtomicUsize::new(0));
         let actor = CounterActor {
@@ -201,8 +209,39 @@ mod tests {
 
         // Give actor time to process the stop message
         std::thread::sleep(Duration::from_millis(100));
+    }
 
-        // Drop the thread pool explicitly to wait for all threads
-        drop(thread_pool);
+    // Actors must not be capped by a worker count: every peer runs one, and a
+    // cap silently strands every peer past it. Far more actors than cores must
+    // all make progress concurrently.
+    #[test]
+    fn far_more_actors_than_cores_all_run() {
+        let system = ActorSystem::new();
+        let count = Arc::new(AtomicUsize::new(0));
+
+        let handles: Vec<_> = (0..256)
+            .map(|_| {
+                system.spawn(CounterActor {
+                    count: count.clone(),
+                })
+            })
+            .collect();
+        for handle in &handles {
+            handle.send(1).unwrap();
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while count.load(Ordering::SeqCst) < 256 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            256,
+            "every actor should have processed its message"
+        );
+
+        for handle in &handles {
+            handle.stop().unwrap();
+        }
     }
 }

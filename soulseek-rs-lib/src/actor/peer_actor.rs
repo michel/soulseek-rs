@@ -295,6 +295,14 @@ impl PeerActor {
         }
     }
 
+    /// A peer offers us a file. Record the peer's transfer token with the
+    /// client, and let *that* step send the TransferResponse.
+    ///
+    /// The response is what invites the peer's file connection, and that
+    /// connection is matched by the peer's token — so replying here would race
+    /// the client loop that records the token. Under load the client loop is
+    /// the one that loses, the file connection finds no download, and the
+    /// transfer is dropped with the download stuck on Queued forever.
     fn handle_transfer_request(&self, transfer: Transfer) {
         let username = self.peer_username();
         debug!("[peer:{}] TransferRequest for {}", username, transfer.token);
@@ -302,25 +310,12 @@ impl PeerActor {
         if let Err(e) =
             self.client_channel
                 .send(ClientOperation::UpdateDownloadTokens(
-                    transfer.clone(),
+                    transfer,
                     username.clone(),
                 ))
         {
             error!(
                 "[peer:{}] failed to send UpdateDownloadTokens: {}",
-                username, e
-            );
-        }
-
-        let transfer_response =
-            MessageFactory::build_transfer_response_message(transfer);
-
-        if let Some(ref handle) = self.self_handle
-            && let Err(e) =
-                handle.send(PeerMessage::SendMessage(transfer_response))
-        {
-            error!(
-                "[peer:{}] Failed to send TransferResponse message: {}",
                 username, e
             );
         }

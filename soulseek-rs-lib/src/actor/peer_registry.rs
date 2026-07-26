@@ -215,14 +215,12 @@ mod tests {
     use super::PeerRegistry;
     use crate::actor::ActorSystem;
     use crate::peer::{ConnectionType, Peer};
-    use crate::utils::thread_pool::ThreadPool;
     use std::net::{TcpListener, TcpStream};
     use std::sync::Arc;
 
     #[test]
     fn remove_peer_if_respects_actor_identity() {
-        let pool = Arc::new(ThreadPool::new(2));
-        let system = Arc::new(ActorSystem::new(pool));
+        let system = Arc::new(ActorSystem::new());
         let (tx, _rx) = std::sync::mpsc::channel();
         let registry = PeerRegistry::new(system, tx, "me".to_string());
 

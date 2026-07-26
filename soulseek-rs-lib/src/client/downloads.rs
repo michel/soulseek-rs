@@ -1,6 +1,7 @@
 use super::{
     Arc, Client, ClientContext, Download, DownloadMetadata, DownloadStatus,
-    Receiver, Result, RwLock, RwLockExt, Sender, error, info, md5, mpsc,
+    Receiver, Result, RwLock, RwLockExt, Sender, error, info, mpsc,
+    next_download_token,
 };
 
 impl Client {
@@ -52,9 +53,8 @@ impl Client {
     }
 
     /// Remove every download for `username`/`filename` regardless of status.
-    /// Call this before re-issuing [`Client::download`] for a failed download,
-    /// otherwise the stale entry (whose md5-derived token equals the retry's)
-    /// shadows the fresh one and its completion is misrouted.
+    /// Useful before re-issuing [`Client::download`] for a failed download, so
+    /// the list does not accumulate dead entries for the same file.
     ///
     /// Returns whether anything was removed.
     #[must_use]
@@ -94,8 +94,7 @@ impl Client {
     ) -> Result<(Download, Receiver<DownloadStatus>)> {
         info!("[client] Downloading {} from {}", filename, username);
 
-        let hash = md5::md5(&filename);
-        let token = u32::from_str_radix(&hash[0..5], 16)?;
+        let token = next_download_token();
 
         let (download_sender, download_receiver): (
             Sender<DownloadStatus>,
@@ -187,5 +186,31 @@ impl Client {
                 DownloadStatus::Failed(reason),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_download_token;
+    use std::collections::HashSet;
+
+    // The download store is keyed by token and removes *every* entry matching
+    // one, so two downloads sharing a token means queueing one silently evicts
+    // the other — which is what fetching the same filename from two peers does
+    // if the token depends on the filename.
+    #[test]
+    fn download_tokens_are_unique_and_below_the_upload_range() {
+        let tokens: Vec<u32> =
+            (0..10_000).map(|_| next_download_token()).collect();
+
+        assert_eq!(
+            tokens.iter().collect::<HashSet<_>>().len(),
+            tokens.len(),
+            "every download must get its own token"
+        );
+        assert!(
+            tokens.iter().all(|t| *t < 0x8000_0000),
+            "download tokens must not reach into the upload range"
+        );
     }
 }
