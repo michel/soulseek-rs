@@ -19,7 +19,7 @@ pub struct Store {
 }
 
 impl Store {
-    fn save(&self, config: &FileConfig) -> CliResult {
+    pub fn save(&self, config: &FileConfig) -> CliResult {
         let Some(path) = &self.path else {
             return Err(CliError::usage(
                 "no config file to write to (running with --no-config)",

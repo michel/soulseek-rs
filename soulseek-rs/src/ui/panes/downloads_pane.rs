@@ -1,9 +1,9 @@
 use crate::models::DownloadEntry;
 use crate::ui::{
-    GLYPH_ACTIVE, GLYPH_DONE, GLYPH_FAILED, HIGHLIGHT_SYMBOL, accent_style,
-    body_style, dimmed_style, download_status_glyph, error_style, format_bytes,
-    format_speed, header_style, inactive_style, info_style, pane_block,
-    pane_title, primary_style, row_highlight_style, success_style,
+    GLYPH_ACTIVE, GLYPH_DONE, GLYPH_FAILED, GLYPH_QUEUED, HIGHLIGHT_SYMBOL,
+    accent_style, body_style, dimmed_style, download_status_glyph, error_style,
+    format_bytes, format_speed, header_style, inactive_style, info_style,
+    pane_block, pane_title, primary_style, row_highlight_style, success_style,
     warning_style,
 };
 use ratatui::{
@@ -119,12 +119,14 @@ pub fn render_downloads_pane(
 
     rows.extend(uploads.iter().map(|upload| {
         let (status_icon, status_style) = match &upload.status {
+            UploadStatus::Queued(_) => (GLYPH_QUEUED, warning_style()),
             UploadStatus::InProgress => (GLYPH_ACTIVE, accent_style()),
             UploadStatus::Completed => (GLYPH_DONE, success_style()),
             UploadStatus::Cancelled => (GLYPH_FAILED, inactive_style()),
             UploadStatus::Failed(_) => (GLYPH_FAILED, error_style()),
         };
         let progress_text = match &upload.status {
+            UploadStatus::Queued(place) => format!("Queued #{place}"),
             UploadStatus::InProgress => {
                 let percent = if upload.size > 0 {
                     (upload.bytes_sent as f64 / upload.size as f64 * 100.0)

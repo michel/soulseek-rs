@@ -1,5 +1,51 @@
 # Lessons
 
+## A polling assertion that is true before the event is not an assertion
+
+**2026-07-26, upload-queue e2e.** Three tests waited for "the blocker took the
+slot" with `wait_for(|| place_of(...).is_none())`. That is already true before
+the peer has queued anything, so `wait_for` returned on its first poll. One was
+worse: `(A && B) || A`, which `&&`-binding reduces to plain `A`, leaving the
+`uploads()` half dead. All three would have passed against a completely broken
+pump. A review agent caught it; the test suite never would have.
+
+**Why it matters:** a green test that cannot fail is worse than no test, because
+it buys false confidence in exactly the code you were least sure about.
+
+**How to apply:** for any `wait_for`/poll assertion, ask "what does this return
+on the very first call, before the thing I am waiting for has happened?" If the
+answer is `true`, the assertion is inverted or vacuous. Prefer waiting on a
+*positive* observation — here, the peer receiving the offer (peer code 40) —
+over the absence of something, since absence is also the initial state.
+
+## Adding a cap without adding an expiry invents a wedge
+
+**2026-07-26, upload slots.** Adding `upload_slots` (default 2) gave privileged
+users something to jump, but nothing ever removed an un-accepted offer from
+`ctx.uploads`. A peer that queued a file and vanished held its slot for the life
+of the process, so two of them shut uploads down permanently. Before the cap,
+a stale entry was harmless — the cap is what turned it into a failure mode.
+
+**How to apply:** when introducing a bound on a resource, find the release path
+in the same change. Ask "what happens if the thing holding this never comes
+back?" Here the mechanism already existed and was already wired
+(`ClientOperation::PeerDisconnected`) — the fix was ten lines in an arm I was
+already editing.
+
+## Don't wait per item when one shared window covers them all
+
+**2026-07-26, wishlist sweep.** `sweep` called a blocking
+`wishlist_search(wish, timeout)` per wish. Ten wishes at the default 10s timeout
+meant a 100-second sweep, during which `serve` reported no uploads and stopped
+checking its own `--duration`. Peers answer a search whenever they get round to
+it, so the window was never per-query to begin with.
+
+**How to apply:** when a "wait for responses" API is called in a loop, check
+whether the wait is inherent to each call or just how the wrapper was written.
+Splitting send from wait (`start_wishlist_search` + `collect_for`) turned N
+windows into one. Watch for this whenever a blocking helper is convenient for
+the single-item case and quietly quadratic for the batch.
+
 ## Don't act on a credential choice the moment it is selected
 
 **2026-07-26, Homebrew tap automation.** Offered three ways to give the release
