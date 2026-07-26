@@ -29,6 +29,8 @@ does, how to install it, and every `config.toml` setting.
 - **Sharing**: `shares add` a directory and your files show up in searches;
   `serve` stays online so peers can browse and download them
 - **Browse**: list any user's shared files and download straight from the tree
+- **Resumable downloads**: a transfer that dies leaves a `.part` file, and
+  re-running the download asks the peer to send only what is missing
 - **Chat rooms**: list, join, and talk in public rooms, several open at once
 - **Private messages**: send and receive messages, with an inbox in the TUI
 - **Firewalled peers**: downloads and browsing fall back to server-brokered
@@ -326,6 +328,12 @@ there yet.
 
 Downloads run under a deadline (`--timeout`, 300s by default) and
 `--max-concurrent-downloads` at a time, so an unattended run always ends.
+
+An interrupted download is picked up where it stopped. Bytes stream into
+`<file>.part` as they arrive and it is renamed only once the file is whole, so
+re-running the same `download` asks the peer to start at the offset already on
+disk. Partial files are never offered to other peers, and deleting the `.part`
+starts the transfer over.
 
 ### Configuration
 

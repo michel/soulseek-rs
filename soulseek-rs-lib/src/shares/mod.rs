@@ -198,6 +198,14 @@ fn scan_root(
             if meta.is_dir() {
                 stack.push(path);
             } else if meta.is_file() {
+                // The download directory is usually shared too; an in-progress
+                // `.part` file is not something to offer other peers.
+                if path
+                    .to_string_lossy()
+                    .ends_with(crate::utils::path::PART_SUFFIX)
+                {
+                    continue;
+                }
                 let virtual_path = virtual_path_for(root_name, root, &path);
                 files.push(SharedFile {
                     virtual_path,
@@ -250,6 +258,18 @@ mod tests {
         assert_eq!(shares.file_count(), 3);
         // Two folders contain files: the root and `album`.
         assert_eq!(shares.folder_count(), 2);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn in_progress_downloads_are_not_shared() {
+        let root = temp_tree();
+        std::fs::write(root.join("half.mp3.part"), b"dd").unwrap();
+
+        let shares = Shares::scan(&root).unwrap();
+        assert_eq!(shares.file_count(), 3, ".part files stay out of the index");
+        let base = root.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(shares.get(&format!("{base}\\half.mp3.part")).is_none());
         let _ = std::fs::remove_dir_all(root);
     }
 
