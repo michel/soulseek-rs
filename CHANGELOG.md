@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [12.0.0](https://github.com/michel/soulseek-rs/compare/v11.0.0...v12.0.0) - 2026-07-26
+
+### Added
+
+- lift the client's concurrency ceiling from ~15 peers to 1024
+
+### Fixed
+
+- *(serve)* report a queued upload even when it is served between two polls
+
+### Other
+
+- raise transfer defaults and stop uploads sleeping on their slot
+- add an aislop baseline at 100/100
+- *(lib)* move the client tests into their own file
+
 ## [11.0.0](https://github.com/michel/soulseek-rs/compare/v10.0.0...v11.0.0) - 2026-07-26
 
 ### Fixed
