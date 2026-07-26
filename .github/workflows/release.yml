@@ -104,8 +104,15 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Skipped when a tag was dispatched by hand: that run exists to rebuild
+      # binaries for a tag that already shipped. Letting release-plz also
+      # publish here produced exactly one bad outcome in practice - it cut
+      # v9.1.0 while `Resolve tag` went on to honour the dispatched v9.0.0, so
+      # the new release got no binaries at all and the tap, which tracks the
+      # latest release, had nothing to generate a formula from.
       - uses: release-plz/action@v0.5
         id: release-plz
+        if: inputs.tag == ''
         with:
           command: release
         env:
