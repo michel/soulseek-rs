@@ -17,9 +17,9 @@ use crate::cli::{Commands, MessageCommand, RoomCommand};
 use crate::output::{CliError, CliResult, Exit, Out, PortmapRecord};
 use crate::port_mapping::{self, PortMapper};
 use soulseek_rs::types::{RoomEvent, RoomInfo};
-use soulseek_rs::{Client, ClientSettings};
+use soulseek_rs::{Client, ClientSettings, SessionLoss};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 /// Everything a one-shot command needs that does not come from its own flags.
@@ -29,6 +29,47 @@ pub struct Ctx {
     pub download_dir: String,
     pub max_concurrent_downloads: usize,
     pub search_timeout: Duration,
+    /// The client of the session this command opened, once it has one, so the
+    /// verdict can be checked against the session that produced it.
+    pub session: OnceLock<Arc<Client>>,
+}
+
+impl Ctx {
+    /// Re-read a "found nothing", "timed out" or "transfer failed" verdict
+    /// against the session that produced it.
+    ///
+    /// A session the server cut off — most often because another process
+    /// logged in under the same name — sees nothing at all from that moment
+    /// on. Reported as exit 4 it reads as "this file is not on the network",
+    /// and a caller acting on that gives up on files that were there.
+    fn checked(&self, result: CliResult) -> CliResult {
+        let Err(error) = result else {
+            return Ok(());
+        };
+        if !matches!(
+            error.exit,
+            Exit::NoResults | Exit::Timeout | Exit::Transfer
+        ) {
+            return Err(error);
+        }
+        match self.session.get().and_then(|client| client.session_loss()) {
+            Some(loss) => Err(session_lost(loss)),
+            None => Err(error),
+        }
+    }
+}
+
+/// What to tell a caller whose session ended under it.
+fn session_lost(loss: SessionLoss) -> CliError {
+    let fix = match loss {
+        SessionLoss::Displaced => {
+            "; give each concurrent run its own --username"
+        }
+        SessionLoss::Disconnected => "",
+    };
+    CliError::session_lost(format!(
+        "the session ended before this command finished: {loss}{fix}"
+    ))
 }
 
 /// A logged-in client plus, while the listener is enabled, the port mapping
@@ -45,21 +86,33 @@ const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl Session {
     pub fn open(ctx: &Ctx) -> CliResult<Self> {
-        let mapper = ctx
-            .settings
-            .enable_listen
-            .then(|| PortMapper::spawn(ctx.settings.listen_port));
-
         let address = ctx.settings.server_address.to_string();
         ctx.out.status(&format!("connecting to {address}…"));
         reachable(&address, REACH_TIMEOUT)?;
 
-        let client = login(ctx.settings.clone(), &address)?;
+        let client = Arc::new(login(ctx.settings.clone(), &address)?);
         ctx.out
             .status(&format!("logged in as {}", ctx.settings.username));
+        let _ = ctx.session.set(Arc::clone(&client));
+
+        let bound = client.listen_port();
+        if let Some(bound) = bound
+            && ctx.settings.listen_port != 0
+            && bound != ctx.settings.listen_port
+        {
+            ctx.out.warn(&format!(
+                "listener port {} is in use; listening on {bound} instead",
+                ctx.settings.listen_port
+            ));
+        }
+
+        // Ask the router for the port the listener actually holds: when the
+        // configured one was taken, mapping it would open a hole to whoever
+        // did take it.
+        let mapper = bound.map(PortMapper::spawn);
 
         Ok(Self {
-            client: Arc::new(client),
+            client,
             _mapper: mapper,
         })
     }
@@ -167,6 +220,10 @@ pub fn confirm_flush(client: &Client, timeout: Duration) -> bool {
 }
 
 pub fn run(ctx: &Ctx, command: Commands) -> CliResult {
+    ctx.checked(dispatch(ctx, command))
+}
+
+fn dispatch(ctx: &Ctx, command: Commands) -> CliResult {
     match command {
         Commands::Search(args) => transfer::search(ctx, &args),
         Commands::Download(args) => transfer::download(ctx, &args),

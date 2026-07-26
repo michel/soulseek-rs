@@ -182,6 +182,7 @@ fn context(
         download_dir: resolved.download_dir.clone(),
         max_concurrent_downloads: resolved.max_concurrent_downloads,
         search_timeout: Duration::from_secs(resolved.search_timeout),
+        session: std::sync::OnceLock::new(),
     })
 }
 
@@ -298,11 +299,6 @@ fn run_default_tui(
     // Enable logger buffering BEFORE connection to prevent log artifacts
     soulseek_rs::utils::logger::enable_buffering();
 
-    // Best-effort: make ourselves reachable behind a home router so
-    // firewalled peers can connect back. Kept alive for the session.
-    let _port_mapper = (!resolved.disable_listener)
-        .then(|| port_mapping::PortMapper::spawn(resolved.listener_port));
-
     let enable_listen = !resolved.disable_listener;
     let listen_port = resolved.listener_port;
     let make_settings =
@@ -344,6 +340,14 @@ fn run_default_tui(
     };
 
     persist_credentials(&outcome, config_path, file_config, &secret_store);
+
+    // Best-effort: make ourselves reachable behind a home router so firewalled
+    // peers can connect back. Mapped only once the listener is up, and for the
+    // port it really bound. Kept alive for the session.
+    let _port_mapper = outcome
+        .client
+        .listen_port()
+        .map(port_mapping::PortMapper::spawn);
 
     let store =
         persist::paths::state_dir().map(persist::state::StateStore::new);

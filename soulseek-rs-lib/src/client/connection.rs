@@ -53,14 +53,26 @@ impl Client {
         ctx.shares = shares;
         ctx.shared_directories.clone_from(&self.shared_directories);
 
-        let server_actor = ServerActor::new(
+        // Bind before logging in: the port we advertise has to be the port we
+        // hold, and a bind that fails outright is the caller's to see rather
+        // than a panic on a thread nobody is watching.
+        let listener = if self.enable_listen {
+            let listener = Listen::bind(self.listen_port)?;
+            self.bound_port = Some(listener.local_addr()?.port());
+            Some(listener)
+        } else {
+            None
+        };
+
+        let mut server_actor = ServerActor::new(
             self.address.clone(),
             sender,
-            self.listen_port,
+            self.bound_port.unwrap_or(self.listen_port),
             self.enable_listen,
             shared_folder_count,
             shared_file_count,
         );
+        server_actor.set_session_watch(self.session.clone());
 
         self.server_handle = Some(ctx.actor_system.spawn_with_handle(
             server_actor,
@@ -69,19 +81,13 @@ impl Client {
             },
         ));
 
-        if self.enable_listen {
-            let listen_port = self.listen_port;
+        if let Some(listener) = listener {
             let client_sender = listen_sender;
             let context = self.context.clone();
             let own_username = self.username.clone();
 
             thread::spawn(move || {
-                Listen::start(
-                    listen_port,
-                    client_sender,
-                    context,
-                    own_username,
-                );
+                Listen::serve(&listener, client_sender, context, own_username);
             });
         }
 
