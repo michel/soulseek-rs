@@ -22,7 +22,7 @@ use crate::{
     utils::{lock::RwLockExt, md5, thread_pool::ThreadPool},
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     net::TcpStream,
     sync::{
         RwLock,
@@ -35,9 +35,23 @@ use std::{
     sync::{Arc, mpsc},
     time::{Duration, Instant},
 };
+use upload_queue::QueuedUpload;
 
 use crate::{debug, error, info, trace, warn};
 const DEFAULT_LISTEN_PORT: u16 = 2234;
+
+/// What to assume between wishlist searches until the server announces its own.
+///
+/// Twelve minutes is what Soulseek servers give an unprivileged account (code
+/// 104); guessing lower only gets the searches dropped.
+pub const DEFAULT_WISHLIST_INTERVAL: Duration = Duration::from_mins(12);
+
+/// How many uploads run at once by default.
+///
+/// Two is what makes the queue real: with unlimited slots there is nothing for
+/// a privileged peer to jump, and a home connection split across every peer
+/// that asks serves all of them badly.
+pub const DEFAULT_UPLOAD_SLOTS: usize = 2;
 
 /// How long to wait for a server-brokered (firewalled) peer to connect back
 /// before giving up and failing the download. Matches the direct-dial timeout.
@@ -248,6 +262,19 @@ pub enum ClientOperation {
     /// Something happened in the chat-room subsystem (list refreshed, a room
     /// joined/left, a message said, a member joined/left).
     RoomEvent(RoomEvent),
+    /// The server announced how many seconds must pass between wishlist
+    /// searches.
+    WishlistInterval(u32),
+    /// Everyone the server counts as privileged; they sort ahead of others in
+    /// our upload queue.
+    PrivilegedUsers(Vec<String>),
+    /// Seconds of our own privileges left.
+    OwnPrivileges(u32),
+    /// A peer asked where their queued file sits.
+    PlaceInQueueRequested {
+        requester_key: String,
+        filename: String,
+    },
 }
 pub struct ClientContext {
     pub peer_registry: Option<PeerRegistry>,
@@ -284,6 +311,20 @@ pub struct ClientContext {
     /// What the server has told us about other users, merged across the
     /// separate status and statistics replies.
     user_info: HashMap<String, UserInfo>,
+    /// Seconds the server wants between wishlist searches (code 104), once it
+    /// has told us.
+    wishlist_interval: Option<u32>,
+    /// Everyone the server listed as privileged (code 69). They sort ahead of
+    /// other peers in [`Self::upload_queue`].
+    privileged_users: HashSet<String>,
+    /// Seconds of our own privileges left (code 92), once we have asked.
+    own_privileges: Option<u32>,
+    /// Peers waiting for one of our upload slots.
+    upload_queue: Vec<QueuedUpload>,
+    /// Arrival counter for the queue's first-come tie-break.
+    upload_seq: u64,
+    /// How many uploads may be in flight at once.
+    upload_slots: usize,
     actor_system: Arc<ActorSystem>,
 }
 impl Default for ClientContext {
@@ -580,6 +621,12 @@ impl ClientContext {
             room_events: Vec::new(),
             room_members: HashMap::new(),
             user_info: HashMap::new(),
+            wishlist_interval: None,
+            privileged_users: HashSet::new(),
+            own_privileges: None,
+            upload_queue: Vec::new(),
+            upload_seq: 0,
+            upload_slots: DEFAULT_UPLOAD_SLOTS,
             downloads: DownloadStore::new(),
             actor_system,
         }
@@ -820,8 +867,9 @@ impl Client {
         })
     }
 
-    /// Snapshot of the uploads served this session (active and finished),
-    /// most recent last.
+    /// Every upload this session knows about: the ones streaming or finished,
+    /// followed by the peers still waiting for a slot, in the order they will
+    /// be served.
     #[must_use]
     pub fn uploads(&self) -> Vec<crate::types::UploadInfo> {
         self.context.read_safe().map_or_else(
@@ -829,7 +877,7 @@ impl Client {
             |ctx| {
                 let mut tokens: Vec<&u32> = ctx.active_uploads.keys().collect();
                 tokens.sort_unstable();
-                tokens
+                let mut all: Vec<crate::types::UploadInfo> = tokens
                     .into_iter()
                     .map(|token| {
                         let upload = &ctx.active_uploads[token];
@@ -849,7 +897,9 @@ impl Client {
                             status: upload.status.clone(),
                         }
                     })
-                    .collect()
+                    .collect();
+                all.extend(ctx.queued_uploads());
+                all
             },
         )
     }
@@ -919,6 +969,7 @@ mod downloads;
 mod operations;
 mod rooms;
 mod search;
+mod upload_queue;
 mod uploads;
 
 #[cfg(test)]

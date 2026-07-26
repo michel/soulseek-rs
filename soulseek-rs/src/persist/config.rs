@@ -23,6 +23,10 @@ pub struct FileConfig {
     /// Command whose stdout is the password (headless fallback, like mutt's
     /// `password_cmd`). Never store the password itself in the file.
     pub password_cmd: Option<String>,
+    /// Standing searches the server lets us repeat once per wishlist interval.
+    /// A TOML array rather than a `config set` key, because a query may itself
+    /// contain a comma.
+    pub wishlist: Option<Vec<String>>,
 }
 
 impl FileConfig {
@@ -129,6 +133,54 @@ impl FileConfig {
             }
         }
         Ok(())
+    }
+
+    /// The standing searches, in the order they were added.
+    #[must_use]
+    pub fn wishes(&self) -> Vec<String> {
+        self.wishlist.clone().unwrap_or_default()
+    }
+
+    /// Add `query` to the wishlist. Returns whether it changed anything: a
+    /// blank query and a case-insensitive repeat are both refused, so adding
+    /// the same wish twice cannot fill the file with duplicates the server
+    /// would then be asked about twice per interval.
+    pub fn add_wish(&mut self, query: &str) -> bool {
+        let query = query.trim();
+        if query.is_empty() || self.find_wish(query).is_some() {
+            return false;
+        }
+        self.wishlist
+            .get_or_insert_with(Vec::new)
+            .push(query.to_string());
+        true
+    }
+
+    /// Remove `query`, matched the same way [`Self::add_wish`] compares.
+    /// Returns whether it was there.
+    pub fn remove_wish(&mut self, query: &str) -> bool {
+        let Some(index) = self.find_wish(query.trim()) else {
+            return false;
+        };
+        self.wishlist.get_or_insert_with(Vec::new).remove(index);
+        true
+    }
+
+    /// The stored wish matching `query`, compared the way [`Self::add_wish`]
+    /// compares. Callers that need to act on a named wish go through this so
+    /// "the same wish" means one thing everywhere.
+    #[must_use]
+    pub fn wish(&self, query: &str) -> Option<&String> {
+        let index = self.find_wish(query.trim())?;
+        self.wishlist.as_ref()?.get(index)
+    }
+
+    fn find_wish(&self, query: &str) -> Option<usize> {
+        let wanted = query.to_lowercase();
+        self.wishlist
+            .as_ref()?
+            .iter()
+            .position(|wish| wish.to_lowercase() == wanted)
     }
 
     /// Load from `path`; a missing file is an empty config, a malformed file
@@ -430,6 +482,7 @@ mod tests {
             max_concurrent_downloads: Some(2),
             search_timeout: Some(30),
             password_cmd: Some("pass show slsk".into()),
+            wishlist: None,
         };
         let resolved = resolve(&bare_cli(), &file);
         assert_eq!(resolved.username.as_deref(), Some("alice"));
@@ -575,6 +628,56 @@ mod tests {
         };
         config.save(&path).unwrap();
         assert_eq!(FileConfig::load(&path).unwrap(), config);
+    }
+
+    #[test]
+    fn a_wish_is_added_once_however_it_is_spelled() {
+        let mut config = FileConfig::default();
+        assert!(config.add_wish("Aphex Twin"));
+        assert!(!config.add_wish("aphex twin"), "a repeat is not a new wish");
+        assert!(!config.add_wish("  Aphex Twin  "), "surrounding space too");
+        assert_eq!(config.wishes(), ["Aphex Twin"]);
+    }
+
+    #[test]
+    fn an_empty_wish_is_refused() {
+        let mut config = FileConfig::default();
+        assert!(!config.add_wish("   "));
+        assert!(config.wishes().is_empty());
+    }
+
+    #[test]
+    fn removing_a_wish_ignores_case_and_reports_whether_it_was_there() {
+        let mut config = FileConfig::default();
+        config.add_wish("Boards of Canada");
+        assert!(config.remove_wish("BOARDS OF CANADA"));
+        assert!(config.wishes().is_empty());
+        assert!(!config.remove_wish("never added"));
+    }
+
+    #[test]
+    fn wishes_keep_the_order_they_were_added_in() {
+        let mut config = FileConfig::default();
+        for wish in ["first", "second", "third"] {
+            config.add_wish(wish);
+        }
+        config.remove_wish("second");
+        assert_eq!(config.wishes(), ["first", "third"]);
+    }
+
+    #[test]
+    fn a_wishlist_survives_a_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut config = FileConfig::default();
+        config.add_wish("autechre, incunabula");
+        config.add_wish("plaid");
+        config.save(&path).unwrap();
+        assert_eq!(
+            FileConfig::load(&path).unwrap().wishes(),
+            ["autechre, incunabula", "plaid"],
+            "a comma inside a wish must survive the round trip"
+        );
     }
 
     #[test]

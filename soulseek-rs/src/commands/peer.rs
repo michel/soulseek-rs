@@ -12,6 +12,11 @@ use std::time::{Duration, Instant};
 /// How often the serve loop samples the upload table.
 const POLL: Duration = Duration::from_millis(500);
 
+/// How long `whoami` waits for the server's privilege answer. It is one small
+/// message on an already-open connection, so a server that has not replied by
+/// now is not going to.
+const PRIVILEGE_TIMEOUT: Duration = Duration::from_secs(5);
+
 pub fn whoami(ctx: &Ctx) -> CliResult {
     let session = Session::open(ctx)?;
     let (folders, files) = session.client.shared_counts();
@@ -23,8 +28,27 @@ pub fn whoami(ctx: &Ctx) -> CliResult {
         shared_folders: folders,
         shared_files: files,
         download_dir: ctx.download_dir.clone(),
+        privilege_seconds: own_privileges(&session.client),
     });
     Ok(())
+}
+
+/// Ask the server how much privilege time this account has left.
+///
+/// A server that does not answer leaves the field null rather than reporting a
+/// zero, because "no privileges" and "did not say" are different facts.
+fn own_privileges(client: &soulseek_rs::Client) -> Option<u32> {
+    if client.check_privileges().is_err() {
+        return None;
+    }
+    let deadline = Instant::now() + PRIVILEGE_TIMEOUT;
+    while Instant::now() < deadline {
+        if let Some(seconds) = client.own_privilege_seconds() {
+            return Some(seconds);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    None
 }
 
 pub fn user(ctx: &Ctx, args: &UserArgs) -> CliResult {
@@ -69,7 +93,13 @@ pub fn user(ctx: &Ctx, args: &UserArgs) -> CliResult {
     Ok(())
 }
 
-pub fn serve(ctx: &Ctx, args: &ServeArgs) -> CliResult {
+/// Stay online sharing files, and — with `--wishlist` — re-run the standing
+/// searches on the interval the server sets while doing so.
+pub fn serve(
+    ctx: &Ctx,
+    args: &ServeArgs,
+    mut sweeper: Option<crate::commands::wish::Sweeper>,
+) -> CliResult {
     if ctx.settings.shared_directories.is_empty() {
         return Err(CliError::usage(
             "nothing to share: pass --shared-dir, or add one with `shares add`",
@@ -82,6 +112,10 @@ pub fn serve(ctx: &Ctx, args: &ServeArgs) -> CliResult {
     }
 
     let session = Session::open(ctx)?;
+    if let Some(slots) = args.upload_slots {
+        session.client.set_upload_slots(usize::from(slots));
+        ctx.out.status(&format!("{slots} upload slots"));
+    }
     let (folders, files) = session.client.shared_counts();
     ctx.out.status(&format!(
         "serving {files} files in {folders} folders on port {}",
@@ -109,6 +143,9 @@ pub fn serve(ctx: &Ctx, args: &ServeArgs) -> CliResult {
                 reported.insert(key, record);
             }
         }
+        if let Some(sweeper) = sweeper.as_mut() {
+            sweeper.tick(ctx, &session.client);
+        }
         std::thread::sleep(POLL);
     }
     Ok(())
@@ -117,6 +154,9 @@ pub fn serve(ctx: &Ctx, args: &ServeArgs) -> CliResult {
 /// Flatten a live upload into the record `serve` reports.
 fn upload_record(upload: &UploadInfo) -> UploadRecord {
     let (status, reason) = match &upload.status {
+        UploadStatus::Queued(place) => {
+            ("queued", Some(format!("place {place}")))
+        }
         UploadStatus::InProgress => ("uploading", None),
         UploadStatus::Completed => ("completed", None),
         UploadStatus::Cancelled => ("cancelled", None),

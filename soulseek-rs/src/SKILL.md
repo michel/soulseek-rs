@@ -45,9 +45,12 @@ Each entry lists the keys of the objects it prints.
 
 **`search <query>`** — one object per matching file:
 `user`, `path`, `size`, `bitrate`, `duration`, `free_slot`, `slots`, `speed`.
-Flags: `--min-bitrate <kbps>`, `--free-slots`, `-n/--limit` (0 means all),
-`--sort best|size|bitrate|speed`. Collects results for the whole
-`--search-timeout` window before printing anything.
+Filters: `--min-bitrate <kbps>`, `--free-slots`, `--exclude <term>` (repeatable),
+`--extension <ext>` (repeatable, dot optional), `--min-size <bytes>`,
+`--max-size <bytes>`. Also `-n/--limit` (0 means all) and
+`--sort best|size|bitrate|speed`. Every filter given has to be satisfied.
+Collects results for the whole `--search-timeout` window before printing
+anything.
 
 **`download <user> <path> [--size N]`** or **`download --stdin`** — one object
 per finished transfer: `user`, `path`, `size`, `file` (the local path written).
@@ -56,8 +59,19 @@ per finished transfer: `user`, `path`, `size`, `file` (the local path written).
 starting over, so retrying a failed download is cheap.
 
 **`get <query>`** — search, pick, and download in one step. `--pick
-best|first|all`, `-n/--limit`, `--min-bitrate`, `--free-slots`. Prefer this
+best|first|all`, `-n/--limit`, plus every filter `search` accepts. Prefer this
 over `search` + `download` when the user just wants the file.
+
+**`wish list`** — one object per standing search: `query`.
+**`wish add <query>`** and **`wish remove <query>`** — change the wishlist in
+the config file. `add` prints the stored `query`; `remove` prints nothing. A
+repeat of an existing wish is not an error.
+**`wish run`** — search every stored wish once and print `search`-shaped
+objects, so the output pipes straight into `download --stdin`. `--only <query>`
+runs one stored wish (it must already be on the list), and every `search` filter
+applies. Exit 4 when no wish matched anything. Use this when the user wants
+something that is not on the network right now: add it as a wish, then run the
+wishlist later rather than repeating the same search.
 
 **`browse <user>`** — one object per file the peer shares: `user`, `directory`,
 `path`, `size`.
@@ -68,8 +82,10 @@ be `null` when the server has not answered that half — `null` means unknown,
 not offline.
 
 **`whoami`** — one object: `user`, `server`, `listening`, `listen_port`,
-`shared_folders`, `shared_files`, `download_dir`. The cheapest way to prove the
-credentials and connection work.
+`shared_folders`, `shared_files`, `download_dir`, `privilege_seconds`. The
+cheapest way to prove the credentials and connection work.
+`privilege_seconds` is 0 for an ordinary account and `null` only when the
+server did not answer — those are different facts, so do not treat null as 0.
 
 **`room list`** — `room`, `users`.
 **`room users <room>`** — `room`, `user`.
@@ -81,7 +97,13 @@ credentials and connection work.
 
 **`serve`** — stay online sharing files, one object per upload change: `user`,
 `path`, `size`, `bytes_sent`, `speed`, `status`
-(`uploading`/`completed`/`cancelled`/`failed`), `reason`.
+(`queued`/`uploading`/`completed`/`cancelled`/`failed`), `reason`. A `queued`
+record's `reason` is its place in the queue. `--upload-slots N` sets how many
+uploads run at once (2 by default); the rest wait, with users the server lists
+as privileged served first. With `--wishlist` it also re-runs the wishlist on
+the interval the server sets and prints `search`-shaped objects for what it
+finds, so one long-running process covers both halves of being a good
+participant.
 
 **`shares list`** — one object per configured folder: `directory`, `usable`.
 **`shares add <directory>`** and **`shares remove <directory>`** — change the

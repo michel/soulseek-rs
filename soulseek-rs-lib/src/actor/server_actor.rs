@@ -1,6 +1,7 @@
 use crate::actor::{Actor, ActorHandle, ConnectionState};
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
+use crate::message::server::CheckPrivilegesHandler;
 use crate::message::server::ConnectToPeerHandler;
 use crate::message::server::ExcludedSearchPhrasesHandler;
 use crate::message::server::FileSearchHandler;
@@ -166,6 +167,20 @@ pub enum ServerMessage {
         token: u32,
         query: String,
     },
+    /// A wishlist search (code 103): a stored query the server lets us repeat
+    /// once per announced interval.
+    WishlistSearch {
+        token: u32,
+        query: String,
+    },
+    /// The server announced how often it will accept a wishlist search.
+    WishlistInterval(u32),
+    /// Everyone the server counts as privileged (code 69).
+    PrivilegedUsers(Vec<String>),
+    /// Seconds of our own privileges left (code 92).
+    OwnPrivileges(u32),
+    /// Ask the server for the answer to the above.
+    CheckPrivileges,
     /// A search the server distributed to us from another user; if it matches
     /// our shares we reply with a FileSearchResponse.
     FileSearchRequest {
@@ -391,7 +406,7 @@ impl ServerActor {
         handlers.register_handler(WishListIntervalHandler);
         handlers.register_handler(ParentMinSpeedHandler);
         handlers.register_handler(ParentSpeedRatioHandler);
-        handlers.register_handler(PrivilegedUsersHandler);
+        handlers.register_handler(CheckPrivilegesHandler);
         handlers.register_handler(FileSearchHandler);
         handlers.register_handler(GetPeerAddressHandler);
         handlers.register_handler(ConnectToPeerHandler);
@@ -548,6 +563,39 @@ impl ServerActor {
                 query,
             } => {
                 self.handle_file_search_request(username, token, query);
+            }
+            other => self.handle_standing_message(other),
+        }
+    }
+
+    /// The wishlist and privilege traffic: standing searches (codes 103/104) and
+    /// who is privileged (codes 69/92).
+    ///
+    /// Split out only because it keeps `handle_message`'s match to a readable
+    /// length; there is no behaviour here beyond dispatch.
+    fn handle_standing_message(&mut self, message: ServerMessage) {
+        match message {
+            ServerMessage::WishlistSearch { token, query } => {
+                self.queue_message(MessageFactory::build_wishlist_search(
+                    token, &query,
+                ));
+            }
+            ServerMessage::WishlistInterval(seconds) => {
+                self.forward_to_client(ClientOperation::WishlistInterval(
+                    seconds,
+                ));
+            }
+            ServerMessage::PrivilegedUsers(users) => {
+                self.forward_to_client(ClientOperation::PrivilegedUsers(users));
+            }
+            ServerMessage::OwnPrivileges(seconds) => {
+                self.forward_to_client(ClientOperation::OwnPrivileges(seconds));
+            }
+            ServerMessage::CheckPrivileges => {
+                self.queue_message(MessageFactory::build_check_privileges());
+            }
+            other => {
+                error!("[server] unroutable message: {:?}", other);
             }
         }
     }

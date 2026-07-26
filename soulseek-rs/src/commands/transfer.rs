@@ -1,7 +1,9 @@
 //! Finding files and fetching them: `search`, `download`, and `get`.
 
 use super::{Ctx, Session, social};
-use crate::cli::{DownloadArgs, GetArgs, Pick, SearchArgs, SortKey};
+use crate::cli::{
+    DownloadArgs, FilterArgs, GetArgs, Pick, SearchArgs, SortKey,
+};
 use crate::output::{
     CliError, CliResult, DownloadRecord, Exit, Out, SearchRecord,
 };
@@ -19,25 +21,69 @@ use std::time::{Duration, Instant};
 const ATTR_BITRATE: u32 = 0;
 const ATTR_DURATION: u32 = 1;
 
-/// What to keep out of the raw result set.
-#[derive(Debug, Clone, Copy, Default)]
+/// What to keep out of the raw result set. Every field is a further
+/// restriction: a candidate has to satisfy all of them.
+///
+/// `exclude` and `extensions` are stored already lowercased and without leading
+/// dots — see [`Filter::from`] — so matching a result costs no allocation. A
+/// search returns thousands of files and every one of them is tested.
+#[derive(Debug, Clone, Default)]
 pub struct Filter {
     pub min_bitrate: Option<u32>,
     pub free_slots_only: bool,
+    /// Terms that must not appear anywhere in the remote path, lowercased.
+    pub exclude: Vec<String>,
+    /// File extensions to keep, lowercased and dotless.
+    pub extensions: Vec<String>,
+    pub min_size: Option<u64>,
+    pub max_size: Option<u64>,
 }
 
 impl Filter {
-    const fn keeps(&self, candidate: &SearchRecord) -> bool {
+    fn keeps(&self, candidate: &SearchRecord) -> bool {
         if self.free_slots_only && !candidate.free_slot {
             return false;
         }
-        match (self.min_bitrate, candidate.bitrate) {
-            (Some(minimum), Some(bitrate)) => bitrate >= minimum,
-            // An unknown bitrate cannot satisfy a bitrate floor.
-            (Some(_), None) => false,
-            (None, _) => true,
+        if self.min_size.is_some_and(|min| candidate.size < min) {
+            return false;
         }
+        if self.max_size.is_some_and(|max| candidate.size > max) {
+            return false;
+        }
+        // An unknown bitrate cannot satisfy a bitrate floor.
+        if self
+            .min_bitrate
+            .is_some_and(|min| candidate.bitrate.is_none_or(|have| have < min))
+        {
+            return false;
+        }
+        if self.exclude.is_empty() && self.extensions.is_empty() {
+            return true;
+        }
+        let path = candidate.path.to_lowercase();
+        !self.exclude.iter().any(|term| path.contains(term.as_str()))
+            && (self.extensions.is_empty() || self.matches_extension(&path))
     }
+
+    fn matches_extension(&self, lowercase_path: &str) -> bool {
+        let name = lowercase_path
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or_default();
+        let Some((_, actual)) = name.rsplit_once('.') else {
+            return false;
+        };
+        self.extensions.iter().any(|wanted| wanted == actual)
+    }
+}
+
+/// Lowercase and strip a leading dot, so the comparison in [`Filter::keeps`] is
+/// a plain equality however the flag was spelled.
+fn normalized(terms: &[String]) -> Vec<String> {
+    terms
+        .iter()
+        .map(|term| term.trim_start_matches('.').to_lowercase())
+        .collect()
 }
 
 /// Flatten per-peer results into individual files, dropping what `filter`
@@ -112,6 +158,19 @@ pub struct Request {
     pub size: u64,
 }
 
+impl From<&FilterArgs> for Filter {
+    fn from(args: &FilterArgs) -> Self {
+        Self {
+            min_bitrate: args.min_bitrate,
+            free_slots_only: args.free_slots,
+            exclude: normalized(&args.exclude),
+            extensions: normalized(&args.extension),
+            min_size: args.min_size,
+            max_size: args.max_size,
+        }
+    }
+}
+
 impl From<&SearchRecord> for Request {
     fn from(candidate: &SearchRecord) -> Self {
         Self {
@@ -123,7 +182,7 @@ impl From<&SearchRecord> for Request {
 }
 
 /// Filter, rank, and cap a raw result set, failing when nothing survives.
-fn ranked(
+pub(super) fn ranked(
     results: &[SearchResult],
     filter: &Filter,
     sort: SortKey,
@@ -146,10 +205,7 @@ pub fn search(ctx: &Ctx, args: &SearchArgs) -> CliResult {
     let results = collect(ctx, &session.client, &args.query, false)?;
     let found = ranked(
         &results,
-        &Filter {
-            min_bitrate: args.min_bitrate,
-            free_slots_only: args.free_slots,
-        },
+        &Filter::from(&args.filter),
         args.sort,
         args.limit,
         &args.query,
@@ -206,10 +262,7 @@ pub fn get(ctx: &Ctx, args: &GetArgs) -> CliResult {
     };
     let found = ranked(
         &results,
-        &Filter {
-            min_bitrate: args.min_bitrate,
-            free_slots_only: args.free_slots,
-        },
+        &Filter::from(&args.filter),
         SortKey::Best,
         limit,
         &args.query,
@@ -634,6 +687,10 @@ mod tests {
         }
     }
 
+    fn paths_of(found: &[SearchRecord]) -> Vec<String> {
+        found.iter().map(|c| c.path.clone()).collect()
+    }
+
     fn sample() -> Vec<SearchResult> {
         vec![
             result("slow", 1, 100, vec![file("a\\low.mp3", 10, Some(128))]),
@@ -667,26 +724,162 @@ mod tests {
         assert_eq!(best.speed, 900);
     }
 
+    /// Build a filter the way a command does, so the tests cover the flag
+    /// normalisation (case, leading dots) rather than assuming it.
+    fn filter(build: impl FnOnce(&mut FilterArgs)) -> Filter {
+        let mut args = FilterArgs::default();
+        build(&mut args);
+        Filter::from(&args)
+    }
+
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|v| (*v).to_string()).collect()
+    }
+
     #[test]
     fn min_bitrate_drops_lower_and_unknown_bitrates() {
-        let filter = Filter {
-            min_bitrate: Some(256),
-            free_slots_only: false,
-        };
-        let found = candidates(&sample(), &filter);
-        let paths: Vec<&str> = found.iter().map(|c| c.path.as_str()).collect();
-        assert_eq!(paths, ["b\\best.mp3", "c\\good.mp3"]);
+        let filter = filter(|a| a.min_bitrate = Some(256));
+        assert_eq!(
+            paths_of(&candidates(&sample(), &filter)),
+            ["b\\best.mp3", "c\\good.mp3"]
+        );
     }
 
     #[test]
     fn free_slots_only_keeps_peers_advertising_a_slot() {
-        let filter = Filter {
-            min_bitrate: None,
-            free_slots_only: true,
-        };
+        let filter = filter(|a| a.free_slots = true);
         let found = candidates(&sample(), &filter);
         assert!(found.iter().all(|c| c.free_slot));
         assert!(found.iter().all(|c| c.user != "busy"));
+    }
+
+    #[test]
+    fn exclude_drops_a_path_containing_the_term_whatever_its_case() {
+        let filter = filter(|a| a.exclude = strings(&["LOW"]));
+        let found = candidates(&sample(), &filter);
+        assert!(found.iter().all(|c| c.path != "a\\low.mp3"));
+        assert_eq!(found.len(), 3);
+    }
+
+    #[test]
+    fn exclude_matches_any_term_not_all_of_them() {
+        let filter = filter(|a| a.exclude = strings(&["low", "unknown"]));
+        assert_eq!(
+            paths_of(&candidates(&sample(), &filter)),
+            ["b\\best.mp3", "c\\good.mp3"]
+        );
+    }
+
+    #[test]
+    fn extension_keeps_only_that_type_however_it_is_written() {
+        let mixed = vec![result(
+            "peer",
+            1,
+            1,
+            vec![
+                file("a.mp3", 1, None),
+                file("b.FLAC", 2, None),
+                file("c.ogg", 3, None),
+            ],
+        )];
+        for spelling in [".flac", "flac", "FLAC", ".FLAC"] {
+            let filter = filter(|a| a.extension = strings(&[spelling]));
+            assert_eq!(
+                paths_of(&candidates(&mixed, &filter)),
+                ["b.FLAC"],
+                "--extension {spelling} should match b.FLAC"
+            );
+        }
+    }
+
+    #[test]
+    fn several_extensions_are_a_union() {
+        let mixed = vec![result(
+            "peer",
+            1,
+            1,
+            vec![
+                file("a.mp3", 1, None),
+                file("b.flac", 2, None),
+                file("c.ogg", 3, None),
+            ],
+        )];
+        let filter = filter(|a| a.extension = strings(&["mp3", "ogg"]));
+        assert_eq!(paths_of(&candidates(&mixed, &filter)), ["a.mp3", "c.ogg"]);
+    }
+
+    #[test]
+    fn an_extensionless_file_never_satisfies_an_extension_filter() {
+        let odd = vec![result("peer", 1, 1, vec![file("README", 1, None)])];
+        let filter = filter(|a| a.extension = strings(&["mp3"]));
+        assert!(candidates(&odd, &filter).is_empty());
+    }
+
+    #[test]
+    fn a_dot_in_a_folder_name_is_not_the_files_extension() {
+        // Only the last path segment decides the extension, or every file under
+        // "Album (2004).v0" would look like a .v0 file.
+        let nested = vec![result(
+            "peer",
+            1,
+            1,
+            vec![file("Album (2004).v0\\track.mp3", 1, None)],
+        )];
+        assert!(
+            candidates(&nested, &filter(|a| a.extension = strings(&["v0"])))
+                .is_empty(),
+            "the folder's .v0 suffix must not count as the file's extension"
+        );
+        assert_eq!(
+            paths_of(&candidates(
+                &nested,
+                &filter(|a| a.extension = strings(&["mp3"]))
+            )),
+            ["Album (2004).v0\\track.mp3"]
+        );
+    }
+
+    #[test]
+    fn size_bounds_are_inclusive_on_both_ends() {
+        let filter = filter(|a| {
+            a.min_size = Some(50);
+            a.max_size = Some(70);
+        });
+        assert_eq!(
+            paths_of(&candidates(&sample(), &filter)),
+            ["c\\good.mp3", "c\\unknown.mp3"]
+        );
+    }
+
+    #[test]
+    fn each_size_bound_works_without_the_other() {
+        let floor = filter(|a| a.min_size = Some(70));
+        assert_eq!(
+            paths_of(&candidates(&sample(), &floor)),
+            ["b\\best.mp3", "c\\unknown.mp3"]
+        );
+        let ceiling = filter(|a| a.max_size = Some(10));
+        assert_eq!(paths_of(&candidates(&sample(), &ceiling)), ["a\\low.mp3"]);
+    }
+
+    #[test]
+    fn filters_combine_as_an_and() {
+        let filter = filter(|a| {
+            a.free_slots = true;
+            a.min_bitrate = Some(200);
+            a.min_size = Some(20);
+            a.exclude = strings(&["bad"]);
+            a.extension = strings(&["mp3"]);
+        });
+        assert_eq!(paths_of(&candidates(&sample(), &filter)), ["c\\good.mp3"]);
+    }
+
+    #[test]
+    fn a_filter_that_rejects_everything_is_the_no_results_verdict() {
+        let filter = filter(|a| a.min_size = Some(u64::MAX));
+        let error = ranked(&sample(), &filter, SortKey::Best, 0, "q")
+            .expect_err("nothing survives the filter");
+        assert_eq!(error.exit, Exit::NoResults);
     }
 
     #[test]

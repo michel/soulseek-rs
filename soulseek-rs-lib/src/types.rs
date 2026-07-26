@@ -377,6 +377,8 @@ mod tests {
 /// Lifecycle of a file we are serving to a peer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UploadStatus {
+    /// Waiting for a free upload slot, at this 1-based place in the queue.
+    Queued(u32),
     InProgress,
     Completed,
     Cancelled,

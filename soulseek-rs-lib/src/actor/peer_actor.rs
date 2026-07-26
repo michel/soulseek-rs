@@ -2,9 +2,10 @@ use crate::actor::{Actor, ActorHandle, ConnectionState};
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
 use crate::message::peer::{
-    FileSearchResponse, GetShareFileList, PeerInit, PlaceInQueueResponse,
-    QueueUploadHandler, SharedDirectory, SharedFileListResponseHandler,
-    TransferRequest, TransferResponse, UploadFailedHandler,
+    FileSearchResponse, GetShareFileList, PeerInit, PlaceInQueueRequest,
+    PlaceInQueueResponse, QueueUploadHandler, SharedDirectory,
+    SharedFileListResponseHandler, TransferRequest, TransferResponse,
+    UploadFailedHandler,
 };
 use crate::message::server::MessageFactory;
 use crate::message::{Handlers, Message, MessageReader, MessageType};
@@ -39,6 +40,8 @@ pub enum PeerMessage {
     RequestTransfer(Download),
     /// A peer queued one of our shared files for download (they sent us code 43).
     IncomingQueueUpload(String),
+    /// A peer asked where their queued file sits (they sent us code 51).
+    IncomingPlaceInQueueRequest(String),
     /// A peer asked to browse our shared files (they sent us code 4).
     ShareListRequested,
     /// A peer we are browsing sent us their shared-file listing (code 5).
@@ -164,6 +167,7 @@ impl PeerActor {
         handlers.register_handler(TransferResponse);
         handlers.register_handler(GetShareFileList);
         handlers.register_handler(UploadFailedHandler);
+        handlers.register_handler(PlaceInQueueRequest);
         handlers.register_handler(PlaceInQueueResponse);
         handlers.register_handler(QueueUploadHandler);
         handlers.register_handler(SharedFileListResponseHandler);
@@ -234,6 +238,20 @@ impl PeerActor {
             }
             PeerMessage::IncomingQueueUpload(filename) => {
                 self.handle_incoming_queue_upload(filename);
+            }
+            PeerMessage::IncomingPlaceInQueueRequest(filename) => {
+                let requester_key = self.peer_username();
+                if let Err(e) = self.client_channel.send(
+                    ClientOperation::PlaceInQueueRequested {
+                        requester_key,
+                        filename,
+                    },
+                ) {
+                    error!(
+                        "[peer_actor] forward IncomingPlaceInQueueRequest: {}",
+                        e
+                    );
+                }
             }
             PeerMessage::ServeUpload {
                 token,

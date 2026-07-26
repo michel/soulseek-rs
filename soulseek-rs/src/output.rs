@@ -319,6 +319,9 @@ pub struct WhoamiRecord {
     pub shared_folders: u32,
     pub shared_files: u32,
     pub download_dir: String,
+    /// Seconds of privileges left on this account, or `null` when the server
+    /// did not answer in time. Zero means an ordinary account.
+    pub privilege_seconds: Option<u32>,
 }
 
 impl Record for WhoamiRecord {
@@ -402,6 +405,18 @@ pub struct ShareStatusRecord {
 impl Record for ShareStatusRecord {
     fn text(&self) -> String {
         format!("{}\t{}", self.folders, self.files)
+    }
+}
+
+/// One standing search on the wishlist.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WishRecord {
+    pub query: String,
+}
+
+impl Record for WishRecord {
+    fn text(&self) -> String {
+        sanitize(&self.query)
     }
 }
 

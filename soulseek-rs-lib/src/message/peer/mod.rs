@@ -1,6 +1,7 @@
 mod file_search_response;
 mod get_share_file_list;
 mod peer_init;
+mod place_in_queue_request;
 mod place_in_queue_response;
 mod queue_upload;
 mod shared_file_list;
@@ -14,6 +15,7 @@ pub use file_search_response::{
 };
 pub use get_share_file_list::GetShareFileList;
 pub use peer_init::PeerInit;
+pub use place_in_queue_request::PlaceInQueueRequest;
 pub use place_in_queue_response::PlaceInQueueResponse;
 pub use queue_upload::QueueUploadHandler;
 pub use shared_file_list::{
