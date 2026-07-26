@@ -471,10 +471,7 @@ impl Client {
                                 let registry = context.peer_registry.clone();
                                 drop(context);
                                 if let Some(registry) = registry {
-                                    let response =
-                                        crate::message::server::MessageFactory::build_transfer_response_message(
-                                            transfer,
-                                        );
+                                    let response = MessageFactory::build_transfer_response_message(transfer);
                                     let _ = registry.send_to_peer(
                                         &username,
                                         PeerMessage::SendMessage(response),

@@ -246,7 +246,13 @@ pub struct Resolved {
 
 pub const DEFAULT_SERVER: &str = "server.slsknet.org:2416";
 pub const DEFAULT_LISTENER_PORT: u16 = 2234;
-pub const DEFAULT_MAX_CONCURRENT_DOWNLOADS: usize = 5;
+/// How many downloads run at once by default.
+///
+/// Downstream is the abundant direction, and a Soulseek transfer is paced by
+/// the sending peer — usually a few hundred KiB/s — so filling a modern link
+/// takes many transfers at once, not faster ones. Twenty at a typical peer rate
+/// is tens of MiB/s, and costs twenty threads and sockets, which is nothing.
+pub const DEFAULT_MAX_CONCURRENT_DOWNLOADS: usize = 20;
 pub const DEFAULT_SEARCH_TIMEOUT: u64 = 10;
 
 /// Layer CLI/env values over the config file over defaults.

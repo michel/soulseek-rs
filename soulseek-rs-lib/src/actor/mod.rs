@@ -87,7 +87,7 @@ impl ActorSystem {
     /// The callback receives the actor handle before `on_start` is called
     pub fn spawn_with_handle<A: Actor, F>(
         &self,
-        actor: A,
+        mut actor: A,
         init: F,
     ) -> ActorHandle<A::Message>
     where
@@ -96,7 +96,6 @@ impl ActorSystem {
         let (sender, receiver) = channel::<ActorMessage<A::Message>>();
         let handle = ActorHandle { sender };
         let handle_for_init = handle.clone();
-        let mut actor = actor;
 
         let spawned = thread::Builder::new()
             .name("soulseek-actor".to_string())

@@ -1,11 +1,11 @@
 {
-  "score": 97.39,
+  "score": 97.78,
   "parts": {
     "downloads": 1.0000,
     "uploads": 1.0000,
     "searches": 1.0000,
     "browses": 1.0000,
-    "throughput": 0.8257
+    "throughput": 0.8522
   },
   "load": {
     "peers": 1024,

@@ -13,6 +13,7 @@
 //!   STRESS_DOWNLOADS  downloads started at once
 //!   STRESS_LEECHERS   mock peers pulling uploads from us at once
 //!   STRESS_BROWSES    browses fired at once
+//!   STRESS_UPLOAD_SLOTS  concurrent upload slots (default: every leecher)
 //!   STRESS_FILE_KB    size of every transferred file
 //!   STRESS_TIMEOUT    seconds before the run is called off
 //!   STRESS_SAVE=1     store this run as the new baseline
@@ -54,6 +55,7 @@ struct Config {
     downloads: usize,
     leechers: usize,
     browses: usize,
+    upload_slots: usize,
     file_bytes: usize,
     timeout: Duration,
     save: bool,
@@ -74,6 +76,13 @@ impl Config {
             downloads: env_usize("STRESS_DOWNLOADS", 512),
             leechers: env_usize("STRESS_LEECHERS", 256),
             browses: env_usize("STRESS_BROWSES", 128),
+            // Serve every leecher at once by default: this profile measures
+            // concurrency, and the shipped slot cap would otherwise make it a
+            // measurement of the queue. Lower it deliberately to stress that.
+            upload_slots: env_usize(
+                "STRESS_UPLOAD_SLOTS",
+                env_usize("STRESS_LEECHERS", 256).max(1),
+            ),
             file_bytes: env_usize("STRESS_FILE_KB", 4096) * 1024,
             timeout: Duration::from_secs(env_usize("STRESS_TIMEOUT", 60) as u64),
             save: std::env::var("STRESS_SAVE").is_ok_and(|v| v == "1"),
@@ -980,6 +989,7 @@ fn main() {
     });
     client.connect().expect("client connect");
     assert!(client.login().expect("client login"), "client login failed");
+    client.set_upload_slots(cfg.upload_slots);
     std::thread::sleep(Duration::from_secs(1));
 
     let client = Arc::new(client);
