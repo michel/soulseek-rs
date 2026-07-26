@@ -29,7 +29,9 @@ const EXIT_NO_RESULTS: i32 = 4;
 
 /// Every environment variable the CLI reads, cleared for each run so a
 /// developer's shell (or a stray `.env`) cannot change what a test observes.
-const CLI_ENV_VARS: [&str; 11] = [
+const CLI_ENV_VARS: [&str; 13] = [
+    "SOULSEEK_CONFIG_DIR",
+    "SOULSEEK_STATE_DIR",
     "SOULSEEK_USERNAME",
     "SOULSEEK_PASSWORD",
     "SOULSEEK_PASSWORD_CMD",
@@ -1031,14 +1033,35 @@ fn room_listen_streams_what_is_said_in_the_room() {
         .say_in_room("cli_e2e_lobby_b", "streamed line")
         .expect("say");
 
+    // A second arrival: the README says a join is its own record type, with an
+    // empty message field.
+    let latecomer = server.client("cli_e2e_room_joiner", Vec::new());
+    latecomer.join_room("cli_e2e_lobby_b").expect("join");
+
     let output = child.wait_with_output().expect("the binary should finish");
     assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
 
-    let heard = records(&output).iter().any(|line| {
-        serde_json::from_str::<serde_json::Value>(line)
-            .is_ok_and(|value| value["message"] == "streamed line")
-    });
-    assert!(heard, "stdout was: {:?}", stdout(&output));
+    let events: Vec<serde_json::Value> = records(&output)
+        .iter()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+
+    let said = events
+        .iter()
+        .find(|event| event["message"] == "streamed line")
+        .unwrap_or_else(|| panic!("stdout was: {:?}", stdout(&output)));
+    assert_eq!(said["type"], "message");
+    assert_eq!(said["room"], "cli_e2e_lobby_b");
+    assert_eq!(said["user"], "cli_e2e_room_speaker");
+
+    // The listener's own arrival is a join too, so pick the one that matters.
+    let joined = events
+        .iter()
+        .find(|event| event["user"] == "cli_e2e_room_joiner")
+        .unwrap_or_else(|| panic!("no join record in {:?}", stdout(&output)));
+    assert_eq!(joined["type"], "join");
+    assert_eq!(joined["room"], "cli_e2e_lobby_b");
+    assert_eq!(joined["message"], "");
 }
 
 #[test]
@@ -1264,6 +1287,13 @@ fn serve_stays_online_and_reports_an_upload_a_peer_pulls() {
             .as_str()
             .is_some_and(|p| p.contains("served.bin"))
     );
+    // The fields the README promises a JSON upload record carries.
+    for key in ["status", "user", "path", "bytes_sent", "size", "speed"] {
+        assert!(
+            last.get(key).is_some(),
+            "serve should carry `{key}`: {last}"
+        );
+    }
 }
 
 #[test]
@@ -1582,4 +1612,502 @@ fn asking_about_an_unknown_user_succeeds_with_an_offline_record() {
             .expect("valid JSON");
     assert_eq!(record["status"], "offline");
     assert_eq!(record["shared_files"], 0);
+}
+
+/// Assert that `output` succeeded and that its first record carries every key
+/// the documentation promises. `label` names the invocation in the failure.
+fn assert_record_keys(output: &Output, label: &str, keys: &[&str]) {
+    assert_eq!(
+        code(output),
+        EXIT_OK,
+        "`{label}` should succeed, stderr: {}",
+        stderr(output)
+    );
+    let record: serde_json::Value = serde_json::from_str(
+        records(output).first().expect("at least one record"),
+    )
+    .expect("valid JSON");
+    for key in keys {
+        assert!(
+            record.get(*key).is_some(),
+            "`{label}` should carry `{key}`, got {record}"
+        );
+    }
+}
+
+/// "Thirteen of these need no credentials, because they never touch the
+/// network." A script's first call is one of these, so an account must not be
+/// a prerequisite for any of them.
+#[test]
+fn the_commands_advertised_as_credential_free_run_without_an_account() {
+    let dir = Scratch::new("nocred");
+    let config = dir.path().join("config.toml");
+    let target = Scratch::new("nocred-skills");
+    let skills = target.display();
+    let shared = Scratch::new("nocred-shared");
+    let shared_path = shared.display();
+    // `completions` writes where the shell looks, which is under the home
+    // directory: give it a throwaway one rather than the developer's.
+    let home = Scratch::new("nocred-home");
+
+    let cases: Vec<Vec<&str>> = vec![
+        vec!["config", "path"],
+        vec!["config", "list"],
+        vec!["config", "set", "search_timeout", "12"],
+        vec!["config", "get", "search_timeout"],
+        vec!["shares", "add", &shared_path],
+        vec!["shares", "list"],
+        vec!["shares", "remove", &shared_path],
+        vec!["skills", "install", "--dir", &skills],
+        vec!["skills", "list", "--dir", &skills],
+        vec!["skills", "uninstall", "--dir", &skills],
+        vec!["completions", "install", "--shell", "fish"],
+        vec!["completions", "uninstall", "--shell", "fish"],
+    ];
+
+    for case in cases {
+        let mut all = vec!["--config", config.to_str().expect("utf-8 path")];
+        all.extend_from_slice(&case);
+        let mut invocation = command(&all);
+        invocation.env("HOME", home.path());
+        invocation.env("XDG_CONFIG_HOME", home.path().join("config"));
+        let output = invocation.output().expect("the binary should run");
+        assert_eq!(
+            code(&output),
+            EXIT_OK,
+            "`{}` should not need credentials, stderr: {}",
+            case.join(" "),
+            stderr(&output)
+        );
+    }
+
+    // `portmap` is the thirteenth: it talks to the router, never to the
+    // server, so it answers with its own verdict rather than a credentials
+    // error.
+    let portmap = with_config(&config, &["portmap"]);
+    assert!(
+        matches!(code(&portmap), EXIT_OK | EXIT_NO_RESULTS),
+        "portmap should not need credentials, got {} / {}",
+        code(&portmap),
+        stderr(&portmap)
+    );
+}
+
+/// "Every wait expressed in seconds is bounded to one day, so a mistyped flag
+/// is rejected rather than hanging until the heat death of the universe."
+#[test]
+fn a_wait_longer_than_a_day_is_rejected_rather_than_accepted() {
+    let day = 86_400;
+    let over = (day + 1).to_string();
+    let cases: Vec<Vec<&str>> = vec![
+        vec!["--no-config", "--search-timeout", &over, "search", "x"],
+        vec![
+            "--no-config",
+            "room",
+            "listen",
+            "lobby",
+            "--duration",
+            &over,
+        ],
+        vec!["--no-config", "message", "read", "--duration", &over],
+        vec!["--no-config", "serve", "--duration", &over],
+        vec!["--no-config", "get", "x", "--timeout", &over],
+    ];
+
+    // Missing credentials are a usage error too, so the exit code alone would
+    // not prove the bound rejected anything: the range has to be named.
+    for case in cases {
+        let output = run(&case);
+        assert_eq!(
+            code(&output),
+            EXIT_USAGE,
+            "`{}` should be a usage error, stderr: {}",
+            case.join(" "),
+            stderr(&output)
+        );
+        assert!(
+            stderr(&output).contains(&format!("1..={day}")),
+            "`{}` should be rejected by the one-day bound, stderr: {}",
+            case.join(" "),
+            stderr(&output)
+        );
+    }
+}
+
+/// "`SOULSEEK_CONFIG_DIR` and `SOULSEEK_STATE_DIR` relocate the config and
+/// state directories wholesale" — what a containerised run relies on.
+#[test]
+fn the_config_directory_can_be_relocated_wholesale() {
+    let home = Scratch::new("relocated");
+    let config_dir = home.path().join("config");
+    let state_dir = home.path().join("state");
+
+    let mut set = command(&["config", "set", "search_timeout", "17"]);
+    set.env("SOULSEEK_CONFIG_DIR", &config_dir);
+    set.env("SOULSEEK_STATE_DIR", &state_dir);
+    let output = set.output().expect("the binary should run");
+    assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+
+    let written = config_dir.join("config.toml");
+    assert!(
+        written.exists(),
+        "the setting should land under SOULSEEK_CONFIG_DIR, not the default"
+    );
+
+    let mut path = command(&["config", "path"]);
+    path.env("SOULSEEK_CONFIG_DIR", &config_dir);
+    let reported = path.output().expect("the binary should run");
+    assert!(
+        records(&reported)[0].ends_with(written.to_str().expect("utf-8 path")),
+        "got {:?}",
+        records(&reported)
+    );
+}
+
+/// The shipped SKILL.md tells an agent, key by key, what the offline commands
+/// print. An agent has no way to notice a rename, so pin them here.
+#[test]
+fn the_offline_json_records_carry_the_keys_the_skill_file_names() {
+    let dir = Scratch::new("skill-keys");
+    let config = dir.path().join("config.toml");
+    let shared = Scratch::new("skill-keys-shared");
+    let shared_path = shared.display();
+    let skills = Scratch::new("skill-keys-agent");
+    let skills_path = skills.display();
+
+    with_config(&config, &["shares", "add", &shared_path]);
+
+    let cases: Vec<(Vec<&str>, Vec<&str>)> = vec![
+        (
+            vec!["--json", "shares", "list"],
+            vec!["directory", "usable"],
+        ),
+        (
+            vec!["--json", "skills", "list", "--dir", &skills_path],
+            vec!["agent", "path", "action"],
+        ),
+        (vec!["--json", "config", "list"], vec!["key", "value"]),
+        (vec!["--json", "config", "path"], vec!["key", "value"]),
+    ];
+
+    for (case, keys) in cases {
+        let output = with_config(&config, &case);
+        assert_record_keys(&output, &case.join(" "), &keys);
+    }
+
+    // `completions` writes into the shell's own directory, so it only ever
+    // runs against a throwaway home.
+    let home = Scratch::new("skill-keys-home");
+    for verb in ["install", "uninstall"] {
+        let mut invocation = command(&[
+            "--no-config",
+            "--json",
+            "completions",
+            verb,
+            "--shell",
+            "fish",
+        ]);
+        invocation.env("HOME", home.path());
+        invocation.env("XDG_CONFIG_HOME", home.path().join("config"));
+        let output = invocation.output().expect("the binary should run");
+        assert_record_keys(
+            &output,
+            &format!("completions {verb}"),
+            &["shell", "path", "action"],
+        );
+    }
+}
+
+/// The website's connectivity section: "`serve` refuses to start with the
+/// listener off", because a source nobody can connect to serves nothing.
+#[test]
+fn serve_refuses_to_run_without_a_listener() {
+    let share = Scratch::new("serve-nolistener");
+    let output = run(&[
+        "--no-config",
+        "--username",
+        "someone",
+        "--password",
+        "pw",
+        "--no-listener",
+        "--shared-dir",
+        &share.display(),
+        "serve",
+        "--duration",
+        "5",
+    ]);
+    assert_eq!(code(&output), EXIT_USAGE, "stdout: {}", stdout(&output));
+    assert!(
+        stderr(&output).contains("listener"),
+        "the error should name the listener, got {}",
+        stderr(&output)
+    );
+}
+
+/// The four commands the README calls out as acting rather than reporting:
+/// "say nothing on stdout and answer with their exit code alone".
+#[test]
+fn the_action_commands_answer_with_their_exit_code_alone() {
+    let server = server_or_skip!();
+    let shared = Scratch::new("action-shared");
+    let shared_path = shared.display();
+    let dir = Scratch::new("action-config");
+    let config = dir.path().join("config.toml");
+    let listener = server.client("cli_e2e_action_peer", Vec::new());
+    listener.join_room("cli_e2e_action_room").expect("join");
+    settle();
+
+    for case in [
+        vec!["room", "say", "cli_e2e_action_room", "hello room"],
+        vec!["message", "send", "cli_e2e_action_peer", "hello there"],
+    ] {
+        let output = cli(&server, "cli_e2e_action", &case);
+        assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+        assert!(
+            stdout(&output).is_empty(),
+            "`{}` should print nothing on stdout, got {:?}",
+            case.join(" "),
+            stdout(&output)
+        );
+    }
+
+    for case in [
+        vec!["shares", "add", shared_path.as_str()],
+        vec!["shares", "remove", shared_path.as_str()],
+    ] {
+        let output = with_config(&config, &case);
+        assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+        assert!(
+            stdout(&output).is_empty(),
+            "`{}` should print nothing on stdout, got {:?}",
+            case.join(" "),
+            stdout(&output)
+        );
+    }
+}
+
+/// The recipe the README leads with: `--min-bitrate` and `--free-slots` keep
+/// only what a script asked for, rather than filtering nothing at all.
+#[test]
+fn search_filters_drop_what_they_advertise_dropping() {
+    let server = server_or_skip!();
+    let share = Scratch::new("share");
+    std::fs::write(share.path().join("cli_probe_filt.bin"), probe_bytes())
+        .expect("share file");
+    let _sharer = server.client("cli_e2e_sharer_filt", vec![share.display()]);
+    settle();
+
+    let unfiltered = cli(
+        &server,
+        "cli_e2e_filterer",
+        &["--search-timeout", "5", "--json", "search", "filt"],
+    );
+    assert_eq!(
+        code(&unfiltered),
+        EXIT_OK,
+        "stderr: {}",
+        stderr(&unfiltered)
+    );
+    assert!(
+        records(&unfiltered)
+            .iter()
+            .any(|line| line.contains("cli_probe_filt")),
+        "the probe should be findable before filtering"
+    );
+
+    // A .bin carries no bitrate, so a bitrate floor must exclude it rather
+    // than let an unknown through.
+    let filtered = cli(
+        &server,
+        "cli_e2e_filterer",
+        &[
+            "--search-timeout",
+            "5",
+            "search",
+            "filt",
+            "--min-bitrate",
+            "320",
+        ],
+    );
+    assert_eq!(
+        code(&filtered),
+        EXIT_NO_RESULTS,
+        "a bitrate floor should drop a result with no bitrate, got {:?}",
+        records(&filtered)
+    );
+
+    // `--free-slots` is a narrowing filter too: it may keep everything, but it
+    // must never invent results the unfiltered search did not have.
+    let free = cli(
+        &server,
+        "cli_e2e_filterer",
+        &["--search-timeout", "5", "search", "filt", "--free-slots"],
+    );
+    assert!(
+        matches!(code(&free), EXIT_OK | EXIT_NO_RESULTS),
+        "stderr: {}",
+        stderr(&free)
+    );
+    assert!(
+        records(&free).len() <= records(&unfiltered).len(),
+        "a filter must not add results"
+    );
+}
+
+/// "Nothing sensitive on the command line or in the environment":
+/// `--password-stdin` reads the first line of stdin, `docker login` style.
+#[test]
+fn the_password_can_arrive_on_stdin_instead_of_in_argv() {
+    let server = server_or_skip!();
+    let _owner = server.client("cli_e2e_stdin_pw", Vec::new());
+
+    let args = [
+        "--no-config",
+        "--quiet",
+        "--server",
+        &server.address(),
+        "--username",
+        "cli_e2e_stdin_pw",
+        "--password-stdin",
+        "--no-listener",
+        "whoami",
+    ];
+    let mut child = command(&args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the binary should run");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(b"pw\n")
+        .expect("write the password");
+    let output = child.wait_with_output().expect("the binary should finish");
+
+    assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+    assert!(
+        records(&output)[0].starts_with("cli_e2e_stdin_pw\t"),
+        "got {:?}",
+        records(&output)
+    );
+}
+
+/// The `--json` paragraph names, field by field, what JSON carries that text
+/// does not. A missing key silently breaks the `jq` filters the README sells.
+#[test]
+fn json_records_carry_every_extra_field_the_readme_names() {
+    let server = server_or_skip!();
+    let share = Scratch::new("share");
+    std::fs::write(share.path().join("cli_probe_keys.bin"), probe_bytes())
+        .expect("share file");
+    let target = Scratch::new("downloads");
+    let share_path = share.display();
+    let sharer = server.client("cli_e2e_sharer_keys", vec![share.display()]);
+    sharer.join_room("cli_e2e_keys_room").expect("join");
+    settle();
+
+    let mut expected: Vec<(Vec<&str>, Vec<&str>)> = vec![
+        (
+            vec!["search", "keys", "--search-timeout", "5"],
+            vec![
+                "user",
+                "size",
+                "bitrate",
+                "path",
+                "duration",
+                "slots",
+                "speed",
+                "free_slot",
+            ],
+        ),
+        (
+            vec!["browse", "cli_e2e_sharer_keys"],
+            vec!["user", "size", "path", "directory"],
+        ),
+        (
+            vec!["whoami"],
+            vec![
+                "user",
+                "server",
+                "shared_folders",
+                "shared_files",
+                "listening",
+                "listen_port",
+                "download_dir",
+            ],
+        ),
+        (
+            vec!["user", "cli_e2e_sharer_keys"],
+            vec![
+                "user",
+                "status",
+                "average_speed",
+                "shared_files",
+                "privileged",
+                "shared_folders",
+            ],
+        ),
+        (
+            vec!["shares", "status", "--shared-dir", &share_path],
+            vec!["folders", "files", "directories"],
+        ),
+        (
+            vec!["shares", "reindex", "--shared-dir", &share_path],
+            vec!["folders", "files", "directories"],
+        ),
+    ];
+    expected.push((vec!["room", "list"], vec!["users", "room"]));
+    expected.push((
+        vec!["room", "users", "cli_e2e_keys_room"],
+        vec!["room", "user"],
+    ));
+
+    for (case, keys) in expected {
+        let mut args: Vec<&str> = vec!["--json"];
+        args.extend(case.iter().copied());
+        let output = cli(&server, "cli_e2e_keys", &args);
+        assert_record_keys(&output, &case.join(" "), &keys);
+    }
+
+    // `download` adds the user, remote path and size alongside the local file.
+    let listing =
+        cli(&server, "cli_e2e_keys", &["browse", "cli_e2e_sharer_keys"]);
+    let remote_path = records(&listing)
+        .into_iter()
+        .find(|line| line.contains("cli_probe_keys.bin"))
+        .and_then(|row| row.rsplit('\t').next().map(String::from))
+        .expect("the shared file should be listed");
+    // A fresh name: the peer connects back to the port this user announced at
+    // login, and the browse runs above left an older one registered.
+    let downloaded = cli(
+        &server,
+        "cli_e2e_keys_fetcher",
+        &[
+            "--json",
+            "--download-dir",
+            &target.display(),
+            "download",
+            "cli_e2e_sharer_keys",
+            &remote_path,
+            "--timeout",
+            "40",
+        ],
+    );
+    assert_record_keys(
+        &downloaded,
+        "download",
+        &["file", "user", "path", "size"],
+    );
+
+    // `portmap` adds the port it probed; the verdict lives in the exit code,
+    // which is `EXIT_NO_RESULTS` on a network with no cooperating router.
+    let portmap = cli(&server, "cli_e2e_keys", &["--json", "portmap"]);
+    let record: serde_json::Value =
+        serde_json::from_str(records(&portmap).first().expect("one record"))
+            .expect("valid JSON");
+    for key in ["ok", "backend", "external", "port"] {
+        assert!(record.get(key).is_some(), "portmap should carry `{key}`");
+    }
 }
