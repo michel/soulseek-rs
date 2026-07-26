@@ -33,6 +33,17 @@ use soulseek_rs::{
     UploadStatus,
 };
 
+/// Only one test at a time may drive a server.
+///
+/// Each of these tests runs its own soulfind plus real clients and, for the
+/// queue tests, peer sockets held open on purpose. Letting the harness start a
+/// handful of those at once starves them, and a login that goes unanswered
+/// fails a test for a reason that has nothing to do with the code under test:
+/// seen on CI as `login: Timeout` in two download tests that the change under
+/// test never went near. The CLI suite already carries this gate for the same
+/// reason.
+static SERVER_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// A Soulseek server to test against: either a child soulfind process we
 /// spawned, or an external server referenced by `SOULSEEK_TEST_SERVER`.
 struct TestServer {
@@ -40,11 +51,18 @@ struct TestServer {
     port: u16,
     child: Option<Child>,
     db: Option<PathBuf>,
+    _gate: std::sync::MutexGuard<'static, ()>,
 }
 
 impl TestServer {
     /// Resolve a server to test against, or `None` if the suite should skip.
     fn resolve() -> Option<Self> {
+        // A test that panicked while holding the gate poisoned it; the lock
+        // guards nothing but scheduling, so take it back and carry on.
+        let gate = SERVER_GATE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
         if let Ok(addr) = std::env::var("SOULSEEK_TEST_SERVER") {
             let (host, port) = split_host_port(&addr)?;
             wait_until_listening(&host, port, Duration::from_secs(2))?;
@@ -53,13 +71,14 @@ impl TestServer {
                 port,
                 child: None,
                 db: None,
+                _gate: gate,
             });
         }
-        Self::spawn()
+        Self::spawn(gate)
     }
 
     /// Spawn a local soulfind on an ephemeral port with a throwaway database.
-    fn spawn() -> Option<Self> {
+    fn spawn(gate: std::sync::MutexGuard<'static, ()>) -> Option<Self> {
         let bin = soulfind_binary()?;
         let port = free_port()?;
         let db = std::env::temp_dir().join(format!("soulfind-e2e-{port}.db"));
@@ -89,6 +108,7 @@ impl TestServer {
             port,
             child: Some(child),
             db: Some(db),
+            _gate: gate,
         })
     }
 
