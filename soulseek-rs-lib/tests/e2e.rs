@@ -22,7 +22,7 @@ use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use soulseek_rs::message::Message;
@@ -520,7 +520,7 @@ fn connect_retry(addr: &str, timeout: Duration) -> std::io::Result<TcpStream> {
     }
 }
 
-fn run_mock_uploader(cfg: &MockUpload) -> std::io::Result<()> {
+fn run_mock_uploader(cfg: &MockUpload) -> std::io::Result<u64> {
     // 1. P (control) connection: register ourselves with the downloader.
     let mut p = connect_retry(&cfg.listen_addr, Duration::from_secs(5))?;
     p.set_read_timeout(Some(Duration::from_secs(10)))?;
@@ -571,12 +571,15 @@ fn run_mock_uploader(cfg: &MockUpload) -> std::io::Result<()> {
 /// the token lands in the listener's read buffer, where the download is looked
 /// up by token; the downloader then sends an 8-byte START_DOWNLOAD offset before
 /// we send the bytes.
+///
+/// Like a real peer, only the bytes past that offset are sent. Returns the
+/// offset the downloader asked for.
 fn serve_file_over_f(
     downloader_addr: &str,
     username: &str,
     token: u32,
     content: &[u8],
-) -> std::io::Result<()> {
+) -> std::io::Result<u64> {
     let mut f = connect_retry(downloader_addr, Duration::from_secs(5))?;
     f.set_read_timeout(Some(Duration::from_secs(10)))?;
     let mut init = peer_init_bytes(username, "F", token);
@@ -586,12 +589,13 @@ fn serve_file_over_f(
 
     let mut start = [0u8; 8];
     f.read_exact(&mut start)?;
-    f.write_all(content)?;
+    let offset = u64::from_le_bytes(start);
+    f.write_all(&content[offset as usize..])?;
     f.flush()?;
 
     // Keep the connection open briefly so the reader drains everything.
     std::thread::sleep(Duration::from_millis(500));
-    Ok(())
+    Ok(offset)
 }
 
 /// Log a raw socket in to the server and drain up to the login response,
@@ -651,6 +655,34 @@ fn expect_code(
             format!("timed out waiting for message code {code}"),
         )
     })
+}
+
+/// Wait for a download to reach `Completed`, watching both its status channel
+/// and the client's download list (whichever reports first). Returns false if it
+/// fails, times out, or the deadline passes.
+fn wait_for_completion(
+    client: &Client,
+    status_rx: &Receiver<DownloadStatus>,
+    timeout: Duration,
+) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        match status_rx.recv_timeout(Duration::from_millis(500)) {
+            Ok(DownloadStatus::Completed) => return true,
+            Ok(DownloadStatus::Failed(_) | DownloadStatus::TimedOut) => {
+                return false;
+            }
+            _ => {}
+        }
+        if client
+            .get_all_downloads()
+            .iter()
+            .any(|d| matches!(d.status, DownloadStatus::Completed))
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn unique_download_dir() -> PathBuf {
@@ -716,29 +748,8 @@ fn a_file_downloads_from_a_peer_over_p_and_f_connections() {
         )
         .expect("start download");
 
-    // Wait for completion via the per-download status channel.
-    let mut completed = false;
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while Instant::now() < deadline {
-        match status_rx.recv_timeout(Duration::from_millis(500)) {
-            Ok(DownloadStatus::Completed) => {
-                completed = true;
-                break;
-            }
-            Ok(DownloadStatus::Failed(_) | DownloadStatus::TimedOut) => {
-                break;
-            }
-            _ => {}
-        }
-        if client
-            .get_all_downloads()
-            .iter()
-            .any(|d| matches!(d.status, DownloadStatus::Completed))
-        {
-            completed = true;
-            break;
-        }
-    }
+    let completed =
+        wait_for_completion(&client, &status_rx, Duration::from_secs(20));
     let _ = uploader.join();
 
     assert!(completed, "the download should reach Completed");
@@ -746,6 +757,87 @@ fn a_file_downloads_from_a_peer_over_p_and_f_connections() {
     let written = std::fs::read(download_dir.join(filename))
         .expect("downloaded file should exist");
     assert_eq!(written, content, "downloaded bytes should match the source");
+
+    let _ = std::fs::remove_dir_all(&download_dir);
+}
+
+#[test]
+fn an_interrupted_download_resumes_from_its_partial_file() {
+    let server = server_or_skip!();
+
+    let listen_port = free_port().expect("free listen port");
+    let mut client = Client::with_settings(server.listening_settings(
+        "e2e_resume_dl",
+        "pw",
+        listen_port,
+    ));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login"));
+
+    let filename = "resumed_song.mp3";
+    let content: Vec<u8> = (0..2000u32).map(|i| (i % 251) as u8).collect();
+    let size = content.len() as u64;
+    let already_have = 800usize;
+    let download_dir = unique_download_dir();
+
+    // Stand in for a transfer that died after 800 of 2000 bytes.
+    std::fs::write(
+        download_dir.join(format!("{filename}.part")),
+        &content[..already_have],
+    )
+    .expect("seed the partial file");
+
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let cfg = MockUpload {
+        listen_addr: format!("127.0.0.1:{listen_port}"),
+        peer_username: "e2e_resume_peer".to_string(),
+        filename: filename.to_string(),
+        content: content.clone(),
+        token: 424_243_u32,
+        ready: ready_tx,
+    };
+    let (offset_tx, offset_rx) = std::sync::mpsc::channel();
+    let uploader = std::thread::spawn(move || match run_mock_uploader(&cfg) {
+        Ok(offset) => {
+            let _ = offset_tx.send(offset);
+        }
+        Err(e) => eprintln!("[mock uploader] {e}"),
+    });
+
+    ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("mock uploader P connection");
+    std::thread::sleep(Duration::from_millis(1500));
+
+    let (_download, status_rx) = client
+        .download(
+            filename.to_string(),
+            "e2e_resume_peer:direct".to_string(),
+            size,
+            download_dir.display().to_string(),
+        )
+        .expect("start download");
+
+    let completed =
+        wait_for_completion(&client, &status_rx, Duration::from_secs(20));
+    let _ = uploader.join();
+
+    assert!(completed, "the resumed download should reach Completed");
+    assert_eq!(
+        offset_rx.recv_timeout(Duration::from_secs(1)),
+        Ok(already_have as u64),
+        "the peer should be asked to start past the bytes we already had"
+    );
+    assert_eq!(
+        std::fs::read(download_dir.join(filename))
+            .expect("downloaded file should exist"),
+        content,
+        "the resumed prefix and the fetched tail should form the whole file"
+    );
+    assert!(
+        !download_dir.join(format!("{filename}.part")).exists(),
+        "the .part should be renamed away once complete"
+    );
 
     let _ = std::fs::remove_dir_all(&download_dir);
 }
@@ -911,6 +1003,7 @@ fn run_mock_direct_peer(cfg: &MockDirectUpload) -> std::io::Result<()> {
         cfg.token,
         &cfg.content,
     )
+    .map(|_| ())
 }
 
 #[test]
@@ -969,26 +1062,8 @@ fn a_file_downloads_from_a_peer_via_direct_connection() {
         )
         .expect("start download");
 
-    let mut completed = false;
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while Instant::now() < deadline {
-        match status_rx.recv_timeout(Duration::from_millis(500)) {
-            Ok(DownloadStatus::Completed) => {
-                completed = true;
-                break;
-            }
-            Ok(DownloadStatus::Failed(_) | DownloadStatus::TimedOut) => break,
-            _ => {}
-        }
-        if client
-            .get_all_downloads()
-            .iter()
-            .any(|d| matches!(d.status, DownloadStatus::Completed))
-        {
-            completed = true;
-            break;
-        }
-    }
+    let completed =
+        wait_for_completion(&client, &status_rx, Duration::from_secs(20));
     let _ = uploader.join();
 
     assert!(completed, "the direct download should reach Completed");
@@ -1074,6 +1149,7 @@ fn run_mock_firewalled_peer(cfg: &MockFirewalledUpload) -> std::io::Result<()> {
         cfg.token,
         &cfg.content,
     )
+    .map(|_| ())
 }
 
 #[test]
@@ -1128,26 +1204,8 @@ fn a_file_downloads_from_a_firewalled_peer_via_server_broker() {
         )
         .expect("start download");
 
-    let mut completed = false;
-    let deadline = Instant::now() + Duration::from_secs(25);
-    while Instant::now() < deadline {
-        match status_rx.recv_timeout(Duration::from_millis(500)) {
-            Ok(DownloadStatus::Completed) => {
-                completed = true;
-                break;
-            }
-            Ok(DownloadStatus::Failed(_) | DownloadStatus::TimedOut) => break,
-            _ => {}
-        }
-        if client
-            .get_all_downloads()
-            .iter()
-            .any(|d| matches!(d.status, DownloadStatus::Completed))
-        {
-            completed = true;
-            break;
-        }
-    }
+    let completed =
+        wait_for_completion(&client, &status_rx, Duration::from_secs(25));
     let _ = uploader.join();
 
     assert!(completed, "the firewalled download should reach Completed");
@@ -1229,26 +1287,8 @@ fn two_real_clients_search_and_download() {
         )
         .expect("start download");
 
-    let mut completed = false;
-    let deadline = Instant::now() + Duration::from_secs(25);
-    while Instant::now() < deadline {
-        match status_rx.recv_timeout(Duration::from_millis(500)) {
-            Ok(DownloadStatus::Completed) => {
-                completed = true;
-                break;
-            }
-            Ok(DownloadStatus::Failed(_) | DownloadStatus::TimedOut) => break,
-            _ => {}
-        }
-        if leecher
-            .get_all_downloads()
-            .iter()
-            .any(|d| matches!(d.status, DownloadStatus::Completed))
-        {
-            completed = true;
-            break;
-        }
-    }
+    let completed =
+        wait_for_completion(&leecher, &status_rx, Duration::from_secs(25));
     assert!(completed, "the download should complete");
 
     // The virtual path is backslash-separated; the saved file uses the basename.
