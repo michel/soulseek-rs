@@ -1,0 +1,26 @@
+name: Tap token probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report which candidate tokens are present and can reach the tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          RELEASE_PLZ_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          for name in HOMEBREW_TAP_TOKEN RELEASE_PLZ_TOKEN; do
+            value="${!name}"
+            if [ -z "$value" ]; then
+              echo "$name: empty"
+              continue
+            fi
+            echo "$name: present (${#value} chars)"
+            GH_TOKEN="$value" gh api repos/michel/homebrew-tap --jq '"  read ok"' \
+              || echo "  read FAILED"
+            GH_TOKEN="$value" gh workflow list --repo michel/homebrew-tap >/dev/null 2>&1 \
+              && echo "  actions read ok" || echo "  actions read FAILED"
+          done
