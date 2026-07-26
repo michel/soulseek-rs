@@ -316,9 +316,26 @@ impl Client {
                                     obfuscated_port
                                 );
 
-                                // Cache the address for the serve/search paths,
-                                // and collect any uploads waiting on it.
-                                let waiting_serves =
+                                // Port 0 is the server saying it does not know
+                                // where this user listens (no SetWaitPort yet,
+                                // or firewalled). It is not an address: caching
+                                // it poisons every later lookup, and an upload
+                                // dialled at it dies with "Can't assign
+                                // requested address" and is dropped on the
+                                // floor. Leave those uploads queued for a later
+                                // resolution instead.
+                                //
+                                // The connect attempt further down still runs:
+                                // its failure is exactly what makes an
+                                // unreachable peer fall back to the
+                                // server-brokered path.
+                                let waiting_serves = if port == 0 {
+                                    warn!(
+                                        "[client] server reports no listening port for {}",
+                                        username
+                                    );
+                                    Vec::new()
+                                } else {
                                     match client_context.write_safe() {
                                         Ok(mut ctx) => {
                                             ctx.cache_peer_address(
@@ -331,7 +348,8 @@ impl Client {
                                                 .unwrap_or_default()
                                         }
                                         Err(_) => Vec::new(),
-                                    };
+                                    }
+                                };
                                 for token in waiting_serves {
                                     Self::spawn_serve(
                                         &client_context,
@@ -432,7 +450,7 @@ impl Client {
 
                                     context.add_download(Download {
                                         username: username.clone(),
-                                        filename: transfer.filename,
+                                        filename: transfer.filename.clone(),
                                         token: transfer.token,
                                         size: transfer.size,
                                         download_directory: download
@@ -443,6 +461,24 @@ impl Client {
                                         metadata: download.metadata.clone(),
                                     });
                                     context.remove_download(old_token);
+                                }
+
+                                // Only now invite the file connection: it is
+                                // matched by this token, which is recorded as
+                                // of the line above. Answering any earlier
+                                // races the peer's connection against our own
+                                // bookkeeping.
+                                let registry = context.peer_registry.clone();
+                                drop(context);
+                                if let Some(registry) = registry {
+                                    let response =
+                                        crate::message::server::MessageFactory::build_transfer_response_message(
+                                            transfer,
+                                        );
+                                    let _ = registry.send_to_peer(
+                                        &username,
+                                        PeerMessage::SendMessage(response),
+                                    );
                                 }
                             }
                             ClientOperation::UploadFailed(

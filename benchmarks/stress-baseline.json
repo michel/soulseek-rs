@@ -1,0 +1,23 @@
+{
+  "score": 97.39,
+  "parts": {
+    "downloads": 1.0000,
+    "uploads": 1.0000,
+    "searches": 1.0000,
+    "browses": 1.0000,
+    "throughput": 0.8257
+  },
+  "load": {
+    "peers": 1024,
+    "searches": 128,
+    "downloads": 512,
+    "leechers": 256,
+    "browses": 128,
+    "file_bytes": 4194304
+  },
+  "observed": {
+    "downloads_completed": 512,
+    "uploads_completed": 256,
+    "bytes": 3221225472
+  }
+}

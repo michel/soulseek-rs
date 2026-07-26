@@ -19,7 +19,7 @@ use crate::{
     },
     shares::Shares,
     types::{Download, Search, SearchResult},
-    utils::{lock::RwLockExt, md5, thread_pool::ThreadPool},
+    utils::{lock::RwLockExt, md5},
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -65,11 +65,23 @@ fn next_connect_token() -> u32 {
 }
 
 /// Upload tokens are minted in the high half of the space so they never collide
-/// with download tokens (md5-derived, always < 2^20).
+/// with download tokens, which are always < 2^31.
 static NEXT_UPLOAD_TOKEN: AtomicU32 = AtomicU32::new(0x8000_0000);
 
 fn next_upload_token() -> u32 {
     NEXT_UPLOAD_TOKEN.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Source of download tokens, kept in the low half of the space.
+///
+/// A counter, not a hash of the filename: the download store is keyed by token
+/// and removes every entry matching one, so any two downloads sharing a token
+/// destroy each other — and the same filename from two peers is an ordinary
+/// thing to queue.
+static NEXT_DOWNLOAD_TOKEN: AtomicU32 = AtomicU32::new(1);
+
+fn next_download_token() -> u32 {
+    NEXT_DOWNLOAD_TOKEN.fetch_add(1, Ordering::Relaxed) % 0x8000_0000
 }
 
 /// A file we have agreed to serve to a peer, awaiting their TransferResponse.
@@ -386,11 +398,7 @@ impl ClientContext {
 impl ClientContext {
     #[must_use]
     pub fn new() -> Self {
-        let max_threads =
-            thread::available_parallelism().map_or(8, std::num::NonZero::get);
-
-        let thread_pool = Arc::new(ThreadPool::new(max_threads));
-        let actor_system = Arc::new(ActorSystem::new(thread_pool));
+        let actor_system = Arc::new(ActorSystem::new());
 
         Self {
             peer_registry: None,
