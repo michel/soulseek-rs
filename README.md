@@ -11,15 +11,14 @@ there.**
 Search the network, share your files, browse someone's collection, join a room.
 It runs over ssh on the machine where your music already lives.
 
-Soulseek is a closed-source P2P file-sharing network from the 2000s, still used
-by music enthusiasts around the world to share niche music. This repository is
-that client plus [`soulseek-rs-lib`](./soulseek-rs-lib), the protocol library it
-is built on.
+Soulseek is a closed-source P2P network from the 2000s, still used by music
+enthusiasts to share niche music. This repository is that client plus
+[`soulseek-rs-lib`](./soulseek-rs-lib), the protocol library under it.
 
 **[re-invention.nl/soulseek-rs](https://re-invention.nl/soulseek-rs/)**: what it
 does, how to install it, and every `config.toml` setting.
 
-## 🎥 Demo
+## Demo
 
 [![soulseek-rs TUI demo](fixtures/demo.svg)](https://re-invention.nl/soulseek-rs/)
 
@@ -36,41 +35,31 @@ does, how to install it, and every `config.toml` setting.
   connections when a peer can't be reached directly
 - **Automatic port mapping**: opens your listen port via UPnP-IGD and
   NAT-PMP, with a `portmap` subcommand to test your router
-- **TUI and CLI**: a full terminal interface, plus a one-shot command surface
-  built for scripts and agents, where every feature is reachable without a
-  terminal, stdout carries records only, and the exit code says what happened
+- **TUI and CLI**: a full terminal interface, plus one-shot commands for
+  scripts and agents: every feature reachable without a terminal, stdout
+  carrying records, the exit code saying what happened
 
 ## Project Goals
 
-This project is a learning exercise to explore Rust. I've been using Soulseek
-since the early 2000s, so it's close to my heart, and the Soulseek protocol is
-a closed-source network protocol that provides a great opportunity to learn
-about asynchronous and concurrent network programming and reverse engineering
+A learning exercise in Rust. I've been on Soulseek since the early 2000s, and
+its closed-source protocol is a good way to learn asynchronous network
+programming and reverse engineering.
 
-Since it's a learning project, I have a self-imposed restriction not to use
-external dependencies in the library. This means I can't use any external
-crates that are not part of the Rust standard library. This is a good challenge
-to learn how to build complex systems with only the standard library.
-
-In the client crate, external dependencies are allowed for building a rich
-experience. For me, this is a good balance between learning and practicality.
+The library stays lean on dependencies and has none today; the client takes
+them freely.
 
 ## Planned Features
 
-- [ ] Headless mode daemon mode with remote control
+- [ ] Headless daemon mode with remote control
 
 ## Project Structure
 
-This project is organized as a Cargo workspace with two crates:
+A Cargo workspace with two crates:
 
-- **soulseek-rs-lib** - The core library implementing the Soulseek protocol
-- **soulseek-rs** - A CLI client built on top of the library
-
-This structure allows:
-
-- Other developers to build custom Soulseek clients using `soulseek-rs-lib`
-- Users to install the ready-made client with Homebrew or `cargo install`
-- Clean separation of concerns between protocol implementation and user interface
+- **soulseek-rs-lib** - the protocol implementation, for anyone building their
+  own client
+- **soulseek-rs** - the client built on it, installable with Homebrew or
+  `cargo install`
 
 ## Installation
 
@@ -98,7 +87,7 @@ cd soulseek-rs
 cargo build --release
 ```
 
-The binary will be available at `target/release/soulseek-rs`.
+The binary lands at `target/release/soulseek-rs`.
 
 ### For Library Users
 
@@ -168,10 +157,9 @@ first: the config commands need no account at all, and `whoami` answers
 
 Eleven of these need no credentials, because they never touch the network:
 `config path|list|get|set`, `shares list|add|remove`, `portmap` and
-`skills install|uninstall|list`. Note that
-`shares status` and `shares reindex` are not among them, because they report
-what the network will actually see, which means logging in and letting the
-library scan the folders.
+`skills install|uninstall|list`. `shares status` and `shares reindex` are not
+among them: they report what the network will see, which means logging in and
+scanning the folders.
 
 Every command emits records except the four that perform an action.
 `room say`, `message send`, `shares add` and `shares remove` say nothing on
@@ -207,10 +195,9 @@ the message field empty. `serve`'s `status` is `uploading`, `completed`,
 `cancelled` or `failed`. `user`'s `status` is `online`, `away` or `offline`,
 and any field the server did not answer prints as `-`.
 
-`--json` carries more than text does, because an object has room for fields a
-column layout does not: `search` adds `duration`, `slots`, `speed` and
-`free_slot`; `browse` adds `directory`; `download` adds the `user`, remote
-`path` and `size` alongside the local `file`; `whoami` adds `listening`,
+`--json` carries more than text does: `search` adds `duration`, `slots`,
+`speed` and `free_slot`; `browse` adds `directory`; `download` adds the `user`,
+remote `path` and `size` alongside the local `file`; `whoami` adds `listening`,
 `listen_port` and `download_dir`; `user` adds `privileged` and
 `shared_folders`; `shares status` adds the `directories` array; `serve` adds
 `bytes_sent`, `size`, `speed` and a `reason` on failure; `portmap` adds
@@ -260,10 +247,10 @@ soulseek-rs user someuser --json | jq -e '.status != "offline"'
 
 [![an agent loading the soulseek-rs skill and downloading tracks](website/public/agent-demo.svg)](https://re-invention.nl/soulseek-rs/#agents)
 
-The scriptable surface above is meant to be driven by coding agents as much as
-by shell scripts, but `--help` cannot tell an agent which JSON keys a record
-carries or what exit 4 means. That lives in a skill file shipped inside the
-binary, so a `cargo install` is all you need to hand it to your agent:
+Coding agents drive the surface above as readily as shell scripts do, but
+`--help` cannot tell an agent which JSON keys a record carries or what exit 4
+means. That lives in a skill file shipped inside the binary, so `cargo install`
+is all it takes to hand it over:
 
 ```bash
 soulseek-rs skills install
@@ -301,16 +288,16 @@ seconds (an hour by default), or runs until interrupted with `--follow`.
 
 ```bash
 soulseek-rs shares add ~/Music     # remembered in config.toml
-soulseek-rs shares status          # what the network will actually see
+soulseek-rs shares status          # what the network will see
 soulseek-rs shares reindex         # after adding files on disk
 soulseek-rs serve --follow
 ```
 
-Uploads are only visible inside a running `serve`, because every other command
-is a short-lived process with nothing to serve, so there is no separate
-`uploads list`. Managing transfers across commands (pause, resume, a queue
-that outlives one invocation) needs the resident daemon that `serve` would
-grow into; it is not there yet.
+Uploads only show up inside a running `serve`; every other command is
+short-lived with nothing to serve, so there is no `uploads list`. Managing
+transfers across commands (pause, resume, a queue that outlives one
+invocation) needs the resident daemon `serve` would grow into, which is not
+there yet.
 
 Downloads run under a deadline (`--timeout`, 300s by default) and
 `--max-concurrent-downloads` at a time, so an unattended run always ends.
@@ -387,7 +374,7 @@ In the interactive TUI:
 
 - press `m` to compose, then type `<recipient> <message>` and `Enter` to send;
 - press `i` to open the inbox popup listing sent and received messages
-  (incoming messages arrive automatically while the TUI is open). The `i`
+  (the TUI receives incoming messages while it is open). The `i`
   shortcut shows an unread counter, e.g. `i inbox (3)`.
 
 ### Chat rooms
@@ -416,20 +403,20 @@ In the interactive TUI, press `c` to open the chat-rooms popup:
 
 Browsing and downloading are peer-to-peer, so at least one side must accept an
 incoming connection. When the listener is enabled (the default), the client
-**automatically tries to open its listen port** on your router via **UPnP-IGD**
-and **NAT-PMP**, so firewalled peers and the server can connect back to you.
-This is best-effort: if your router has UPnP/NAT-PMP disabled it's a no-op and
-you'll see a log line suggesting you forward the port manually.
+tries to open its listen port on your router via **UPnP-IGD** and **NAT-PMP**,
+so firewalled peers and the server can connect back. This is best-effort: if
+your router has UPnP/NAT-PMP disabled it's a no-op, and a log line tells you to
+forward the port yourself.
 
 - The mapped/forwarded port is your `--listener-port` (env
-  `SOULSEEK_LISTENER_PORT`, default `2234`); it is renewed automatically and
-  removed on exit.
-- If auto-mapping can't get that exact port, forward **TCP 2234** (or whatever
+  `SOULSEEK_LISTENER_PORT`, default `2234`); the client renews it while it runs
+  and removes it on exit.
+- If auto-mapping can't get that port, forward **TCP 2234** (or whatever
   `--listener-port` you chose) to this machine on your router.
 - Pass `--no-listener` to turn the listener (and port mapping) off, or
   `--listener` to force it on when the config file disables it.
 
-Check whether it works on **your** network without launching the whole client:
+Check whether it works on your network without launching the whole client:
 
 ```bash
 soulseek-rs portmap            # exits 0 when mapping works, 4 when it does not
@@ -447,27 +434,10 @@ bug.
 
 ## Development
 
-To run the project in development mode with debug output and trace output:
-
 ```bash
-RUST_LOG=trace cargo run
-```
-
-To run the tests:
-
-```bash
+RUST_LOG=trace cargo run   # run with debug and trace output
 cargo test
-```
-
-To run the linter:
-
-```bash
 cargo clippy
-```
-
-To run the formatter:
-
-```bash
 cargo fmt
 ```
 
@@ -501,8 +471,8 @@ SOULFIND_BIN=/path/to/soulfind/bin/soulfind \
 > Homebrew's SQLite instead; no patching needed.
 
 Set `SOULSEEK_E2E_REQUIRED=1` to turn a missing server into a hard failure
-instead of a skip. Continuous integration sets it so the e2e suite genuinely
-runs against a freshly built soulfind rather than silently skipping.
+instead of a skip. CI sets it, so the e2e suite runs against a freshly built
+soulfind instead of skipping.
 
 ### Continuous integration
 
@@ -517,5 +487,4 @@ runs against a freshly built soulfind rather than silently skipping.
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](./LICENSE)
-file for details.
+MIT. See [LICENSE](./LICENSE).
