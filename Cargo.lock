@@ -2483,7 +2483,7 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
 name = "soulseek-rs"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "chrono",
  "clap",
@@ -2503,7 +2503,7 @@ dependencies = [
 
 [[package]]
 name = "soulseek-rs-lib"
-version = "11.0.0"
+version = "12.0.0"
 
 [[package]]
 name = "stable_deref_trait"
