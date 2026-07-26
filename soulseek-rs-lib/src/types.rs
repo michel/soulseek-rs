@@ -399,3 +399,62 @@ pub struct UploadInfo {
     /// download does. Zero unless the upload is in progress.
     pub speed_bytes_per_sec: f64,
 }
+
+/// Why a server session ended before the client was done with it.
+///
+/// A session that ends stops seeing the network entirely, which is not the
+/// same thing as the network having nothing to show — telling the two apart is
+/// the difference between "retry" and "give up".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SessionLoss {
+    /// Another login claimed this username. The server keeps one session per
+    /// name, so the older one is cut off.
+    Displaced = 1,
+    /// The connection to the server dropped.
+    Disconnected = 2,
+}
+
+impl std::fmt::Display for SessionLoss {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Displaced => f.write_str(
+                "another login took over this username; the server allows one \
+                 session per account",
+            ),
+            Self::Disconnected => {
+                f.write_str("the connection to the server dropped")
+            }
+        }
+    }
+}
+
+/// A lock-free view, shared with the server actor, of whether the session is
+/// still alive.
+///
+/// The first loss recorded wins: a displaced session also drops its socket a
+/// moment later, and "displaced" is the reason worth reporting.
+#[derive(Debug, Clone, Default)]
+pub struct SessionWatch(std::sync::Arc<std::sync::atomic::AtomicU8>);
+
+impl SessionWatch {
+    const LIVE: u8 = 0;
+
+    pub fn record(&self, loss: SessionLoss) {
+        let _ = self.0.compare_exchange(
+            Self::LIVE,
+            loss as u8,
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+
+    #[must_use]
+    pub fn loss(&self) -> Option<SessionLoss> {
+        match self.0.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => Some(SessionLoss::Displaced),
+            2 => Some(SessionLoss::Disconnected),
+            _ => None,
+        }
+    }
+}

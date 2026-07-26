@@ -33,6 +33,6 @@ pub use error::{Result, SoulseekRs};
 pub use message::peer::SharedDirectory;
 pub use types::{
     ClientVersion, DownloadStatus, File, RoomEvent, RoomInfo, Search,
-    SearchResult, Transfer, UploadInfo, UploadStatus, UserInfo, UserPresence,
-    UserStats, UserStatus,
+    SearchResult, SessionLoss, Transfer, UploadInfo, UploadStatus, UserInfo,
+    UserPresence, UserStats, UserStatus,
 };

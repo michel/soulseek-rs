@@ -31,7 +31,7 @@ Examples:
 
 Exit codes:
   0 success   2 usage/config   3 connect or login   4 no results
-  5 timed out   6 transfer failed   1 unexpected error";
+  5 timed out   6 transfer failed   7 session lost   1 unexpected error";
 
 #[derive(Parser, Debug, Default)]
 #[command(

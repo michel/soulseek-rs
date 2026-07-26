@@ -38,6 +38,7 @@ that form; the columns are a subset of the JSON keys.
 | 4 | It worked and found nothing | Widen or correct the query — retrying it verbatim will not help |
 | 5 | Gave up waiting | Raise `--timeout`, or `--search-timeout` for searches |
 | 6 | A transfer started and did not finish | The peer stalled; try another result |
+| 7 | The session ended mid-command (usually another login took the username) | Nothing this run saw is reliable; retry, and give each concurrent run its own `--username` |
 
 ## Commands
 
@@ -148,6 +149,22 @@ soulseek-rs user someuser --json
 `download --stdin` reads whole records, so filtering with `jq` and piping back
 is the normal way to be selective.
 
+## Running several at once
+
+The server allows one session per account, and the later login wins: two runs
+sharing a username silently kill each other's session. Give every concurrent
+run its own name.
+
+```bash
+for q in 'gary beck fold' 'marcal steady'; do
+  soulseek-rs search "$q" --username "$SOULSEEK_USERNAME-$RANDOM" --json &
+done
+wait
+```
+
+The listener port needs no such care: a run that finds the configured port
+taken binds a free one and tells the server about that one instead.
+
 ## Rules
 
 - **Remote paths belong to the peer.** They are backslash-separated and may
@@ -159,6 +176,8 @@ is the normal way to be selective.
   searches. There is no unbounded form.
 - **Exit 4 is not a failure.** A search that finds nothing means the query was
   too narrow or misspelled. Widen it; use `whoami` to rule out the connection.
+- **Exit 7 is not an answer.** The session ended mid-command, so nothing it saw
+  counts. Retry under a name no other run is using.
 - **Never put a password in argv** — `ps` shows it to every user on the box.
   Use `--password-stdin`, the OS keychain, or `SOULSEEK_PASSWORD_CMD`.
 - **Downloading pulls a file off a stranger's machine.** Confirm with the user

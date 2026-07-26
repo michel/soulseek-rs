@@ -135,6 +135,7 @@ The one-shot commands follow three rules, so they compose with other tools:
 | 4    | the command worked but found nothing                       |
 | 5    | timed out waiting for a response or a transfer             |
 | 6    | a transfer started but did not finish                      |
+| 7    | the session ended mid-command; nothing it saw is reliable  |
 
 #### Commands
 
@@ -464,6 +465,10 @@ forward the port yourself.
   `--listener-port` you chose) to this machine on your router.
 - Pass `--no-listener` to turn the listener (and port mapping) off, or
   `--listener` to force it on when the config file disables it.
+- If another process on this machine already holds that port — the usual case
+  when several one-shot commands run at once — the client takes one the OS
+  picks instead, says so on stderr, and advertises and maps that one. `whoami`
+  reports the port it really holds.
 
 Check whether it works on your network without launching the whole client:
 

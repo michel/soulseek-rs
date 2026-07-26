@@ -39,8 +39,14 @@ impl MessageReader {
     ) -> io::Result<()> {
         let mut temp_buffer = [0; 1024]; // Temporary buffer for reading from the socket
         let bytes_read = stream.read(&mut temp_buffer)?;
+        // On a TCP socket a zero-byte read is the other end hanging up. Passing
+        // that back as success left the caller polling a dead socket forever,
+        // which is how a server that closes cleanly went unnoticed.
         if bytes_read == 0 {
-            return Ok(());
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "the remote end closed the connection",
+            ));
         }
 
         // Add the read bytes to the internal buffer
@@ -120,5 +126,33 @@ mod tests {
 
         assert!(buffered_reader.buffer.is_empty());
         assert_eq!(vec![1, 2, 3], rest);
+    }
+
+    /// A hangup has to reach the caller as an error. Reported as success it
+    /// leaves the actors polling a socket that will never speak again, which is
+    /// how a server that closed cleanly went unnoticed.
+    #[test]
+    fn a_closed_connection_reads_as_an_error_not_as_success() {
+        use std::io::Write;
+        use std::net::{TcpListener, TcpStream};
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut ours = TcpStream::connect(addr).unwrap();
+        let (mut theirs, _) = listener.accept().unwrap();
+
+        theirs.write_all(&[1, 2, 3]).unwrap();
+        theirs.flush().unwrap();
+        drop(theirs);
+
+        let mut reader = MessageReader::new();
+        // Whatever was sent before the close still arrives.
+        while reader.buffer_len() < 3 {
+            reader.read_from_socket(&mut ours).unwrap();
+        }
+        let error = reader
+            .read_from_socket(&mut ours)
+            .expect_err("a closed connection is not a successful read");
+        assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
     }
 }

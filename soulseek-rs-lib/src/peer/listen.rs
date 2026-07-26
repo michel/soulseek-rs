@@ -36,20 +36,11 @@ fn read_peer_init_message(
     reader: &mut MessageReader,
 ) -> io::Result<Message> {
     // An untrusted peer gets a bounded handshake. Without this a peer that
-    // connects and stays silent parks this read forever, and one that hangs up
-    // spins it (a zero-byte read is EOF, which `read_from_socket` reports as
-    // success) — either way pinning a thread that owes us a peer init.
+    // connects and stays silent parks this read forever, pinning a thread that
+    // owes us a peer init.
     stream.set_read_timeout(Some(PEER_INIT_TIMEOUT))?;
     let message = loop {
-        let buffered = reader.buffer_len();
         reader.read_from_socket(stream)?;
-        if reader.buffer_len() == buffered {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "peer closed before sending a peer init",
-            ));
-        }
-
         if let Ok(Some(msg)) = reader.extract_message() {
             break msg;
         }
@@ -374,16 +365,34 @@ fn handle_incoming_connection(stream: TcpStream, context: ConnectionContext) {
 pub struct Listen {}
 
 impl Listen {
-    pub fn start(
-        port: u16,
+    /// Take the peer-listening socket, falling back to a port the operating
+    /// system picks when the configured one is already held.
+    ///
+    /// Several clients on one machine share one configured port, and losing
+    /// the race for it must not cost a session its listener: an unreachable
+    /// client is one that never receives search responses or transfers. The
+    /// caller advertises [`TcpListener::local_addr`], so peers are always told
+    /// the port that was really bound.
+    pub fn bind(port: u16) -> io::Result<TcpListener> {
+        match TcpListener::bind(("0.0.0.0", port)) {
+            Err(e) if e.kind() == io::ErrorKind::AddrInUse && port != 0 => {
+                info!(
+                    "[listener] port {port} is taken, falling back to an \
+                     ephemeral port"
+                );
+                TcpListener::bind(("0.0.0.0", 0))
+            }
+            other => other,
+        }
+    }
+
+    pub fn serve(
+        listener: &TcpListener,
         client_sender: Sender<ClientOperation>,
         client_context: Arc<RwLock<ClientContext>>,
         own_username: String,
     ) {
-        info!("[listener] starting listener on port {port}");
-
-        let listener = TcpListener::bind(format!("0.0.0.0:{port}"))
-            .expect("Failed to bind listener to port");
+        info!("[listener] listening on {:?}", listener.local_addr());
 
         let context = ConnectionContext {
             client_sender,
