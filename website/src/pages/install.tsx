@@ -58,8 +58,8 @@ const INSTALLS: readonly InstallRoute[] = [
     ],
     alt: (
       <>
-        A prebuilt binary for both Apple silicon and Intel, so no Rust toolchain. With one
-        installed, <Code>cargo install soulseek-rs</Code> builds it from crates.io instead.
+        A prebuilt binary for Apple silicon and Intel, no Rust toolchain needed. With a
+        toolchain, <Code>cargo install soulseek-rs</Code> builds from crates.io instead.
       </>
     ),
   },
@@ -116,7 +116,7 @@ const PLATFORMS: readonly PlatformNote[] = [
     config: '~/.config/soulseek-rs/config.toml',
     state: '~/.local/share/soulseek-rs/state',
     downloads: '~/Downloads/Soulseek',
-    note: 'macOS deliberately follows the XDG layout rather than Application Support, so config sits beside your other dotfile config.',
+    note: 'Follows the XDG layout rather than Application Support.',
   },
   {
     id: 'linux',
@@ -185,9 +185,9 @@ const SETTINGS: readonly Setting[] = [
     fallback: 'the download folder',
     body: (
       <>
-        Folders offered to the network, as a list. An explicitly empty list shares
-        nothing. <code>shared_dir</code> is the older single-folder spelling and still
-        reads; <code>shares add</code> writes the list form.
+        Folders offered to the network. An empty list shares nothing.{' '}
+        <code>shares add</code> writes this; the older <code>shared_dir</code> spelling
+        still reads.
       </>
     ),
   },
@@ -388,9 +388,10 @@ export const Install = () => {
             </p>
             <p>
               The port is your <Code>--listener-port</Code> (env{' '}
-              <Code>SOULSEEK_LISTENER_PORT</Code>, default <Code>2234</Code>); it&rsquo;s
-              renewed automatically and removed on exit. Pass <Code>--no-listener</Code> to
-              turn it off. Check your own network without launching the client:
+              <Code>SOULSEEK_LISTENER_PORT</Code>, default <Code>2234</Code>); soulseek-rs
+              renews it while it runs and removes it on exit. Pass{' '}
+              <Code>--no-listener</Code> to turn it off. Check your own network without
+              launching the client:
             </p>
             <div className="mt-4">
               <Terminal
@@ -460,27 +461,24 @@ export const Install = () => {
 
         <Cols start className="mt-7">
           <FeatureCard title="Secrets">
-            Your password goes to the OS keychain, never a plain-text file. If you would
-            rather it never be stored at all, have <code>password_cmd</code> shell out to
-            your own password manager and print it on demand. For CI and containers,{' '}
+            Your password goes to the OS keychain, never a plain-text file. Point{' '}
+            <code>password_cmd</code> at your own password manager and it is never stored
+            at all. For CI and containers,{' '}
             <code>--password-stdin</code> reads it off a pipe so it never reaches{' '}
             <code>ps</code> or the environment.
           </FeatureCard>
           <FeatureCard title="Settings and state">
             <code>config.toml</code> is layered: flags beat environment variables, which
-            beat the file, which beats the defaults. <code>config get</code> and{' '}
-            <code>config set</code> read and write that file without opening an editor.
-            State (searches, downloads, rooms) is versioned JSON and restores on restart;
-            anything unreadable is set aside as <code>.bak</code> instead of being
-            overwritten.
+            beat the file, which beats the defaults. State (searches, downloads, rooms) is
+            versioned JSON and restores on restart; soulseek-rs sets anything unreadable
+            aside as <code>.bak</code> rather than overwriting it.
           </FeatureCard>
         </Cols>
       </Section>
 
       <Section id="config">
         <SectionHead eyebrow="config.toml" title="Nine settings, all optional.">
-          Every one has a working default, so an empty file — or no file — is valid. Flags
-          beat environment variables, which beat this file, which beats the defaults.{' '}
+          Every one has a working default, so an empty file, or no file at all, is valid.{' '}
           <Code>config list</Code> prints the effective value of each.
         </SectionHead>
         <Cols start>
@@ -509,10 +507,10 @@ export const Install = () => {
             <Callout title="editing it without an editor">
               <p>
                 <Code>config path</Code> prints the file in use, <Code>config get</Code>{' '}
-                reads one setting and <Code>config set</Code> writes one. Unknown keys are
-                rejected rather than silently ignored, so a typo fails loudly instead of
-                quietly doing nothing. <Code>--no-config</Code> ignores the file entirely
-                and <Code>--config FILE</Code> points at another one.
+                reads one setting and <Code>config set</Code> writes one. It rejects
+                unknown keys, so a typo fails instead of doing nothing.{' '}
+                <Code>--no-config</Code> ignores the file entirely and{' '}
+                <Code>--config FILE</Code> points at another one.
               </p>
             </Callout>
           </div>
@@ -521,9 +519,8 @@ export const Install = () => {
 
       <Section band>
         <SectionHead eyebrow="uninstall" title="Removing it completely.">
-          Three things exist on disk: the binary, the config, and the state. Nothing else is
-          written unless you pointed <Code>--log-file</Code> at a file, and there is no
-          telemetry to opt out of.
+          Three things exist on disk: the binary, the config, and the state. Nothing else,
+          unless you point <Code>--log-file</Code> somewhere. No telemetry to opt out of.
         </SectionHead>
         <Cols start>
           <Terminal
@@ -555,8 +552,8 @@ export const Install = () => {
         <div className="mt-5">
           <Callout className="bg-raised" title="two things it will not touch">
             <p>
-              Your downloads and your shared directories are yours: they stay exactly where
-              they are. On macOS, delete the keychain entry for <code>soulseek-rs</code> in
+              Your downloads and your shared directories are yours: they stay where they
+              are. On macOS, delete the keychain entry for <code>soulseek-rs</code> in
               Keychain Access if you saved a password.
             </p>
           </Callout>

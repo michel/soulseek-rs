@@ -97,13 +97,13 @@ export const Docs = () => {
           />
           <Prose>
             <p>
-              On first run soulseek-rs shows a login screen: sign in with an existing
-              Soulseek account or register a new one, right in the TUI. Your password is
-              stored in the OS keychain, not in plain text.
+              On first run you get a login screen: sign in with an existing Soulseek
+              account or register a new one. Your password goes to the OS keychain, not a
+              plain-text file.
             </p>
             <p>
-              Downloads land in a conventional folder by default, and your TUI state
-              (searches, downloads, rooms) is saved and restored across restarts.
+              Downloads land in a conventional folder, and TUI state (searches, downloads,
+              rooms) is restored across restarts.
             </p>
           </Prose>
         </Cols>
@@ -202,7 +202,7 @@ export const Docs = () => {
           <Callout title="give it to your agent">
             <p>
               <Code>soulseek-rs skills install</Code> writes a <Code>SKILL.md</Code> into
-              every coding agent on the machine — Claude Code and opencode today,{' '}
+              every coding agent on the machine: Claude Code and opencode today,{' '}
               <Code>--dir</Code> for anything else. After it lands you describe the
               outcome instead of the pipeline: &ldquo;mirror that peer&rsquo;s FLAC
               folder&rdquo;, &ldquo;watch this room for an hour and save anything
@@ -210,9 +210,7 @@ export const Docs = () => {
             </p>
             <p>
               It carries what <Code>--help</Code> cannot: the JSON keys of every record,
-              that exit 4 means widen the query rather than retry it, that remote paths go
-              back byte-identical, and that <Code>--follow</Code> never returns so an agent
-              passes <Code>--duration</Code>. Run it again after an upgrade to update it;{' '}
+              and what each exit code means. Rerun it after an upgrade;{' '}
               <Code>skills uninstall</Code> takes it back out.
             </p>
           </Callout>
@@ -233,8 +231,8 @@ export const Docs = () => {
           <Cols center className="gap-6">
             <Prose>
               <p>
-                Deeper docs live where they stay current: the full README on GitHub, and the
-                generated API reference for the library on docs.rs.
+                The README on GitHub and the library API reference on docs.rs stay current
+                with the code.
               </p>
             </Prose>
             <div className="flex flex-wrap gap-2 sm:gap-3">
