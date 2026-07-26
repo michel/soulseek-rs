@@ -15,14 +15,14 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-soulseek-rs-lib = "7"
+soulseek-rs-lib = "8"
 ```
 
 ## Example
 
 ### Simple Usage
 
-```rust
+```rust,no_run
 use soulseek_rs::Client;
 use std::time::Duration;
 
@@ -59,7 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Advanced Configuration
 
-```rust
+```rust,no_run
 use soulseek_rs::{Client, ClientSettings, PeerAddress};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -85,7 +85,7 @@ The server-backed lookups are request/poll pairs: you ask, then read the
 answer once it lands. `request_user_info` clears any previous answer first, so
 the loop below observes this request rather than the last one.
 
-```rust
+```rust,no_run
 use soulseek_rs::Client;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
