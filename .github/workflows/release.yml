@@ -132,15 +132,17 @@ jobs:
   # existing tag when dispatched manually with `tag` (recovering a target that
   # failed to upload needs a re-run of *this* file, not the old one).
   #
-  # Gated on the resolved tag rather than on `created`/`inputs.tag`: the
-  # `inputs` context reads as empty in a job-level `if` (it only resolves inside
-  # a step), which silently skipped every manual rebuild. `Resolve tag` already
-  # folds both paths into one validated value, so this is also the single place
-  # that decides whether there is anything to build.
+  # Gated on the resolved tag, which `Resolve tag` has already folded both paths
+  # into and validated, so this is the single place deciding whether there is
+  # anything to build. `!cancelled()` is load-bearing: on a manual dispatch
+  # ci-gate is skipped, and that skip propagates down the whole needs graph —
+  # past `release`, which only survives it via its own always() — so without a
+  # status function here every manual rebuild was skipped no matter what the
+  # rest of the condition said.
   binaries:
     name: ${{ matrix.target }}
     needs: release
-    if: needs.release.outputs.tag != ''
+    if: ${{ !cancelled() && needs.release.outputs.tag != '' }}
     runs-on: ${{ matrix.os }}
     strategy:
       # One flaky cross-linker must not hold back the five targets that built.
@@ -198,7 +200,8 @@ jobs:
   # dispatch fails (expired token, tap outage) rather than as the mechanism.
   tap:
     name: Update Homebrew tap
-    needs: [release, binaries]
+    needs: binaries
+    if: ${{ !cancelled() && needs.binaries.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Dispatch the tap's formula workflow
