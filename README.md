@@ -149,17 +149,18 @@ soulseek-rs shares list|add|remove|status|reindex
 soulseek-rs config path|list|get|set
 soulseek-rs portmap                       # test automatic port mapping
 soulseek-rs skills install|uninstall|list # teach a coding agent this CLI
+soulseek-rs completions install|uninstall # tab completion for bash/zsh/fish
 ```
 
 `whoami`, `config` and `shares list|add|remove` are the ones a script runs
 first: the config commands need no account at all, and `whoami` answers
 "are these credentials good and what am I offering" in one call.
 
-Eleven of these need no credentials, because they never touch the network:
-`config path|list|get|set`, `shares list|add|remove`, `portmap` and
-`skills install|uninstall|list`. `shares status` and `shares reindex` are not
-among them: they report what the network will see, which means logging in and
-scanning the folders.
+Thirteen of these need no credentials, because they never touch the network:
+`config path|list|get|set`, `shares list|add|remove`, `portmap`,
+`skills install|uninstall|list` and `completions install|uninstall`.
+`shares status` and `shares reindex` are not among them: they report what the
+network will see, which means logging in and scanning the folders.
 
 Every command emits records except the four that perform an action.
 `room say`, `message send`, `shares add` and `shares remove` say nothing on
@@ -277,6 +278,30 @@ the skill next to a project so everyone working on it gets the same brief:
 soulseek-rs skills install --dir ~/.config/some-agent/skills
 soulseek-rs skills install --dir .claude/skills   # commit it with the repo
 ```
+
+### Shell completions
+
+Tab completion is generated from the same `clap` definition the binary parses
+with, so it never drifts from `--help`:
+
+```bash
+soulseek-rs completions install
+```
+
+That covers whichever of bash, zsh and fish this machine uses, writing each
+script where that shell already looks — `~/.config/fish/completions` is scanned
+unprompted, while bash and zsh also get one marked `source` line appended to
+`~/.bashrc` or `~/.zshrc`, because nothing else puts a per-user directory on
+their search path. Open a new shell and `soulseek-rs sh<TAB>` completes.
+
+```
+installed   zsh    /home/you/.local/share/zsh/site-functions/_soulseek-rs
+installed   fish   /home/you/.config/fish/completions/soulseek-rs.fish
+```
+
+`completions uninstall` removes the scripts and takes back exactly the lines it
+added, leaving the rest of your rc file alone. Pass `--shell bash` (repeatable)
+to act on one shell rather than the ones detected.
 
 ### Sharing
 

@@ -27,6 +27,7 @@ Examples:
   soulseek-rs serve --follow --json             share files, stream upload events
   soulseek-rs user someuser                     is this peer online and worth it
   soulseek-rs skills install                    teach your coding agent this CLI
+  soulseek-rs completions install               tab completion for your shell
 
 Exit codes:
   0 success   2 usage/config   3 connect or login   4 no results
@@ -198,6 +199,35 @@ pub enum Commands {
     /// Teach a local coding agent this command surface
     #[command(subcommand)]
     Skills(SkillsCommand),
+
+    /// Tab completion for bash, zsh, and fish
+    #[command(subcommand)]
+    Completions(CompletionsCommand),
+}
+
+#[derive(Subcommand, Debug)]
+pub enum CompletionsCommand {
+    /// Write the completion script where the shell looks for it
+    Install(CompletionsArgs),
+
+    /// Remove the completion script again
+    Uninstall(CompletionsArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct CompletionsArgs {
+    /// Shell to act on instead of the ones found on this machine; repeat for
+    /// several
+    #[arg(long, value_enum, action = ArgAction::Append)]
+    pub shell: Vec<Shell>,
+}
+
+/// The shells with a conventional per-user completions location.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum Shell {
+    Bash,
+    Zsh,
+    Fish,
 }
 
 #[derive(Subcommand, Debug)]

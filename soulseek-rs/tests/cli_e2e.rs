@@ -93,8 +93,15 @@ fn help_lists_every_scriptable_command() {
     assert_eq!(code(&output), EXIT_OK);
     let help = stdout(&output);
     for command in [
-        "search", "download", "get", "browse", "room", "message", "portmap",
+        "search",
+        "download",
+        "get",
+        "browse",
+        "room",
+        "message",
+        "portmap",
         "skills",
+        "completions",
     ] {
         assert!(help.contains(command), "--help should mention {command}");
     }
@@ -331,6 +338,51 @@ fn listing_skills_reports_without_writing_anything() {
         !target.path().join("soulseek-rs").exists(),
         "list must not create anything"
     );
+}
+
+/// fish is the shell the whole round trip can be driven for on every platform:
+/// its completions directory hangs off `XDG_CONFIG_HOME`, so nothing outside
+/// the scratch directory is read or written. bash and zsh also append a line
+/// to a real rc file under `$HOME`, which is not a thing to point a test at on
+/// Windows — the unit tests cover that half.
+#[test]
+fn installing_completions_is_repeatable_and_reversible() {
+    let target = Scratch::new("completions");
+    let installed = target
+        .path()
+        .join("fish")
+        .join("completions")
+        .join("soulseek-rs.fish");
+    let completions = |verb: &str| {
+        command(&["--json", "completions", verb, "--shell", "fish"])
+            .env("XDG_CONFIG_HOME", target.path())
+            .output()
+            .expect("the binary should run")
+    };
+
+    let first = completions("install");
+    assert_eq!(code(&first), EXIT_OK, "stderr: {}", stderr(&first));
+    assert_eq!(action(&first), "installed");
+    let script = std::fs::read_to_string(&installed).expect("a fish script");
+    assert!(script.contains("complete -c soulseek-rs"));
+    assert!(
+        script.contains("-l download-dir"),
+        "flags are completed too"
+    );
+
+    assert_eq!(
+        action(&completions("install")),
+        "unchanged",
+        "reinstalling is how you update"
+    );
+
+    let removed = completions("uninstall");
+    assert_eq!(action(&removed), "removed");
+    assert!(!installed.exists());
+
+    let again = completions("uninstall");
+    assert_eq!(code(&again), EXIT_OK, "removing nothing is not a failure");
+    assert_eq!(action(&again), "absent");
 }
 
 // ---------------------------------------------------------------------------
