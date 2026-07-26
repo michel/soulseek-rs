@@ -2342,6 +2342,11 @@ fn the_commands_advertised_as_credential_free_run_without_an_account() {
         vec!["shares", "add", &shared_path],
         vec!["shares", "list"],
         vec!["shares", "remove", &shared_path],
+        // The wishlist is stored, not searched, until `wish run` asks the
+        // network — so managing it must not demand an account either.
+        vec!["wish", "add", "something rare"],
+        vec!["wish", "list"],
+        vec!["wish", "remove", "something rare"],
         vec!["skills", "install", "--dir", &skills],
         vec!["skills", "list", "--dir", &skills],
         vec!["skills", "uninstall", "--dir", &skills],
