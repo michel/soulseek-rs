@@ -79,7 +79,7 @@ credentials and connection work.
 
 **`serve`** — stay online sharing files, one object per upload change: `user`,
 `path`, `size`, `bytes_sent`, `speed`, `status`
-(`queued`/`uploading`/`completed`/`cancelled`/`failed`), `reason`.
+(`uploading`/`completed`/`cancelled`/`failed`), `reason`.
 
 **`shares list`** — one object per configured folder: `directory`, `usable`.
 **`shares add <directory>`** and **`shares remove <directory>`** — change the

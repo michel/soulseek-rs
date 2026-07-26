@@ -1,3 +1,7 @@
+// The README is the crate's front page, and `cargo test --doc` compiles every
+// example in it, so a signature change cannot leave the advertised usage stale.
+#![doc = include_str!("../README.md")]
+
 // Core modules
 pub mod actor;
 pub mod client;
