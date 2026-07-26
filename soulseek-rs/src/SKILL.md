@@ -97,6 +97,10 @@ answered, which is a negative answer rather than an error.
 this skill file into the local agent directories, or remove it: `agent`,
 `path`, `action`.
 
+**`completions install`** and **`completions uninstall`** — write the tab
+completion script where bash, zsh, or fish looks for it, or take it back
+again: `shell`, `path`, `action`. For a human at a prompt, not for you.
+
 ## Idioms
 
 ```bash

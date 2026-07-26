@@ -64,6 +64,9 @@ fn run(mut cli: Cli, out: &Out) -> CliResult {
         Commands::Skills(ref command) => {
             return commands::skills::run(out, command);
         }
+        Commands::Completions(ref command) => {
+            return commands::completions::run(out, command);
+        }
         Commands::Config(ConfigCommand::Path) => {
             return commands::settings::config_path(out, &store);
         }

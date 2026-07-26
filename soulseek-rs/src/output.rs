@@ -445,6 +445,28 @@ impl Record for SkillRecord {
     }
 }
 
+/// What happened to one shell's completion script.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CompletionRecord {
+    /// `bash`, `zsh`, or `fish`.
+    pub shell: String,
+    pub path: String,
+    /// `installed` (written), `unchanged` (already identical), `removed`, or
+    /// `absent`.
+    pub action: String,
+}
+
+impl Record for CompletionRecord {
+    fn text(&self) -> String {
+        format!(
+            "{}\t{}\t{}",
+            sanitize(&self.action),
+            sanitize(&self.shell),
+            sanitize(&self.path)
+        )
+    }
+}
+
 /// The result of probing automatic port mapping.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PortmapRecord {
