@@ -207,4 +207,11 @@ jobs:
       - name: Dispatch the tap's formula workflow
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: gh workflow run formula.yml --repo michel/homebrew-tap
+        run: |
+          # gh answers a missing token with generic "set GH_TOKEN" advice, which
+          # reads like a workflow bug rather than a secret that needs filling in.
+          [ -n "$GH_TOKEN" ] || {
+            echo "::error::HOMEBREW_TAP_TOKEN is empty - set it to a PAT with Actions: write on michel/homebrew-tap. The tap's hourly cron will pick this release up in the meantime."
+            exit 1
+          }
+          gh workflow run formula.yml --repo michel/homebrew-tap
