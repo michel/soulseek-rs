@@ -341,9 +341,9 @@ export const Install = () => {
               label="Cargo.toml"
               lines={[
                 { t: 'cm', text: '[dependencies]' },
-                { t: 'code', text: 'soulseek-rs-lib = "7"' },
+                { t: 'code', text: 'soulseek-rs-lib = "8"' },
               ]}
-              copy={'[dependencies]\nsoulseek-rs-lib = "7"'}
+              copy={'[dependencies]\nsoulseek-rs-lib = "8"'}
             />
             <Terminal label="src/main.rs" lines={LIB_LINES} copy={LIB_SRC} />
             <p className="text-[13px] text-muted">
@@ -356,7 +356,7 @@ export const Install = () => {
               >
                 docs.rs
               </a>
-              . Note: v6 moved sharing from one directory to a list. See the{' '}
+              . The lib API changes between majors, so check the{' '}
               <a
                 href={LINKS.changelog}
                 target="_blank"
@@ -365,7 +365,7 @@ export const Install = () => {
               >
                 changelog
               </a>{' '}
-              if you&rsquo;re upgrading from 5.x.
+              when you upgrade.
             </p>
           </Step>
         </div>
