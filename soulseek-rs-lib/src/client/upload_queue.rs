@@ -14,6 +14,10 @@ use super::{ClientContext, PeerRegistry, UploadJob};
 use crate::types::{UploadInfo, UploadStatus};
 use std::path::PathBuf;
 
+/// Cap on remembered queued-upload states, so a caller that never drains
+/// them cannot grow the list without bound.
+const MAX_UPLOAD_EVENTS: usize = 256;
+
 /// A queued upload that has just been given a slot, ready to be offered to the
 /// peer that asked for it.
 #[derive(Debug, Clone)]
@@ -145,7 +149,32 @@ impl ClientContext {
                 },
             );
         }
+
+        // Whatever is still waiting had to wait. Record it, because a caller
+        // polling `uploads()` on an interval cannot see a peer that queued and
+        // was served between two polls — and with a small slot count that is
+        // the common case, not the rare one.
+        for waiting in self.queued_uploads() {
+            let already = self.upload_events.iter().any(|seen| {
+                seen.username == waiting.username
+                    && seen.filename == waiting.filename
+            });
+            if !already {
+                self.upload_events.push(waiting);
+            }
+        }
+        // A caller that never drains must not grow this without bound.
+        if self.upload_events.len() > MAX_UPLOAD_EVENTS {
+            let excess = self.upload_events.len() - MAX_UPLOAD_EVENTS;
+            self.upload_events.drain(..excess);
+        }
+
         (self.peer_registry.clone(), offers)
+    }
+
+    /// Take the queued-upload states recorded since the last call.
+    pub fn take_upload_events(&mut self) -> Vec<UploadInfo> {
+        std::mem::take(&mut self.upload_events)
     }
 
     /// Uploads occupying a slot: offered but not yet accepted, plus those
@@ -490,6 +519,45 @@ mod context_tests {
                 ("donor".to_string(), UploadStatus::Queued(1)),
                 ("plain".to_string(), UploadStatus::Queued(2)),
             ]
+        );
+    }
+
+    // A peer that waits and is then served inside one poll interval must still
+    // be reportable as queued: `serve` samples on an interval, so a state that
+    // only ever existed between two samples would otherwise vanish from the
+    // transfer log entirely.
+    #[test]
+    fn a_queued_upload_is_recorded_even_after_it_leaves_the_queue() {
+        let (mut ctx, mut token) = context(1);
+        ask(&mut ctx, "amy", "@@share\\amy.mp3");
+        ask(&mut ctx, "bob", "@@share\\bob.mp3");
+
+        // One slot, so bob waits behind amy.
+        let _ = ctx.pump_uploads(&mut token);
+        assert!(
+            ctx.queued_uploads().iter().any(|u| u.username == "bob"),
+            "bob should be waiting while amy holds the only slot"
+        );
+
+        // Amy finishes and bob is served, so nothing is waiting any more...
+        ctx.uploads.clear();
+        ctx.active_uploads.clear();
+        let _ = ctx.pump_uploads(&mut token);
+        assert!(
+            ctx.queued_uploads().is_empty(),
+            "the queue should have drained"
+        );
+
+        // ...but the fact that bob waited survives for whoever asks next.
+        let events = ctx.take_upload_events();
+        assert!(
+            events.iter().any(|u| u.username == "bob"
+                && matches!(u.status, UploadStatus::Queued(_))),
+            "bob's wait should still be reportable, got {events:?}"
+        );
+        assert!(
+            ctx.take_upload_events().is_empty(),
+            "draining twice must not repeat the same events"
         );
     }
 }

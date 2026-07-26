@@ -344,6 +344,11 @@ pub struct ClientContext {
     upload_seq: u64,
     /// How many uploads may be in flight at once.
     upload_slots: usize,
+    /// Queued-upload states that came and went between two polls of
+    /// [`Client::uploads`]. A caller sampling that snapshot would otherwise
+    /// never see a peer that queued and was served inside one poll interval,
+    /// and "it waited" is exactly the fact a transfer log must not lose.
+    upload_events: Vec<crate::types::UploadInfo>,
     actor_system: Arc<ActorSystem>,
 }
 impl Default for ClientContext {
@@ -432,6 +437,7 @@ impl ClientContext {
             upload_queue: Vec::new(),
             upload_seq: 0,
             upload_slots: DEFAULT_UPLOAD_SLOTS,
+            upload_events: Vec::new(),
             downloads: DownloadStore::new(),
             actor_system,
         }
