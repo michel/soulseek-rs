@@ -1,0 +1,15 @@
+# Baseline: this repo scans 100/100 clean.
+#
+# No rule is disabled here on purpose. The handful of known-bogus findings are
+# suppressed inline at the site that triggers them, each with a reason, so the
+# rule keeps working everywhere else:
+#
+#   soulseek-rs/src/commands/transfer.rs  complexity/function-too-long
+#   website/src/pages/home.tsx            code-quality/duplicate-block
+#   website/src/pages/install.tsx         code-quality/duplicate-block
+#
+# Grep for `aislop-ignore` to find them. Suppress that way rather than adding a
+# `rules:` entry here, which would blind the rule across the whole project.
+
+ci:
+  failBelow: 100

@@ -607,6 +607,7 @@ fn read_requests(
 }
 
 /// `Ok(None)` for a blank line, `Err` for something unusable.
+// aislop-ignore-next-line complexity/function-too-long -- scanner bug, not a long function: the `'{'` char literal below reads as an opening brace, so aislop's counter never closes and measures to EOF. It is 34 lines.
 fn parse_request(line: &str) -> Result<Option<Request>, String> {
     let line = line.trim_end_matches(['\r', '\n']);
     if line.trim().is_empty() {

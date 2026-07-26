@@ -4,3 +4,8 @@
 
 # Impeccable design-detector state: hook consent and detector overrides.
 .impeccable/
+
+# aislop: the config is the shared baseline, the rest is local scan history
+# and agent worktrees.
+.aislop/*
+!.aislop/config.yml
