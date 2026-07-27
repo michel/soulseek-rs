@@ -1,6 +1,7 @@
 import { Link } from 'react-router'
 
 import { Button } from '@/components/ui/button'
+import { ExtLink } from '@/components/ui/ext-link'
 import { Code } from '@/components/ui/inline-code'
 import {
   Cols,
@@ -257,14 +258,95 @@ const Daemon = () => (
           rescan every invocation, and downloads that outlive the command that queued
           them. If you drive this from a script or an agent, start one.
         </p>
+      </Prose>
+    </Cols>
+  </Section>
+)
+
+const DownloadBox = () => (
+  <Section>
+    <SectionHead
+      eyebrow="6 · a download box"
+      title="Put it on the machine that should be downloading."
+    >
+      A home server, a NAS, a Raspberry Pi. It needs no terminal and nobody logged in.
+      You drive it from your laptop, and it keeps working after you close the lid.
+    </SectionHead>
+    <Cols start>
+      <Terminal
+        label="on the box"
+        lines={[
+          { t: 'cmd', text: 'soulseek-rs daemon --bind 0.0.0.0:5030' },
+          { t: 'cmd', text: 'soulseek-rs daemon token' },
+          { t: 'cm', text: '# copy this once' },
+          { t: 'cm', text: '' },
+          { t: 'cm', text: '# on your laptop, one-time setup:' },
+          { t: 'cmd', text: 'soulseek-rs config set daemon nas.local:5030' },
+          { t: 'cmd', text: 'soulseek-rs config set daemon_token <token>' },
+          { t: 'cm', text: '' },
+          { t: 'cm', text: '# then just use it, no flags:' },
+          { t: 'cmd', text: 'soulseek-rs get "selected ambient works"' },
+          { t: 'cmd', text: 'soulseek-rs daemon status' },
+          { t: 'cmd', text: 'soulseek-rs daemon stop' },
+          { t: 'cm', text: '# shuts down the remote one when you are done' },
+        ]}
+      />
+      <Prose>
         <p>
-          It speaks newline-delimited JSON-RPC 2.0 described by an{' '}
-          <Code>openrpc.json</Code> the daemon serves itself, so a client generator gives
-          you one in any language. <Code>daemon --bind</Code> adds a TCP port for other
-          machines; those need the token from <Code>daemon token</Code>, while the local
-          socket never does.
+          Your laptop needs no Soulseek account of its own &mdash; it is using the box&rsquo;s.
+          Queue what you want, then close the lid: the downloads keep going, because they
+          belong to the daemon rather than to the command that asked for them. Come back
+          tomorrow, run <Code>daemon status</Code>, and pick up where you left off. The
+          files are on the box, which is where you wanted them.
+        </p>
+        <p>
+          There is no encryption on that port. On a home network that is usually fine;
+          over the internet, reach it through SSH instead &mdash;{' '}
+          <Code>ssh -L 5030:localhost:5030 nas</Code>, or just run the commands on the box.
         </p>
       </Prose>
+    </Cols>
+  </Section>
+)
+
+const OpenSchema = () => (
+  <Section>
+    <SectionHead eyebrow="7 · build your own" title="The interface is open.">
+      Nothing about the daemon is specific to this CLI. Point a client generator at its
+      schema and write your own remote.
+    </SectionHead>
+    <Cols start>
+      <Prose>
+        <p>
+          It speaks newline-delimited JSON-RPC 2.0, described by an{' '}
+          <ExtLink href="https://open-rpc.org">OpenRPC</ExtLink> document. The daemon
+          serves that document itself through <Code>rpc.discover</Code>, so a client can
+          ask a running daemon what it can do.
+        </p>
+        <p>
+          OpenRPC is the JSON-RPC counterpart to OpenAPI: point a generator at it and you
+          get typed bindings in whatever language you are working in. An Android or iOS app
+          that queues downloads on your home server from the sofa, a small web page showing
+          what is transferring &mdash; you have everything you need and nobody to ask.
+        </p>
+        <p>
+          Searches, transfers, rooms, private messages and shares are all on the same
+          interface this CLI uses. There is no private back channel it keeps for itself,
+          and live updates are pushed to every connected client rather than polled for.
+        </p>
+      </Prose>
+      <Terminal
+        label="any language"
+        lines={[
+          { t: 'cmd', text: 'soulseek-rs daemon --bind 0.0.0.0:5030' },
+          { t: 'cm', text: '# then, from your own client:' },
+          { t: 'out', text: '{"jsonrpc":"2.0","id":1,"method":"auth",' },
+          { t: 'out', text: ' "params":{"protocol":1,"token":"..."}}' },
+          { t: 'out', text: '{"jsonrpc":"2.0","id":2,"method":"search.start",' },
+          { t: 'out', text: ' "params":{"query":"aphex twin"}}' },
+          { t: 'cm', text: '# events arrive unasked: transfers, chat, uploads' },
+        ]}
+      />
     </Cols>
   </Section>
 )
@@ -305,6 +387,8 @@ export const Docs = () => (
     <Keys />
     <FromTheShell />
     <Daemon />
+    <DownloadBox />
+    <OpenSchema />
     <TheRest />
   </>
 )

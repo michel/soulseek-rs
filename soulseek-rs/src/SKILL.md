@@ -165,6 +165,13 @@ accepts connections from other machines, which need the token.
 **`daemon token`** — the secret a client on another machine needs. Local
 clients never need it.
 
+The daemon can also be on a *different* machine — a home server or NAS doing
+the downloading. Point at it once with `config set daemon host:5030` and
+`config set daemon_token <token>`, and every command afterwards drives that
+machine; files land there, not here. The interface is an open JSON-RPC schema
+(`rpc.discover` serves it), so a purpose-built client is a reasonable thing to
+write.
+
 **`shares list`** — one object per configured folder: `directory`, `usable`.
 **`shares add <directory>`** and **`shares remove <directory>`** — change the
 config file; they print nothing. With a daemon running they also update it in

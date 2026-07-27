@@ -37,7 +37,7 @@ pub fn run(mut cli: Cli, out: &Out) -> CliResult {
         // A running daemon already holds a session; the TUI attaches to it
         // rather than logging in a second time, which the server would answer
         // by cutting the daemon off.
-        if let Some(endpoint) = daemon_endpoint(&cli) {
+        if let Some(endpoint) = daemon_endpoint(&cli, &resolved) {
             return run_attached_tui(&cli, &resolved, &endpoint);
         }
         return run_default_tui(&cli, &resolved, config_path, &file_config);
@@ -87,7 +87,7 @@ pub fn run(mut cli: Cli, out: &Out) -> CliResult {
                 out,
                 &store,
                 directory,
-                &live_daemon(&cli),
+                &live_daemon(&cli, &resolved),
             );
         }
         Commands::Shares(SharesCommand::Remove { ref directory }) => {
@@ -95,7 +95,7 @@ pub fn run(mut cli: Cli, out: &Out) -> CliResult {
                 out,
                 &store,
                 directory,
-                &live_daemon(&cli),
+                &live_daemon(&cli, &resolved),
             );
         }
         Commands::Wish(WishCommand::Add { ref query }) => {
@@ -114,8 +114,8 @@ pub fn run(mut cli: Cli, out: &Out) -> CliResult {
             command: Some(ref command),
             ..
         }) => {
-            let endpoint = daemon_endpoint(&cli);
-            let token = cli.daemon_token.clone();
+            let endpoint = daemon_endpoint(&cli, &resolved);
+            let token = resolved.daemon_token;
             return match command {
                 DaemonCommand::Token => crate::commands::daemon::token(out),
                 DaemonCommand::Status => crate::commands::daemon::status(
@@ -182,7 +182,7 @@ fn context(
     resolved: &crate::persist::config::Resolved,
     out: &Out,
 ) -> CliResult<Ctx> {
-    let daemon = daemon_endpoint(cli);
+    let daemon = daemon_endpoint(cli, resolved);
     // A run routed to a daemon needs no account of its own: the daemon is
     // already logged in, and asking for credentials it will not use would
     // stop a script that never had any.
@@ -213,7 +213,7 @@ fn context(
     // honest — `whoami` naming the right server, `download` naming the file
     // where the bytes actually landed.
     let described = daemon.as_ref().and_then(|endpoint| {
-        describe_daemon(endpoint, cli.daemon_token.clone())
+        describe_daemon(endpoint, resolved.daemon_token.clone())
     });
     let server_address = described.as_ref().map_or_else(
         || PeerAddress::new(host, port),
@@ -244,16 +244,19 @@ fn context(
         max_concurrent_downloads: resolved.max_concurrent_downloads,
         search_timeout: Duration::from_secs(resolved.search_timeout),
         daemon,
-        daemon_token: cli.daemon_token.clone(),
+        daemon_token: resolved.daemon_token.clone(),
         session: std::sync::OnceLock::new(),
     })
 }
 
 /// The daemon a config change should also reach, if one is running.
-fn live_daemon(cli: &Cli) -> crate::commands::settings::LiveDaemon {
+fn live_daemon(
+    cli: &Cli,
+    resolved: &crate::persist::config::Resolved,
+) -> crate::commands::settings::LiveDaemon {
     crate::commands::settings::LiveDaemon {
-        endpoint: daemon_endpoint(cli),
-        token: cli.daemon_token.clone(),
+        endpoint: daemon_endpoint(cli, resolved),
+        token: resolved.daemon_token.clone(),
     }
 }
 
@@ -278,11 +281,16 @@ fn describe_daemon(
 /// ssh-agent set, and what lets an agent run a command with no flags at all.
 /// With nothing listening, the run opens its own session exactly as it always
 /// has.
-fn daemon_endpoint(cli: &Cli) -> Option<crate::remote::Endpoint> {
+fn daemon_endpoint(
+    cli: &Cli,
+    resolved: &crate::persist::config::Resolved,
+) -> Option<crate::remote::Endpoint> {
     if cli.no_daemon {
         return None;
     }
-    if let Some(address) = &cli.daemon {
+    // Flag, then environment, then config file — `resolved` has already
+    // layered those — and otherwise a daemon on this machine, if one is up.
+    if let Some(address) = &resolved.daemon {
         return Some(crate::remote::Endpoint::parse(address));
     }
     crate::daemon::local_daemon().map(crate::remote::Endpoint::Socket)

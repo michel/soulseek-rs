@@ -165,23 +165,76 @@ file *and* update a running daemon, so a folder is served straight away rather
 than at its next start. Files land on the *daemon's* filesystem — `daemon
 status` reports where.
 
-For a client on another machine, bind a TCP port as well and give it the
-token:
+#### A download box you drive from your laptop
+
+This is what daemon mode is really for. Put soulseek-rs on the machine that
+should be doing the downloading — a home server, a NAS, a Raspberry Pi, a
+seedbox — and drive it from wherever you happen to be.
+
+**On that machine**, run the daemon and let it accept connections from your
+network:
 
 ```bash
 soulseek-rs daemon --bind 0.0.0.0:5030
-soulseek-rs daemon token           # the secret that connection needs
+soulseek-rs daemon token           # copy this, you need it once
 ```
 
-There is no transport encryption, so put SSH or a TLS proxy in front of
-anything non-loopback.
+It needs no terminal and no one logged in; hand it to systemd or launchd and
+forget about it.
 
-Third-party clients are first-class: the daemon speaks newline-delimited
-JSON-RPC 2.0 described by an [OpenRPC](https://open-rpc.org) document
-([`docs/openrpc.json`](docs/openrpc.json), also served by `rpc.discover`), so
-a generator produces a client in any language.
-[`docs/daemon-protocol.md`](docs/daemon-protocol.md) covers the framing, the
-handshake, and how pushed events behave.
+**On your laptop**, say once where it lives:
+
+```bash
+soulseek-rs config set daemon nas.local:5030
+soulseek-rs config set daemon_token <the token you copied>
+```
+
+That is the whole setup. Every command from now on is the normal command —
+your laptop needs no Soulseek account of its own, because it is using the
+server's:
+
+```bash
+soulseek-rs search 'aphex twin' --json
+soulseek-rs get 'selected ambient works'
+soulseek-rs daemon status          # what it's doing right now
+```
+
+Then close the lid. **The downloads keep going**, because they belong to the
+daemon, not to the command that asked for them or to the laptop that ran it.
+Come back tomorrow, run `soulseek-rs daemon status` again, and pick up where
+you left off. The files are on the download box, which is where you wanted
+them.
+
+When you are finished with it:
+
+```bash
+soulseek-rs daemon stop            # shuts down the remote daemon
+```
+
+One caution: there is no encryption on that TCP port. On a home network that
+is usually fine. Over the internet, don't expose it — reach it through SSH
+instead, either with a tunnel (`ssh -L 5030:localhost:5030 nas`) or by running
+the commands over `ssh` on the box itself.
+
+#### Build your own remote
+
+The daemon's interface is open and documented, so nothing about it is specific
+to this CLI. It speaks newline-delimited JSON-RPC 2.0 over a socket, described
+by an [OpenRPC](https://open-rpc.org) document —
+[`docs/openrpc.json`](docs/openrpc.json), which the daemon also serves itself
+via `rpc.discover`, so a client can ask a running daemon what it can do.
+
+OpenRPC is the JSON-RPC counterpart to OpenAPI: point a client generator at
+that document and you get typed bindings in whatever language you are working
+in. If you want an Android or iOS app that queues downloads on your home
+server from the sofa, or a small web page that shows what is transferring, you
+have everything you need and no permission to ask for. Searches, transfers,
+rooms, private messages and shares are all on the same interface this CLI
+uses — there is no private back channel it keeps for itself, and live updates
+are pushed to every connected client rather than polled for.
+
+[`docs/daemon-protocol.md`](docs/daemon-protocol.md) covers the parts a schema
+cannot state: the framing, the handshake, and how pushed events behave.
 
 ### Scripting
 

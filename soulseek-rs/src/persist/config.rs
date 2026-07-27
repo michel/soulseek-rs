@@ -23,6 +23,14 @@ pub struct FileConfig {
     /// Command whose stdout is the password (headless fallback, like mutt's
     /// `password_cmd`). Never store the password itself in the file.
     pub password_cmd: Option<String>,
+    /// A daemon to control instead of opening a session of our own —
+    /// `host:port`, or a Unix socket path. Unset means "use the local one if
+    /// there is one", which is what a daemon on this machine wants.
+    pub daemon: Option<String>,
+    /// The token for a remote daemon. Not a secret about *this* account, and
+    /// useless without reaching the host, so unlike a password it is
+    /// reasonable to keep here rather than behind a command.
+    pub daemon_token: Option<String>,
     /// Standing searches the server lets us repeat once per wishlist interval.
     /// A TOML array rather than a `config set` key, because a query may itself
     /// contain a comma.
@@ -43,6 +51,8 @@ impl FileConfig {
         "max_concurrent_downloads",
         "search_timeout",
         "password_cmd",
+        "daemon",
+        "daemon_token",
     ];
 
     /// The value of `key`, or `None` when it is unset or unknown. Lists are
@@ -64,6 +74,8 @@ impl FileConfig {
             }
             "search_timeout" => self.search_timeout.map(|v| v.to_string()),
             "password_cmd" => self.password_cmd.clone(),
+            "daemon" => self.daemon.clone(),
+            "daemon_token" => self.daemon_token.clone(),
             _ => None,
         }
     }
@@ -88,6 +100,8 @@ impl FileConfig {
             "server" => text(&mut self.server),
             "download_dir" => text(&mut self.download_dir),
             "password_cmd" => text(&mut self.password_cmd),
+            "daemon" => text(&mut self.daemon),
+            "daemon_token" => text(&mut self.daemon_token),
             "listener_port" => {
                 self.listener_port = parse_opt(value, clear, key)?;
             }
@@ -242,6 +256,8 @@ pub struct Resolved {
     pub max_concurrent_downloads: usize,
     pub search_timeout: u64,
     pub password_cmd: Option<String>,
+    pub daemon: Option<String>,
+    pub daemon_token: Option<String>,
 }
 
 pub const DEFAULT_SERVER: &str = "server.slsknet.org:2416";
@@ -297,6 +313,11 @@ pub fn resolve(cli: &crate::cli::Cli, file: &FileConfig) -> Resolved {
             .password_cmd
             .clone()
             .or_else(|| file.password_cmd.clone()),
+        daemon: cli.daemon.clone().or_else(|| file.daemon.clone()),
+        daemon_token: cli
+            .daemon_token
+            .clone()
+            .or_else(|| file.daemon_token.clone()),
     }
 }
 
@@ -488,6 +509,8 @@ mod tests {
             max_concurrent_downloads: Some(2),
             search_timeout: Some(30),
             password_cmd: Some("pass show slsk".into()),
+            daemon: Some("nas.local:5030".into()),
+            daemon_token: Some("deadbeef".into()),
             wishlist: None,
         };
         let resolved = resolve(&bare_cli(), &file);
@@ -497,6 +520,8 @@ mod tests {
         assert!(resolved.disable_listener);
         assert_eq!(resolved.download_dir, "/music");
         assert_eq!(resolved.shared_dirs, vec!["/shared".to_string()]);
+        assert_eq!(resolved.daemon.as_deref(), Some("nas.local:5030"));
+        assert_eq!(resolved.daemon_token.as_deref(), Some("deadbeef"));
         assert_eq!(resolved.max_concurrent_downloads, 2);
         assert_eq!(resolved.search_timeout, 30);
         assert_eq!(resolved.password_cmd.as_deref(), Some("pass show slsk"));

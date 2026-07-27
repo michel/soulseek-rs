@@ -70,6 +70,8 @@ impl Daemon {
             "pw",
             "--listener-port",
             &free_port()?.to_string(),
+            "--download-dir",
+            state.join("downloads").to_str()?,
             "daemon",
             "--bind",
             &format!("127.0.0.1:{port}"),
@@ -491,4 +493,75 @@ fn scratch(label: &str) -> PathBuf {
         .join(format!("soulseek-{label}-{}-{n}", std::process::id()));
     std::fs::create_dir_all(&path).expect("scratch directory");
     path
+}
+
+/// A client configured for a remote daemon reports the *daemon's* world.
+///
+/// This is the download-box workflow: the token lives in the client's config
+/// file rather than on its command line, and it has no Soulseek account of its
+/// own. Reading the token from the flag alone made the status probe fail
+/// silently, and every command that names a path or a server then quietly fell
+/// back to this machine's defaults — `whoami` claiming downloads land in the
+/// laptop's home directory when they land on the box.
+#[test]
+fn a_config_driven_remote_client_reports_the_daemons_world() {
+    let daemon = daemon_or_skip!();
+    let config = scratch("remote-client-config");
+    let state = scratch("remote-client-state");
+
+    // A laptop that knows only where the daemon is. No username, no password,
+    // no server — exactly what the documented setup produces.
+    std::fs::write(
+        config.join("config.toml"),
+        format!(
+            "daemon = \"127.0.0.1:{}\"\ndaemon_token = \"{}\"\n",
+            daemon.port,
+            daemon.token()
+        ),
+    )
+    .expect("config file");
+
+    let mut command = Command::new(BIN);
+    for name in CLI_ENV_VARS {
+        command.env_remove(name);
+    }
+    command.env("SOULSEEK_CONFIG_DIR", &config);
+    command.env("SOULSEEK_STATE_DIR", &state);
+    command.current_dir(std::env::temp_dir());
+    command.args(["--json", "whoami"]);
+    let output = command.output().expect("the binary should run");
+
+    assert!(
+        output.status.success(),
+        "a client configured for a remote daemon should just work: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let record: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .expect("one record"),
+    )
+    .expect("valid JSON");
+
+    assert_eq!(
+        record["user"], "cli_e2e_proto",
+        "the daemon's account, not this machine's"
+    );
+    assert!(
+        record["server"]
+            .as_str()
+            .is_some_and(|server| server.starts_with("127.0.0.1:")),
+        "the server the daemon is connected to, not a local default: {record}"
+    );
+    assert!(
+        record["download_dir"].as_str().is_some_and(
+            |dir| dir.starts_with(std::env::temp_dir().to_str().unwrap())
+        ),
+        "the directory the bytes actually land in, on the daemon's host, not \
+         this machine's Downloads folder: {record}"
+    );
+
+    let _ = std::fs::remove_dir_all(&config);
+    let _ = std::fs::remove_dir_all(&state);
 }
