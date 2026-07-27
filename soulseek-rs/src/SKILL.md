@@ -309,21 +309,37 @@ One table, because the two routes below must not disagree:
 
 | | At once |
 |---|---|
-| Subagents | 10 |
-| Searches on the wire | 5 |
-| Transfers running | 5 |
-| Transfers from any one peer | 2 |
+| Subagents | 20 |
+| Searches on the wire | 10 |
+| Transfers running | 20 |
+| Transfers from any one peer | 3 |
 | Search rungs spent on one track | 4 |
 
-Ten subagents but five searches is deliberate. A subagent spends most of its
-life waiting on a transfer, not searching, and the server rate-limits searches
-harder than peers rate-limit uploads. You are already holding subagents at the
-pick, so hold them before the search the same way: hand out a search slot, take
-it back when results land.
+Twenty transfers is the client's own default, and the reasoning is in the
+code: a Soulseek transfer is paced by the peer sending it, usually a few
+hundred KiB/s, so a fast link is filled by many transfers at once rather than
+by faster ones. Twenty costs twenty sockets, which is nothing.
+
+The two numbers that are *not* just "as many as the machine can take":
+
+- **Three from one peer.** This is the one that gets you banned. A client
+  serves ten upload slots by default, so three is a visible minority of one
+  person's capacity rather than a monopoly on it. Spread twenty transfers over
+  seven or more peers, not over two.
+- **Ten searches.** The server rate-limits searches, which is why the wishlist
+  has an interval, and it is the daemon's single connection making all of
+  them. Twenty subagents against ten search slots is deliberate: a subagent
+  spends most of its life waiting on a transfer, not searching. Hand out a
+  search slot and take it back when results land, the same way you already
+  hold subagents at the pick.
+
+Four rungs is not a concurrency limit and does not move with the rest. It is
+the point past which a track is genuinely not on the network and more queries
+are just noise against a rate-limited server.
 
 ### Search in parallel, download with a plan
 
-Give each track its own subagent, **at most ten at a time**. A subagent works
+Give each track its own subagent, **at most twenty at a time**. A subagent works
 the search ladder for its track and judges the candidates, because that is a judgement
 call every time: bitrate against file size, the right pressing against a live
 bootleg of the same name, a peer with a free slot against a faster one. A shell
@@ -336,14 +352,14 @@ that protects you. Only you can see every pick, and there are two collisions to
 resolve:
 
 - **The same peer chosen by several subagents.** Queueing many files at once
-  from one person is the classic way to be banned by them. Let at most two
+  from one person is the classic way to be banned by them. Let at most three
   through per peer at a time and hold the rest, or tell those subagents to take
   their second choice from a different peer.
 - **The same file chosen twice**, which wastes a transfer slot on a duplicate.
 
 Cleared subagents download their own track, report where it landed, and are
-done. Hold the rest until a slot frees up: five transfers at once across the
-batch, and never more than two from one peer.
+done. Hold the rest until a slot frees up: twenty transfers at once across the
+batch, and never more than three from one peer.
 
 **Report as you go.** Each subagent says when its search has found candidates
 and again when its download finishes. A batch that only reports at the end is
@@ -355,15 +371,15 @@ For a long list where the picks need no arguing, feed them to one command and
 let it manage the queue:
 
 ```bash
-soulseek-rs download --stdin --json -c 5 < picks.ndjson
+soulseek-rs download --stdin --json -c 20 < picks.ndjson
 ```
 
 It runs `-c` at a time from the list in order, so **order the lines to
 alternate between peers**. Consecutive lines naming the same user are what put
 several simultaneous transfers on one person; interleaving them spreads the
-load without slowing anything down. `-c 5` matches the budget above; the
-tool's own default is 20, which is too many strangers at once for a batch you
-did not hand-pick.
+load without slowing anything down. `-c 20` matches the budget above and is
+the tool's own default, so a well-interleaved list needs no flag at all. Lower
+it if the picks are concentrated on a few peers.
 
 ### What not to do
 
@@ -378,8 +394,8 @@ did not hand-pick.
 - **Do not fetch what you were not asked for.** Confirm with the user before
   `get --pick all` or any fetch whose size you do not know.
 
-Ten at once works only because the daemon holds the session: ten subagents are
-ten commands sharing one login. Without a daemon they would displace each other
+Twenty at once works only because the daemon holds the session: twenty
+subagents are twenty commands sharing one login. Without a daemon they would displace each other
 (exit 7), and giving each its own `--username` would register a throwaway
 account per track, which is worse. Start the daemon first.
 
@@ -414,9 +430,10 @@ send you the file.
 - **Sharing nothing gets the user banned.** Check `shares status` before a
   batch; if `files` is 0, say so before downloading. Users block leechers, and
   some clients do it without being asked.
-- **One or two files at a time from any one peer.** Their queue is per-user and
-  they can see it. A pile of simultaneous transfers from one person reads as
-  abuse and is answered with a ban.
+- **At most three files at a time from any one peer.** Their queue is per-user
+  and they can see it. A pile of simultaneous transfers from one person reads
+  as abuse and is answered with a ban. Twenty transfers is fine; twenty
+  transfers from two people is not.
 - **Exit 6 means pick someone else.** The transfer died because that peer went
   away or is not serving you. Take the next candidate from the results you
   already have; retrying the same peer hammers their queue.
