@@ -24,7 +24,10 @@ pub fn whoami(ctx: &Ctx) -> CliResult {
     // reachable needs what is true, not what was asked for.
     let bound = session.client.listen_port();
     ctx.out.emit(&WhoamiRecord {
-        user: ctx.settings.username.clone(),
+        // The session's own name, not this run's configuration: routed to a
+        // daemon they are different, and the session is the one that is
+        // actually on the network.
+        user: session.client.username(),
         server: ctx.settings.server_address.to_string(),
         listening: bound.is_some(),
         listen_port: bound.unwrap_or(0),

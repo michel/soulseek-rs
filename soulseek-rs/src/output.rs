@@ -489,6 +489,49 @@ impl Record for CompletionRecord {
     }
 }
 
+/// The token a remote client authenticates with.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TokenRecord {
+    pub token: String,
+}
+
+impl Record for TokenRecord {
+    fn text(&self) -> String {
+        sanitize(&self.token)
+    }
+}
+
+/// What a running daemon is and what its session is doing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DaemonStatusRecord {
+    pub user: String,
+    pub server: String,
+    pub version: String,
+    pub protocol: u32,
+    pub listening: bool,
+    pub listen_port: u16,
+    pub shared_folders: u32,
+    pub shared_files: u32,
+    pub download_dir: String,
+    /// `displaced` or `disconnected` when the server session has ended.
+    pub session_loss: Option<String>,
+    /// Control connections currently attached.
+    pub clients: usize,
+    pub uptime_secs: u64,
+}
+
+impl Record for DaemonStatusRecord {
+    fn text(&self) -> String {
+        format!(
+            "{}\t{}\t{}\t{}",
+            sanitize(&self.user),
+            sanitize(&self.server),
+            self.clients,
+            self.uptime_secs
+        )
+    }
+}
+
 /// The result of probing automatic port mapping.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PortmapRecord {

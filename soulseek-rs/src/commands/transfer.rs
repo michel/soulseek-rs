@@ -240,7 +240,7 @@ pub fn download(ctx: &Ctx, args: &DownloadArgs) -> CliResult {
         return Err(CliError::no_results("no files to download"));
     }
 
-    ensure_download_dir(&ctx.download_dir)?;
+    ensure_download_dir(ctx)?;
     let session = Session::open(ctx)?;
     let requests = resolve_sizes(ctx, session.client.as_ref(), requests)?;
     download_all(
@@ -252,7 +252,7 @@ pub fn download(ctx: &Ctx, args: &DownloadArgs) -> CliResult {
 }
 
 pub fn get(ctx: &Ctx, args: &GetArgs) -> CliResult {
-    ensure_download_dir(&ctx.download_dir)?;
+    ensure_download_dir(ctx)?;
     let session = Session::open(ctx)?;
     let results =
         collect(ctx, &session.client, &args.query, args.pick == Pick::First)?;
@@ -421,8 +421,17 @@ fn resolve_sizes(
     Ok(resolved)
 }
 
-fn ensure_download_dir(download_dir: &str) -> CliResult {
-    let path = expand_tilde(download_dir);
+/// Make sure the bytes have somewhere to land.
+///
+/// A daemon writes to its own filesystem and has already done this; creating
+/// the same path here would leave a stray directory on the client machine and,
+/// for a daemon on another host, could fail outright over a path that is none
+/// of this machine's business.
+fn ensure_download_dir(ctx: &Ctx) -> CliResult {
+    if ctx.daemon.is_some() {
+        return Ok(());
+    }
+    let path = expand_tilde(&ctx.download_dir);
     std::fs::create_dir_all(&path).map_err(|e| {
         CliError::usage(format!(
             "cannot use download directory {}: {e}",

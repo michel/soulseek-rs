@@ -25,6 +25,7 @@ Examples:
   soulseek-rs browse someuser --json            list a peer's shares
   soulseek-rs room listen lobby --follow        stream room chat
   soulseek-rs serve --follow --json             share files, stream upload events
+  soulseek-rs daemon                            run as a service; later commands use it
   soulseek-rs user someuser                     is this peer online and worth it
   soulseek-rs skills install                    teach your coding agent this CLI
   soulseek-rs completions install               tab completion for your shell
@@ -129,6 +130,23 @@ pub struct Cli {
     )]
     pub search_timeout: Option<u64>,
 
+    /// Control a daemon at this address (host:port) or Unix socket path
+    #[arg(long, global = true, env = "SOULSEEK_DAEMON", value_name = "ADDR")]
+    pub daemon: Option<String>,
+
+    /// Token for a remote daemon; a local socket needs none
+    #[arg(
+        long,
+        global = true,
+        env = "SOULSEEK_DAEMON_TOKEN",
+        hide_env_values = true
+    )]
+    pub daemon_token: Option<String>,
+
+    /// Ignore any running daemon and open this run's own session
+    #[arg(long, global = true, action = ArgAction::SetTrue)]
+    pub no_daemon: bool,
+
     /// Config file to read instead of the default location
     #[arg(long, global = true, env = "SOULSEEK_CONFIG", value_name = "FILE")]
     pub config: Option<PathBuf>,
@@ -183,6 +201,9 @@ pub enum Commands {
     /// Stay online sharing files, reporting each upload as it happens
     Serve(ServeArgs),
 
+    /// Run as a service other clients connect to, or control one that is
+    Daemon(DaemonArgs),
+
     /// What the server knows about another user
     User(UserArgs),
 
@@ -207,6 +228,33 @@ pub enum Commands {
     /// Tab completion for bash, zsh, and fish
     #[command(subcommand)]
     Completions(CompletionsCommand),
+}
+
+#[derive(Args, Debug, Default)]
+pub struct DaemonArgs {
+    #[command(subcommand)]
+    pub command: Option<DaemonCommand>,
+
+    /// Also accept control connections on this address, for clients on other
+    /// machines. They need the token; the local socket does not.
+    #[arg(long, value_name = "ADDR")]
+    pub bind: Option<String>,
+
+    /// How many uploads to serve at once
+    #[arg(long, value_parser = clap::value_parser!(u16).range(1..=1000))]
+    pub upload_slots: Option<u16>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum DaemonCommand {
+    /// Print the token remote clients authenticate with
+    Token,
+
+    /// What a running daemon is doing
+    Status,
+
+    /// Ask a running daemon to shut down
+    Stop,
 }
 
 #[derive(Subcommand, Debug)]

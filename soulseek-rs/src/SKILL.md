@@ -106,6 +106,18 @@ the interval the server sets and prints `search`-shaped objects for what it
 finds, so one long-running process covers both halves of being a good
 participant.
 
+**`daemon`** — stay logged in as a service other commands share. Prints
+progress on stderr and nothing on stdout; it does not return until stopped.
+While it runs, every other command on this machine uses its session
+automatically — no flags, no credentials, no second login. `--bind ADDR` also
+accepts connections from other machines, which need the token.
+**`daemon status`** — one object: `user`, `server`, `version`, `protocol`,
+`listening`, `listen_port`, `shared_folders`, `shared_files`, `download_dir`,
+`session_loss`, `clients`, `uptime_secs`. Exit 3 when nothing is running.
+**`daemon stop`** — ask it to shut down; prints nothing.
+**`daemon token`** — the secret a client on another machine needs. Local
+clients never need it.
+
 **`shares list`** — one object per configured folder: `directory`, `usable`.
 **`shares add <directory>`** and **`shares remove <directory>`** — change the
 config file; they print nothing.
@@ -152,8 +164,27 @@ is the normal way to be selective.
 ## Running several at once
 
 The server allows one session per account, and the later login wins: two runs
-sharing a username silently kill each other's session. Give every concurrent
-run its own name.
+sharing a username silently kill each other's session.
+
+The daemon is the answer to this. Start one, and every command afterwards
+borrows its session instead of opening one:
+
+```bash
+soulseek-rs daemon &          # once
+soulseek-rs search 'gary beck fold' --json   # no login, no flags
+soulseek-rs search 'marcal steady' --json    # concurrent, same session
+```
+
+Commands find it on their own: it listens on a Unix socket only you can open,
+so there is nothing to configure and no token to pass. `daemon status` says
+whether one is running. This also makes downloads outlive the command that
+started them — the transfer belongs to the daemon, so the queue survives.
+
+Two things change when a daemon is in play: files land in the *daemon's*
+download directory, and `--no-daemon` is how one run opts out and logs in for
+itself.
+
+Without a daemon, give every concurrent run its own name instead:
 
 ```bash
 for q in 'gary beck fold' 'marcal steady'; do

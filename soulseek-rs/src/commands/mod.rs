@@ -6,6 +6,7 @@
 //! dispatched by `main::run` before any credentials are demanded.
 
 pub mod completions;
+pub mod daemon;
 pub mod peer;
 pub mod settings;
 pub mod skills;
@@ -16,6 +17,7 @@ pub mod wish;
 use crate::cli::{Commands, MessageCommand, RoomCommand};
 use crate::output::{CliError, CliResult, Exit, Out, PortmapRecord};
 use crate::port_mapping::{self, PortMapper};
+use crate::remote::{Endpoint, RemoteSession};
 use soulseek_rs::types::{RoomEvent, RoomInfo};
 use soulseek_rs::{Client, ClientSettings, SessionLoss};
 use crate::api::SessionApi;
@@ -30,6 +32,11 @@ pub struct Ctx {
     pub download_dir: String,
     pub max_concurrent_downloads: usize,
     pub search_timeout: Duration,
+    /// Where to find a daemon, when this run should use one rather than open
+    /// its own session. Resolved once in `main`, so every command agrees.
+    pub daemon: Option<Endpoint>,
+    /// Token for a remote daemon; a Unix socket needs none.
+    pub daemon_token: Option<String>,
     /// The client of the session this command opened, once it has one, so the
     /// verdict can be checked against the session that produced it.
     pub session: OnceLock<Arc<dyn SessionApi>>,
@@ -86,7 +93,42 @@ const REACH_TIMEOUT: Duration = Duration::from_secs(10);
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl Session {
+    /// Get a session: the daemon's, if this run is routed to one, or a fresh
+    /// login of its own.
     pub fn open(ctx: &Ctx) -> CliResult<Self> {
+        match &ctx.daemon {
+            Some(endpoint) => Self::attach(ctx, endpoint),
+            None => Self::login(ctx),
+        }
+    }
+
+    /// Borrow the daemon's session instead of logging in again.
+    ///
+    /// The server allows one login per account, so a second login would
+    /// displace the daemon — attaching is not just cheaper, it is the only way
+    /// two things can be on the network as the same user at once.
+    fn attach(ctx: &Ctx, endpoint: &Endpoint) -> CliResult<Self> {
+        ctx.out.status(&format!("using the daemon at {endpoint}"));
+        let token = ctx
+            .daemon_token
+            .clone()
+            .or_else(crate::daemon::stored_token);
+        let remote = RemoteSession::connect(endpoint, token).map_err(|e| {
+            CliError::connection(format!("cannot use the daemon: {e}"))
+        })?;
+
+        let client: Arc<dyn SessionApi> = Arc::new(remote);
+        ctx.out
+            .status(&format!("logged in as {}", client.username()));
+        let _ = ctx.session.set(Arc::clone(&client));
+        Ok(Self {
+            client,
+            // The daemon holds the listener, so it owns the port mapping too.
+            _mapper: None,
+        })
+    }
+
+    fn login(ctx: &Ctx) -> CliResult<Self> {
         let address = ctx.settings.server_address.to_string();
         ctx.out.status(&format!("connecting to {address}…"));
         reachable(&address, REACH_TIMEOUT)?;
@@ -259,6 +301,7 @@ fn dispatch(ctx: &Ctx, command: Commands) -> CliResult {
         // These need the config file as well as a session, so main.rs runs
         // them where the store is in scope.
         Commands::Serve(_)
+        | Commands::Daemon(_)
         | Commands::Wish(_)
         | Commands::Config(_)
         | Commands::Shares(_)

@@ -96,7 +96,9 @@ pub fn shares_status(ctx: &Ctx) -> CliResult {
     ctx.out.emit(&ShareStatusRecord {
         folders,
         files,
-        directories: ctx.settings.shared_directories.clone(),
+        // What the session shares, which locally is what this run configured
+        // and against a daemon is what the daemon configured.
+        directories: session.client.shared_directories(),
     });
     Ok(())
 }
@@ -106,16 +108,20 @@ pub fn shares_status(ctx: &Ctx) -> CliResult {
 pub fn shares_reindex(ctx: &Ctx) -> CliResult {
     let session = Session::open(ctx)?;
     ctx.out.status("re-indexing the shared folders…");
+    // Re-scan what the session already shares rather than imposing this run's
+    // configuration on it: against a daemon that would silently replace the
+    // daemon's shares with the client machine's.
+    let directories = session.client.shared_directories();
     session
         .client
-        .set_shared_directories(ctx.settings.shared_directories.clone())
+        .set_shared_directories(directories.clone())
         .map_err(|e| CliError::usage(format!("cannot re-index: {e}")))?;
 
     let (folders, files) = session.client.shared_counts();
     ctx.out.emit(&ShareStatusRecord {
         folders,
         files,
-        directories: ctx.settings.shared_directories.clone(),
+        directories,
     });
     Ok(())
 }

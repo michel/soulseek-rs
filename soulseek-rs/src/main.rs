@@ -7,11 +7,12 @@ mod models;
 mod output;
 mod persist;
 mod port_mapping;
+mod remote;
 mod ui;
 
 use clap::Parser;
 use cli::{
-    Cli, Commands, ConfigCommand, SharesCommand, WishCommand,
+    Cli, Commands, ConfigCommand, DaemonCommand, SharesCommand, WishCommand,
     parse_server_address,
 };
 use commands::Ctx;
@@ -52,6 +53,12 @@ fn run(mut cli: Cli, out: &Out) -> CliResult {
     let resolved = persist::config::resolve(&cli, &file_config);
 
     let Some(command) = cli.command.take() else {
+        // A running daemon already holds a session; the TUI attaches to it
+        // rather than logging in a second time, which the server would answer
+        // by cutting the daemon off.
+        if let Some(endpoint) = daemon_endpoint(&cli) {
+            return run_attached_tui(&cli, &resolved, &endpoint);
+        }
         return run_default_tui(&cli, &resolved, config_path, &file_config);
     };
 
@@ -107,6 +114,25 @@ fn run(mut cli: Cli, out: &Out) -> CliResult {
         Commands::Wish(WishCommand::List) => {
             return commands::wish::list(out, &store);
         }
+        // Controlling a daemon needs no account of our own: the daemon is
+        // already logged in, and demanding credentials a script never had
+        // would turn "is it running?" into a configuration error.
+        Commands::Daemon(cli::DaemonArgs {
+            command: Some(ref command),
+            ..
+        }) => {
+            let endpoint = daemon_endpoint(&cli);
+            let token = cli.daemon_token.clone();
+            return match command {
+                DaemonCommand::Token => commands::daemon::token(out),
+                DaemonCommand::Status => {
+                    commands::daemon::status(out, endpoint.as_ref(), token)
+                }
+                DaemonCommand::Stop => {
+                    commands::daemon::stop(out, endpoint.as_ref(), token)
+                }
+            };
+        }
         _ => {}
     }
 
@@ -120,6 +146,9 @@ fn run(mut cli: Cli, out: &Out) -> CliResult {
         }
         Commands::Wish(WishCommand::Run(ref args)) => {
             commands::wish::run(&ctx, &store, args)
+        }
+        Commands::Daemon(ref args) => {
+            daemon::run(&ctx, args.bind.as_deref(), args.upload_slots)
         }
         Commands::Serve(ref args) => {
             let sweeper = args
@@ -154,38 +183,102 @@ fn context(
     resolved: &persist::config::Resolved,
     out: &Out,
 ) -> CliResult<Ctx> {
-    let username = resolved.username.clone().ok_or_else(|| {
-        CliError::usage(
-            "no username: pass --username, set SOULSEEK_USERNAME, or put one \
-             in config.toml",
+    let daemon = daemon_endpoint(cli);
+    // A run routed to a daemon needs no account of its own: the daemon is
+    // already logged in, and asking for credentials it will not use would
+    // stop a script that never had any.
+    let (username, password) = if daemon.is_some() {
+        (String::new(), String::new())
+    } else {
+        (
+            resolved.username.clone().ok_or_else(|| {
+                CliError::usage(
+                    "no username: pass --username, set SOULSEEK_USERNAME, or \
+                     put one in config.toml",
+                )
+            })?,
+            password(cli, resolved)?.ok_or_else(|| {
+                CliError::usage(
+                    "no password: pass --password/--password-stdin, set \
+                     SOULSEEK_PASSWORD, store one in the OS keychain, or set \
+                     password_cmd",
+                )
+            })?,
         )
-    })?;
-    let password = password(cli, resolved)?.ok_or_else(|| {
-        CliError::usage(
-            "no password: pass --password/--password-stdin, set \
-             SOULSEEK_PASSWORD, store one in the OS keychain, or set \
-             password_cmd",
-        )
-    })?;
+    };
     let (host, port) =
         parse_server_address(&resolved.server).map_err(CliError::usage)?;
+
+    // A daemon has its own server and its own filesystem. Asking it once, up
+    // front, is what keeps every command that reports a path or a server
+    // honest — `whoami` naming the right server, `download` naming the file
+    // where the bytes actually landed.
+    let described = daemon.as_ref().and_then(|endpoint| {
+        describe_daemon(endpoint, cli.daemon_token.clone())
+    });
+    let server_address = described.as_ref().map_or_else(
+        || PeerAddress::new(host, port),
+        |status| {
+            parse_server_address(&status.server).map_or_else(
+                |_| PeerAddress::new(status.server.clone(), 0),
+                |(host, port)| PeerAddress::new(host, port),
+            )
+        },
+    );
+    let download_dir = described.as_ref().map_or_else(
+        || resolved.download_dir.clone(),
+        |status| status.download_dir.clone(),
+    );
 
     Ok(Ctx {
         out: out.clone(),
         settings: ClientSettings {
             username,
             password,
-            server_address: PeerAddress::new(host, port),
+            server_address,
             enable_listen: !resolved.disable_listener,
             listen_port: resolved.listener_port,
             shared_directories: shared_directories(resolved, out),
             version: ClientVersion::REFERENCE_CLIENT,
         },
-        download_dir: resolved.download_dir.clone(),
+        download_dir,
         max_concurrent_downloads: resolved.max_concurrent_downloads,
         search_timeout: Duration::from_secs(resolved.search_timeout),
+        daemon,
+        daemon_token: cli.daemon_token.clone(),
         session: std::sync::OnceLock::new(),
     })
+}
+
+/// Ask a daemon what it is, so this run describes the session it will actually
+/// use. A daemon that cannot be reached is left to `Session::open` to report,
+/// which produces a better message than anything this early probe could.
+fn describe_daemon(
+    endpoint: &remote::Endpoint,
+    token: Option<String>,
+) -> Option<daemon::proto::DaemonStatus> {
+    let token = token.or_else(daemon::stored_token);
+    remote::RemoteSession::connect(endpoint, token)
+        .ok()?
+        .ask_for(daemon::proto::Method::DaemonStatus)
+        .ok()
+}
+
+/// Which daemon this run should use, if any.
+///
+/// An address given explicitly always wins. Otherwise a daemon listening on
+/// the local socket is used automatically — the convention Docker and
+/// ssh-agent set, and what lets an agent run a command with no flags at all.
+/// With nothing listening, the run opens its own session exactly as it always
+/// has.
+fn daemon_endpoint(cli: &Cli) -> Option<remote::Endpoint> {
+    if cli.no_daemon {
+        return None;
+    }
+    if let Some(address) = &cli.daemon {
+        return Some(remote::Endpoint::parse(address));
+    }
+    daemon::local_daemon().map(remote::Endpoint::Socket)
 }
 
 /// Resolve the password: stdin beats the flag/env, which beats the keychain,
@@ -361,6 +454,54 @@ fn run_default_tui(
         resolved.max_concurrent_downloads,
         Duration::from_secs(resolved.search_timeout),
         store,
+    )
+    .map_err(|e| CliError::new(Exit::Failure, e.to_string()))
+}
+
+/// Run the TUI against a daemon's session.
+///
+/// No login screen: the daemon is already logged in, so there is nothing to
+/// ask for and nothing to store. Everything the UI shows comes back over the
+/// socket, and what it persists stays daemon-side.
+fn run_attached_tui(
+    cli: &Cli,
+    resolved: &persist::config::Resolved,
+    endpoint: &remote::Endpoint,
+) -> CliResult {
+    use ratatui::crossterm::{
+        event::EnableMouseCapture,
+        execute,
+        terminal::{Clear, ClearType},
+    };
+
+    if !std::io::stdout().is_terminal() {
+        return Err(CliError::usage(
+            "the interactive interface needs a terminal; run a subcommand for \
+             scripted use (see --help)",
+        ));
+    }
+
+    let token = cli
+        .daemon_token
+        .clone()
+        .or_else(daemon::stored_token);
+    let session = remote::RemoteSession::connect(endpoint, token)
+        .map_err(|e| CliError::connection(format!("cannot use the daemon at {endpoint}: {e}")))?;
+
+    soulseek_rs::utils::logger::enable_buffering();
+    let _ =
+        execute!(std::io::stdout(), Clear(ClearType::All), EnableMouseCapture);
+    let terminal = ratatui::init();
+
+    // No StateStore: the daemon owns what survives a restart, so a second
+    // writer here would fight it for the same files.
+    launch_main_tui(
+        terminal,
+        Arc::new(session),
+        resolved.download_dir.clone(),
+        resolved.max_concurrent_downloads,
+        Duration::from_secs(resolved.search_timeout),
+        None,
     )
     .map_err(|e| CliError::new(Exit::Failure, e.to_string()))
 }
