@@ -3395,3 +3395,70 @@ fn the_daemon_token_is_stable_across_reads() {
         "a restart must not lock existing clients out"
     );
 }
+
+/// Adding a folder reaches a daemon that is already running.
+///
+/// Locally `shares add` means "shared from the next run on", because there is
+/// no session yet. A daemon *is* that next run and it is already going, so
+/// without pushing the change the command would look like it had worked while
+/// the network still saw nothing.
+#[test]
+fn adding_a_share_takes_effect_on_a_running_daemon() {
+    if mode() != Mode::Daemon {
+        println!(
+            "skipped: there is no running session to update in local mode"
+        );
+        return;
+    }
+    let server = server_or_skip!();
+    let user = "cli_e2e_live_shares";
+    let socket = server.daemon_state(user).join("daemon.sock");
+    let at = socket.display().to_string();
+    let config = Scratch::new("live-shares-config");
+    let config_file = config.path().join("config.toml");
+    let share = Scratch::new("live-shares");
+    std::fs::write(share.path().join("cli_probe_live.bin"), probe_bytes())
+        .expect("share file");
+
+    let before =
+        run(&["--no-config", "--json", "--daemon", &at, "shares", "status"]);
+    assert_eq!(code(&before), EXIT_OK, "stderr: {}", stderr(&before));
+
+    let added = run(&[
+        "--config",
+        config_file.to_str().expect("utf-8 path"),
+        "--daemon",
+        &at,
+        "shares",
+        "add",
+        &share.display(),
+    ]);
+    assert_eq!(code(&added), EXIT_OK, "stderr: {}", stderr(&added));
+
+    // The daemon re-indexes on the way through, so the folder is visible to
+    // the network now rather than after a restart.
+    let after: serde_json::Value = serde_json::from_str(
+        records(&run(&[
+            "--no-config",
+            "--json",
+            "--daemon",
+            &at,
+            "shares",
+            "status",
+        ]))
+        .first()
+        .expect("one record"),
+    )
+    .expect("valid JSON");
+    let listed = after["directories"]
+        .as_array()
+        .expect("directories is an array");
+    assert!(
+        listed.iter().any(|d| d == &share.display()),
+        "the daemon should be sharing the folder that was just added: {after}"
+    );
+    assert!(
+        after["files"].as_u64().is_some_and(|files| files >= 1),
+        "and should have indexed what is in it: {after}"
+    );
+}

@@ -143,6 +143,11 @@ configuration and a client cannot name one — that would be an arbitrary write
 on the daemon's host. `daemon.status` reports the directory in use. There is
 no method to fetch the bytes over the control socket.
 
+**Configuration is per machine, shares are per session.** A client's config
+file is its own; changing it does not reach a daemon. The exception is
+`shares.set`, which the CLI's `shares add`/`remove` call so a folder is served
+without waiting for a restart.
+
 **Several clients, no locking.** Last write wins. Two clients cancelling the
 same transfer is two hands on one keyboard, not an error.
 

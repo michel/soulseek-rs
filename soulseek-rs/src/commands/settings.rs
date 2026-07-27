@@ -5,11 +5,13 @@
 //! what the next run — interactive or scripted — starts from.
 
 use super::{Ctx, Session};
+use crate::api::SessionApi;
 use crate::directories;
 use crate::output::{
     CliError, CliResult, ConfigRecord, Out, ShareRecord, ShareStatusRecord,
 };
 use crate::persist::config::FileConfig;
+use crate::remote::{Endpoint, RemoteSession};
 use std::path::PathBuf;
 
 /// Where a `shares`/`config` change is written, and what it starts from.
@@ -46,7 +48,42 @@ pub fn shares_list(out: &Out, store: &Store, resolved: &[String]) -> CliResult {
     Ok(())
 }
 
-pub fn shares_add(out: &Out, store: &Store, directory: &str) -> CliResult {
+/// Where a running daemon can be reached, so a share change takes effect now
+/// rather than at its next restart.
+pub struct LiveDaemon {
+    pub endpoint: Option<Endpoint>,
+    pub token: Option<String>,
+}
+
+/// Tell a running daemon what this machine now shares.
+///
+/// Locally, `shares add` means "shared from the next run on", because there is
+/// no session yet. A daemon *is* that next run and it is already going, so
+/// leaving it on its startup list would make the command look like it had
+/// done nothing — the folder configured, and still invisible to the network.
+fn push_to_daemon(out: &Out, daemon: &LiveDaemon, directories: Vec<String>) {
+    let Some(endpoint) = daemon.endpoint.as_ref() else {
+        return;
+    };
+    let token = daemon.token.clone().or_else(crate::daemon::stored_token);
+    let outcome = RemoteSession::connect(endpoint, token)
+        .and_then(|session| session.set_shared_directories(directories));
+    match outcome {
+        Ok(()) => out.status("the running daemon is re-indexing"),
+        // Not fatal: the config file is written either way, so the change
+        // still takes effect when the daemon next starts.
+        Err(e) => out.warn(&format!(
+            "the daemon kept its own shares ({e}); restart it to pick this up"
+        )),
+    }
+}
+
+pub fn shares_add(
+    out: &Out,
+    store: &Store,
+    directory: &str,
+    daemon: &LiveDaemon,
+) -> CliResult {
     // Refuse a folder that is not there: sharing it would silently index
     // nothing, and the mistake would only surface as "no one can find my
     // files" much later.
@@ -63,14 +100,20 @@ pub fn shares_add(out: &Out, store: &Store, directory: &str) -> CliResult {
         return Ok(());
     }
     dirs.push(directory.to_string());
-    updated.shared_dirs = Some(dirs);
+    updated.shared_dirs = Some(dirs.clone());
     updated.shared_dir = None;
     store.save(&updated)?;
     out.status(&format!("sharing {directory}"));
+    push_to_daemon(out, daemon, dirs);
     Ok(())
 }
 
-pub fn shares_remove(out: &Out, store: &Store, directory: &str) -> CliResult {
+pub fn shares_remove(
+    out: &Out,
+    store: &Store,
+    directory: &str,
+    daemon: &LiveDaemon,
+) -> CliResult {
     let mut dirs = share_list(&store.config);
     let before = dirs.len();
     dirs.retain(|existing| existing != directory);
@@ -81,10 +124,11 @@ pub fn shares_remove(out: &Out, store: &Store, directory: &str) -> CliResult {
     }
 
     let mut updated = store.config.clone();
-    updated.shared_dirs = Some(dirs);
+    updated.shared_dirs = Some(dirs.clone());
     updated.shared_dir = None;
     store.save(&updated)?;
     out.status(&format!("no longer sharing {directory}"));
+    push_to_daemon(out, daemon, dirs);
     Ok(())
 }
 

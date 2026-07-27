@@ -84,12 +84,18 @@ pub fn run(mut cli: Cli, out: &Out) -> CliResult {
         }
         Commands::Shares(SharesCommand::Add { ref directory }) => {
             return crate::commands::settings::shares_add(
-                out, &store, directory,
+                out,
+                &store,
+                directory,
+                &live_daemon(&cli),
             );
         }
         Commands::Shares(SharesCommand::Remove { ref directory }) => {
             return crate::commands::settings::shares_remove(
-                out, &store, directory,
+                out,
+                &store,
+                directory,
+                &live_daemon(&cli),
             );
         }
         Commands::Wish(WishCommand::Add { ref query }) => {
@@ -241,6 +247,14 @@ fn context(
         daemon_token: cli.daemon_token.clone(),
         session: std::sync::OnceLock::new(),
     })
+}
+
+/// The daemon a config change should also reach, if one is running.
+fn live_daemon(cli: &Cli) -> crate::commands::settings::LiveDaemon {
+    crate::commands::settings::LiveDaemon {
+        endpoint: daemon_endpoint(cli),
+        token: cli.daemon_token.clone(),
+    }
 }
 
 /// Ask a daemon what it is, so this run describes the session it will actually

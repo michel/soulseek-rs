@@ -120,7 +120,8 @@ clients never need it.
 
 **`shares list`** — one object per configured folder: `directory`, `usable`.
 **`shares add <directory>`** and **`shares remove <directory>`** — change the
-config file; they print nothing.
+config file; they print nothing. With a daemon running they also update it in
+place, so the folder is on the network at once rather than after a restart.
 **`shares status`** and **`shares reindex`** — `folders`, `files`,
 `directories`, counted by logging in and scanning.
 
