@@ -18,6 +18,14 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::mpsc::Sender;
 
+/// How many undrained events of one kind a client may accumulate.
+///
+/// Every attached client is sent everything, including events for work another
+/// client asked for. A command that only drains room events would otherwise
+/// grow its private-message buffer for as long as it runs. Dropping the oldest
+/// is right for a buffer nobody is reading: the newest state is the useful one.
+const BUFFER_LIMIT: usize = 4096;
+
 /// Everything a pushed event can land in, behind one lock.
 ///
 /// One lock rather than several: it is taken for the length of a `Vec::push`
@@ -49,21 +57,24 @@ impl Mirror {
         match event {
             Event::Room => {
                 if let Ok(room) = parse::<RoomEventDto>(event, params) {
-                    buffers.rooms.push(room.into());
+                    push(&mut buffers.rooms, room.into());
                 }
             }
             Event::Message => {
                 if let Ok(message) = parse::<UserMessageDto>(event, params) {
-                    buffers.messages.push(message.into());
+                    push(&mut buffers.messages, message.into());
                 }
             }
             Event::Upload => {
                 if let Ok(upload) = parse::<UploadInfoDto>(event, params) {
-                    buffers.uploads.push(upload.into());
+                    push(&mut buffers.uploads, upload.into());
                 }
             }
             Event::Browse => {
                 if let Ok(browse) = parse::<BrowseEvent>(event, params) {
+                    if buffers.browses.len() >= BUFFER_LIMIT {
+                        buffers.browses.clear();
+                    }
                     buffers.browses.insert(
                         browse.username,
                         browse
@@ -112,6 +123,18 @@ impl Mirror {
         }
     }
 
+    /// Stop tracking every transfer, so anything blocked on one is told the
+    /// connection is gone.
+    ///
+    /// Dropping the senders is the signal: a caller waiting on its receiver
+    /// sees a disconnect immediately instead of sitting out its full transfer
+    /// timeout and then reporting a misleading "gave up".
+    pub fn abandon_downloads(&self) {
+        if let Ok(mut buffers) = self.0.lock() {
+            buffers.downloads.clear();
+        }
+    }
+
     /// Register where a transfer's updates should go before asking for it, so
     /// an update that lands immediately is not dropped on the floor.
     pub fn expect_download(
@@ -156,8 +179,18 @@ impl Mirror {
     }
 
     fn take<T: Default>(&self, drain: impl FnOnce(&mut Buffers) -> T) -> T {
-        self.0.lock().map_or_else(|_| T::default(), |mut b| drain(&mut b))
+        self.0
+            .lock()
+            .map_or_else(|_| T::default(), |mut b| drain(&mut b))
     }
+}
+
+/// Append, dropping the oldest once the buffer is at its limit.
+fn push<T>(buffer: &mut Vec<T>, item: T) {
+    if buffer.len() >= BUFFER_LIMIT {
+        buffer.remove(0);
+    }
+    buffer.push(item);
 }
 
 fn parse<T: serde::de::DeserializeOwned>(
@@ -178,10 +211,7 @@ mod tests {
     #[test]
     fn a_room_event_is_delivered_once_and_then_gone() {
         let mirror = Mirror::default();
-        mirror.apply(
-            Event::Room,
-            json!({ "event": "left", "room": "lobby" }),
-        );
+        mirror.apply(Event::Room, json!({ "event": "left", "room": "lobby" }));
 
         assert_eq!(
             mirror.take_rooms(),
@@ -283,6 +313,35 @@ mod tests {
             Some(SessionLoss::Displaced),
             "being displaced is the reason worth reporting; the dropped socket \
              is its consequence"
+        );
+    }
+
+    #[test]
+    fn an_undrained_buffer_stops_growing_at_its_limit() {
+        // A client is sent every event, including ones for work it never asked
+        // for; a command that drains only rooms must not grow without bound.
+        let mirror = Mirror::default();
+        for _ in 0..(BUFFER_LIMIT + 50) {
+            mirror.apply(
+                Event::Room,
+                json!({ "event": "left", "room": "lobby" }),
+            );
+        }
+        assert_eq!(mirror.take_rooms().len(), BUFFER_LIMIT);
+    }
+
+    #[test]
+    fn abandoning_transfers_wakes_whoever_is_waiting_on_them() {
+        let mirror = Mirror::default();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        mirror.expect_download("bob", "a.mp3", sender);
+
+        mirror.abandon_downloads();
+
+        assert!(
+            matches!(receiver.recv(), Err(std::sync::mpsc::RecvError)),
+            "a caller blocked on a transfer must be told the daemon is gone, \
+             not left to time out"
         );
     }
 

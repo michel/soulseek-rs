@@ -190,7 +190,7 @@ pub fn run(
     let downloads = Arc::new(Mutex::new(Vec::new()));
     let stop = Arc::new(AtomicBool::new(false));
 
-    restore(ctx, &store, session.client.as_ref(), &hub, &downloads);
+    let rooms = restore(ctx, &store, session.client.as_ref(), &hub, &downloads);
 
     let daemon = Arc::new(Daemon {
         session: Arc::clone(&session.client),
@@ -202,7 +202,8 @@ pub fn run(
         token,
         started: Instant::now(),
         stop: Arc::clone(&stop),
-        rooms: Mutex::new(store.load_rooms()),
+        open: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        rooms: Mutex::new(rooms),
     });
 
     let drainer = {
@@ -263,7 +264,7 @@ fn restore(
     session: &dyn SessionApi,
     hub: &Hub,
     downloads: &Mutex<Vec<PendingDownload>>,
-) {
+) -> Vec<String> {
     hub.restore(
         store
             .load_messages()
@@ -277,8 +278,9 @@ fn restore(
             .collect(),
     );
 
-    for room in store.load_rooms() {
-        if let Err(e) = session.join_room(&room) {
+    let rooms = store.load_rooms();
+    for room in &rooms {
+        if let Err(e) = session.join_room(room) {
             ctx.out.warn(&format!("cannot rejoin {room}: {e}"));
         }
     }
@@ -289,7 +291,7 @@ fn restore(
         .filter(|download| !download.completed)
         .collect();
     if unfinished.is_empty() {
-        return;
+        return rooms;
     }
     ctx.out
         .status(&format!("resuming {} transfers", unfinished.len()));
@@ -314,6 +316,7 @@ fn restore(
                 .warn(&format!("cannot resume {}: {e}", download.filename)),
         }
     }
+    rooms
 }
 
 /// Write daemon-owned state back. Best-effort: a state file that cannot be

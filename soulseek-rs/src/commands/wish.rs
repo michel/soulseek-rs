@@ -6,10 +6,10 @@
 //! set — we only decide which queries to send and what to print.
 
 use super::{Ctx, Session, settings::Store, transfer};
+use crate::api::SessionApi;
 use crate::cli::{SortKey, WishRunArgs};
 use crate::output::{CliError, CliResult, Out, WishRecord};
 use crate::persist::config::FileConfig;
-use crate::api::SessionApi;
 use soulseek_rs::Client;
 use std::time::Instant;
 

@@ -1,6 +1,7 @@
 //! Finding files and fetching them: `search`, `download`, and `get`.
 
 use super::{Ctx, Session, social};
+use crate::api::SessionApi;
 use crate::cli::{
     DownloadArgs, FilterArgs, GetArgs, Pick, SearchArgs, SortKey,
 };
@@ -8,7 +9,6 @@ use crate::output::{
     CliError, CliResult, DownloadRecord, Exit, Out, SearchRecord,
 };
 use soulseek_rs::utils::path::expand_tilde;
-use crate::api::SessionApi;
 use soulseek_rs::{DownloadStatus, SearchResult};
 use std::collections::{HashMap, VecDeque};
 use std::io::BufRead;

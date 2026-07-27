@@ -170,7 +170,11 @@ impl RemoteSession {
             std::thread::spawn(move || {
                 read_loop(read, &pending, &mirror);
                 hung_up.store(true, Ordering::Relaxed);
+                // Everything waiting on this connection has to be told, not
+                // left to discover it by timing out: calls in flight, and
+                // transfers whose progress only ever arrived as events.
                 pending.fail_all();
+                mirror.abandon_downloads();
             });
         }
 
@@ -185,7 +189,10 @@ impl RemoteSession {
         };
 
         let token = if endpoint.self_authenticating() {
-            token
+            // Offering a token here can only hurt: the socket's permissions
+            // have already answered the question, and a stale one on disk
+            // would turn a connection that should succeed into a refusal.
+            None
         } else {
             Some(token.ok_or_else(|| {
                 network(
@@ -250,7 +257,8 @@ impl RemoteSession {
         {
             let mut outgoing =
                 self.outgoing.lock().map_err(|_| SoulseekRs::LockPoisoned)?;
-            if writeln!(outgoing, "{line}").is_err() || outgoing.flush().is_err()
+            if writeln!(outgoing, "{line}").is_err()
+                || outgoing.flush().is_err()
             {
                 self.pending.abandon(id);
                 return Err(SoulseekRs::ConnectionClosed);
@@ -328,33 +336,27 @@ impl RemoteSession {
                     username: username.clone(),
                     filename: filename.clone(),
                     size,
-                    // The daemon writes to its own filesystem, which a remote
-                    // caller cannot see and so does not get to choose.
-                    download_directory: None,
                     metadata: (&metadata).into(),
                 },
             )
-            .inspect_err(|_| self.mirror.forget_download(&username, &filename))?;
+            .inspect_err(|_| {
+                self.mirror.forget_download(&username, &filename);
+            })?;
 
-        Ok((rebuild(started.download, sender, metadata), receiver))
+        Ok((rebuild(started.download, sender), receiver))
     }
 
     /// One parameterless request, for the control commands that only need to
     /// ask a daemon something once.
-    ///
     pub fn ask_for<R: DeserializeOwned>(&self, method: Method) -> Result<R> {
         self.request(method, ())
     }
-
 }
 
 /// Turn the daemon's view of a transfer back into the library's, with the
 /// caller's own channel spliced in.
-fn rebuild(
-    dto: DownloadDto,
-    sender: Sender<DownloadStatus>,
-    metadata: DownloadMetadata,
-) -> Download {
+fn rebuild(dto: DownloadDto, sender: Sender<DownloadStatus>) -> Download {
+    let metadata = dto.metadata.into();
     Download {
         username: dto.username,
         filename: dto.filename,
@@ -381,8 +383,9 @@ fn open(endpoint: &Endpoint) -> Result<Halves> {
                 network(format!("cannot reach the daemon at {address}: {e}"))
             })?;
             let read = stream.try_clone().map_err(SoulseekRs::NetworkError)?;
-            let closer =
-                Closer::Tcp(stream.try_clone().map_err(SoulseekRs::NetworkError)?);
+            let closer = Closer::Tcp(
+                stream.try_clone().map_err(SoulseekRs::NetworkError)?,
+            );
             Ok((Box::new(read), Box::new(stream), closer))
         }
         Endpoint::Socket(path) => connect_socket(path),
@@ -391,9 +394,13 @@ fn open(endpoint: &Endpoint) -> Result<Halves> {
 
 #[cfg(unix)]
 fn connect_socket(path: &Path) -> Result<Halves> {
-    let stream = std::os::unix::net::UnixStream::connect(path).map_err(|e| {
-        network(format!("cannot reach the daemon at {}: {e}", path.display()))
-    })?;
+    let stream =
+        std::os::unix::net::UnixStream::connect(path).map_err(|e| {
+            network(format!(
+                "cannot reach the daemon at {}: {e}",
+                path.display()
+            ))
+        })?;
     let read = stream.try_clone().map_err(SoulseekRs::NetworkError)?;
     let closer =
         Closer::Unix(stream.try_clone().map_err(SoulseekRs::NetworkError)?);
@@ -472,14 +479,6 @@ impl SessionApi for RemoteSession {
                 .and_then(|status| status.session_loss)
                 .map(Into::into)
         })
-    }
-
-    fn search(
-        &self,
-        query: &str,
-        timeout: Duration,
-    ) -> Result<Vec<SearchResult>> {
-        self.search_with_cancel(query, timeout, None)
     }
 
     fn search_with_cancel(
@@ -577,8 +576,7 @@ impl SessionApi for RemoteSession {
                 // transfers too, and the ones this client started already have
                 // a live channel from `download`.
                 let (sender, _) = channel();
-                let metadata = dto.metadata.clone().into();
-                rebuild(dto, sender, metadata)
+                rebuild(dto, sender)
             })
             .collect()
     }

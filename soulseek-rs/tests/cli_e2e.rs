@@ -551,10 +551,8 @@ impl DaemonFixture {
         static COUNTER: std::sync::atomic::AtomicU32 =
             std::sync::atomic::AtomicU32::new(0);
         let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let state = std::env::temp_dir().join(format!(
-            "soulseek-e2e-daemon-{}-{n}",
-            std::process::id()
-        ));
+        let state = std::env::temp_dir()
+            .join(format!("soulseek-e2e-daemon-{}-{n}", std::process::id()));
         std::fs::create_dir_all(&state).expect("daemon state directory");
 
         let mut args = vec![
@@ -568,9 +566,10 @@ impl DaemonFixture {
         ];
         // A listener of its own unless the test asked for something specific:
         // transfers arrive on a connection the uploader opens back to us.
-        if !session_flags.iter().any(|flag| {
-            flag == "--listener-port" || flag == "--no-listener"
-        }) {
+        if !session_flags
+            .iter()
+            .any(|flag| flag == "--listener-port" || flag == "--no-listener")
+        {
             args.push("--listener-port".to_string());
             args.push(free_port().expect("listener port").to_string());
         }
@@ -631,9 +630,7 @@ impl DaemonFixture {
             "daemon",
             "status",
         ]);
-        command
-            .output()
-            .is_ok_and(|output| output.status.success())
+        command.output().is_ok_and(|output| output.status.success())
     }
 }
 
@@ -663,9 +660,7 @@ impl TestServer {
                 child: None,
                 db: None,
                 _gate: gate,
-                daemons: std::sync::Mutex::new(
-                    std::collections::HashMap::new(),
-                ),
+                daemons: std::sync::Mutex::new(std::collections::HashMap::new()),
             });
         }
 

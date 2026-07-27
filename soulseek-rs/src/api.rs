@@ -39,11 +39,16 @@ pub trait SessionApi: Send + Sync {
     fn listen_port(&self) -> Option<u16>;
     fn session_loss(&self) -> Option<SessionLoss>;
 
+    /// Search and wait out the window. Every implementation is
+    /// `search_with_cancel` with nothing to cancel on.
     fn search(
         &self,
         query: &str,
         timeout: Duration,
-    ) -> Result<Vec<SearchResult>>;
+    ) -> Result<Vec<SearchResult>> {
+        self.search_with_cancel(query, timeout, None)
+    }
+
     fn search_with_cancel(
         &self,
         query: &str,
@@ -91,7 +96,8 @@ pub trait SessionApi: Send + Sync {
     fn room_members(&self, room: &str) -> Vec<String>;
     fn take_room_events(&self) -> Vec<RoomEvent>;
 
-    fn send_private_message(&self, username: &str, message: &str) -> Result<()>;
+    fn send_private_message(&self, username: &str, message: &str)
+    -> Result<()>;
     fn take_private_messages(&self) -> Vec<UserMessage>;
 
     fn browse_user(&self, username: &str) -> Result<()>;
@@ -131,14 +137,6 @@ impl SessionApi for Client {
 
     fn session_loss(&self) -> Option<SessionLoss> {
         Self::session_loss(self)
-    }
-
-    fn search(
-        &self,
-        query: &str,
-        timeout: Duration,
-    ) -> Result<Vec<SearchResult>> {
-        Self::search(self, query, timeout)
     }
 
     fn search_with_cancel(
@@ -266,7 +264,11 @@ impl SessionApi for Client {
         Self::take_room_events(self)
     }
 
-    fn send_private_message(&self, username: &str, message: &str) -> Result<()> {
+    fn send_private_message(
+        &self,
+        username: &str,
+        message: &str,
+    ) -> Result<()> {
         Self::send_private_message(self, username, message)
     }
 

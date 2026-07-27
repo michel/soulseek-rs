@@ -12,7 +12,7 @@
 
 use super::proto::{
     BrowseEvent, ChatMessageDto, DownloadStatusEvent, Event, Response,
-    SessionLossEvent, UploadInfoDto, UserMessageDto,
+    SessionLossEvent, UploadInfoDto, UploadStatusDto, UserMessageDto,
 };
 use crate::api::SessionApi;
 use soulseek_rs::DownloadStatus;
@@ -39,6 +39,14 @@ const HISTORY_LIMIT: usize = 500;
 struct Subscriber {
     id: u64,
     sender: SyncSender<Response>,
+    /// How to end this client's connection. A stalled client cannot be
+    /// reached any other way, and leaving it attached but silently eventless
+    /// is worse than disconnecting it: it would keep working while missing
+    /// every room message, transfer update and upload it should have seen.
+    ///
+    /// A closure rather than the socket itself, so the hub stays ignorant of
+    /// what a connection is made of.
+    disconnect: Box<dyn Fn() + Send + Sync>,
 }
 
 /// Fans daemon-side events out to every attached connection.
@@ -61,12 +69,20 @@ impl Hub {
     }
 
     /// Attach a connection. The returned receiver yields notifications until
-    /// [`Hub::unsubscribe`] or a full queue drops it.
-    pub fn subscribe(&self) -> (u64, Receiver<Response>) {
+    /// [`Hub::unsubscribe`], or until a full queue costs the client its
+    /// connection.
+    pub fn subscribe(
+        &self,
+        disconnect: impl Fn() + Send + Sync + 'static,
+    ) -> (u64, Receiver<Response>) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (sender, receiver) = sync_channel(QUEUE_DEPTH);
         if let Ok(mut subscribers) = self.subscribers.lock() {
-            subscribers.push(Subscriber { id, sender });
+            subscribers.push(Subscriber {
+                id,
+                sender,
+                disconnect: Box::new(disconnect),
+            });
         }
         (id, receiver)
     }
@@ -78,7 +94,9 @@ impl Hub {
     }
 
     pub fn subscribers(&self) -> usize {
-        self.subscribers.lock().map_or(0, |subscribers| subscribers.len())
+        self.subscribers
+            .lock()
+            .map_or(0, |subscribers| subscribers.len())
     }
 
     /// Send one event to everyone, dropping any client that has stopped
@@ -93,9 +111,14 @@ impl Hub {
                 Ok(()) => true,
                 Err(TrySendError::Full(_)) => {
                     soulseek_rs::warn!(
-                        "control client {} is not reading its events; dropping it",
+                        "control client {} is not reading its events; \
+                         disconnecting it",
                         subscriber.id
                     );
+                    // Closing the socket is the point: a client dropped from
+                    // the fan-out but left connected would carry on believing
+                    // it was subscribed, silently blind to everything after.
+                    (subscriber.disconnect)();
                     false
                 }
                 Err(TrySendError::Disconnected(_)) => false,
@@ -192,11 +215,8 @@ impl PendingBrowses {
         pending.iter().map(|(name, _)| name.clone()).collect()
     }
 
-    fn settled(&self, username: &str) {
-        self.forget(username);
-    }
-
-    /// Stop waiting on a peer whose request never reached the wire.
+    /// Stop waiting on a peer — because it answered, or because its request
+    /// never reached the wire.
     pub fn forget(&self, username: &str) {
         if let Ok(mut pending) = self.0.lock() {
             pending.retain(|(name, _)| name != username);
@@ -272,7 +292,11 @@ fn tick(
 /// Both sources matter: the drained events carry states that came and went
 /// between two ticks (a small file served straight out of the queue), and the
 /// live table carries progress.
-fn publish_uploads(session: &dyn SessionApi, hub: &Hub, state: &mut DrainState) {
+fn publish_uploads(
+    session: &dyn SessionApi,
+    hub: &Hub,
+    state: &mut DrainState,
+) {
     let sampled = session
         .take_upload_events()
         .iter()
@@ -285,11 +309,24 @@ fn publish_uploads(session: &dyn SessionApi, hub: &Hub, state: &mut DrainState) 
         if state.uploads.get(&key) == Some(&upload) {
             continue;
         }
+        let settled = matches!(
+            upload.status,
+            UploadStatusDto::Completed
+                | UploadStatusDto::Cancelled
+                | UploadStatusDto::Failed { .. }
+        );
         hub.publish(
             Event::Upload,
             serde_json::to_value(&upload).unwrap_or(serde_json::Value::Null),
         );
-        state.uploads.insert(key, upload);
+        // An upload that has finished cannot change again, so remembering it
+        // would grow this table by one entry per file for the life of the
+        // daemon.
+        if settled {
+            state.uploads.remove(&key);
+        } else {
+            state.uploads.insert(key, upload);
+        }
     }
 }
 
@@ -302,7 +339,7 @@ fn publish_browses(
         let Some(directories) = session.take_browse_result(&username) else {
             continue;
         };
-        browses.settled(&username);
+        browses.forget(&username);
         hub.publish(
             Event::Browse,
             serde_json::to_value(BrowseEvent {
@@ -358,8 +395,8 @@ mod tests {
         // The whole reason the hub exists: two clients must both see an event
         // that only exists once in the library's buffer.
         let hub = Hub::new();
-        let (_, first) = hub.subscribe();
-        let (_, second) = hub.subscribe();
+        let (_, first) = hub.subscribe(|| {});
+        let (_, second) = hub.subscribe(|| {});
 
         hub.publish(Event::Room, json!({ "event": "left", "room": "lobby" }));
 
@@ -370,7 +407,7 @@ mod tests {
     #[test]
     fn unsubscribing_stops_delivery() {
         let hub = Hub::new();
-        let (id, receiver) = hub.subscribe();
+        let (id, receiver) = hub.subscribe(|| {});
         hub.unsubscribe(id);
         hub.publish(Event::Upload, json!({}));
         assert!(drain(&receiver).is_empty());
@@ -380,8 +417,8 @@ mod tests {
     #[test]
     fn a_client_that_stops_reading_is_dropped_and_the_others_keep_up() {
         let hub = Hub::new();
-        let (_, slow) = hub.subscribe();
-        let (_, healthy) = hub.subscribe();
+        let (_, slow) = hub.subscribe(|| {});
+        let (_, healthy) = hub.subscribe(|| {});
 
         // Overrun the slow client's queue while the healthy one keeps reading,
         // which is exactly the asymmetry the bound exists to survive.
@@ -408,7 +445,7 @@ mod tests {
     #[test]
     fn a_dropped_receiver_removes_its_subscriber() {
         let hub = Hub::new();
-        let (_, receiver) = hub.subscribe();
+        let (_, receiver) = hub.subscribe(|| {});
         drop(receiver);
         hub.publish(Event::Message, json!({}));
         assert_eq!(hub.subscribers(), 0);
@@ -427,7 +464,10 @@ mod tests {
         }
         let history = hub.history();
         assert_eq!(history.len(), HISTORY_LIMIT);
-        assert_eq!(history[0].at, 5, "the oldest messages are the ones dropped");
+        assert_eq!(
+            history[0].at, 5,
+            "the oldest messages are the ones dropped"
+        );
         assert_eq!(history[HISTORY_LIMIT - 1].at, HISTORY_LIMIT as i64 + 4);
     }
 
@@ -460,7 +500,7 @@ mod tests {
         pending.expect("bob");
         pending.expect("bob");
         assert_eq!(pending.snapshot(), ["bob"]);
-        pending.settled("bob");
+        pending.forget("bob");
         assert!(pending.snapshot().is_empty());
     }
 

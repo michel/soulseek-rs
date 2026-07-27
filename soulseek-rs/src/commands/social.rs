@@ -2,14 +2,14 @@
 //! `message`.
 
 use super::{Ctx, Session, confirm_flush};
+use crate::api::SessionApi;
 use crate::cli::BrowseArgs;
 use crate::output::{
     BrowseRecord, CliError, CliResult, Out, PrivateMessageRecord,
     RoomEventRecord, RoomMemberRecord, RoomRecord,
 };
-use soulseek_rs::types::RoomEvent;
-use crate::api::SessionApi;
 use soulseek_rs::SharedDirectory;
+use soulseek_rs::types::RoomEvent;
 use std::time::{Duration, Instant};
 
 /// How long to wait for the server to acknowledge something we sent.

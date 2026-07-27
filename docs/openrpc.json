@@ -115,6 +115,7 @@
             "type": "string"
           },
           "listen_port": {
+            "default": null,
             "format": "uint16",
             "maximum": 65535,
             "minimum": 0,
@@ -139,7 +140,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "default": null
           },
           "shared_files": {
             "format": "uint32",
@@ -197,9 +199,15 @@
           },
           "metadata": {
             "$ref": "#/components/schemas/DownloadMetadataDto",
-            "default": {}
+            "default": {
+              "bitrate": null,
+              "length_seconds": null,
+              "peer_free_slots": null,
+              "peer_upload_speed": null
+            }
           },
           "queue_position": {
+            "default": null,
             "format": "uint32",
             "minimum": 0,
             "type": [
@@ -237,6 +245,7 @@
       "DownloadMetadataDto": {
         "properties": {
           "bitrate": {
+            "default": null,
             "format": "uint32",
             "minimum": 0,
             "type": [
@@ -245,6 +254,7 @@
             ]
           },
           "length_seconds": {
+            "default": null,
             "format": "uint32",
             "minimum": 0,
             "type": [
@@ -253,6 +263,7 @@
             ]
           },
           "peer_free_slots": {
+            "default": null,
             "format": "uint8",
             "maximum": 255,
             "minimum": 0,
@@ -262,6 +273,7 @@
             ]
           },
           "peer_upload_speed": {
+            "default": null,
             "format": "uint32",
             "minimum": 0,
             "type": [
@@ -274,19 +286,17 @@
       },
       "DownloadStartParams": {
         "properties": {
-          "download_directory": {
-            "description": "Where the file lands *on the daemon's* filesystem. Defaults to the\ndaemon's configured download directory, which is the only sensible\nchoice for a remote caller that cannot see that filesystem.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "filename": {
             "type": "string"
           },
           "metadata": {
             "$ref": "#/components/schemas/DownloadMetadataDto",
-            "default": {}
+            "default": {
+              "bitrate": null,
+              "length_seconds": null,
+              "peer_free_slots": null,
+              "peer_upload_speed": null
+            }
           },
           "size": {
             "default": 0,
@@ -780,6 +790,7 @@
       "Seconds": {
         "properties": {
           "seconds": {
+            "default": null,
             "format": "uint32",
             "minimum": 0,
             "type": [
@@ -1031,7 +1042,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "default": null
           },
           "stats": {
             "anyOf": [
@@ -1041,7 +1053,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "default": null
           },
           "username": {
             "type": "string"
@@ -1120,7 +1133,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "default": null
           }
         },
         "type": "object"
@@ -1166,10 +1180,24 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
-          "required": true,
+          "name": "protocol",
+          "required": false,
           "schema": {
-            "$ref": "#/components/schemas/AuthParams"
+            "default": 0,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        {
+          "name": "token",
+          "required": false,
+          "schema": {
+            "description": "Required on TCP. Omitted on a Unix socket, where the socket's own\npermissions already prove the caller is this user.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       ],
@@ -1222,10 +1250,10 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "query",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/QueryParams"
+            "type": "string"
           }
         }
       ],
@@ -1242,10 +1270,10 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "query",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/QueryParams"
+            "type": "string"
           }
         }
       ],
@@ -1262,10 +1290,10 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "query",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/QueryParams"
+            "type": "string"
           }
         }
       ],
@@ -1294,10 +1322,40 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "filename",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/DownloadStartParams"
+            "type": "string"
+          }
+        },
+        {
+          "name": "metadata",
+          "required": false,
+          "schema": {
+            "$ref": "#/components/schemas/DownloadMetadataDto",
+            "default": {
+              "bitrate": null,
+              "length_seconds": null,
+              "peer_free_slots": null,
+              "peer_upload_speed": null
+            }
+          }
+        },
+        {
+          "name": "size",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        {
+          "name": "username",
+          "required": true,
+          "schema": {
+            "type": "string"
           }
         }
       ],
@@ -1326,10 +1384,17 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "filename",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/TransferRef"
+            "type": "string"
+          }
+        },
+        {
+          "name": "username",
+          "required": true,
+          "schema": {
+            "type": "string"
           }
         }
       ],
@@ -1346,10 +1411,17 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "filename",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/TransferRef"
+            "type": "string"
+          }
+        },
+        {
+          "name": "username",
+          "required": true,
+          "schema": {
+            "type": "string"
           }
         }
       ],
@@ -1366,10 +1438,17 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "filename",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/TransferRef"
+            "type": "string"
+          }
+        },
+        {
+          "name": "username",
+          "required": true,
+          "schema": {
+            "type": "string"
           }
         }
       ],
@@ -1386,10 +1465,17 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "filename",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/TransferRef"
+            "type": "string"
+          }
+        },
+        {
+          "name": "username",
+          "required": true,
+          "schema": {
+            "type": "string"
           }
         }
       ],
@@ -1418,10 +1504,17 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "filename",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/TransferRef"
+            "type": "string"
+          }
+        },
+        {
+          "name": "username",
+          "required": true,
+          "schema": {
+            "type": "string"
           }
         }
       ],
@@ -1438,10 +1531,12 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "slots",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/SlotsParams"
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
           }
         }
       ],
@@ -1494,10 +1589,10 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "room",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/RoomRef"
+            "type": "string"
           }
         }
       ],
@@ -1514,10 +1609,10 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "room",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/RoomRef"
+            "type": "string"
           }
         }
       ],
@@ -1534,10 +1629,17 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "message",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/SayParams"
+            "type": "string"
+          }
+        },
+        {
+          "name": "room",
+          "required": true,
+          "schema": {
+            "type": "string"
           }
         }
       ],
@@ -1554,10 +1656,10 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "room",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/RoomRef"
+            "type": "string"
           }
         }
       ],
@@ -1574,10 +1676,17 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "message",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/MessageParams"
+            "type": "string"
+          }
+        },
+        {
+          "name": "username",
+          "required": true,
+          "schema": {
+            "type": "string"
           }
         }
       ],
@@ -1606,10 +1715,10 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "username",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/UserRef"
+            "type": "string"
           }
         }
       ],
@@ -1626,10 +1735,10 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "username",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/UserRef"
+            "type": "string"
           }
         }
       ],
@@ -1646,10 +1755,10 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "username",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/UserRef"
+            "type": "string"
           }
         }
       ],
@@ -1678,10 +1787,13 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "directories",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/DirectoriesParams"
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         }
       ],
@@ -1710,7 +1822,7 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "payload",
           "required": true,
           "schema": {
             "$ref": "#/components/schemas/RoomEventDto"
@@ -1731,7 +1843,7 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "payload",
           "required": true,
           "schema": {
             "$ref": "#/components/schemas/UserMessageDto"
@@ -1752,7 +1864,7 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "payload",
           "required": true,
           "schema": {
             "$ref": "#/components/schemas/UploadInfoDto"
@@ -1773,7 +1885,7 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "payload",
           "required": true,
           "schema": {
             "$ref": "#/components/schemas/DownloadStatusEvent"
@@ -1794,7 +1906,7 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "payload",
           "required": true,
           "schema": {
             "$ref": "#/components/schemas/BrowseEvent"
@@ -1815,7 +1927,7 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "params",
+          "name": "payload",
           "required": true,
           "schema": {
             "$ref": "#/components/schemas/SessionLossEvent"

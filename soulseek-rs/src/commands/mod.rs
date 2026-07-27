@@ -14,13 +14,13 @@ pub mod social;
 pub mod transfer;
 pub mod wish;
 
+use crate::api::SessionApi;
 use crate::cli::{Commands, MessageCommand, RoomCommand};
 use crate::output::{CliError, CliResult, Exit, Out, PortmapRecord};
 use crate::port_mapping::{self, PortMapper};
 use crate::remote::{Endpoint, RemoteSession};
 use soulseek_rs::types::{RoomEvent, RoomInfo};
 use soulseek_rs::{Client, ClientSettings, SessionLoss};
-use crate::api::SessionApi;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};

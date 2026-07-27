@@ -7,13 +7,13 @@ use crate::cli::{
 };
 use crate::commands::Ctx;
 use crate::output::{CliError, CliResult, Exit, Out};
+use crate::ui::launch_main_tui;
 use soulseek_rs::{ClientSettings, ClientVersion, PeerAddress};
 use std::io::{BufRead, IsTerminal};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{env, io};
-use crate::ui::launch_main_tui;
 
 pub fn run(mut cli: Cli, out: &Out) -> CliResult {
     let config_path = config_path(&cli);
@@ -25,6 +25,15 @@ pub fn run(mut cli: Cli, out: &Out) -> CliResult {
     let resolved = crate::persist::config::resolve(&cli, &file_config);
 
     let Some(command) = cli.command.take() else {
+        // Without a terminal the TUI would panic on its first draw. A script
+        // that reached this point wanted a subcommand, so say that instead of
+        // crashing.
+        if !std::io::stdout().is_terminal() {
+            return Err(CliError::usage(
+                "the interactive interface needs a terminal; run a subcommand \
+                 for scripted use (see --help)",
+            ));
+        }
         // A running daemon already holds a session; the TUI attaches to it
         // rather than logging in a second time, which the server would answer
         // by cutting the daemon off.
@@ -62,7 +71,9 @@ pub fn run(mut cli: Cli, out: &Out) -> CliResult {
             return crate::commands::settings::config_get(out, &store, key);
         }
         Commands::Config(ConfigCommand::Set { ref key, ref value }) => {
-            return crate::commands::settings::config_set(out, &store, key, value);
+            return crate::commands::settings::config_set(
+                out, &store, key, value,
+            );
         }
         Commands::Shares(SharesCommand::List) => {
             return crate::commands::settings::shares_list(
@@ -72,10 +83,14 @@ pub fn run(mut cli: Cli, out: &Out) -> CliResult {
             );
         }
         Commands::Shares(SharesCommand::Add { ref directory }) => {
-            return crate::commands::settings::shares_add(out, &store, directory);
+            return crate::commands::settings::shares_add(
+                out, &store, directory,
+            );
         }
         Commands::Shares(SharesCommand::Remove { ref directory }) => {
-            return crate::commands::settings::shares_remove(out, &store, directory);
+            return crate::commands::settings::shares_remove(
+                out, &store, directory,
+            );
         }
         Commands::Wish(WishCommand::Add { ref query }) => {
             return crate::commands::wish::add(out, &store, query);
@@ -97,9 +112,11 @@ pub fn run(mut cli: Cli, out: &Out) -> CliResult {
             let token = cli.daemon_token.clone();
             return match command {
                 DaemonCommand::Token => crate::commands::daemon::token(out),
-                DaemonCommand::Status => {
-                    crate::commands::daemon::status(out, endpoint.as_ref(), token)
-                }
+                DaemonCommand::Status => crate::commands::daemon::status(
+                    out,
+                    endpoint.as_ref(),
+                    token,
+                ),
                 DaemonCommand::Stop => {
                     crate::commands::daemon::stop(out, endpoint.as_ref(), token)
                 }
@@ -125,7 +142,9 @@ pub fn run(mut cli: Cli, out: &Out) -> CliResult {
         Commands::Serve(ref args) => {
             let sweeper = args
                 .wishlist
-                .then(|| crate::commands::wish::Sweeper::new(store.config.wishes()))
+                .then(|| {
+                    crate::commands::wish::Sweeper::new(store.config.wishes())
+                })
                 .flatten();
             if args.wishlist && sweeper.is_none() {
                 out.warn(
@@ -145,7 +164,9 @@ fn config_path(cli: &Cli) -> Option<PathBuf> {
     if cli.no_config {
         return None;
     }
-    cli.config.clone().or_else(crate::persist::paths::config_file)
+    cli.config
+        .clone()
+        .or_else(crate::persist::paths::config_file)
 }
 
 /// Assemble everything a one-shot command needs, demanding the credentials
@@ -338,15 +359,6 @@ fn run_default_tui(
         terminal::{Clear, ClearType},
     };
 
-    // Without a terminal the TUI would panic on its first draw. A script that
-    // reached this point wanted a subcommand, so say that instead of crashing.
-    if !std::io::stdout().is_terminal() {
-        return Err(CliError::usage(
-            "the interactive interface needs a terminal; run a subcommand for \
-             scripted use (see --help)",
-        ));
-    }
-
     let out = Out::new(false, false);
     let (server_host, server_port) =
         parse_server_address(&resolved.server).map_err(CliError::usage)?;
@@ -418,8 +430,8 @@ fn run_default_tui(
         .listen_port()
         .map(crate::port_mapping::PortMapper::spawn);
 
-    let store =
-        crate::persist::paths::state_dir().map(crate::persist::state::StateStore::new);
+    let store = crate::persist::paths::state_dir()
+        .map(crate::persist::state::StateStore::new);
 
     launch_main_tui(
         terminal,
@@ -448,19 +460,16 @@ fn run_attached_tui(
         terminal::{Clear, ClearType},
     };
 
-    if !std::io::stdout().is_terminal() {
-        return Err(CliError::usage(
-            "the interactive interface needs a terminal; run a subcommand for \
-             scripted use (see --help)",
-        ));
-    }
-
     let token = cli
         .daemon_token
         .clone()
         .or_else(crate::daemon::stored_token);
     let session = crate::remote::RemoteSession::connect(endpoint, token)
-        .map_err(|e| CliError::connection(format!("cannot use the daemon at {endpoint}: {e}")))?;
+        .map_err(|e| {
+            CliError::connection(format!(
+                "cannot use the daemon at {endpoint}: {e}"
+            ))
+        })?;
 
     soulseek_rs::utils::logger::enable_buffering();
     let _ =

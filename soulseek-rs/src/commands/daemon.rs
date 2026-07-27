@@ -6,7 +6,9 @@
 //! credentials are demanded.
 
 use crate::daemon::proto::{DaemonStatus, Method};
-use crate::output::{CliError, CliResult, DaemonStatusRecord, Out, TokenRecord};
+use crate::output::{
+    CliError, CliResult, DaemonStatusRecord, Out, TokenRecord,
+};
 use crate::remote::{Endpoint, RemoteSession};
 
 /// Print the token a client on another machine needs.

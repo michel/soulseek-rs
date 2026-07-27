@@ -13,8 +13,13 @@ events behave.
 ## Framing
 
 Newline-delimited JSON-RPC 2.0. One JSON value per line, in both directions,
-UTF-8, no length prefix. A line that does not parse gets a `-32700` reply and
-the connection stays open.
+UTF-8, no length prefix. A line that does not parse gets a `-32700` reply; on
+an established connection it stays open, but the *first* line has to be a valid
+`auth` request, so a parse error there ends the connection.
+
+Lines are capped at 1 MiB and a connection that has not authenticated within
+30 seconds is closed. The daemon serves at most 64 control connections at
+once.
 
 ## Transports and authentication
 
@@ -57,9 +62,14 @@ the old shape.
 
 ## Requests
 
-Parameters are by name — a JSON object, never an array. Every method and its
-parameter and result schemas are in `openrpc.json`; `rpc.discover` returns
-that same document from the running daemon.
+Parameters are by name — a JSON object, never an array. Each method's fields
+are published as individual OpenRPC content descriptors, so a generated client
+sends exactly the object the daemon deserializes. `rpc.discover` returns that
+same document from the running daemon.
+
+An event is the exception: its `params` object *is* the payload, published as
+a single `payload` descriptor because several payloads are tagged unions with
+no fixed field set.
 
 Requests may be pipelined and are answered out of order, so match replies by
 `id`. A request without an `id` is a notification and is answered with
@@ -70,6 +80,10 @@ silence, including when it fails.
 ```json
 {"jsonrpc":"2.0","id":4,"error":{"code":-32000,"message":"no results","data":{"exit":4}}}
 ```
+
+An error always carries an `id`, explicitly `null` when the request was too
+malformed to have one — so do not read a missing `id` as "this is a
+notification" and drop it.
 
 Standard codes (`-32700` parse, `-32600` invalid request, `-32601` unknown
 method, `-32602` bad parameters) mean what they always mean. Application
@@ -100,6 +114,12 @@ where they appear as entries marked `x-notification` — OpenRPC has no
 first-class notion of a server-pushed message, so that flag is how they are
 distinguished from methods you may call.
 
+`message.history` and `event.message` describe the same conversation in
+different shapes, deliberately: a live event is the message as the server
+delivered it (`id`, `timestamp`, `username`, `message`), while history is a
+chat log and carries a direction (`peer`, `outgoing`, `text`, `at`) because it
+includes what this account sent.
+
 **Events are the only way to observe these things, and they are not
 replayable.** The underlying library hands over its event buffer and empties
 it, so the daemon drains once and copies to every attached connection. A
@@ -118,10 +138,10 @@ matched on `username` + `filename`.
 
 ## Behaviour worth knowing
 
-**Files land on the daemon's filesystem.** `download_directory` is the
-daemon's configuration; a remote client cannot see that filesystem and does
-not choose. `daemon.status` reports the directory in use. There is no method
-to fetch the bytes over the control socket.
+**Files land on the daemon's filesystem.** The directory is the daemon's
+configuration and a client cannot name one — that would be an arbitrary write
+on the daemon's host. `daemon.status` reports the directory in use. There is
+no method to fetch the bytes over the control socket.
 
 **Several clients, no locking.** Last write wins. Two clients cancelling the
 same transfer is two hands on one keyboard, not an error.
