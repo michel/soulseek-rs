@@ -98,18 +98,6 @@ fn mode() -> Mode {
     }
 }
 
-/// Skip the rest of a test that has no meaning against a daemon — one about
-/// logging in, or about what happens when a listener port is taken, both of
-/// which are the daemon's business rather than a client's.
-macro_rules! local_only {
-    ($why:expr) => {
-        if mode() == Mode::Daemon {
-            println!("skipped in daemon mode: {}", $why);
-            return;
-        }
-    };
-}
-
 fn run(args: &[&str]) -> Output {
     command(args).output().expect("the binary should run")
 }
@@ -744,12 +732,15 @@ impl TestServer {
         ]
     }
 
-    /// Client arguments pointing at a daemon logged in as `user` with
-    /// `session_flags`, starting one if this combination has not been seen.
+    /// Client arguments pointing at a daemon logged in as `user`, starting one
+    /// if this account has not been seen.
     ///
-    /// Keyed by the flags as well as the user: a test that shares a different
-    /// folder needs a daemon that shares it, and reusing one configured for
-    /// something else would quietly test the wrong thing.
+    /// Strictly one daemon per account: the server allows a single session per
+    /// name, so a second daemon under the same name would displace the first
+    /// and every command already routed to it would start failing with
+    /// "session lost". The session flags of the first call configure it — a
+    /// later call's are ignored, which is exactly what happens in real daemon
+    /// mode, where shares and the listener belong to the daemon.
     fn daemon_args(&self, user: &str, session_flags: &[String]) -> Vec<String> {
         let socket = self.daemon_for(user, session_flags);
         vec![
@@ -761,7 +752,7 @@ impl TestServer {
     }
 
     fn daemon_for(&self, user: &str, session_flags: &[String]) -> PathBuf {
-        let key = format!("{}|{user}|{}", self.address(), session_flags.join(" "));
+        let key = format!("{}|{user}", self.address());
         let mut daemons = self.daemons.lock().expect("daemon registry");
         if let Some(existing) = daemons.get(&key) {
             return existing.socket.clone();

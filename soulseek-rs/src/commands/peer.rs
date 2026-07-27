@@ -106,18 +106,27 @@ pub fn serve(
     args: &ServeArgs,
     mut sweeper: Option<crate::commands::wish::Sweeper>,
 ) -> CliResult {
-    if ctx.settings.shared_directories.is_empty() {
-        return Err(CliError::usage(
-            "nothing to share: pass --shared-dir, or add one with `shares add`",
-        ));
-    }
-    if !ctx.settings.enable_listen {
-        return Err(CliError::usage(
-            "serving needs the listener: drop --no-listener",
-        ));
+    // Cheap check first, so a misconfigured local run is rejected before it
+    // bothers the server with a login.
+    if ctx.daemon.is_none() {
+        if ctx.settings.shared_directories.is_empty() {
+            return Err(nothing_to_share());
+        }
+        if !ctx.settings.enable_listen {
+            return Err(needs_a_listener());
+        }
     }
 
     let session = Session::open(ctx)?;
+    // What the session actually offers is what decides. Routed to a daemon
+    // that is what the daemon shares, which is the only thing peers can see —
+    // this run's own configuration has no bearing on it.
+    if session.client.shared_directories().is_empty() {
+        return Err(nothing_to_share());
+    }
+    if session.client.listen_port().is_none() {
+        return Err(needs_a_listener());
+    }
     if let Some(slots) = args.upload_slots {
         session.client.set_upload_slots(usize::from(slots));
         ctx.out.status(&format!("{slots} upload slots"));
@@ -167,6 +176,16 @@ pub fn serve(
         std::thread::sleep(POLL);
     }
     Ok(())
+}
+
+fn nothing_to_share() -> CliError {
+    CliError::usage(
+        "nothing to share: pass --shared-dir, or add one with `shares add`",
+    )
+}
+
+fn needs_a_listener() -> CliError {
+    CliError::usage("serving needs the listener: drop --no-listener")
 }
 
 /// Flatten a live upload into the record `serve` reports.

@@ -523,20 +523,21 @@ fn handle(stream: Stream, daemon: Arc<Daemon>) -> std::io::Result<()> {
         })
     };
 
+    // Requests are answered on this thread, in order. A method slow enough to
+    // matter (re-indexing a large share) delays only the connection that asked
+    // for it, which is the right person to wait — and every other client has a
+    // connection of its own. Spawning per request would instead churn a thread
+    // for each of the handful of polls a TUI makes every frame.
     for line in lines {
         let line = line?;
         if line.trim().is_empty() {
             continue;
         }
-        let daemon = Arc::clone(&daemon);
-        let out = out.clone();
-        // One thread per request: a slow method must not hold up the ones
-        // behind it, and the ids let a client match replies out of order.
-        std::thread::spawn(move || {
-            if let Some(response) = answer(&line, &daemon) {
-                let _ = out.send(response);
-            }
-        });
+        if let Some(response) = answer(&line, &daemon)
+            && out.send(response).is_err()
+        {
+            break;
+        }
     }
 
     daemon.hub.unsubscribe(subscription);

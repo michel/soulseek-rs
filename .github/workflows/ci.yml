@@ -107,3 +107,13 @@ jobs:
         env:
           SOULSEEK_E2E_REQUIRED: "1"
         run: cargo test -p soulseek-rs --test cli_e2e -- --nocapture
+
+      # The same suite again, with every session served by a daemon instead of
+      # the command's own login. Identical records and exit codes both ways is
+      # what makes daemon mode a routing decision rather than a second
+      # implementation to keep in step.
+      - name: Run CLI e2e tests against a daemon
+        env:
+          SOULSEEK_E2E_REQUIRED: "1"
+          SOULSEEK_E2E_MODE: daemon
+        run: cargo test -p soulseek-rs --test cli_e2e -- --nocapture --test-threads=1

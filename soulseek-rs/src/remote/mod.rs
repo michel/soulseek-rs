@@ -162,14 +162,14 @@ impl RemoteSession {
 
         let pending = Arc::new(Pending::default());
         let mirror = Arc::new(Mirror::default());
-        let closed = Arc::new(AtomicBool::new(false));
+        let hung_up = Arc::new(AtomicBool::new(false));
         {
             let pending = Arc::clone(&pending);
             let mirror = Arc::clone(&mirror);
-            let closed = Arc::clone(&closed);
+            let hung_up = Arc::clone(&hung_up);
             std::thread::spawn(move || {
                 read_loop(read, &pending, &mirror);
-                closed.store(true, Ordering::Relaxed);
+                hung_up.store(true, Ordering::Relaxed);
                 pending.fail_all();
             });
         }
@@ -181,7 +181,7 @@ impl RemoteSession {
             mirror,
             next_id: AtomicU64::new(1),
             username: String::new(),
-            closed,
+            closed: hung_up,
         };
 
         let token = if endpoint.self_authenticating() {
@@ -341,17 +341,11 @@ impl RemoteSession {
 
     /// One parameterless request, for the control commands that only need to
     /// ask a daemon something once.
+    ///
     pub fn ask_for<R: DeserializeOwned>(&self, method: Method) -> Result<R> {
         self.request(method, ())
     }
 
-    /// The daemon's chat history, which a remote client needs to rebuild a
-    /// conversation it was not attached for. Not part of [`SessionApi`]
-    /// because a local session keeps this in the TUI's own snapshot.
-    pub fn message_history(&self) -> Result<Vec<ChatMessageDto>> {
-        self.request::<_, Messages>(Method::MessageHistory, ())
-            .map(|history| history.messages)
-    }
 }
 
 /// Turn the daemon's view of a transfer back into the library's, with the
@@ -737,6 +731,12 @@ impl SessionApi for RemoteSession {
         .ok()?
         .user
         .map(Into::into)
+    }
+
+    fn message_history(&self) -> Vec<ChatMessageDto> {
+        self.request::<_, Messages>(Method::MessageHistory, ())
+            .map(|history| history.messages)
+            .unwrap_or_default()
     }
 
     fn shared_counts(&self) -> (u32, u32) {

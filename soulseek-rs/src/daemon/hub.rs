@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How often the drainer samples the session. The TUI already redraws on this
 /// cadence, so events reach a remote UI as promptly as a local one.
@@ -157,22 +157,39 @@ struct DrainState {
     reported_loss: bool,
 }
 
-/// Peers we have asked for a listing and are still waiting on. `take_browse_result`
-/// is per-user and destructive, so the daemon has to know who to ask about.
+/// How long to keep asking whether a peer has answered a browse request.
+///
+/// A peer that is offline or uninterested never replies, and the daemon would
+/// otherwise poll for it until restart — so a script that browsed a few
+/// thousand absent peers would leave the drainer doing thousands of pointless
+/// lookups every tick. Comfortably longer than any client's own browse
+/// timeout, so this expiry never beats a real answer.
+const BROWSE_PATIENCE: Duration = Duration::from_mins(2);
+
+/// Peers we have asked for a listing and are still waiting on.
+/// `take_browse_result` is per-user and destructive, so the daemon has to know
+/// who to ask about.
 #[derive(Default)]
-pub struct PendingBrowses(Mutex<Vec<String>>);
+pub struct PendingBrowses(Mutex<Vec<(String, Instant)>>);
 
 impl PendingBrowses {
     pub fn expect(&self, username: &str) {
-        if let Ok(mut pending) = self.0.lock()
-            && !pending.iter().any(|name| name == username)
-        {
-            pending.push(username.to_string());
-        }
+        let Ok(mut pending) = self.0.lock() else {
+            return;
+        };
+        // Asking again restarts the clock: it is a fresh request.
+        pending.retain(|(name, _)| name != username);
+        pending.push((username.to_string(), Instant::now()));
     }
 
+    /// Who to ask about this tick, forgetting the ones that have run out of
+    /// patience.
     fn snapshot(&self) -> Vec<String> {
-        self.0.lock().map_or_else(|_| Vec::new(), |pending| pending.clone())
+        let Ok(mut pending) = self.0.lock() else {
+            return Vec::new();
+        };
+        pending.retain(|(_, asked)| asked.elapsed() < BROWSE_PATIENCE);
+        pending.iter().map(|(name, _)| name.clone()).collect()
     }
 
     fn settled(&self, username: &str) {
@@ -182,7 +199,7 @@ impl PendingBrowses {
     /// Stop waiting on a peer whose request never reached the wire.
     pub fn forget(&self, username: &str) {
         if let Ok(mut pending) = self.0.lock() {
-            pending.retain(|name| name != username);
+            pending.retain(|(name, _)| name != username);
         }
     }
 }
@@ -444,6 +461,18 @@ mod tests {
         pending.expect("bob");
         assert_eq!(pending.snapshot(), ["bob"]);
         pending.settled("bob");
+        assert!(pending.snapshot().is_empty());
+    }
+
+    #[test]
+    fn a_browse_that_is_never_answered_stops_being_polled() {
+        // A peer that is offline never replies; without an expiry the drainer
+        // would look for its answer on every tick until the daemon restarts.
+        let asked = Instant::now()
+            .checked_sub(BROWSE_PATIENCE + Duration::from_secs(1))
+            .expect("the clock is past the epoch");
+        let pending =
+            PendingBrowses(Mutex::new(vec![("ghost".to_string(), asked)]));
         assert!(pending.snapshot().is_empty());
     }
 }

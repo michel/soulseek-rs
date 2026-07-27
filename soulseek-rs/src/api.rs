@@ -12,6 +12,7 @@
 //! change is [`SessionApi::username`], which returns an owned `String`: a
 //! remote session has no borrowed client to hand a `&str` out of.
 
+use crate::daemon::proto::ChatMessageDto;
 use soulseek_rs::types::{Download, DownloadMetadata};
 use soulseek_rs::{
     Client, DownloadStatus, Result, RoomEvent, SearchResult, SessionLoss,
@@ -100,6 +101,17 @@ pub trait SessionApi: Send + Sync {
     ) -> Option<Vec<SharedDirectory>>;
     fn request_user_info(&self, username: &str) -> Result<()>;
     fn user_info(&self, username: &str) -> Option<UserInfo>;
+
+    /// The conversation this session already knows about.
+    ///
+    /// Empty locally, where the TUI's own snapshot on disk is the record. A
+    /// daemon has been collecting private messages the whole time it has been
+    /// running, including while nothing was attached, so an attaching client
+    /// asks for the backlog rather than starting a conversation half-way
+    /// through.
+    fn message_history(&self) -> Vec<ChatMessageDto> {
+        Vec::new()
+    }
 
     fn shared_counts(&self) -> (u32, u32);
     fn shared_directories(&self) -> Vec<String>;

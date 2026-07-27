@@ -10,7 +10,7 @@ use crate::api::SessionApi;
 use crate::models::AppState;
 use crate::persist::{
     snapshot::{Snapshot, restore_messages, restore_searches},
-    state::StateStore,
+    state::{PersistedMessage, StateStore},
 };
 use color_eyre::Result;
 use ratatui::{
@@ -58,7 +58,29 @@ impl MainTui {
     /// (rejoined on the server), and downloads — incomplete ones are
     /// re-enqueued so they resume automatically.
     fn restore_persisted_state(&mut self) {
-        let Some(store) = &self.store else { return };
+        // Whatever the session has been collecting comes first: attached to a
+        // daemon this is the conversation so far, including everything that
+        // arrived while nothing was showing it. Locally it is empty and the
+        // snapshot below is the whole record.
+        let history: Vec<PersistedMessage> = self
+            .client
+            .message_history()
+            .into_iter()
+            .map(|message| PersistedMessage {
+                peer: message.peer,
+                outgoing: message.outgoing,
+                text: message.text,
+                at: chrono::DateTime::from_timestamp(message.at, 0)
+                    .unwrap_or_default()
+                    .into(),
+            })
+            .collect();
+        restore_messages(&mut self.state, &history);
+
+        let Some(store) = &self.store else {
+            self.saved_snapshot = Snapshot::capture(&self.state);
+            return;
+        };
 
         restore_searches(&mut self.state, &store.load_search_queries());
         restore_messages(&mut self.state, &store.load_messages());
