@@ -8,7 +8,8 @@ use crate::output::{
     RoomEventRecord, RoomMemberRecord, RoomRecord,
 };
 use soulseek_rs::types::RoomEvent;
-use soulseek_rs::{Client, SharedDirectory};
+use crate::api::SessionApi;
+use soulseek_rs::SharedDirectory;
 use std::time::{Duration, Instant};
 
 /// How long to wait for the server to acknowledge something we sent.
@@ -30,7 +31,7 @@ pub fn full_path(directory: &str, basename: &str) -> String {
 
 /// Ask a peer for its share listing and wait for the answer.
 pub fn fetch_listing(
-    client: &Client,
+    client: &dyn SessionApi,
     user: &str,
     timeout: Duration,
 ) -> CliResult<Vec<SharedDirectory>> {
@@ -57,7 +58,7 @@ pub fn browse(ctx: &Ctx, args: &BrowseArgs) -> CliResult {
         .status(&format!("requesting {}'s shared files…", args.user));
 
     let directories = fetch_listing(
-        &session.client,
+        session.client.as_ref(),
         &args.user,
         Duration::from_secs(args.timeout),
     )?;
@@ -89,7 +90,7 @@ pub fn room_list(ctx: &Ctx, timeout: Duration) -> CliResult {
     ctx.out.status("fetching the room list…");
 
     let Some(mut rooms) =
-        super::await_room_list(&session.client, timeout, POLL)
+        super::await_room_list(session.client.as_ref(), timeout, POLL)
     else {
         return Err(CliError::timeout(format!(
             "the server sent no room list within {}s",
@@ -123,7 +124,7 @@ pub fn room_say(ctx: &Ctx, room: &str, message: &str) -> CliResult {
         CliError::connection(format!("cannot post to {room}: {e}"))
     })?;
 
-    if confirm_flush(&session.client, FLUSH_TIMEOUT) {
+    if confirm_flush(session.client.as_ref(), FLUSH_TIMEOUT) {
         ctx.out.status(&format!("posted to {room}"));
         return Ok(());
     }
@@ -248,7 +249,7 @@ pub fn message_send(ctx: &Ctx, user: &str, message: &str) -> CliResult {
             CliError::connection(format!("cannot send to {user}: {e}"))
         })?;
 
-    if confirm_flush(&session.client, FLUSH_TIMEOUT) {
+    if confirm_flush(session.client.as_ref(), FLUSH_TIMEOUT) {
         ctx.out.status(&format!("sent to {user}"));
         return Ok(());
     }

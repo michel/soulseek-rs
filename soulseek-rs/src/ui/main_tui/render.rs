@@ -264,7 +264,7 @@ impl MainTui {
         // it renders the messages and the compose line itself.
         let area = centered_rect(70, 60, frame.area());
         frame.render_widget(ratatui::widgets::Clear, area);
-        render_chat_pane(frame, area, &self.state, self.client.username());
+        render_chat_pane(frame, area, &self.state, &self.client.username());
     }
 
     /// Context shortcuts for the chat-rooms popup.

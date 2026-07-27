@@ -31,7 +31,7 @@ pub fn whoami(ctx: &Ctx) -> CliResult {
         shared_folders: folders,
         shared_files: files,
         download_dir: ctx.download_dir.clone(),
-        privilege_seconds: own_privileges(&session.client),
+        privilege_seconds: own_privileges(session.client.as_ref()),
     });
     Ok(())
 }
@@ -40,7 +40,7 @@ pub fn whoami(ctx: &Ctx) -> CliResult {
 ///
 /// A server that does not answer leaves the field null rather than reporting a
 /// zero, because "no privileges" and "did not say" are different facts.
-fn own_privileges(client: &soulseek_rs::Client) -> Option<u32> {
+fn own_privileges(client: &dyn crate::api::SessionApi) -> Option<u32> {
     if client.check_privileges().is_err() {
         return None;
     }
@@ -159,7 +159,7 @@ pub fn serve(
             }
         }
         if let Some(sweeper) = sweeper.as_mut() {
-            sweeper.tick(ctx, &session.client);
+            sweeper.tick(ctx, session.client.as_ref());
         }
         std::thread::sleep(POLL);
     }

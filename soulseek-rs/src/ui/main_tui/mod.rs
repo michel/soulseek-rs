@@ -6,6 +6,7 @@ mod rooms;
 mod search;
 mod settings;
 
+use crate::api::SessionApi;
 use crate::models::AppState;
 use crate::persist::{
     snapshot::{Snapshot, restore_messages, restore_searches},
@@ -16,11 +17,10 @@ use ratatui::{
     DefaultTerminal,
     crossterm::event::{self, Event, KeyEventKind, poll},
 };
-use soulseek_rs::Client;
 use std::{sync::Arc, time::Duration};
 
 pub struct MainTui {
-    client: Arc<Client>,
+    client: Arc<dyn SessionApi>,
     state: AppState,
     download_dir: String,
     #[allow(dead_code)]
@@ -34,7 +34,7 @@ pub struct MainTui {
 
 impl MainTui {
     pub fn new(
-        client: Arc<Client>,
+        client: Arc<dyn SessionApi>,
         download_dir: String,
         max_concurrent_downloads: usize,
         search_timeout: Duration,
@@ -227,7 +227,7 @@ impl MainTui {
 
 pub fn launch_main_tui(
     terminal: DefaultTerminal,
-    client: Arc<Client>,
+    client: Arc<dyn SessionApi>,
     download_dir: String,
     max_concurrent_downloads: usize,
     search_timeout: Duration,

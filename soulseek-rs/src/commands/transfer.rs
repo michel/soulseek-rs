@@ -8,7 +8,8 @@ use crate::output::{
     CliError, CliResult, DownloadRecord, Exit, Out, SearchRecord,
 };
 use soulseek_rs::utils::path::expand_tilde;
-use soulseek_rs::{Client, DownloadStatus, SearchResult};
+use crate::api::SessionApi;
+use soulseek_rs::{DownloadStatus, SearchResult};
 use std::collections::{HashMap, VecDeque};
 use std::io::BufRead;
 use std::path::PathBuf;
@@ -241,7 +242,7 @@ pub fn download(ctx: &Ctx, args: &DownloadArgs) -> CliResult {
 
     ensure_download_dir(&ctx.download_dir)?;
     let session = Session::open(ctx)?;
-    let requests = resolve_sizes(ctx, &session.client, requests)?;
+    let requests = resolve_sizes(ctx, session.client.as_ref(), requests)?;
     download_all(
         ctx,
         &session.client,
@@ -283,7 +284,7 @@ pub fn get(ctx: &Ctx, args: &GetArgs) -> CliResult {
 /// late responders are often the better sources.
 fn collect(
     ctx: &Ctx,
-    client: &Arc<Client>,
+    client: &Arc<dyn SessionApi>,
     query: &str,
     stop_early: bool,
 ) -> CliResult<Vec<SearchResult>> {
@@ -365,7 +366,7 @@ fn dedupe(
 /// and saved empty, so look it up in the peer's share listing first.
 fn resolve_sizes(
     ctx: &Ctx,
-    client: &Client,
+    client: &dyn SessionApi,
     requests: Vec<Request>,
 ) -> CliResult<Vec<Request>> {
     if requests.iter().all(|request| request.size > 0) {
@@ -434,7 +435,7 @@ fn ensure_download_dir(download_dir: &str) -> CliResult {
 /// each result as it lands. Any failure fails the command.
 fn download_all(
     ctx: &Ctx,
-    client: &Arc<Client>,
+    client: &Arc<dyn SessionApi>,
     requests: Vec<Request>,
     timeout: Duration,
 ) -> CliResult {
@@ -452,7 +453,7 @@ fn download_all(
                     queue.lock().ok().and_then(|mut q| q.pop_front())
                 {
                     let outcome = download_one(
-                        client,
+                        client.as_ref(),
                         &ctx.out,
                         &request,
                         &ctx.download_dir,
@@ -499,7 +500,7 @@ fn download_all(
 /// on the status channel rather than through the call that starts the
 /// transfer, so the channel is the only thing worth believing.
 fn download_one(
-    client: &Client,
+    client: &dyn SessionApi,
     out: &Out,
     request: &Request,
     download_dir: &str,

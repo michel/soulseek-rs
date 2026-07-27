@@ -18,6 +18,7 @@ use crate::output::{CliError, CliResult, Exit, Out, PortmapRecord};
 use crate::port_mapping::{self, PortMapper};
 use soulseek_rs::types::{RoomEvent, RoomInfo};
 use soulseek_rs::{Client, ClientSettings, SessionLoss};
+use crate::api::SessionApi;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -31,7 +32,7 @@ pub struct Ctx {
     pub search_timeout: Duration,
     /// The client of the session this command opened, once it has one, so the
     /// verdict can be checked against the session that produced it.
-    pub session: OnceLock<Arc<Client>>,
+    pub session: OnceLock<Arc<dyn SessionApi>>,
 }
 
 impl Ctx {
@@ -75,7 +76,7 @@ fn session_lost(loss: SessionLoss) -> CliError {
 /// A logged-in client plus, while the listener is enabled, the port mapping
 /// that makes us reachable. Both live until the command ends.
 pub struct Session {
-    pub client: Arc<Client>,
+    pub client: Arc<dyn SessionApi>,
     _mapper: Option<PortMapper>,
 }
 
@@ -90,7 +91,8 @@ impl Session {
         ctx.out.status(&format!("connecting to {address}…"));
         reachable(&address, REACH_TIMEOUT)?;
 
-        let client = Arc::new(login(ctx.settings.clone(), &address)?);
+        let client: Arc<dyn SessionApi> =
+            Arc::new(login(ctx.settings.clone(), &address)?);
         ctx.out
             .status(&format!("logged in as {}", ctx.settings.username));
         let _ = ctx.session.set(Arc::clone(&client));
@@ -184,7 +186,7 @@ fn login(settings: ClientSettings, address: &str) -> CliResult<Client> {
 /// Events already queued are discarded first: servers push a room list at
 /// login, and counting that one would answer a question we had not asked yet.
 pub fn await_room_list(
-    client: &Client,
+    client: &dyn SessionApi,
     timeout: Duration,
     poll: Duration,
 ) -> Option<Vec<RoomInfo>> {
@@ -215,7 +217,7 @@ pub fn await_room_list(
 /// message reached the socket. The room list is the cheapest such request and
 /// every server answers it, which lets `message send` and `room say` report
 /// delivery honestly instead of sleeping and hoping.
-pub fn confirm_flush(client: &Client, timeout: Duration) -> bool {
+pub fn confirm_flush(client: &dyn SessionApi, timeout: Duration) -> bool {
     await_room_list(client, timeout, Duration::from_millis(50)).is_some()
 }
 

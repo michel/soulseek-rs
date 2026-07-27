@@ -9,6 +9,7 @@ use super::{Ctx, Session, settings::Store, transfer};
 use crate::cli::{SortKey, WishRunArgs};
 use crate::output::{CliError, CliResult, Out, WishRecord};
 use crate::persist::config::FileConfig;
+use crate::api::SessionApi;
 use soulseek_rs::Client;
 use std::time::Instant;
 
@@ -56,7 +57,7 @@ pub fn run(ctx: &Ctx, store: &Store, args: &WishRunArgs) -> CliResult {
     let wishes = selected(&store.config, args.only.as_deref())?;
     let session = Session::open(ctx)?;
 
-    if !sweep(ctx, &session.client, &wishes, &Sweep::from(args)) {
+    if !sweep(ctx, session.client.as_ref(), &wishes, &Sweep::from(args)) {
         return Err(CliError::no_results(
             "no wish matched anything on the network",
         ));
@@ -121,7 +122,7 @@ impl Sweeper {
     /// unreported and `--duration` overshoots by that much. Move the sweep to its
     /// own thread with a channel of records if that ever matters; what mattered
     /// was that it used to be one window *per wish*.
-    pub fn tick(&mut self, ctx: &Ctx, client: &Client) {
+    pub fn tick(&mut self, ctx: &Ctx, client: &dyn SessionApi) {
         if Instant::now() < self.next {
             return;
         }
@@ -139,7 +140,12 @@ impl Sweeper {
 /// All the searches go out before anything is waited for: peers answer whenever
 /// they get round to it, so one shared window covers every wish, where waiting
 /// per wish would cost a full window each.
-fn sweep(ctx: &Ctx, client: &Client, wishes: &[String], how: &Sweep) -> bool {
+fn sweep(
+    ctx: &Ctx,
+    client: &dyn SessionApi,
+    wishes: &[String],
+    how: &Sweep,
+) -> bool {
     let mut sent = Vec::new();
     for wish in wishes {
         match client.start_wishlist_search(wish) {
