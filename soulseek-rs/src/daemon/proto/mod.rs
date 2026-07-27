@@ -80,6 +80,8 @@ wire_vocabulary! {
         RpcDiscover => "rpc.discover",
         SearchStart => "search.start",
         SearchResults => "search.results",
+        SearchList => "search.list",
+        SearchForget => "search.forget",
         SearchWishlist => "search.wishlist",
         SearchWishlistInterval => "search.wishlist_interval",
         DownloadStart => "download.start",

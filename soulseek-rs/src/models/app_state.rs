@@ -16,6 +16,13 @@ pub struct SearchEntry {
     pub query: String,
     pub status: SearchStatus,
     pub results: Vec<FileDisplayData>,
+    /// What the session says this search has found, for a window that has not
+    /// fetched the results itself. Fetching every search every frame is what
+    /// a shared cache would otherwise cost.
+    pub known_files: usize,
+    /// Whether this window started the search. Its own worker knows when it
+    /// finishes; for the rest the session is the authority.
+    pub owned: bool,
     pub start_time: Instant,
     #[allow(dead_code)]
     pub cancel_flag: Arc<AtomicBool>,

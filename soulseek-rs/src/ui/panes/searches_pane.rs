@@ -35,7 +35,14 @@ pub fn render_searches_pane(
                 }
             };
 
-            let results_count = search.results.len();
+            // What this window has fetched, or what the session says it will
+            // find when it does. A search another window ran has a count long
+            // before this one has pulled the results across.
+            let results_count = if search.results.is_empty() {
+                search.known_files
+            } else {
+                search.results.len()
+            };
             let results_text = if results_count == 0
                 && search.status == SearchStatus::Active
             {

@@ -269,15 +269,40 @@ pub fn launch_main_tui(
 mod tests {
     use super::*;
     use crate::daemon::proto::ChatMessageDto;
-    use crate::models::MessageDirection;
+    use crate::models::{MessageDirection, SearchStatus};
 
-    /// A session that knows a conversation and nothing else — what attaching
-    /// to a daemon looks like from the TUI's side.
-    struct TalkativeSession(Vec<ChatMessageDto>);
+    /// A stand-in for a daemon: it already holds a conversation, a transfer
+    /// queue, and a search cache, none of which this window created.
+    #[derive(Default)]
+    struct TalkativeSession {
+        history: Vec<ChatMessageDto>,
+        downloads: Vec<soulseek_rs::types::Download>,
+        searches: std::sync::Mutex<Vec<crate::api::SessionSearch>>,
+        /// Whether this session is a daemon's. Local sessions do not sync.
+        shared: bool,
+    }
+
+    fn queued(username: &str, filename: &str) -> soulseek_rs::types::Download {
+        let (sender, _) = std::sync::mpsc::channel();
+        soulseek_rs::types::Download {
+            username: username.to_string(),
+            filename: filename.to_string(),
+            token: 1,
+            size: 4096,
+            download_directory: "/tmp".to_string(),
+            status: soulseek_rs::DownloadStatus::Queued,
+            sender,
+            queue_position: None,
+            metadata: soulseek_rs::types::DownloadMetadata::default(),
+        }
+    }
 
     impl SessionApi for TalkativeSession {
         fn message_history(&self) -> Vec<ChatMessageDto> {
-            self.0.clone()
+            self.history.clone()
+        }
+        fn daemon_endpoint(&self) -> Option<String> {
+            self.shared.then(|| "test-daemon".to_string())
         }
         fn username(&self) -> String {
             "tester".to_string()
@@ -301,6 +326,15 @@ mod tests {
             _key: &str,
         ) -> Vec<soulseek_rs::SearchResult> {
             Vec::new()
+        }
+        fn all_searches(&self) -> Vec<crate::api::SessionSearch> {
+            self.searches.lock().expect("not poisoned").clone()
+        }
+        fn forget_search(&self, query: &str) -> bool {
+            let mut searches = self.searches.lock().expect("not poisoned");
+            let before = searches.len();
+            searches.retain(|search| search.query != query);
+            searches.len() != before
         }
         fn get_search_results_count(&self, _key: &str) -> usize {
             0
@@ -346,7 +380,7 @@ mod tests {
             Err(soulseek_rs::SoulseekRs::NotConnected)
         }
         fn get_all_downloads(&self) -> Vec<soulseek_rs::types::Download> {
-            Vec::new()
+            self.downloads.clone()
         }
         fn pause_download(&self, _u: &str, _f: &str) -> bool {
             false
@@ -441,8 +475,36 @@ mod tests {
     }
 
     fn tui(history: Vec<ChatMessageDto>) -> MainTui {
+        with_session(TalkativeSession {
+            history,
+            shared: true,
+            ..TalkativeSession::default()
+        })
+    }
+
+    fn shared(searches: Vec<crate::api::SessionSearch>) -> TalkativeSession {
+        TalkativeSession {
+            searches: std::sync::Mutex::new(searches),
+            shared: true,
+            ..TalkativeSession::default()
+        }
+    }
+
+    fn search_of(
+        query: &str,
+        files: usize,
+        age: u64,
+    ) -> crate::api::SessionSearch {
+        crate::api::SessionSearch {
+            query: query.to_string(),
+            files,
+            started_secs_ago: Some(age),
+        }
+    }
+
+    fn with_session(session: TalkativeSession) -> MainTui {
         MainTui::new(
-            Arc::new(TalkativeSession(history)),
+            Arc::new(session),
             "/tmp".to_string(),
             1,
             Duration::from_secs(1),
@@ -479,6 +541,167 @@ mod tests {
             "both halves of the conversation, not just what arrived"
         );
         assert_eq!(tui.state.chat_peers(), ["bob"]);
+    }
+
+    #[test]
+    fn a_window_shows_transfers_it_did_not_start() {
+        // Two windows on one daemon are two views of one queue. A transfer
+        // queued in the other one has to appear here, or closing a window
+        // would look like losing its downloads.
+        let mut tui = with_session(TalkativeSession {
+            downloads: vec![queued("bob", "@@x\\theirs.mp3")],
+            shared: true,
+            ..TalkativeSession::default()
+        });
+        assert!(
+            tui.state.downloads.is_empty(),
+            "nothing until the first poll"
+        );
+
+        tui.update_downloads();
+
+        assert_eq!(tui.state.downloads.len(), 1);
+        assert_eq!(tui.state.downloads[0].download.filename, "@@x\\theirs.mp3");
+        assert!(
+            tui.state.downloads[0].receiver.is_none(),
+            "someone else's transfer has no channel of ours"
+        );
+
+        // Polling again must not double it up.
+        tui.update_downloads();
+        assert_eq!(tui.state.downloads.len(), 1);
+    }
+
+    #[test]
+    fn a_transfer_the_session_forgets_leaves_every_window() {
+        let mut tui = with_session(TalkativeSession {
+            downloads: vec![queued("bob", "gone.mp3")],
+            shared: true,
+            ..TalkativeSession::default()
+        });
+        tui.update_downloads();
+        assert_eq!(tui.state.downloads.len(), 1);
+
+        // The session no longer has it — cancelled from the other window.
+        tui.client = Arc::new(TalkativeSession {
+            shared: true,
+            ..TalkativeSession::default()
+        });
+        tui.update_downloads();
+        assert!(
+            tui.state.downloads.is_empty(),
+            "a queue is shared in both directions"
+        );
+    }
+
+    #[test]
+    fn a_window_shows_searches_run_in_another() {
+        let mut tui =
+            with_session(shared(vec![search_of("their query", 7, 9_999)]));
+        tui.update_search_results();
+
+        assert_eq!(tui.state.searches.len(), 1);
+        assert_eq!(tui.state.searches[0].query, "their query");
+
+        // And it is not added a second time on the next frame.
+        tui.update_search_results();
+        assert_eq!(tui.state.searches.len(), 1);
+    }
+
+    #[test]
+    fn a_search_another_window_is_still_running_shows_as_active() {
+        // It had said "Done" the moment it appeared, because an imported
+        // search carried no notion of still collecting — so the other window
+        // looked finished while results were still arriving.
+        let mut tui =
+            with_session(shared(vec![search_of("still going", 3, 0)]));
+        tui.update_search_results();
+
+        assert_eq!(tui.state.searches[0].status, SearchStatus::Active);
+        assert_eq!(
+            tui.state.searches[0].known_files, 3,
+            "and its count comes across before the results do"
+        );
+    }
+
+    #[test]
+    fn a_search_that_has_run_its_window_shows_as_done() {
+        let mut tui =
+            with_session(shared(vec![search_of("finished", 12, 9_999)]));
+        tui.update_search_results();
+        assert_eq!(tui.state.searches[0].status, SearchStatus::Completed);
+    }
+
+    #[test]
+    fn removing_a_search_removes_it_from_the_session() {
+        // Removing it only from this window would last until the next sync,
+        // which would put it straight back — and in a shared session it would
+        // come back for every other window too.
+        let mut tui =
+            with_session(shared(vec![search_of("unwanted", 1, 9_999)]));
+        tui.update_search_results();
+        assert_eq!(tui.state.searches.len(), 1);
+
+        tui.remove_search_at_index(0);
+        tui.update_search_results();
+
+        assert!(tui.state.searches.is_empty(), "and it stays gone");
+    }
+
+    #[test]
+    fn clearing_every_search_clears_them_in_the_session_too() {
+        let mut tui = with_session(shared(vec![
+            search_of("one", 1, 9_999),
+            search_of("two", 2, 9_999),
+        ]));
+        tui.update_search_results();
+        assert_eq!(tui.state.searches.len(), 2);
+
+        tui.clear_all_searches();
+        tui.update_search_results();
+
+        assert!(
+            tui.state.searches.is_empty(),
+            "clearing has to reach the session, or every row comes back"
+        );
+    }
+
+    #[test]
+    fn a_search_dismissed_in_another_window_leaves_this_one() {
+        let session = shared(vec![search_of("theirs", 4, 9_999)]);
+        let mut tui = with_session(session);
+        tui.update_search_results();
+        assert_eq!(tui.state.searches.len(), 1);
+
+        // The other window dismissed it.
+        tui.client.forget_search("theirs");
+        tui.update_search_results();
+
+        assert!(tui.state.searches.is_empty());
+    }
+
+    #[test]
+    fn a_window_with_its_own_session_is_left_alone() {
+        // Nothing to share, so nothing is synced — and in particular the
+        // completed transfers restored from disk, which the session has never
+        // heard of, are not mistaken for cancelled and deleted.
+        let mut tui = with_session(TalkativeSession {
+            downloads: Vec::new(),
+            shared: false,
+            ..TalkativeSession::default()
+        });
+        tui.state.downloads.push(crate::models::DownloadEntry {
+            download: queued("bob", "from-disk.mp3"),
+            receiver: None,
+        });
+
+        tui.update_downloads();
+
+        assert_eq!(
+            tui.state.downloads.len(),
+            1,
+            "a local window's history must survive the tick"
+        );
     }
 
     #[test]

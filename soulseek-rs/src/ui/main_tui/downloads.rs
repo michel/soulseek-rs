@@ -59,6 +59,22 @@ impl MainTui {
 
     /// Remove all completed / failed / timed-out downloads from the list.
     pub(super) fn clear_finished_downloads(&mut self) {
+        // Forget them in the session too. The list is a view of what the
+        // session holds, so dropping them only here would last until the next
+        // poll put them straight back.
+        for entry in &self.state.downloads {
+            if matches!(
+                entry.download.status,
+                DownloadStatus::Completed
+                    | DownloadStatus::Failed(_)
+                    | DownloadStatus::TimedOut
+            ) {
+                self.client.remove_download(
+                    &entry.download.username,
+                    &entry.download.filename,
+                );
+            }
+        }
         self.state.downloads.retain(|entry| {
             !matches!(
                 entry.download.status,
@@ -218,12 +234,29 @@ impl MainTui {
     pub(super) fn update_downloads(&mut self) {
         if let Some(ref receiver) = self.state.downloads_receiver_channel {
             while let Ok((download, download_receiver)) = receiver.try_recv() {
-                self.state.downloads.push(DownloadEntry {
-                    download,
-                    receiver: Some(download_receiver),
+                // A transfer of ours can already be listed: the session
+                // registers it the moment it is queued, so a frame between
+                // that and the worker handing it over here will have picked it
+                // up from the session. Take over that row rather than adding a
+                // second one for the same file.
+                let existing = self.state.downloads.iter_mut().find(|entry| {
+                    entry.download.username == download.username
+                        && entry.download.filename == download.filename
                 });
+                match existing {
+                    Some(entry) => {
+                        entry.download = download;
+                        entry.receiver = Some(download_receiver);
+                    }
+                    None => self.state.downloads.push(DownloadEntry {
+                        download,
+                        receiver: Some(download_receiver),
+                    }),
+                }
             }
         }
+
+        self.sync_downloads_with_session();
 
         self.state.active_downloads_count = 0;
         for download_entry in &mut self.state.downloads {
@@ -240,5 +273,50 @@ impl MainTui {
                 self.state.active_downloads_count += 1;
             }
         }
+    }
+
+    /// Make the list show the session's transfers, not just this window's.
+    ///
+    /// The queue belongs to the session, so against a daemon it includes what
+    /// another client queued and what was still running before this window
+    /// opened. Transfers this window started keep their own status channel,
+    /// which reports sooner than a poll; everything else is refreshed from the
+    /// session each tick.
+    fn sync_downloads_with_session(&mut self) {
+        // Only worth doing when the session is shared. A window with a
+        // session of its own started every transfer in it, so there is
+        // nothing to learn — and the list also holds completed transfers
+        // restored from disk that the session has never heard of, which this
+        // reconciliation would take to mean "cancelled elsewhere" and delete.
+        if self.client.daemon_endpoint().is_none() {
+            return;
+        }
+
+        let known = self.client.get_all_downloads();
+
+        for download in &known {
+            let existing = self.state.downloads.iter_mut().find(|entry| {
+                entry.download.username == download.username
+                    && entry.download.filename == download.filename
+            });
+            match existing {
+                // Ours: the channel is more current than this snapshot.
+                Some(entry) if entry.receiver.is_some() => {}
+                Some(entry) => entry.download.status = download.status.clone(),
+                None => self.state.downloads.push(DownloadEntry {
+                    download: download.clone(),
+                    receiver: None,
+                }),
+            }
+        }
+
+        // Anything the session has forgotten is gone for every window.
+        self.state.downloads.retain(|entry| {
+            entry.receiver.is_some()
+                || known.iter().any(|download| {
+                    download.username == entry.download.username
+                        && download.filename == entry.download.filename
+                })
+        });
     }
 }

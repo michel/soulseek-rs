@@ -41,11 +41,13 @@ impl MainTui {
         constraints.push(Constraint::Length(3)); // Shortcuts
         let main_chunks = Layout::vertical(constraints).split(frame.area());
 
+        let daemon = self.client.daemon_endpoint();
         render_download_stats(
             frame,
             main_chunks[0],
             &self.state.downloads,
             self.state.active_downloads_count,
+            daemon.as_deref(),
         );
 
         self.render_content(frame, main_chunks[1]);

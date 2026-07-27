@@ -228,6 +228,7 @@ pub fn run(
         stop: Arc::clone(&stop),
         open: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         rooms: Mutex::new(rooms),
+        searches: Mutex::new(std::collections::HashMap::new()),
     });
 
     let drainer = {

@@ -107,6 +107,8 @@ pub fn restore_searches(state: &mut AppState, queries: &[String]) {
             query: query.clone(),
             status: SearchStatus::Completed,
             results: Vec::new(),
+            known_files: 0,
+            owned: false,
             start_time: std::time::Instant::now(),
             cancel_flag: std::sync::Arc::new(
                 std::sync::atomic::AtomicBool::new(false),
@@ -147,6 +149,8 @@ mod tests {
             query: query.into(),
             status: SearchStatus::Active,
             results: Vec::new(),
+            known_files: 0,
+            owned: false,
             start_time: Instant::now(),
             cancel_flag: Arc::new(AtomicBool::new(false)),
         }

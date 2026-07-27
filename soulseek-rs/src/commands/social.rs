@@ -261,6 +261,22 @@ pub fn message_send(ctx: &Ctx, user: &str, message: &str) -> CliResult {
 pub fn message_read(ctx: &Ctx, span: Option<Duration>) -> CliResult {
     let session = Session::open(ctx)?;
 
+    // What the session already holds comes first. A daemon has been collecting
+    // the whole time it has been up, including while nothing was reading, so
+    // starting from the next arrival would silently skip everything said so
+    // far. A session of our own knows nothing yet, so this is empty and the
+    // command behaves as it always did.
+    for message in session.client.message_history() {
+        if message.outgoing {
+            continue;
+        }
+        ctx.out.emit(&PrivateMessageRecord {
+            timestamp: u32::try_from(message.at).unwrap_or(0),
+            user: message.peer,
+            message: message.text,
+        });
+    }
+
     stream(&ctx.out, "reading private messages", span, || {
         for message in session.client.take_private_messages() {
             ctx.out.emit(&PrivateMessageRecord {

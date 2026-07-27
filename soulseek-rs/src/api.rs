@@ -23,6 +23,23 @@ use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
+/// What a session knows about one search it has run.
+///
+/// `started_secs_ago` is what lets a second window tell a search that is still
+/// collecting from one that has finished: the collecting window is the
+/// client's, so without the daemon saying when a search began, every window
+/// but the one that started it would show the result as final immediately.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionSearch {
+    pub query: String,
+    /// Files found so far, across every peer that has answered.
+    pub files: usize,
+    /// How long ago the search went out, or `None` when the session cannot
+    /// say — which is the local case, where the window that ran it already
+    /// knows.
+    pub started_secs_ago: Option<u64>,
+}
+
 /// Everything the command layer and the TUI ask of a logged-in session.
 ///
 /// Two rules keep the remote implementation honest:
@@ -36,6 +53,11 @@ use std::time::Duration;
 ///   local mirror.
 pub trait SessionApi: Send + Sync {
     fn username(&self) -> String;
+    /// The daemon this session is borrowed from, for the UI to name. `None`
+    /// when the session belongs to this process.
+    fn daemon_endpoint(&self) -> Option<String> {
+        None
+    }
     fn listen_port(&self) -> Option<u16>;
     fn session_loss(&self) -> Option<SessionLoss>;
 
@@ -56,6 +78,14 @@ pub trait SessionApi: Send + Sync {
         cancel: Option<Arc<AtomicBool>>,
     ) -> Result<Vec<SearchResult>>;
     fn get_search_results(&self, key: &str) -> Vec<SearchResult>;
+    /// Every search the session knows about.
+    ///
+    /// Daemon-side this is shared, so a second client sees what the first has
+    /// been searching for rather than starting from a blank list.
+    fn all_searches(&self) -> Vec<SessionSearch>;
+    /// Drop a search from the session, so every window loses it rather than
+    /// only the one that dismissed it.
+    fn forget_search(&self, query: &str) -> bool;
     fn get_search_results_count(&self, key: &str) -> usize;
     fn try_get_search_results(&self, key: &str) -> Option<Vec<SearchResult>>;
     fn start_wishlist_search(&self, query: &str) -> Result<()>;
@@ -150,6 +180,23 @@ impl SessionApi for Client {
 
     fn get_search_results(&self, key: &str) -> Vec<SearchResult> {
         Self::get_search_results(self, key)
+    }
+
+    fn forget_search(&self, query: &str) -> bool {
+        Self::forget_search(self, query)
+    }
+
+    fn all_searches(&self) -> Vec<SessionSearch> {
+        Self::get_all_searches(self)
+            .into_iter()
+            .map(|(query, search)| SessionSearch {
+                query,
+                files: search.results.iter().map(|r| r.files.len()).sum(),
+                // A local window started every search it can see, so it
+                // already knows which are still running.
+                started_secs_ago: None,
+            })
+            .collect()
     }
 
     fn get_search_results_count(&self, key: &str) -> usize {

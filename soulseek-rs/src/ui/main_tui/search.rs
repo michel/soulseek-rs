@@ -26,6 +26,13 @@ impl MainTui {
         // Check if we're removing the currently active search
         let was_active_search = self.state.selected_search_index == Some(index);
 
+        // Drop it from the session too. The list is a view of what the session
+        // holds, so removing it only here would last until the next sync put
+        // it straight back — and against a daemon it would come back for every
+        // other window as well.
+        if let Some(search) = self.state.searches.get(index) {
+            self.client.forget_search(&search.query);
+        }
         self.state.searches.remove(index);
 
         if let Some(current_idx) = self.state.selected_search_index {
@@ -64,7 +71,19 @@ impl MainTui {
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
 
-        // Clear searches
+        // And drop them from the session, or the next sync brings every one
+        // of them straight back — the same reason removing a single search
+        // has to say so.
+        let queries: Vec<String> = self
+            .state
+            .searches
+            .iter()
+            .map(|search| search.query.clone())
+            .collect();
+        for query in queries {
+            self.client.forget_search(&query);
+        }
+
         self.state.searches.clear();
         self.state.searches_table_state.select(None);
         self.state.selected_search_index = None;
@@ -173,6 +192,8 @@ impl MainTui {
             query: query.clone(),
             status: SearchStatus::Active,
             results: Vec::new(),
+            known_files: 0,
+            owned: true,
             start_time: Instant::now(),
             cancel_flag: cancel_flag.clone(),
         };
@@ -213,17 +234,98 @@ impl MainTui {
         });
     }
 
+    /// Show the searches the session knows about, not just this window's.
+    ///
+    /// Against a daemon the search cache is shared, so a window that opens
+    /// later sees what the others have looked for, and a query run in one
+    /// appears in the other. A search is still collecting if it went out less
+    /// than one search window ago — the window belongs to whichever client
+    /// started it, so the age is the only thing another window can judge by.
+    fn sync_searches_with_session(&mut self) {
+        // Only worth doing when the session is shared: a window with its own
+        // session ran every search in the list and already knows their state,
+        // so asking would cost a full copy of every result set per frame and
+        // tell us nothing.
+        if self.client.daemon_endpoint().is_none() {
+            return;
+        }
+
+        let timeout = self.search_timeout.as_secs();
+        for known in self.client.all_searches() {
+            let running = known
+                .started_secs_ago
+                .is_some_and(|elapsed| elapsed < timeout);
+
+            if let Some(existing) = self
+                .state
+                .searches
+                .iter_mut()
+                .find(|search| search.query == known.query)
+            {
+                // Ours keeps the status its own worker thread sets; the rest
+                // follow the session, so a search finishing in one window
+                // stops saying "Active" in the others.
+                if known.started_secs_ago.is_some() && !existing.owned {
+                    existing.status = if running {
+                        SearchStatus::Active
+                    } else {
+                        SearchStatus::Completed
+                    };
+                    existing.known_files = known.files;
+                }
+                continue;
+            }
+
+            self.state.searches.push(SearchEntry {
+                query: known.query,
+                status: if running {
+                    SearchStatus::Active
+                } else {
+                    SearchStatus::Completed
+                },
+                results: Vec::new(),
+                known_files: known.files,
+                owned: false,
+                start_time: std::time::Instant::now(),
+                cancel_flag: std::sync::Arc::new(
+                    std::sync::atomic::AtomicBool::new(false),
+                ),
+            });
+        }
+
+        // Dismissed elsewhere means dismissed here. Ours stay: this window is
+        // the authority on a search it started.
+        let live: Vec<String> = self
+            .client
+            .all_searches()
+            .into_iter()
+            .map(|search| search.query)
+            .collect();
+        self.state
+            .searches
+            .retain(|search| search.owned || live.contains(&search.query));
+    }
+
     pub(super) fn update_search_results(&mut self) {
+        self.sync_searches_with_session();
         let timeout = self.search_timeout;
         let selected_search_index = self.state.selected_search_index;
 
         // Fetch all results in one go (single lock acquisition per query)
         // Use try_get_search_results to avoid blocking the UI thread
+        // Only what the user can see or what is still arriving. A shared
+        // cache can hold every search every window has ever run, and fetching
+        // all of them each frame is a round trip apiece against a daemon.
+        // The rest show the count the session reported.
         let all_results: Vec<(usize, Vec<_>)> = self
             .state
             .searches
             .iter()
             .enumerate()
+            .filter(|(idx, search)| {
+                search.status == SearchStatus::Active
+                    || selected_search_index == Some(*idx)
+            })
             .map(|(idx, s)| (idx, s.query.clone()))
             .filter_map(|(idx, query)| {
                 self.client

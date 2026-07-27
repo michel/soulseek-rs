@@ -7,14 +7,14 @@
 
 mod mirror;
 
-use crate::api::SessionApi;
+use crate::api::{SessionApi, SessionSearch};
 use crate::daemon::proto::{
     Ack, AuthParams, AuthResult, CODE_APPLICATION, ChatMessageDto,
     DaemonStatus, DirectoriesParams, DownloadDto, DownloadStartParams,
     DownloadStarted, Downloads, Event, IntervalSeconds, Members, MessageParams,
     Messages, Method, PROTOCOL_VERSION, QueryParams, Request, Response,
-    RoomRef, RpcError, SayParams, SearchResults, Seconds, SharesStatus,
-    SlotsParams, TransferRef, Uploads, UserRef, UserResult,
+    RoomRef, RpcError, SayParams, SearchResults, Searches, Seconds,
+    SharesStatus, SlotsParams, TransferRef, Uploads, UserRef, UserResult,
 };
 use mirror::Mirror;
 use serde::de::DeserializeOwned;
@@ -147,6 +147,8 @@ pub struct RemoteSession {
     mirror: Arc<Mirror>,
     next_id: AtomicU64,
     username: String,
+    /// Where this session was reached, so the UI can say so.
+    endpoint: String,
     /// Set when the reader thread stops, so a call fails immediately rather
     /// than waiting out its timeout against a socket nobody is reading.
     closed: Arc<AtomicBool>,
@@ -185,6 +187,7 @@ impl RemoteSession {
             mirror,
             next_id: AtomicU64::new(1),
             username: String::new(),
+            endpoint: endpoint.to_string(),
             closed: hung_up,
         };
 
@@ -467,6 +470,10 @@ impl SessionApi for RemoteSession {
         self.username.clone()
     }
 
+    fn daemon_endpoint(&self) -> Option<String> {
+        Some(self.endpoint.clone())
+    }
+
     fn listen_port(&self) -> Option<u16> {
         self.status().and_then(|status| status.listen_port)
     }
@@ -508,6 +515,31 @@ impl SessionApi for RemoteSession {
         )
         .map(|found| found.results.into_iter().map(Into::into).collect())
         .unwrap_or_default()
+    }
+
+    fn all_searches(&self) -> Vec<SessionSearch> {
+        self.request::<_, Searches>(Method::SearchList, ())
+            .map(|listed| {
+                listed
+                    .searches
+                    .into_iter()
+                    .map(|search| SessionSearch {
+                        query: search.query,
+                        files: search.files,
+                        started_secs_ago: Some(search.started_secs_ago),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn forget_search(&self, query: &str) -> bool {
+        self.ask(
+            Method::SearchForget,
+            QueryParams {
+                query: query.to_string(),
+            },
+        )
     }
 
     fn get_search_results_count(&self, key: &str) -> usize {

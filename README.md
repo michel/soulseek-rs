@@ -158,6 +158,13 @@ soulseek-rs daemon status          # who it is, what it shares, who is attached
 soulseek-rs daemon stop
 ```
 
+Every window is a view of the same session, not a session of its own. Open a
+second TUI and it shows the searches and transfers already running, including
+ones the first started; queue something in either and both see it. The status
+bar names the daemon it is attached to, so it is obvious which you are looking
+at. Closing a window leaves its downloads running, because they belong to the
+daemon.
+
 Everything that touches the network goes through it. `config`, `skills`,
 `completions` and `portmap` stay local, because they are about this machine
 rather than a session. `shares add`/`remove` do both: they write the config

@@ -11,9 +11,9 @@ use super::proto::{
     DaemonStatus, DirectoriesParams, DownloadDto, DownloadStartParams,
     DownloadStarted, Downloads, IntervalSeconds, Members, MessageParams,
     Messages, Method, OPENRPC, PROTOCOL_VERSION, QueryParams, RoomRef,
-    RpcError, SayParams, SearchResultDto, SearchResults, Seconds, SharesStatus,
-    SlotsParams, TransferRef, UploadInfoDto, Uploads, UserInfoDto, UserRef,
-    UserResult,
+    RpcError, SayParams, SearchResultDto, SearchResults, SearchSummary,
+    Searches, Seconds, SharesStatus, SlotsParams, TransferRef, UploadInfoDto,
+    Uploads, UserInfoDto, UserRef, UserResult,
 };
 use crate::api::SessionApi;
 use crate::output::Exit;
@@ -41,6 +41,10 @@ pub struct Daemon {
     pub open: Arc<std::sync::atomic::AtomicUsize>,
     /// Rooms this session has joined, so a restart can rejoin them.
     pub rooms: Mutex<Vec<String>>,
+    /// When each search went out. The window a search collects for belongs to
+    /// the client, so a second client can only tell a running search from a
+    /// finished one if the daemon remembers when it started.
+    pub searches: Mutex<std::collections::HashMap<String, Instant>>,
 }
 
 impl Daemon {
@@ -84,6 +88,7 @@ impl Daemon {
                             format!("search failed: {e}"),
                         )
                     })?;
+                self.record_search_start(&query.query);
                 ok(Ack::OK)
             }
             Method::SearchResults => {
@@ -95,6 +100,25 @@ impl Daemon {
                         .iter()
                         .map(SearchResultDto::from)
                         .collect(),
+                })
+            }
+            Method::SearchList => ok(Searches {
+                searches: self
+                    .session
+                    .all_searches()
+                    .into_iter()
+                    .map(|search| SearchSummary {
+                        files: search.files,
+                        started_secs_ago: self.search_age(&search.query),
+                        query: search.query,
+                    })
+                    .collect(),
+            }),
+            Method::SearchForget => {
+                let query: QueryParams = parse(params)?;
+                self.forget_search_start(&query.query);
+                ok(Ack {
+                    ok: self.session.forget_search(&query.query),
                 })
             }
             Method::SearchWishlist => {
@@ -361,6 +385,30 @@ impl Daemon {
         }
     }
 
+    /// How long ago a search went out, or a long time when we never saw it
+    /// start — a search restored or begun before this daemon did.
+    fn search_age(&self, query: &str) -> u64 {
+        self.searches
+            .lock()
+            .ok()
+            .and_then(|searches| {
+                searches.get(query).map(|at| at.elapsed().as_secs())
+            })
+            .unwrap_or(u64::MAX)
+    }
+
+    fn record_search_start(&self, query: &str) {
+        if let Ok(mut searches) = self.searches.lock() {
+            searches.insert(query.to_string(), Instant::now());
+        }
+    }
+
+    fn forget_search_start(&self, query: &str) {
+        if let Ok(mut searches) = self.searches.lock() {
+            searches.remove(query);
+        }
+    }
+
     fn identify(&self) -> AuthResult {
         AuthResult {
             protocol: PROTOCOL_VERSION,
@@ -536,6 +584,7 @@ mod tests {
             stop: Arc::new(AtomicBool::new(false)),
             open: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             rooms: Mutex::new(Vec::new()),
+            searches: Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -569,6 +618,12 @@ mod tests {
             _key: &str,
         ) -> Vec<soulseek_rs::SearchResult> {
             Vec::new()
+        }
+        fn all_searches(&self) -> Vec<crate::api::SessionSearch> {
+            Vec::new()
+        }
+        fn forget_search(&self, _query: &str) -> bool {
+            false
         }
         fn get_search_results_count(&self, _key: &str) -> usize {
             0

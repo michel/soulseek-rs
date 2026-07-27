@@ -251,6 +251,12 @@ const Daemon = () => (
           running, everything behaves exactly as it did before.
         </p>
         <p>
+          Every window is a view of the same session. Open a second TUI and it shows the
+          searches and transfers already running; queue something in either and both see
+          it. The status bar names the daemon, and closing a window leaves its downloads
+          going, because they belong to the daemon rather than the window.
+        </p>
+        <p>
           Why bother: the server permits a single session per account. Two one-off
           commands at once either cut each other off, or push you into a throwaway
           username per run, which is account churn on a network other people maintain.

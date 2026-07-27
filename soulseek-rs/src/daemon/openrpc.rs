@@ -12,9 +12,9 @@ use super::proto::{
     Ack, AuthParams, AuthResult, BrowseEvent, DaemonStatus, DirectoriesParams,
     DownloadStartParams, DownloadStarted, DownloadStatusEvent, Downloads,
     Event, IntervalSeconds, Members, MessageParams, Messages, Method,
-    QueryParams, RoomEventDto, RoomRef, SayParams, SearchResults, Seconds,
-    SessionLossEvent, SharesStatus, SlotsParams, TransferRef, UploadInfoDto,
-    Uploads, UserMessageDto, UserRef, UserResult,
+    QueryParams, RoomEventDto, RoomRef, SayParams, SearchResults, Searches,
+    Seconds, SessionLossEvent, SharesStatus, SlotsParams, TransferRef,
+    UploadInfoDto, Uploads, UserMessageDto, UserRef, UserResult,
 };
 use schemars::{JsonSchema, SchemaGenerator, generate::SchemaSettings};
 use serde_json::{Value, json};
@@ -41,7 +41,8 @@ fn params_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         Method::Auth => schema_of::<AuthParams>(generator),
         Method::SearchStart
         | Method::SearchResults
-        | Method::SearchWishlist => schema_of::<QueryParams>(generator),
+        | Method::SearchWishlist
+        | Method::SearchForget => schema_of::<QueryParams>(generator),
         Method::DownloadStart => schema_of::<DownloadStartParams>(generator),
         Method::DownloadPause
         | Method::DownloadResume
@@ -68,6 +69,7 @@ fn params_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         | Method::PrivilegesOwn
         | Method::RoomListRequest
         | Method::MessageHistory
+        | Method::SearchList
         | Method::SharesStatusOf
         | Method::SharesReindex => nothing(),
     }
@@ -80,6 +82,7 @@ fn result_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         Method::DaemonStatus => schema_of::<DaemonStatus>(generator),
         Method::RpcDiscover => json!({ "type": "object" }),
         Method::SearchResults => schema_of::<SearchResults>(generator),
+        Method::SearchList => schema_of::<Searches>(generator),
         Method::SearchWishlistInterval => {
             schema_of::<IntervalSeconds>(generator)
         }
@@ -110,6 +113,7 @@ fn result_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         | Method::RoomSay
         | Method::MessageSend
         | Method::BrowseUser
+        | Method::SearchForget
         | Method::UserRequest => schema_of::<Ack>(generator),
     }
 }
@@ -130,6 +134,12 @@ fn summary(method: Method) -> &'static str {
         }
         Method::SearchResults => {
             "Everything that has answered a search so far."
+        }
+        Method::SearchList => {
+            "Every search this session has run, shared by all clients."
+        }
+        Method::SearchForget => {
+            "Drop a search and its results, for every client at once."
         }
         Method::SearchWishlist => {
             "Send a query as a wishlist search (server code 103)."

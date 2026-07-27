@@ -137,6 +137,18 @@ impl Client {
         })
     }
 
+    /// Drop a search and everything it collected.
+    ///
+    /// Returns whether there was one to drop. A client that stays up for days
+    /// would otherwise hold every result set it has ever seen, and a caller
+    /// that has dismissed a search has no other way to say so.
+    #[must_use]
+    pub fn forget_search(&self, search_key: &str) -> bool {
+        self.context
+            .write_safe()
+            .is_ok_and(|mut ctx| ctx.searches.remove(search_key).is_some())
+    }
+
     #[must_use]
     pub fn get_all_searches(&self) -> HashMap<String, Search> {
         self.context

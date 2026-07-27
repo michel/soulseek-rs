@@ -81,6 +81,26 @@ pub struct DirectoriesParams {
     pub directories: Vec<String>,
 }
 
+/// Every search this session has run, newest last. Shared by all clients, so
+/// a second one attaching sees what the first has been looking for.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct Searches {
+    pub searches: Vec<SearchSummary>,
+}
+
+/// One search as the daemon sees it, for a client that did not run it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct SearchSummary {
+    pub query: String,
+    /// Files found so far, across every peer that has answered.
+    pub files: usize,
+    /// How long ago the query went out. A client compares this with its own
+    /// search window to decide whether the search is still collecting.
+    pub started_secs_ago: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct SearchResults {

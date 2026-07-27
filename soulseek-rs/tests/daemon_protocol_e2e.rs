@@ -667,3 +667,129 @@ fn rapid_connect_and_drop_does_not_wear_the_daemon_out() {
         "abandoned connections must not still be counted: {status}"
     );
 }
+
+/// What one client does, the other sees.
+///
+/// Two TUIs on one daemon are two views of a single session, not two sessions
+/// that happen to share a login. A search run in one appears in the other's
+/// list, and a transfer queued in one appears in the other's queue — which is
+/// what makes closing one window harmless.
+#[test]
+fn one_clients_work_shows_up_in_another() {
+    let daemon = daemon_or_skip!();
+    let mut first = daemon.connect_tcp().expect("connect");
+    first.authenticate(Some(&daemon.token())).expect("first in");
+    let mut second = daemon.connect_tcp().expect("connect");
+    second
+        .authenticate(Some(&daemon.token()))
+        .expect("second in");
+
+    // Nothing searched yet, so neither sees anything.
+    let queries = |connection: &mut Connection, id: u32| -> Vec<String> {
+        let reply = connection
+            .call(&format!(
+                r#"{{"jsonrpc":"2.0","id":{id},"method":"search.list"}}"#
+            ))
+            .expect("an answer");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&reply).expect("valid JSON");
+        parsed["result"]["searches"]
+            .as_array()
+            .expect("searches is an array")
+            .iter()
+            .filter_map(|search| search["query"].as_str().map(String::from))
+            .collect()
+    };
+    assert!(!queries(&mut second, 1).contains(&"shared_probe".to_string()));
+
+    // The first client searches.
+    first
+        .call(
+            r#"{"jsonrpc":"2.0","id":2,"method":"search.start","params":{"query":"shared_probe"}}"#,
+        )
+        .expect("an answer");
+
+    // The second client sees that search without having run it.
+    assert!(
+        queries(&mut second, 3).contains(&"shared_probe".to_string()),
+        "a search in one window must appear in the other"
+    );
+
+    // And its results are the same set, because there is one search cache.
+    let results = |connection: &mut Connection, id: u32| -> usize {
+        let reply = connection
+            .call(&format!(
+                r#"{{"jsonrpc":"2.0","id":{id},"method":"search.results","params":{{"query":"shared_probe"}}}}"#
+            ))
+            .expect("an answer");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&reply).expect("valid JSON");
+        parsed["result"]["results"]
+            .as_array()
+            .expect("results is an array")
+            .len()
+    };
+    assert_eq!(
+        results(&mut first, 4),
+        results(&mut second, 5),
+        "both windows read one search cache"
+    );
+}
+
+/// A client that attaches later starts from the session's state.
+///
+/// This is what makes a second window useful at all: it opens showing what is
+/// already going on rather than a blank slate that fills only with what it
+/// does itself.
+#[test]
+fn a_client_that_attaches_later_sees_what_is_already_there() {
+    let daemon = daemon_or_skip!();
+
+    // An early client does some work.
+    let mut early = daemon.connect_tcp().expect("connect");
+    early.authenticate(Some(&daemon.token())).expect("in");
+    early
+        .call(
+            r#"{"jsonrpc":"2.0","id":1,"method":"search.start","params":{"query":"earlier_probe"}}"#,
+        )
+        .expect("an answer");
+    early
+        .call(
+            r#"{"jsonrpc":"2.0","id":2,"method":"room.join","params":{"room":"cli_e2e_late_room"}}"#,
+        )
+        .expect("an answer");
+
+    // A window opened afterwards is told about it.
+    let mut late = daemon.connect_tcp().expect("connect");
+    late.authenticate(Some(&daemon.token())).expect("in");
+
+    let reply = late
+        .call(r#"{"jsonrpc":"2.0","id":3,"method":"search.list"}"#)
+        .expect("an answer");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&reply).expect("valid JSON");
+    let mut queries = parsed["result"]["searches"]
+        .as_array()
+        .expect("searches is an array")
+        .iter()
+        .filter_map(|search| search["query"].as_str());
+    assert!(
+        queries.any(|query| query == "earlier_probe"),
+        "a window that opens later must see the searches already run: {reply}"
+    );
+
+    // The transfer queue is the session's, so both read the same one.
+    for (connection, id) in [(&mut early, 4), (&mut late, 5)] {
+        let reply = connection
+            .call(&format!(
+                r#"{{"jsonrpc":"2.0","id":{id},"method":"download.list"}}"#
+            ))
+            .expect("an answer");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&reply).expect("valid JSON");
+        assert!(
+            parsed["result"]["downloads"].is_array(),
+            "both windows read one queue: {reply}"
+        );
+    }
+}

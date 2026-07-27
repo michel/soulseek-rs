@@ -159,6 +159,11 @@ While it runs, every other command on this machine uses its session
 automatically, with no flags, no credentials, and no second login.
 `--bind ADDR` also accepts connections from other machines, which need the
 token.
+State lives in the daemon, so every client reads the same thing: `search` sees
+searches any client ran, the transfer queue is shared, and `message read`
+starts from the conversation the daemon already collected rather than only
+what arrives while it runs.
+
 **`daemon status`** — one object: `user`, `server`, `version`, `protocol`,
 `listening`, `listen_port`, `shared_folders`, `shared_files`, `download_dir`,
 `session_loss`, `clients`, `uptime_secs`. Exit 3 when nothing is running.
@@ -217,21 +222,42 @@ soulseek-rs user someuser --json
 `download --stdin` reads whole records, so filtering with `jq` and piping back
 is the normal way to be selective.
 
-## Running several at once
+## Several tracks at once
 
-With a daemon running this needs no thought. They all share its one session:
+Asked for a list of tracks (an album, a playlist, "these ten songs"), **give
+each track its own subagent**, and run **at most ten at a time**. One subagent
+searches for its track, judges the candidates, downloads the one it picked, and
+reports back.
+
+**Report as you go, not only at the end.** Each subagent tells the main agent
+when its search has found candidates and again when its download completes, so
+progress is visible while the rest are still working. A batch that reports only
+once everything is finished looks indistinguishable from a batch that is stuck.
+One short line each is enough: what it searched for, what it picked and why,
+where the file landed, or which of the exit codes it hit and what that means
+for that track.
+
+Do this rather than writing a shell script that loops. Picking a file is a
+judgement call every time: bitrate against file size, a peer with a free slot
+against a faster one, the right pressing against a live bootleg with the same
+name. A loop cannot make that call, so it either takes the first hit or needs
+you to encode rules you would rather apply case by case. A subagent per track
+also means one failure is one track, not a dead pipeline, and each comes back
+with a sentence you can pass on.
+
+Ten at once, not more. Every peer you queue behind is someone's home machine,
+and the searches all share the daemon's one session.
 
 ```bash
-for q in 'gary beck fold' 'marcal steady'; do
-  soulseek-rs search "$q" --json &
-done
-wait
+# What each subagent runs for its own track:
+soulseek-rs search 'gary beck fold' --json     # look
+soulseek-rs get 'gary beck fold' --json        # or search, pick and fetch in one
 ```
 
-Without one, the same loop is a bug: the runs share a username, so each login
-displaces the last and they kill each other's session (exit 7). Giving each run
-its own `--username` avoids the collision by registering a fresh account on the
-server for every search, which is worse. Do not do it. Start the daemon.
+This works because the daemon holds the session: ten subagents at once are ten
+commands sharing one login. Without a daemon they would displace each
+other (exit 7), and giving each its own `--username` would register a throwaway
+account per track, which is worse. Start the daemon first.
 
 The listener port needs no care either way: a run that finds the configured
 port taken binds a free one and tells the server about that one instead.

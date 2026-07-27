@@ -787,6 +787,47 @@
         ],
         "type": "object"
       },
+      "SearchSummary": {
+        "description": "One search as the daemon sees it, for a client that did not run it.",
+        "properties": {
+          "files": {
+            "description": "Files found so far, across every peer that has answered.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "query": {
+            "type": "string"
+          },
+          "started_secs_ago": {
+            "description": "How long ago the query went out. A client compares this with its own\nsearch window to decide whether the search is still collecting.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "query",
+          "files",
+          "started_secs_ago"
+        ],
+        "type": "object"
+      },
+      "Searches": {
+        "description": "Every search this session has run, newest last. Shared by all clients, so\na second one attaching sees what the first has been looking for.",
+        "properties": {
+          "searches": {
+            "items": {
+              "$ref": "#/components/schemas/SearchSummary"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "searches"
+        ],
+        "type": "object"
+      },
       "Seconds": {
         "properties": {
           "seconds": {
@@ -1284,6 +1325,38 @@
         }
       },
       "summary": "Everything that has answered a search so far."
+    },
+    {
+      "name": "search.list",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Searches"
+        }
+      },
+      "summary": "Every search this session has run, shared by all clients."
+    },
+    {
+      "name": "search.forget",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "query",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Drop a search and its results, for every client at once."
     },
     {
       "name": "search.wishlist",

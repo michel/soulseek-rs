@@ -42,11 +42,18 @@ fn active_progress(downloads: &[DownloadEntry]) -> Option<(u64, u64, f64)> {
 }
 
 /// Renders download statistics in a reusable way
+/// The status bar.
+///
+/// `daemon` names the session's owner when this window is attached to one. It
+/// belongs in the title because a shared session behaves differently from a
+/// private one: another window can add transfers, and closing this one leaves
+/// them running.
 pub fn render_download_stats(
     frame: &mut Frame,
     area: ratatui::layout::Rect,
     downloads: &[DownloadEntry],
     active_count: usize,
+    daemon: Option<&str>,
 ) {
     let completed = downloads
         .iter()
@@ -72,7 +79,11 @@ pub fn render_download_stats(
 
     let active = active_progress(downloads);
 
-    let block = pane_block(false).title(plain_title("Status", false));
+    let title = match daemon {
+        Some(endpoint) => format!("Status · daemon {endpoint}"),
+        None => "Status".to_string(),
+    };
+    let block = pane_block(false).title(plain_title(&title, false));
 
     let inner_area = block.inner(area);
     frame.render_widget(block, area);
