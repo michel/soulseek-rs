@@ -66,8 +66,8 @@ const FEATURES = [
     cmd: 'soulseek-rs daemon',
     body: (
       <>
-        Hold one session and let every other command borrow it &mdash; the network allows
-        one login per account, so this is the neighbourly way to run several at once. It
+        Hold one session and let every other command borrow it. The network allows one
+        login per account, so this is the neighbourly way to run several at once. It
         speaks JSON-RPC, so other tools can drive it too.
       </>
     ),

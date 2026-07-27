@@ -123,21 +123,21 @@ it holds the session while everything else borrows it:
 
 ```bash
 soulseek-rs daemon                 # stays in the foreground; leave it running
-soulseek-rs search 'aphex twin'    # no login, no flags — uses the daemon
+soulseek-rs search 'aphex twin'    # no login, no flags; uses the daemon
 soulseek-rs                        # the TUI attaches to the same session
 ```
 
 **Why you want this.** The server allows one session per account. Without a
-daemon, two commands at once either cut each other off or push you into a
-throwaway username per run — account churn on infrastructure other people
-maintain and share. A daemon is one login for as long as you work, and one
-share index instead of a rescan every invocation. It also lets a download
+daemon, two commands at once either cut each other off, or push you into a
+throwaway username per run. That second option is account churn on
+infrastructure other people maintain and share. A daemon is one login for as
+long as you work, and one share index instead of a rescan every invocation. It also lets a download
 outlive the command that queued it, and keeps collecting chat while nothing is
 attached. If you drive this from a script or an agent, start one.
 
 Commands find it by themselves. It listens on a Unix socket only your user can
-open, so there is nothing to configure and no secret to pass around — the same
-arrangement Docker and ssh-agent use. With no daemon running, everything
+open, so there is nothing to configure and no secret to pass around. Docker and
+ssh-agent make the same arrangement. With no daemon running, everything
 behaves exactly as it did before; `--no-daemon` forces that for one run.
 
 From a script, start it and *wait* for it: it takes a second or two to log in,
@@ -162,14 +162,14 @@ Everything that touches the network goes through it. `config`, `skills`,
 `completions` and `portmap` stay local, because they are about this machine
 rather than a session. `shares add`/`remove` do both: they write the config
 file *and* update a running daemon, so a folder is served straight away rather
-than at its next start. Files land on the *daemon's* filesystem — `daemon
+than at its next start. Files land on the *daemon's* filesystem, and `daemon
 status` reports where.
 
 #### A download box you drive from your laptop
 
 This is what daemon mode is really for. Put soulseek-rs on the machine that
-should be doing the downloading — a home server, a NAS, a Raspberry Pi, a
-seedbox — and drive it from wherever you happen to be.
+should be doing the downloading: a home server, a NAS, a Raspberry Pi, a
+seedbox. Then drive it from wherever you happen to be.
 
 **On that machine**, run the daemon and let it accept connections from your
 network:
@@ -189,9 +189,8 @@ soulseek-rs config set daemon nas.local:5030
 soulseek-rs config set daemon_token <the token you copied>
 ```
 
-That is the whole setup. Every command from now on is the normal command —
-your laptop needs no Soulseek account of its own, because it is using the
-server's:
+That is the whole setup. Every command from now on is the normal command. Your
+laptop needs no Soulseek account of its own, because it uses the server's:
 
 ```bash
 soulseek-rs search 'aphex twin' --json
@@ -212,7 +211,7 @@ soulseek-rs daemon stop            # shuts down the remote daemon
 ```
 
 One caution: there is no encryption on that TCP port. On a home network that
-is usually fine. Over the internet, don't expose it — reach it through SSH
+is usually fine. Over the internet, don't expose it. Reach it through SSH
 instead, either with a tunnel (`ssh -L 5030:localhost:5030 nas`) or by running
 the commands over `ssh` on the box itself.
 
@@ -220,9 +219,10 @@ the commands over `ssh` on the box itself.
 
 The daemon's interface is open and documented, so nothing about it is specific
 to this CLI. It speaks newline-delimited JSON-RPC 2.0 over a socket, described
-by an [OpenRPC](https://open-rpc.org) document —
-[`docs/openrpc.json`](docs/openrpc.json), which the daemon also serves itself
-via `rpc.discover`, so a client can ask a running daemon what it can do.
+by an [OpenRPC](https://open-rpc.org) document,
+[`docs/openrpc.json`](docs/openrpc.json). The daemon serves that document
+itself via `rpc.discover`, so a client can ask a running daemon what it can
+do.
 
 OpenRPC is the JSON-RPC counterpart to OpenAPI: point a client generator at
 that document and you get typed bindings in whatever language you are working
@@ -230,7 +230,7 @@ in. If you want an Android or iOS app that queues downloads on your home
 server from the sofa, or a small web page that shows what is transferring, you
 have everything you need and no permission to ask for. Searches, transfers,
 rooms, private messages and shares are all on the same interface this CLI
-uses — there is no private back channel it keeps for itself, and live updates
+uses. There is no private back channel it keeps for itself, and live updates
 are pushed to every connected client rather than polled for.
 
 [`docs/daemon-protocol.md`](docs/daemon-protocol.md) covers the parts a schema
@@ -459,8 +459,8 @@ soulseek-rs serve --follow         # add --upload-slots N to widen the queue
 
 Uploads only show up inside a running `serve`; every other command is
 short-lived with nothing to serve, so there is no `uploads list`. Managing
-transfers across commands — pause, resume, a queue that outlives one
-invocation — is what [daemon mode](#daemon-mode) is for.
+transfers across commands (pause, resume, a queue that outlives one
+invocation) is what [daemon mode](#daemon-mode) is for.
 
 Downloads run under a deadline (`--timeout`, 300s by default) and
 `--max-concurrent-downloads` at a time, so an unattended run always ends.

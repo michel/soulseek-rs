@@ -199,7 +199,7 @@ pub fn run(
         downloads: Arc::clone(&downloads),
         download_dir: ctx.download_dir.clone(),
         server: ctx.settings.server_address.to_string(),
-        token,
+        token: token.clone(),
         started: Instant::now(),
         stop: Arc::clone(&stop),
         open: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -225,7 +225,7 @@ pub fn run(
         "logged in as {}, sharing {files} files in {folders} folders",
         session.client.username()
     ));
-    ctx.out.status("ready");
+    ready(ctx, bind, &token);
 
     // The listeners run on their own threads; this one only has to notice a
     // `daemon.stop` and write state back on the way past.
@@ -245,6 +245,57 @@ pub fn run(
     let _ = drainer.join();
     cleanup();
     Ok(())
+}
+
+/// Say what is now possible, once, on stderr.
+///
+/// The token goes here rather than only into a file because the moment you
+/// need it is the moment you bind a port, and hunting for `daemon token`
+/// afterwards is a poor first experience. stdout stays empty either way, so
+/// `daemon` still composes in a pipeline.
+fn ready(ctx: &Ctx, bind: Option<&str>, token: &str) {
+    ctx.out.status("");
+    ctx.out.status("ready — leave this running.");
+    ctx.out.status("");
+    ctx.out
+        .status("  On this machine, nothing else to do. Other commands find");
+    ctx.out
+        .status("  it on their own and share this one login:");
+    ctx.out.status("");
+    ctx.out.status("      soulseek-rs search 'aphex twin'");
+    ctx.out
+        .status("      soulseek-rs                       (the TUI attaches)");
+    ctx.out.status("      soulseek-rs daemon status");
+    ctx.out.status("      soulseek-rs daemon stop");
+    ctx.out.status("");
+
+    let Some(address) = bind else {
+        ctx.out.status(
+            "  To drive it from another machine, restart with --bind ADDR;",
+        );
+        ctx.out
+            .status("  `soulseek-rs daemon token` prints the secret it needs.");
+        ctx.out.status("");
+        return;
+    };
+
+    ctx.out.status(&format!(
+        "  From another machine, point a client at {address} with"
+    ));
+    ctx.out.status("  this token:");
+    ctx.out.status("");
+    ctx.out.status(&format!("      {token}"));
+    ctx.out.status("");
+    ctx.out
+        .status("      soulseek-rs config set daemon <this-host>:PORT");
+    ctx.out
+        .status("      soulseek-rs config set daemon_token <token above>");
+    ctx.out.status("");
+    ctx.out.status(
+        "  That port has no encryption. Keep it off the open internet and \
+         reach it over SSH instead.",
+    );
+    ctx.out.status("");
 }
 
 /// Remove the socket file so the next start does not have to reason about

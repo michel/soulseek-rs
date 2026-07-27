@@ -30,15 +30,15 @@ soulseek-rs daemon status --json >/dev/null 2>&1 || {
 ```
 
 Wait for it, do not just launch it. A daemon takes a second or two to log in,
-and `soulseek-rs daemon status … || soulseek-rs daemon &` does **not** do this
-— `&` backgrounds the whole list, so it returns instantly and the next command
+and `soulseek-rs daemon status … || soulseek-rs daemon &` does **not** do this.
+`&` backgrounds the whole list, so it returns instantly and the next command
 races the login it is supposed to be using. A command that arrives too early
 finds no daemon and quietly opens a session of its own, which is the outcome
 this whole section exists to avoid.
 
 Then use every other command exactly as documented below. They find the daemon
-by themselves — it listens on a Unix socket only your user can open, so there
-is nothing to configure, no address to pass, and no token to handle.
+by themselves. It listens on a Unix socket only your user can open, so there is
+nothing to configure, no address to pass, and no token to handle.
 
 **Why this matters, and why it is not optional for you.** Soulseek is a real
 network of other people's computers, and the server allows **one session per
@@ -46,7 +46,7 @@ account**. Without a daemon, every invocation is its own login, and running two
 at once leaves you two bad choices: share a username and they silently cut each
 other off (exit 7), or give each run a throwaway name and *register a new
 account on a public server for every search you make*. The second is what a
-naive script does, and it is the antisocial one — it is account churn on
+naive script does, and it is the antisocial one: account churn on
 infrastructure other people maintain and share.
 
 A daemon is one login for as long as you work, however many commands you run
@@ -156,8 +156,9 @@ participant.
 **`daemon`** — stay logged in as a service other commands share. Prints
 progress on stderr and nothing on stdout; it does not return until stopped.
 While it runs, every other command on this machine uses its session
-automatically — no flags, no credentials, no second login. `--bind ADDR` also
-accepts connections from other machines, which need the token.
+automatically, with no flags, no credentials, and no second login.
+`--bind ADDR` also accepts connections from other machines, which need the
+token.
 **`daemon status`** — one object: `user`, `server`, `version`, `protocol`,
 `listening`, `listen_port`, `shared_folders`, `shared_files`, `download_dir`,
 `session_loss`, `clients`, `uptime_secs`. Exit 3 when nothing is running.
@@ -165,8 +166,8 @@ accepts connections from other machines, which need the token.
 **`daemon token`** — the secret a client on another machine needs. Local
 clients never need it.
 
-The daemon can also be on a *different* machine — a home server or NAS doing
-the downloading. Point at it once with `config set daemon host:5030` and
+The daemon can also be on a *different* machine, such as a home server or NAS
+doing the downloading. Point at it once with `config set daemon host:5030` and
 `config set daemon_token <token>`, and every command afterwards drives that
 machine; files land there, not here. The interface is an open JSON-RPC schema
 (`rpc.discover` serves it), so a purpose-built client is a reasonable thing to
@@ -218,7 +219,7 @@ is the normal way to be selective.
 
 ## Running several at once
 
-With a daemon running this needs no thought — they all share its one session:
+With a daemon running this needs no thought. They all share its one session:
 
 ```bash
 for q in 'gary beck fold' 'marcal steady'; do
@@ -230,7 +231,7 @@ wait
 Without one, the same loop is a bug: the runs share a username, so each login
 displaces the last and they kill each other's session (exit 7). Giving each run
 its own `--username` avoids the collision by registering a fresh account on the
-server for every search, which is worse — do not do it. Start the daemon.
+server for every search, which is worse. Do not do it. Start the daemon.
 
 The listener port needs no care either way: a run that finds the configured
 port taken binds a free one and tells the server about that one instead.
@@ -250,8 +251,8 @@ port taken binds a free one and tells the server about that one instead.
 - **Exit 4 is not a failure.** A search that finds nothing means the query was
   too narrow or misspelled. Widen it; use `whoami` to rule out the connection.
 - **Exit 7 is not an answer.** The session ended mid-command, so nothing it saw
-  counts. It means something else logged in as you — almost always a second
-  run of your own. Start a daemon and route through it rather than hunting for
+  counts. Something else logged in as you, almost always a second run of your
+  own. Start a daemon and route through it rather than hunting for
   an unused name.
 - **Never put a password in argv** — `ps` shows it to every user on the box.
   Use `--password-stdin`, the OS keychain, or `SOULSEEK_PASSWORD_CMD`.

@@ -155,14 +155,20 @@ fn spawn_connection(stream: Stream, daemon: Arc<Daemon>) {
     if open > MAX_CONNECTIONS {
         daemon.open.fetch_sub(1, Ordering::Relaxed);
         soulseek_rs::warn!(
-            "refusing a control connection: {MAX_CONNECTIONS} already open"
+            "refusing a control connection: {MAX_CONNECTIONS} already open. \
+             This is a leak unless you really have that many clients — please \
+             report it with `soulseek-rs daemon status`."
         );
         stream.shutdown();
         return;
     }
     std::thread::spawn(move || {
         if let Err(e) = handle(stream, daemon.as_ref()) {
-            soulseek_rs::debug!("control connection ended: {e}");
+            // Loud, not debug: a client sees only "the connection closed", so
+            // this line is the only account of why it did.
+            soulseek_rs::warn!(
+                "control connection dropped before it could be served: {e}"
+            );
         }
         daemon.open.fetch_sub(1, Ordering::Relaxed);
     });

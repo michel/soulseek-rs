@@ -228,7 +228,7 @@ const Daemon = () => (
   <Section>
     <SectionHead eyebrow="5 · the daemon" title="One login, however many commands.">
       Soulseek allows one session per account. Run a daemon and everything else borrows
-      it &mdash; no second login, nothing to configure.
+      it. No second login, nothing to configure.
     </SectionHead>
     <Cols start>
       <Terminal
@@ -237,7 +237,7 @@ const Daemon = () => (
           { t: 'cmd', text: 'soulseek-rs daemon &' },
           { t: 'cm', text: '# once; it holds the session' },
           { t: 'cmd', text: 'soulseek-rs search "netlabel 2004" --json' },
-          { t: 'cm', text: '# no login, no flags — it finds the daemon' },
+          { t: 'cm', text: '# no login, no flags; it finds the daemon' },
           { t: 'cmd', text: 'soulseek-rs' },
           { t: 'cm', text: '# the TUI attaches to the same session' },
           { t: 'cmd', text: 'soulseek-rs daemon status' },
@@ -251,10 +251,10 @@ const Daemon = () => (
           running, everything behaves exactly as it did before.
         </p>
         <p>
-          Why bother: the server permits a single session per account, so two one-off
-          commands at once either cut each other off or push you into a throwaway
-          username per run &mdash; account churn on a network other people maintain. A
-          daemon is one login for as long as you work, one share index instead of a
+          Why bother: the server permits a single session per account. Two one-off
+          commands at once either cut each other off, or push you into a throwaway
+          username per run, which is account churn on a network other people maintain.
+          A daemon is one login for as long as you work, one share index instead of a
           rescan every invocation, and downloads that outlive the command that queued
           them. If you drive this from a script or an agent, start one.
         </p>
@@ -293,16 +293,16 @@ const DownloadBox = () => (
       />
       <Prose>
         <p>
-          Your laptop needs no Soulseek account of its own &mdash; it is using the box&rsquo;s.
-          Queue what you want, then close the lid: the downloads keep going, because they
+          Your laptop needs no Soulseek account of its own; it uses the box&rsquo;s. Queue
+          what you want, then close the lid. The downloads keep going, because they
           belong to the daemon rather than to the command that asked for them. Come back
           tomorrow, run <Code>daemon status</Code>, and pick up where you left off. The
           files are on the box, which is where you wanted them.
         </p>
         <p>
-          There is no encryption on that port. On a home network that is usually fine;
-          over the internet, reach it through SSH instead &mdash;{' '}
-          <Code>ssh -L 5030:localhost:5030 nas</Code>, or just run the commands on the box.
+          There is no encryption on that port. On a home network that is usually fine.
+          Over the internet, reach it through SSH instead:{' '}
+          <Code>ssh -L 5030:localhost:5030 nas</Code>, or run the commands on the box.
         </p>
       </Prose>
     </Cols>
@@ -325,9 +325,9 @@ const OpenSchema = () => (
         </p>
         <p>
           OpenRPC is the JSON-RPC counterpart to OpenAPI: point a generator at it and you
-          get typed bindings in whatever language you are working in. An Android or iOS app
-          that queues downloads on your home server from the sofa, a small web page showing
-          what is transferring &mdash; you have everything you need and nobody to ask.
+          get typed bindings in whatever language you are working in. Want an Android or
+          iOS app that queues downloads on your home server from the sofa, or a web page
+          showing what is transferring? You have what you need and nobody to ask.
         </p>
         <p>
           Searches, transfers, rooms, private messages and shares are all on the same

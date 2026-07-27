@@ -565,3 +565,105 @@ fn a_config_driven_remote_client_reports_the_daemons_world() {
     let _ = std::fs::remove_dir_all(&config);
     let _ = std::fs::remove_dir_all(&state);
 }
+
+/// Several clients at once, all seeing the same session.
+///
+/// This is the promise daemon mode makes and the reason the fan-out exists:
+/// the server allows one login, so the alternative to sharing is displacing.
+/// Each client gets its own connection, its own event queue, and the same
+/// answers.
+#[test]
+fn many_clients_share_one_session_and_agree_about_it() {
+    let daemon = daemon_or_skip!();
+
+    // Held open together, not one after another: the point is concurrency.
+    let mut clients: Vec<Connection> = (0..8)
+        .map(|_| {
+            let mut connection = daemon.connect_tcp().expect("connect");
+            let reply = connection
+                .authenticate(Some(&daemon.token()))
+                .expect("an answer");
+            assert!(reply.contains("\"result\""), "client rejected: {reply}");
+            connection
+        })
+        .collect();
+
+    // Every one of them is told the same thing about the same session.
+    let mut seen = Vec::new();
+    for (i, client) in clients.iter_mut().enumerate() {
+        let reply = client
+            .call(&format!(
+                r#"{{"jsonrpc":"2.0","id":{},"method":"daemon.status"}}"#,
+                100 + i
+            ))
+            .unwrap_or_else(|| panic!("client {i} lost its connection"));
+        let status: serde_json::Value =
+            serde_json::from_str(&reply).expect("valid JSON");
+        assert_eq!(
+            status["id"],
+            serde_json::json!(100 + i),
+            "replies must not be crossed between clients: {reply}"
+        );
+        seen.push((
+            status["result"]["username"].clone(),
+            status["result"]["server"].clone(),
+        ));
+    }
+    assert!(
+        seen.windows(2).all(|pair| pair[0] == pair[1]),
+        "every client should describe the same session: {seen:?}"
+    );
+
+    // And the daemon counts them all, rather than having quietly dropped some.
+    let reply = clients[0]
+        .call(r#"{"jsonrpc":"2.0","id":200,"method":"daemon.status"}"#)
+        .expect("still connected");
+    let status: serde_json::Value =
+        serde_json::from_str(&reply).expect("valid JSON");
+    assert_eq!(
+        status["result"]["clients"],
+        serde_json::json!(8),
+        "all eight should still be attached: {reply}"
+    );
+}
+
+/// Connecting and dropping, over and over, must not degrade the daemon.
+///
+/// Every command makes at least one throwaway connection while it works out
+/// whether a daemon is there, so a per-connection resource that is not
+/// released shows up as a daemon that works for a while and then refuses
+/// everyone.
+#[test]
+fn rapid_connect_and_drop_does_not_wear_the_daemon_out() {
+    let daemon = daemon_or_skip!();
+
+    // Comfortably more than the connection cap, so a leak of one slot per
+    // connection would have exhausted it well before the end.
+    for _ in 0..200 {
+        drop(daemon.connect_tcp().expect("connect"));
+    }
+    // Half-open ones too: authenticated, then abandoned mid-conversation.
+    for _ in 0..50 {
+        let mut connection = daemon.connect_tcp().expect("connect");
+        connection.authenticate(Some(&daemon.token()));
+        drop(connection);
+    }
+
+    // Give the daemon a moment to notice the hangups, then prove it is well.
+    std::thread::sleep(Duration::from_secs(2));
+    let mut connection = daemon.connect_tcp().expect("connect");
+    let reply = connection
+        .authenticate(Some(&daemon.token()))
+        .expect("the daemon should still be answering");
+    assert!(reply.contains("\"result\""), "{reply}");
+    let status = connection
+        .call(r#"{"jsonrpc":"2.0","id":1,"method":"daemon.status"}"#)
+        .expect("an answer");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&status).expect("valid JSON");
+    assert_eq!(
+        parsed["result"]["clients"],
+        serde_json::json!(1),
+        "abandoned connections must not still be counted: {status}"
+    );
+}

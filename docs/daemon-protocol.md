@@ -2,8 +2,8 @@
 
 `soulseek-rs daemon` stays logged in and answers JSON-RPC over a socket, so
 several clients can share one Soulseek session. The machine-readable contract
-is [`openrpc.json`](openrpc.json) — an [OpenRPC](https://open-rpc.org)
-document, the JSON-RPC counterpart to OpenAPI. Point a client generator at it,
+is [`openrpc.json`](openrpc.json), an [OpenRPC](https://open-rpc.org)
+document and the JSON-RPC counterpart to OpenAPI. Point a client generator at it,
 or at a running daemon via `rpc.discover`, and you have a client in your
 language.
 
@@ -30,8 +30,8 @@ once.
 
 The local socket is the Docker and ssh-agent bargain: if the operating system
 let you open it, you are the user who started the daemon, and there is nothing
-further to prove. This is what lets a local client — a script or an agent —
-work with no configuration at all.
+further to prove. A local client, whether a script or an agent, works with no
+configuration at all.
 
 TCP always requires the token, and a token that *is* offered is always
 checked, on either transport, so a wrong one never passes. Failed attempts
@@ -62,7 +62,7 @@ the old shape.
 
 ## Requests
 
-Parameters are by name — a JSON object, never an array. Each method's fields
+Parameters are by name: a JSON object, never an array. Each method's fields
 are published as individual OpenRPC content descriptors, so a generated client
 sends exactly the object the daemon deserializes. `rpc.discover` returns that
 same document from the running daemon.
@@ -82,8 +82,8 @@ silence, including when it fails.
 ```
 
 An error always carries an `id`, explicitly `null` when the request was too
-malformed to have one — so do not read a missing `id` as "this is a
-notification" and drop it.
+malformed to have one. Do not read a missing `id` as "this is a notification"
+and drop it.
 
 Standard codes (`-32700` parse, `-32600` invalid request, `-32601` unknown
 method, `-32602` bad parameters) mean what they always mean. Application
@@ -102,7 +102,7 @@ as it branches on the exit code.
 
 ## Events
 
-The daemon pushes notifications — no `id`, so never answer them:
+The daemon pushes notifications. They carry no `id`, so never answer them:
 
 ```json
 {"jsonrpc":"2.0","method":"event.room","params":{"event":"message","room":"lobby","username":"bob","message":"hi"}}
@@ -110,7 +110,7 @@ The daemon pushes notifications — no `id`, so never answer them:
 
 `event.room`, `event.message`, `event.upload`, `event.download_status`,
 `event.browse`, `event.session_loss`. Payload schemas are in `openrpc.json`,
-where they appear as entries marked `x-notification` — OpenRPC has no
+where they appear as entries marked `x-notification`. OpenRPC has no
 first-class notion of a server-pushed message, so that flag is how they are
 distinguished from methods you may call.
 
@@ -129,7 +129,7 @@ later, with one exception: private messages are also kept, and
 nobody was attached.
 
 Every connection gets its own queue, bounded at 1024 events. **A client that
-stops reading its socket is disconnected** once that queue fills — the daemon
+stops reading its socket is disconnected** once that queue fills. The daemon
 will not let one stalled consumer cost the others their events. Read
 continuously; do not treat the socket as request/response only.
 
@@ -139,7 +139,7 @@ matched on `username` + `filename`.
 ## Behaviour worth knowing
 
 **Files land on the daemon's filesystem.** The directory is the daemon's
-configuration and a client cannot name one — that would be an arbitrary write
+configuration and a client cannot name one, which would be an arbitrary write
 on the daemon's host. `daemon.status` reports the directory in use. There is
 no method to fetch the bytes over the control socket.
 
@@ -158,8 +158,8 @@ rejoined on startup.
 **Searching is two steps.** `search.start` puts the query on the wire and
 returns immediately; peers answer over their own connections for as long as
 you care to wait. Decide the window yourself, then read `search.results`. This
-is deliberate — a client's search window must not be time the daemon spends
-not answering everybody else.
+is deliberate: a client's search window must not be time the daemon spends not
+answering everybody else.
 
 ## A session by hand
 
