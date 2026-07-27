@@ -1,6 +1,7 @@
 mod api;
 mod cli;
 mod commands;
+mod daemon;
 mod directories;
 mod models;
 mod output;

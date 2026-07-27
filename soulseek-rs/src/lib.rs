@@ -3,5 +3,7 @@
 
 pub mod api;
 pub mod cli;
+pub mod daemon;
 pub mod models;
+pub mod output;
 pub mod persist;

@@ -1,0 +1,1809 @@
+{
+  "components": {
+    "schemas": {
+      "Ack": {
+        "description": "A void result. JSON-RPC allows a null result, but an object leaves room to\nadd a field later without changing the shape a client already parses.",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "type": "object"
+      },
+      "AuthParams": {
+        "properties": {
+          "protocol": {
+            "default": 0,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "token": {
+            "description": "Required on TCP. Omitted on a Unix socket, where the socket's own\npermissions already prove the caller is this user.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "AuthResult": {
+        "properties": {
+          "daemon_version": {
+            "type": "string"
+          },
+          "protocol": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "username": {
+            "description": "The Soulseek account the daemon is logged in as.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "daemon_version",
+          "username"
+        ],
+        "type": "object"
+      },
+      "BrowseEvent": {
+        "description": "A peer answered a browse request. Carried whole rather than as a \"go ask\nfor it\" nudge, because the daemon's own copy is consumed when it drains.",
+        "properties": {
+          "directories": {
+            "items": {
+              "$ref": "#/components/schemas/SharedDirectoryDto"
+            },
+            "type": "array"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "directories"
+        ],
+        "type": "object"
+      },
+      "DaemonStatus": {
+        "description": "What the daemon is and what its session is doing, from `daemon.status`.",
+        "properties": {
+          "clients": {
+            "description": "Control connections currently attached.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "daemon_version": {
+            "type": "string"
+          },
+          "download_dir": {
+            "type": "string"
+          },
+          "listen_port": {
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "protocol": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "server": {
+            "type": "string"
+          },
+          "session_loss": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionLossDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "shared_files": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "shared_folders": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "uptime_secs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "server",
+          "daemon_version",
+          "protocol",
+          "shared_folders",
+          "shared_files",
+          "download_dir",
+          "clients",
+          "uptime_secs"
+        ],
+        "type": "object"
+      },
+      "DirectoriesParams": {
+        "properties": {
+          "directories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "directories"
+        ],
+        "type": "object"
+      },
+      "DownloadDto": {
+        "properties": {
+          "download_directory": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/DownloadMetadataDto",
+            "default": {}
+          },
+          "queue_position": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "size": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DownloadStatusDto"
+          },
+          "token": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "filename",
+          "token",
+          "size",
+          "download_directory",
+          "status"
+        ],
+        "type": "object"
+      },
+      "DownloadMetadataDto": {
+        "properties": {
+          "bitrate": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "length_seconds": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "peer_free_slots": {
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "peer_upload_speed": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "DownloadStartParams": {
+        "properties": {
+          "download_directory": {
+            "description": "Where the file lands *on the daemon's* filesystem. Defaults to the\ndaemon's configured download directory, which is the only sensible\nchoice for a remote caller that cannot see that filesystem.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "filename": {
+            "type": "string"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/DownloadMetadataDto",
+            "default": {}
+          },
+          "size": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "filename"
+        ],
+        "type": "object"
+      },
+      "DownloadStarted": {
+        "properties": {
+          "download": {
+            "$ref": "#/components/schemas/DownloadDto"
+          }
+        },
+        "required": [
+          "download"
+        ],
+        "type": "object"
+      },
+      "DownloadStatusDto": {
+        "oneOf": [
+          {
+            "properties": {
+              "state": {
+                "const": "queued",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "bytes_downloaded": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "speed_bytes_per_sec": {
+                "format": "double",
+                "type": "number"
+              },
+              "state": {
+                "const": "in_progress",
+                "type": "string"
+              },
+              "total_bytes": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "state",
+              "bytes_downloaded",
+              "total_bytes",
+              "speed_bytes_per_sec"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "bytes_downloaded": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "state": {
+                "const": "paused",
+                "type": "string"
+              },
+              "total_bytes": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "state",
+              "bytes_downloaded",
+              "total_bytes"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "const": "completed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "state": {
+                "const": "failed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "const": "timed_out",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "DownloadStatusEvent": {
+        "description": "One step in a transfer this client started.",
+        "properties": {
+          "filename": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DownloadStatusDto"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "filename",
+          "status"
+        ],
+        "type": "object"
+      },
+      "Downloads": {
+        "properties": {
+          "downloads": {
+            "items": {
+              "$ref": "#/components/schemas/DownloadDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "downloads"
+        ],
+        "type": "object"
+      },
+      "FileDto": {
+        "properties": {
+          "attribs": {
+            "additionalProperties": false,
+            "description": "Soulseek attribute codes (0 = bitrate, 1 = duration in seconds).",
+            "patternProperties": {
+              "^\\d+$": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "size",
+          "attribs"
+        ],
+        "type": "object"
+      },
+      "IntervalSeconds": {
+        "properties": {
+          "seconds": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seconds"
+        ],
+        "type": "object"
+      },
+      "Members": {
+        "properties": {
+          "users": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "users"
+        ],
+        "type": "object"
+      },
+      "MessageParams": {
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "message"
+        ],
+        "type": "object"
+      },
+      "Messages": {
+        "properties": {
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/UserMessageDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "messages"
+        ],
+        "type": "object"
+      },
+      "QueryParams": {
+        "properties": {
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "RoomEventDto": {
+        "oneOf": [
+          {
+            "properties": {
+              "event": {
+                "const": "list",
+                "type": "string"
+              },
+              "rooms": {
+                "items": {
+                  "$ref": "#/components/schemas/RoomInfoDto"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "event",
+              "rooms"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "event": {
+                "const": "joined",
+                "type": "string"
+              },
+              "room": {
+                "type": "string"
+              },
+              "users": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "event",
+              "room",
+              "users"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "event": {
+                "const": "left",
+                "type": "string"
+              },
+              "room": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "room"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "event": {
+                "const": "message",
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "room": {
+                "type": "string"
+              },
+              "username": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "room",
+              "username",
+              "message"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "event": {
+                "const": "user_joined",
+                "type": "string"
+              },
+              "room": {
+                "type": "string"
+              },
+              "username": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "room",
+              "username"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "event": {
+                "const": "user_left",
+                "type": "string"
+              },
+              "room": {
+                "type": "string"
+              },
+              "username": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "room",
+              "username"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "RoomInfoDto": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "user_count": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "user_count"
+        ],
+        "type": "object"
+      },
+      "RoomRef": {
+        "properties": {
+          "room": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "room"
+        ],
+        "type": "object"
+      },
+      "SayParams": {
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "room": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "room",
+          "message"
+        ],
+        "type": "object"
+      },
+      "SearchResultDto": {
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/FileDto"
+            },
+            "type": "array"
+          },
+          "slots": {
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "speed": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "token": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "username",
+          "slots",
+          "speed",
+          "files"
+        ],
+        "type": "object"
+      },
+      "SearchResults": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SearchResultDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "type": "object"
+      },
+      "Seconds": {
+        "properties": {
+          "seconds": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "SessionLossDto": {
+        "enum": [
+          "displaced",
+          "disconnected"
+        ],
+        "type": "string"
+      },
+      "SessionLossEvent": {
+        "properties": {
+          "loss": {
+            "$ref": "#/components/schemas/SessionLossDto"
+          }
+        },
+        "required": [
+          "loss"
+        ],
+        "type": "object"
+      },
+      "SharedDirectoryDto": {
+        "properties": {
+          "files": {
+            "description": "Basename and size; join with the directory to get a downloadable path.",
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            "type": "array"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "files"
+        ],
+        "type": "object"
+      },
+      "SharesStatus": {
+        "description": "What the share index holds, from `shares.status` / `shares.reindex`.",
+        "properties": {
+          "directories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "files": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "folders": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "folders",
+          "files",
+          "directories"
+        ],
+        "type": "object"
+      },
+      "SlotsParams": {
+        "properties": {
+          "slots": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "slots"
+        ],
+        "type": "object"
+      },
+      "TransferRef": {
+        "description": "Names one transfer, which is how both directions are addressed.",
+        "properties": {
+          "filename": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "filename"
+        ],
+        "type": "object"
+      },
+      "UploadInfoDto": {
+        "properties": {
+          "bytes_sent": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "size": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "speed_bytes_per_sec": {
+            "format": "double",
+            "type": "number"
+          },
+          "status": {
+            "$ref": "#/components/schemas/UploadStatusDto"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "filename",
+          "size",
+          "bytes_sent",
+          "status",
+          "speed_bytes_per_sec"
+        ],
+        "type": "object"
+      },
+      "UploadStatusDto": {
+        "oneOf": [
+          {
+            "description": "Waiting for a slot, at this 1-based place in the queue.",
+            "properties": {
+              "place": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "state": {
+                "const": "queued",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "place"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "const": "in_progress",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "const": "completed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "const": "cancelled",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "state": {
+                "const": "failed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Uploads": {
+        "properties": {
+          "uploads": {
+            "items": {
+              "$ref": "#/components/schemas/UploadInfoDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "uploads"
+        ],
+        "type": "object"
+      },
+      "UserInfoDto": {
+        "description": "Each half is `None` until its reply lands, so a consumer can tell \"the\nserver said offline\" from \"the server has not answered yet\".",
+        "properties": {
+          "presence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserPresenceDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stats": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserStatsDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username"
+        ],
+        "type": "object"
+      },
+      "UserMessageDto": {
+        "properties": {
+          "id": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          },
+          "new_message": {
+            "type": "boolean"
+          },
+          "timestamp": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "timestamp",
+          "username",
+          "message",
+          "new_message"
+        ],
+        "type": "object"
+      },
+      "UserPresenceDto": {
+        "properties": {
+          "privileged": {
+            "type": "boolean"
+          },
+          "status": {
+            "description": "`online`, `away`, or `offline`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "privileged"
+        ],
+        "type": "object"
+      },
+      "UserRef": {
+        "properties": {
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username"
+        ],
+        "type": "object"
+      },
+      "UserResult": {
+        "properties": {
+          "user": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserInfoDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "UserStatsDto": {
+        "properties": {
+          "average_speed": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "shared_files": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "shared_folders": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "average_speed",
+          "shared_files",
+          "shared_folders"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Control a running soulseek-rs daemon. Newline-delimited JSON-RPC 2.0 over a Unix socket (local, authenticated by socket permissions) or TCP (remote, authenticated by the token in <state-dir>/daemon.token). `auth` must be the first request on a connection. Errors carry the CLI exit status in `error.data.exit`. Entries marked `x-notification` are pushed by the daemon and are never requested.",
+    "license": {
+      "name": "MIT"
+    },
+    "title": "soulseek-rs daemon",
+    "version": "12.0.0"
+  },
+  "methods": [
+    {
+      "name": "auth",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/AuthParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AuthResult"
+        }
+      },
+      "summary": "Authenticate. Must be the first request on a connection."
+    },
+    {
+      "name": "daemon.status",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DaemonStatus"
+        }
+      },
+      "summary": "Who the daemon is logged in as and what its session is doing."
+    },
+    {
+      "name": "daemon.stop",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Ask the daemon to shut down."
+    },
+    {
+      "name": "rpc.discover",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "type": "object"
+        }
+      },
+      "summary": "This document."
+    },
+    {
+      "name": "search.start",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/QueryParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Put a search on the wire and return at once; results accumulate."
+    },
+    {
+      "name": "search.results",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/QueryParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SearchResults"
+        }
+      },
+      "summary": "Everything that has answered a search so far."
+    },
+    {
+      "name": "search.wishlist",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/QueryParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Send a query as a wishlist search (server code 103)."
+    },
+    {
+      "name": "search.wishlist_interval",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/IntervalSeconds"
+        }
+      },
+      "summary": "How long the server wants between wishlist searches."
+    },
+    {
+      "name": "download.start",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/DownloadStartParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DownloadStarted"
+        }
+      },
+      "summary": "Queue a transfer. Progress arrives as event.download_status."
+    },
+    {
+      "name": "download.list",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Downloads"
+        }
+      },
+      "summary": "Every transfer the daemon knows about."
+    },
+    {
+      "name": "download.pause",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/TransferRef"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Pause a transfer in progress."
+    },
+    {
+      "name": "download.resume",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/TransferRef"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Resume a paused transfer."
+    },
+    {
+      "name": "download.remove",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/TransferRef"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Forget a transfer entirely."
+    },
+    {
+      "name": "download.remove_queued",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/TransferRef"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Drop a transfer that has not started."
+    },
+    {
+      "name": "upload.list",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Uploads"
+        }
+      },
+      "summary": "Uploads being served, active first."
+    },
+    {
+      "name": "upload.cancel",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/TransferRef"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Stop serving an upload in progress."
+    },
+    {
+      "name": "upload.slots",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SlotsParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "How many uploads may run at once."
+    },
+    {
+      "name": "privileges.check",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Ask the server for this account's privilege time."
+    },
+    {
+      "name": "privileges.own",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Seconds"
+        }
+      },
+      "summary": "Privilege seconds left, or null if the server has not answered."
+    },
+    {
+      "name": "room.list_request",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Ask the server for the public room list; it arrives as event.room."
+    },
+    {
+      "name": "room.join",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/RoomRef"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Join a chat room."
+    },
+    {
+      "name": "room.leave",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/RoomRef"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Leave a chat room."
+    },
+    {
+      "name": "room.say",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SayParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Post a message to a room."
+    },
+    {
+      "name": "room.members",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/RoomRef"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Members"
+        }
+      },
+      "summary": "Who is currently in a room."
+    },
+    {
+      "name": "message.send",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/MessageParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Send a private message."
+    },
+    {
+      "name": "message.history",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Messages"
+        }
+      },
+      "summary": "Private messages the daemon collected, including while nobody was attached."
+    },
+    {
+      "name": "browse.user",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/UserRef"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Ask a peer for its share listing; it arrives as event.browse."
+    },
+    {
+      "name": "user.request",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/UserRef"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Ask the server about a user; poll user.info for the answer."
+    },
+    {
+      "name": "user.info",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/UserRef"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/UserResult"
+        }
+      },
+      "summary": "What the server has said about a user so far."
+    },
+    {
+      "name": "shares.status",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SharesStatus"
+        }
+      },
+      "summary": "What the share index currently holds."
+    },
+    {
+      "name": "shares.set",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/DirectoriesParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SharesStatus"
+        }
+      },
+      "summary": "Replace the shared folders and re-index."
+    },
+    {
+      "name": "shares.reindex",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SharesStatus"
+        }
+      },
+      "summary": "Re-scan the configured folders."
+    },
+    {
+      "name": "event.room",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/RoomEventDto"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "type": "null"
+        }
+      },
+      "summary": "Something happened in a room this session has joined.",
+      "x-notification": true
+    },
+    {
+      "name": "event.message",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/UserMessageDto"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "type": "null"
+        }
+      },
+      "summary": "A private message arrived.",
+      "x-notification": true
+    },
+    {
+      "name": "event.upload",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/UploadInfoDto"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "type": "null"
+        }
+      },
+      "summary": "An upload changed state.",
+      "x-notification": true
+    },
+    {
+      "name": "event.download_status",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/DownloadStatusEvent"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "type": "null"
+        }
+      },
+      "summary": "A transfer moved.",
+      "x-notification": true
+    },
+    {
+      "name": "event.browse",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/BrowseEvent"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "type": "null"
+        }
+      },
+      "summary": "A peer answered a browse request.",
+      "x-notification": true
+    },
+    {
+      "name": "event.session_loss",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SessionLossEvent"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "type": "null"
+        }
+      },
+      "summary": "The server session ended; nothing seen after this means anything.",
+      "x-notification": true
+    }
+  ],
+  "openrpc": "1.3.2"
+}
