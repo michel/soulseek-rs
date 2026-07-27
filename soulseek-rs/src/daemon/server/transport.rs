@@ -181,9 +181,13 @@ fn handle(stream: Stream, daemon: &Daemon) -> std::io::Result<()> {
     let writer = std::thread::spawn(move || write_loop(stream, &outbox));
 
     if !authenticate(&mut reader, daemon, trusted, &out) {
-        closer.shutdown();
+        // Let the writer flush the refusal before closing: shutting the socket
+        // first discards the reply, and the caller learns only that the
+        // connection vanished — which is indistinguishable from the daemon
+        // having crashed.
         drop(out);
         let _ = writer.join();
+        closer.shutdown();
         return Ok(());
     }
     // An established client is expected to idle, holding the connection open
@@ -237,10 +241,10 @@ fn handle(stream: Stream, daemon: &Daemon) -> std::io::Result<()> {
     }
 
     daemon.hub.unsubscribe(subscription);
-    closer.shutdown();
     drop(out);
     let _ = pump.join();
     let _ = writer.join();
+    closer.shutdown();
     Ok(())
 }
 

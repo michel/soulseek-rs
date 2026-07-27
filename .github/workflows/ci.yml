@@ -108,6 +108,14 @@ jobs:
           SOULSEEK_E2E_REQUIRED: "1"
         run: cargo test -p soulseek-rs --test cli_e2e -- --nocapture
 
+      # The control protocol as a third party meets it: the TCP transport, the
+      # token, and the gate. None of it is reachable through the command
+      # surface, so the CLI suite cannot cover it in either mode.
+      - name: Run daemon protocol e2e tests (required against soulfind)
+        env:
+          SOULSEEK_E2E_REQUIRED: "1"
+        run: cargo test -p soulseek-rs --test daemon_protocol_e2e -- --nocapture --test-threads=1
+
       # The same suite again, with every session served by a daemon instead of
       # the command's own login. Identical records and exit codes both ways is
       # what makes daemon mode a routing decision rather than a second

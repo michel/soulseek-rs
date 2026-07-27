@@ -264,3 +264,227 @@ pub fn launch_main_tui(
     );
     tui.run(terminal)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::daemon::proto::ChatMessageDto;
+    use crate::models::MessageDirection;
+
+    /// A session that knows a conversation and nothing else — what attaching
+    /// to a daemon looks like from the TUI's side.
+    struct TalkativeSession(Vec<ChatMessageDto>);
+
+    impl SessionApi for TalkativeSession {
+        fn message_history(&self) -> Vec<ChatMessageDto> {
+            self.0.clone()
+        }
+        fn username(&self) -> String {
+            "tester".to_string()
+        }
+        fn listen_port(&self) -> Option<u16> {
+            None
+        }
+        fn session_loss(&self) -> Option<soulseek_rs::SessionLoss> {
+            None
+        }
+        fn search_with_cancel(
+            &self,
+            _query: &str,
+            _timeout: Duration,
+            _cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+        ) -> soulseek_rs::Result<Vec<soulseek_rs::SearchResult>> {
+            Ok(Vec::new())
+        }
+        fn get_search_results(
+            &self,
+            _key: &str,
+        ) -> Vec<soulseek_rs::SearchResult> {
+            Vec::new()
+        }
+        fn get_search_results_count(&self, _key: &str) -> usize {
+            0
+        }
+        fn try_get_search_results(
+            &self,
+            _key: &str,
+        ) -> Option<Vec<soulseek_rs::SearchResult>> {
+            None
+        }
+        fn start_wishlist_search(
+            &self,
+            _query: &str,
+        ) -> soulseek_rs::Result<()> {
+            Ok(())
+        }
+        fn wishlist_interval(&self) -> Duration {
+            Duration::from_mins(12)
+        }
+        fn download(
+            &self,
+            _filename: String,
+            _username: String,
+            _size: u64,
+            _directory: String,
+        ) -> soulseek_rs::Result<(
+            soulseek_rs::types::Download,
+            std::sync::mpsc::Receiver<soulseek_rs::DownloadStatus>,
+        )> {
+            Err(soulseek_rs::SoulseekRs::NotConnected)
+        }
+        fn download_with_metadata(
+            &self,
+            _filename: String,
+            _username: String,
+            _size: u64,
+            _directory: String,
+            _metadata: soulseek_rs::types::DownloadMetadata,
+        ) -> soulseek_rs::Result<(
+            soulseek_rs::types::Download,
+            std::sync::mpsc::Receiver<soulseek_rs::DownloadStatus>,
+        )> {
+            Err(soulseek_rs::SoulseekRs::NotConnected)
+        }
+        fn get_all_downloads(&self) -> Vec<soulseek_rs::types::Download> {
+            Vec::new()
+        }
+        fn pause_download(&self, _u: &str, _f: &str) -> bool {
+            false
+        }
+        fn resume_download(&self, _u: &str, _f: &str) -> bool {
+            false
+        }
+        fn remove_queued_download(&self, _u: &str, _f: &str) -> bool {
+            false
+        }
+        fn remove_download(&self, _u: &str, _f: &str) -> bool {
+            false
+        }
+        fn uploads(&self) -> Vec<soulseek_rs::UploadInfo> {
+            Vec::new()
+        }
+        fn take_upload_events(&self) -> Vec<soulseek_rs::UploadInfo> {
+            Vec::new()
+        }
+        fn cancel_upload(&self, _u: &str, _f: &str) -> bool {
+            false
+        }
+        fn set_upload_slots(&self, _slots: usize) {}
+        fn check_privileges(&self) -> soulseek_rs::Result<()> {
+            Ok(())
+        }
+        fn own_privilege_seconds(&self) -> Option<u32> {
+            None
+        }
+        fn request_room_list(&self) -> soulseek_rs::Result<()> {
+            Ok(())
+        }
+        fn join_room(&self, _room: &str) -> soulseek_rs::Result<()> {
+            Ok(())
+        }
+        fn leave_room(&self, _room: &str) -> soulseek_rs::Result<()> {
+            Ok(())
+        }
+        fn say_in_room(
+            &self,
+            _room: &str,
+            _message: &str,
+        ) -> soulseek_rs::Result<()> {
+            Ok(())
+        }
+        fn room_members(&self, _room: &str) -> Vec<String> {
+            Vec::new()
+        }
+        fn take_room_events(&self) -> Vec<soulseek_rs::RoomEvent> {
+            Vec::new()
+        }
+        fn send_private_message(
+            &self,
+            _u: &str,
+            _m: &str,
+        ) -> soulseek_rs::Result<()> {
+            Ok(())
+        }
+        fn take_private_messages(&self) -> Vec<soulseek_rs::UserMessage> {
+            Vec::new()
+        }
+        fn browse_user(&self, _username: &str) -> soulseek_rs::Result<()> {
+            Ok(())
+        }
+        fn take_browse_result(
+            &self,
+            _username: &str,
+        ) -> Option<Vec<soulseek_rs::SharedDirectory>> {
+            None
+        }
+        fn request_user_info(
+            &self,
+            _username: &str,
+        ) -> soulseek_rs::Result<()> {
+            Ok(())
+        }
+        fn user_info(&self, _username: &str) -> Option<soulseek_rs::UserInfo> {
+            None
+        }
+        fn shared_counts(&self) -> (u32, u32) {
+            (0, 0)
+        }
+        fn shared_directories(&self) -> Vec<String> {
+            Vec::new()
+        }
+        fn set_shared_directories(
+            &self,
+            _directories: Vec<String>,
+        ) -> soulseek_rs::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn tui(history: Vec<ChatMessageDto>) -> MainTui {
+        MainTui::new(
+            Arc::new(TalkativeSession(history)),
+            "/tmp".to_string(),
+            1,
+            Duration::from_secs(1),
+            None,
+        )
+    }
+
+    #[test]
+    fn an_attached_session_opens_with_the_conversation_already_in_it() {
+        // A TUI attached to a daemon has no state file of its own; the
+        // conversation has to come from the session, or it starts blank while
+        // the daemon has been collecting messages for hours.
+        let tui = tui(vec![
+            ChatMessageDto {
+                peer: "bob".into(),
+                outgoing: false,
+                text: "hi".into(),
+                at: 1,
+            },
+            ChatMessageDto {
+                peer: "bob".into(),
+                outgoing: true,
+                text: "hello".into(),
+                at: 2,
+            },
+        ]);
+
+        assert_eq!(tui.state.messages.len(), 2);
+        assert_eq!(tui.state.messages[0].peer, "bob");
+        assert_eq!(tui.state.messages[0].direction, MessageDirection::Incoming);
+        assert_eq!(
+            tui.state.messages[1].direction,
+            MessageDirection::Outgoing,
+            "both halves of the conversation, not just what arrived"
+        );
+        assert_eq!(tui.state.chat_peers(), ["bob"]);
+    }
+
+    #[test]
+    fn a_local_session_starts_from_its_own_snapshot_instead() {
+        // Locally the session knows no history and the state file is the whole
+        // record, so nothing is invented.
+        assert!(tui(Vec::new()).state.messages.is_empty());
+    }
+}

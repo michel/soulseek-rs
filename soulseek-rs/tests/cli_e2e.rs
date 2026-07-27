@@ -701,13 +701,34 @@ impl TestServer {
         format!("{}:{}", self.host, self.port)
     }
 
-    /// Arguments that point the binary at this server as `user`.
+    /// Arguments that point the binary at this server as `user` — or, in
+    /// daemon mode, at a daemon logged in as `user`.
+    ///
+    /// Every helper that builds a command goes through here, so routing at
+    /// this one point is what puts the streaming and wishlist tests through a
+    /// daemon too, rather than only the ones that happen to use [`cli`].
     ///
     /// The listener stays on: a Soulseek transfer is delivered over a
     /// connection the *uploader* opens back to us, so a downloader without a
     /// listener never receives its file.
     fn args(&self, user: &str) -> Vec<String> {
-        self.args_on(user, free_port().expect("listener port"))
+        self.args_with(user, &[])
+    }
+
+    /// The same, with flags that configure the *session* rather than the
+    /// command — shares, the listener, where downloads land. Locally they go
+    /// to the run itself; in daemon mode they configure the daemon, because
+    /// that is whose session they now describe.
+    fn args_with(&self, user: &str, session_flags: &[String]) -> Vec<String> {
+        match mode() {
+            Mode::Local => {
+                let mut args =
+                    self.args_on(user, free_port().expect("listener port"));
+                args.extend(session_flags.iter().cloned());
+                args
+            }
+            Mode::Daemon => self.daemon_args(user, session_flags),
+        }
     }
 
     /// The same arguments on a chosen listener port, for the tests about what
@@ -744,6 +765,19 @@ impl TestServer {
             "--daemon".to_string(),
             socket.display().to_string(),
         ]
+    }
+
+    /// The state directory of the daemon serving `user`, where its socket and
+    /// token live.
+    fn daemon_state(&self, user: &str) -> PathBuf {
+        self.daemon_for(user, &[]);
+        let key = format!("{}|{user}", self.address());
+        let daemons = self.daemons.lock().expect("daemon registry");
+        daemons
+            .get(&key)
+            .expect("the daemon was just started")
+            .state
+            .clone()
     }
 
     fn daemon_for(&self, user: &str, session_flags: &[String]) -> PathBuf {
@@ -893,17 +927,14 @@ fn probe_bytes() -> Vec<u8> {
 /// the whole point: if the records and exit code come out the same either way,
 /// daemon mode is equivalent.
 fn cli(server: &TestServer, user: &str, args: &[&str]) -> Output {
-    let mut all = match mode() {
-        Mode::Local => server.args(user),
-        Mode::Daemon => {
-            let (session_flags, _) = split_session_flags(args);
-            server.daemon_args(user, &session_flags)
+    let (session_flags, command_args) = match mode() {
+        // Locally a flag is a flag: the run configures its own session.
+        Mode::Local => {
+            (Vec::new(), args.iter().map(|a| (*a).to_string()).collect())
         }
+        Mode::Daemon => split_session_flags(args),
     };
-    let command_args: Vec<String> = match mode() {
-        Mode::Local => args.iter().map(|a| (*a).to_string()).collect(),
-        Mode::Daemon => split_session_flags(args).1,
-    };
+    let mut all = server.args_with(user, &session_flags);
     all.extend(command_args);
     let refs: Vec<&str> = all.iter().map(String::as_str).collect();
     run(&refs)
@@ -3220,4 +3251,147 @@ fn concurrent_downloads_sharing_a_listener_port_all_land() {
             .unwrap_or_else(|e| panic!("run {i} wrote no file: {e}"));
         assert_eq!(written, probe_bytes(), "run {i} wrote the wrong bytes");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Daemon mode
+//
+// Everything above proves a command behaves the same whichever kind of session
+// serves it. These prove the things that only exist *because* there is a
+// daemon: one session shared by several clients at once, the remote transport
+// and its token, and the gate that decides who may talk to it at all.
+// ---------------------------------------------------------------------------
+
+/// Two clients, one session, at the same time.
+///
+/// This is the whole reason the daemon exists: the server allows one login per
+/// account, so without it a second command would displace the first and both
+/// would start reporting a lost session.
+#[test]
+fn two_clients_share_one_daemon_session_at_once() {
+    if mode() != Mode::Daemon {
+        println!("skipped: this is a daemon-mode property");
+        return;
+    }
+    let server = server_or_skip!();
+    let share = Scratch::new("share");
+    std::fs::write(share.path().join("cli_probe_shared.bin"), probe_bytes())
+        .expect("share file");
+    let _sharer =
+        server.client("cli_e2e_two_client_peer", vec![share.display()]);
+    settle();
+
+    // One daemon, because both runs use the same account.
+    let args = server.args("cli_e2e_two_clients");
+    let spawn = |extra: &[&str]| {
+        let mut all = args.clone();
+        all.extend(extra.iter().map(|a| (*a).to_string()));
+        let refs: Vec<&str> = all.iter().map(String::as_str).collect();
+        command(&refs)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("the binary should start")
+    };
+
+    let first = spawn(&["--json", "--search-timeout", "8", "search", "shared"]);
+    let second = spawn(&["--json", "browse", "cli_e2e_two_client_peer"]);
+
+    let first = first.wait_with_output().expect("wait");
+    let second = second.wait_with_output().expect("wait");
+
+    assert_eq!(
+        code(&first),
+        EXIT_OK,
+        "the search failed while another client was attached: {}",
+        stderr(&first)
+    );
+    assert_eq!(
+        code(&second),
+        EXIT_OK,
+        "the browse failed while another client was attached: {}",
+        stderr(&second)
+    );
+    assert!(
+        !records(&first).is_empty() && !records(&second).is_empty(),
+        "both clients should have got answers"
+    );
+    // Neither may report the session being taken over: that is exactly what a
+    // second *login* would have caused, and what borrowing one avoids.
+    for output in [&first, &second] {
+        assert_ne!(code(output), EXIT_SESSION_LOST, "{}", stderr(output));
+    }
+}
+
+/// A daemon reports itself, and stops when asked.
+#[test]
+fn a_daemon_reports_its_session_and_stops_on_request() {
+    if mode() != Mode::Daemon {
+        println!("skipped: there is no daemon to ask in local mode");
+        return;
+    }
+    let server = server_or_skip!();
+    // A daemon of its own: this test stops it, and the shared fixtures are
+    // still serving the rest of the suite.
+    let user = "cli_e2e_daemon_status";
+    let state = server.daemon_state(user);
+    let socket = state.join("daemon.sock");
+    let at = socket.display().to_string();
+
+    let status =
+        run(&["--no-config", "--json", "--daemon", &at, "daemon", "status"]);
+    assert_eq!(code(&status), EXIT_OK, "stderr: {}", stderr(&status));
+    let record: serde_json::Value =
+        serde_json::from_str(records(&status).first().expect("one record"))
+            .expect("valid JSON");
+    assert_eq!(record["user"], user);
+    assert_eq!(record["server"], server.address());
+    assert!(
+        record["clients"].as_u64().is_some_and(|n| n >= 1),
+        "the asking client counts as attached: {record}"
+    );
+
+    let stopped = run(&["--no-config", "--daemon", &at, "daemon", "stop"]);
+    assert_eq!(code(&stopped), EXIT_OK, "stderr: {}", stderr(&stopped));
+
+    // The socket goes away, and a command that finds nothing there says so
+    // rather than hanging.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while socket.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let after = run(&["--no-config", "--daemon", &at, "daemon", "status"]);
+    assert_eq!(
+        code(&after),
+        EXIT_CONNECTION,
+        "a stopped daemon is a connection error, not a hang: {}",
+        stderr(&after)
+    );
+}
+
+/// `daemon token` prints a secret, and the same one every time.
+#[test]
+fn the_daemon_token_is_stable_across_reads() {
+    let state = Scratch::new("token");
+    let read = || {
+        let mut command = Command::new(BIN);
+        for name in CLI_ENV_VARS {
+            command.env_remove(name);
+        }
+        command.env("SOULSEEK_STATE_DIR", state.path());
+        command.current_dir(std::env::temp_dir());
+        command.args(["--no-config", "daemon", "token"]);
+        command.output().expect("the binary should run")
+    };
+
+    let first = read();
+    assert_eq!(code(&first), EXIT_OK, "stderr: {}", stderr(&first));
+    let token = records(&first).first().expect("a token").clone();
+    assert_eq!(token.len(), 64, "256 bits, hex encoded");
+    assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
+    assert_eq!(
+        records(&read()).first().expect("a token"),
+        &token,
+        "a restart must not lock existing clients out"
+    );
 }
