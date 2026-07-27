@@ -129,6 +129,19 @@ soulseek-rs search 'aphex twin'    # no login, no flags — uses the daemon
 soulseek-rs                        # the TUI attaches to the same session
 ```
 
+From a script, start it and wait for it — it takes a second or two to log in,
+and a command that arrives early opens a session of its own instead:
+
+```bash
+soulseek-rs daemon status --json >/dev/null 2>&1 || {
+  soulseek-rs daemon >/dev/null 2>&1 &
+  for _ in $(seq 30); do
+    soulseek-rs daemon status --json >/dev/null 2>&1 && break
+    sleep 1
+  done
+}
+```
+
 Commands find it by themselves. The daemon listens on a Unix socket only your
 user can open, so there is nothing to configure and no secret to pass around —
 the same arrangement Docker and ssh-agent use. With no daemon running,
@@ -138,6 +151,13 @@ run.
 What this buys: downloads that outlive the command that queued them, several
 clients (or agents) on one account at once, and a chat window that keeps
 collecting while nothing is attached.
+
+It is also the neighbourly way to use the network. The server allows one
+session per account, so parallel one-shot runs either displace each other or
+push you into registering a throwaway name per run — account churn on
+infrastructure other people maintain. A daemon is one login for as long as you
+work, and one share index instead of a rescan per invocation. If you are
+driving this from a script or an agent, start a daemon.
 
 ```bash
 soulseek-rs daemon status          # who it is, what it shares, who is attached

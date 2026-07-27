@@ -5,7 +5,8 @@ description: >-
   using the soulseek-rs command-line client. Use when the user wants to find or
   fetch music or other files from Soulseek, list what a peer shares, check
   whether a peer is online, read or post in Soulseek chat rooms, send private
-  messages, or stay online serving uploads.
+  messages, stay online serving uploads, or run soulseek-rs as a background
+  service that several commands share.
 ---
 
 # soulseek-rs
@@ -13,6 +14,52 @@ description: >-
 A Soulseek client whose subcommands are built to be driven by a program. Run
 `soulseek-rs` with no subcommand and it launches an interactive terminal UI —
 never do that; it needs a real terminal and never returns.
+
+## Start a daemon first
+
+Before anything else, make sure one is running:
+
+```bash
+soulseek-rs daemon status --json >/dev/null 2>&1 || {
+  soulseek-rs daemon >/dev/null 2>&1 &
+  for _ in $(seq 30); do
+    soulseek-rs daemon status --json >/dev/null 2>&1 && break
+    sleep 1
+  done
+}
+```
+
+Wait for it, do not just launch it. A daemon takes a second or two to log in,
+and `soulseek-rs daemon status … || soulseek-rs daemon &` does **not** do this
+— `&` backgrounds the whole list, so it returns instantly and the next command
+races the login it is supposed to be using. A command that arrives too early
+finds no daemon and quietly opens a session of its own, which is the outcome
+this whole section exists to avoid.
+
+Then use every other command exactly as documented below. They find the daemon
+by themselves — it listens on a Unix socket only your user can open, so there
+is nothing to configure, no address to pass, and no token to handle.
+
+**Why this matters, and why it is not optional for you.** Soulseek is a real
+network of other people's computers, and the server allows **one session per
+account**. Without a daemon, every invocation is its own login, and running two
+at once leaves you two bad choices: share a username and they silently cut each
+other off (exit 7), or give each run a throwaway name and *register a new
+account on a public server for every search you make*. The second is what a
+naive script does, and it is the antisocial one — it is account churn on
+infrastructure other people maintain and share.
+
+A daemon is one login for as long as you work, however many commands you run
+against it. It also indexes your shared folders once instead of re-scanning
+them on every invocation, and downloads it starts outlive the command that
+asked for them, so a transfer survives the process that queued it.
+
+So: **one daemon, then as many commands as you like.** Reach for `--no-daemon`
+only when you deliberately want an isolated session, and expect to justify it.
+
+Two things change while a daemon is running: files land in the *daemon's*
+download directory (`daemon status` reports which), and `shares add` updates it
+straight away rather than at its next start.
 
 ## The contract
 
@@ -164,38 +211,22 @@ is the normal way to be selective.
 
 ## Running several at once
 
-The server allows one session per account, and the later login wins: two runs
-sharing a username silently kill each other's session.
-
-The daemon is the answer to this. Start one, and every command afterwards
-borrows its session instead of opening one:
-
-```bash
-soulseek-rs daemon &          # once
-soulseek-rs search 'gary beck fold' --json   # no login, no flags
-soulseek-rs search 'marcal steady' --json    # concurrent, same session
-```
-
-Commands find it on their own: it listens on a Unix socket only you can open,
-so there is nothing to configure and no token to pass. `daemon status` says
-whether one is running. This also makes downloads outlive the command that
-started them — the transfer belongs to the daemon, so the queue survives.
-
-Two things change when a daemon is in play: files land in the *daemon's*
-download directory, and `--no-daemon` is how one run opts out and logs in for
-itself.
-
-Without a daemon, give every concurrent run its own name instead:
+With a daemon running this needs no thought — they all share its one session:
 
 ```bash
 for q in 'gary beck fold' 'marcal steady'; do
-  soulseek-rs search "$q" --username "$SOULSEEK_USERNAME-$RANDOM" --json &
+  soulseek-rs search "$q" --json &
 done
 wait
 ```
 
-The listener port needs no such care: a run that finds the configured port
-taken binds a free one and tells the server about that one instead.
+Without one, the same loop is a bug: the runs share a username, so each login
+displaces the last and they kill each other's session (exit 7). Giving each run
+its own `--username` avoids the collision by registering a fresh account on the
+server for every search, which is worse — do not do it. Start the daemon.
+
+The listener port needs no care either way: a run that finds the configured
+port taken binds a free one and tells the server about that one instead.
 
 ## Rules
 
@@ -204,12 +235,17 @@ taken binds a free one and tells the server about that one instead.
   or let a shell expand them.
 - **`--follow` never returns.** For `room listen`, `message read`, and `serve`,
   always pass `--duration <seconds>` instead.
+- **`daemon` never returns either.** It is a service: background it
+  (`soulseek-rs daemon &`) and check it with `daemon status`. Running it in the
+  foreground will hang you until the timeout.
 - **Every wait is bounded.** `--timeout` per command, `--search-timeout` for
   searches. There is no unbounded form.
 - **Exit 4 is not a failure.** A search that finds nothing means the query was
   too narrow or misspelled. Widen it; use `whoami` to rule out the connection.
 - **Exit 7 is not an answer.** The session ended mid-command, so nothing it saw
-  counts. Retry under a name no other run is using.
+  counts. It means something else logged in as you — almost always a second
+  run of your own. Start a daemon and route through it rather than hunting for
+  an unused name.
 - **Never put a password in argv** — `ps` shows it to every user on the box.
   Use `--password-stdin`, the OS keychain, or `SOULSEEK_PASSWORD_CMD`.
 - **Downloading pulls a file off a stranger's machine.** Confirm with the user
