@@ -44,6 +44,15 @@ pub const TOKEN_NAME: &str = "daemon.token";
 /// loses little, rare enough not to churn the disk on a busy queue.
 const SAVE_INTERVAL: Duration = Duration::from_secs(5);
 
+/// Open files the daemon asks the OS for at startup.
+///
+/// The client holds a socket per peer and will talk to a thousand of them
+/// during a busy search, plus transfers, the share index, and control
+/// connections. A shell hands its children a soft limit of 256 on macOS, which
+/// a single search blows through — and a one-shot command never noticed
+/// because it exited before it mattered. A resident process has to ask.
+const WANTED_OPEN_FILES: u64 = 8192;
+
 #[must_use]
 pub fn socket_path() -> Option<PathBuf> {
     crate::persist::paths::state_dir().map(|dir| dir.join(SOCKET_NAME))
@@ -152,6 +161,21 @@ pub fn run(
     let token = load_or_create_token(&state_dir.join(TOKEN_NAME))
         .map_err(|e| CliError::usage(format!("cannot read the token: {e}")))?;
 
+    // Before anything opens a socket: running out of file descriptors mid
+    // search leaves the client unable to accept peers *or* control
+    // connections, and the only symptom is everything quietly failing.
+    match raise_open_file_limit() {
+        Ok(limit) if limit < WANTED_OPEN_FILES => ctx.out.warn(&format!(
+            "only {limit} open files allowed; a busy search wants \
+             {WANTED_OPEN_FILES}. Raise it with `ulimit -n {WANTED_OPEN_FILES}` \
+             before starting the daemon."
+        )),
+        Ok(_) => {}
+        Err(e) => ctx
+            .out
+            .warn(&format!("could not check the open-file limit: {e}")),
+    }
+
     // Bind before logging in: a second daemon should fail in a millisecond,
     // not after a full login handshake against the server.
     let mut listeners = Vec::new();
@@ -245,6 +269,59 @@ pub fn run(
     let _ = drainer.join();
     cleanup();
     Ok(())
+}
+
+/// Ask the OS for enough open files to run a busy session, and report what we
+/// actually got.
+///
+/// Raising our own soft limit is what a service does: the limit a shell
+/// inherits is sized for a shell. The hard limit is the ceiling, and asking
+/// past it fails outright rather than clamping, so this asks for the smaller
+/// of what we want and what we are allowed.
+#[cfg(unix)]
+fn raise_open_file_limit() -> std::io::Result<u64> {
+    // SAFETY: every call takes a pointer to a `rlimit` this function owns, and
+    // none of them retains it.
+    unsafe {
+        let mut limit = std::mem::zeroed::<libc::rlimit>();
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut limit) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if limit.rlim_cur >= WANTED_OPEN_FILES {
+            return Ok(limit.rlim_cur);
+        }
+
+        let previous = limit.rlim_cur;
+        let ceiling = if limit.rlim_max == libc::RLIM_INFINITY {
+            WANTED_OPEN_FILES
+        } else {
+            limit.rlim_max.min(WANTED_OPEN_FILES)
+        };
+
+        // macOS rejects an unlimited *hard* limit for open files, so raising
+        // the soft one while leaving `rlim_max` as it came back fails with
+        // EINVAL. Naming both is what it will accept.
+        for candidate in [
+            libc::rlimit {
+                rlim_cur: ceiling,
+                rlim_max: limit.rlim_max,
+            },
+            libc::rlimit {
+                rlim_cur: ceiling,
+                rlim_max: ceiling,
+            },
+        ] {
+            if libc::setrlimit(libc::RLIMIT_NOFILE, &raw const candidate) == 0 {
+                return Ok(ceiling);
+            }
+        }
+        Ok(previous)
+    }
+}
+
+#[cfg(not(unix))]
+const fn raise_open_file_limit() -> std::io::Result<u64> {
+    Ok(WANTED_OPEN_FILES)
 }
 
 /// Say what is now possible, once, on stderr.

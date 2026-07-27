@@ -13,6 +13,13 @@ use crate::types::Download;
 use crate::utils::lock::RwLockExt;
 use crate::{DownloadStatus, debug, error, info, trace};
 
+/// How long to wait before accepting again after a failure.
+///
+/// The failure worth pausing for is running out of file descriptors, which a
+/// busy search can reach: it does not clear by the next instruction, and
+/// retrying flat out spins a core and floods the log.
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
+
 const PEER_INIT_MESSAGE_CODE: u8 = 1;
 
 /// How long an accepted peer gets to send its peer-init handshake.
@@ -406,6 +413,11 @@ impl Listen {
                     "[listener] Failed to accept connection: {}",
                     stream.unwrap_err()
                 );
+                // Running out of file descriptors does not clear by the next
+                // instruction, and retrying flat out turns one exhausted
+                // moment into a spinning core and thousands of identical log
+                // lines. Pause long enough for something to be released.
+                std::thread::sleep(ACCEPT_BACKOFF);
                 continue;
             };
 

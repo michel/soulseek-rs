@@ -38,6 +38,9 @@ const MAX_LINE: u64 = 1 << 20;
 /// connection open for events without sending anything.
 const AUTH_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How long to wait before accepting again after a failure.
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
+
 /// How many control connections may be open at once. Far above any real use
 /// (a TUI, a few scripts, an agent), and low enough that an unauthenticated
 /// peer cannot exhaust the daemon's threads.
@@ -132,7 +135,12 @@ impl Listener {
         loop {
             match self.accept() {
                 Ok(stream) => spawn_connection(stream, Arc::clone(&daemon)),
-                Err(e) => soulseek_rs::warn!("control accept failed: {e}"),
+                Err(e) => {
+                    soulseek_rs::warn!("control accept failed: {e}");
+                    // Out of file descriptors does not clear by the next
+                    // instruction; retrying flat out spins a core.
+                    std::thread::sleep(ACCEPT_BACKOFF);
+                }
             }
         }
     }

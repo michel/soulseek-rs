@@ -47,3 +47,6 @@ getrandom = "0.4.3"
 [dev-dependencies]
 schemars = "1.2.1"
 tempfile = "3"
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.189"
