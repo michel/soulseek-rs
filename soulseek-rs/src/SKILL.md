@@ -222,6 +222,51 @@ soulseek-rs user someuser --json
 `download --stdin` reads whole records, so filtering with `jq` and piping back
 is the normal way to be selective.
 
+## Searching: widen by rungs, then match back
+
+Soulseek matches your query against the filenames peers happen to have on
+disk. Nobody agrees on how to write a track, so the name the user gives you is
+usually *more* specific than any filename: it carries a mix suffix that is not
+in the file, a diacritic the uploader typed as ASCII, an ampersand where the
+file has a space. Search that verbatim and you get exit 4 for a track dozens of
+people are sharing.
+
+So climb down a ladder, one rung at a time, and **stop at the first rung that
+returns anything usable**:
+
+1. **As written.** `bicep glue original mix`
+2. **Without the version suffix**, meaning anything in trailing brackets or
+   after a dash: `(Original Mix)`, `[Radio Edit]`, `- Remastered 2011`, `(feat. X)`.
+   `bicep glue`
+3. **Without featured artists and punctuation**, and with diacritics folded to
+   ASCII: `sigur rós hoppípolla` becomes `sigur ros hoppipolla`, `Tyler, The
+   Creator - EARFQUAKE` becomes `tyler the creator earfquake`.
+4. **The two or three rarest words**, usually a surname and one distinctive
+   title word: `hoppipolla`.
+
+Each rung is a *different, wider* query, which is why this does not break the
+rule against re-running a search: never repeat a rung, and do not go past the
+fourth. Four searches is the most any one track should ever cost.
+
+**Then match back.** Widening finds candidates; it does not choose. Compare each
+result against what the user actually asked for, folded the same way (lowercase,
+diacritics stripped, punctuation to spaces), and require the distinctive words
+to appear in the path. A search for `hoppipolla` will also return live versions,
+covers, and a DJ set that mentions it.
+
+Where the user named a specific version, prefer a filename that carries it and
+treat one that does not as second best rather than a match:
+
+```bash
+# "Bicep - Glue (Original Mix)"  ->  rung 2 finds it
+soulseek-rs search 'bicep glue' --json --min-bitrate 320
+# then, among the results, prefer paths containing "glue" and not "live",
+# "remix" or "edit" unless that is what was asked for.
+```
+
+A track that survives all four rungs with nothing plausible is genuinely not
+there. Say so and move on; do not keep inventing spellings.
+
 ## Downloading a list of tracks
 
 Soulseek is people's home computers, and they can see what you are doing. The
@@ -258,10 +303,28 @@ their queue is *for* when you let it feed them to you a couple at a time,
 which is the opposite of opening ten transfers at once. Fall back to
 per-track searching for whatever that peer does not have.
 
+### How much to have in flight
+
+One table, because the two routes below must not disagree:
+
+| | At once |
+|---|---|
+| Subagents | 10 |
+| Searches on the wire | 5 |
+| Transfers running | 5 |
+| Transfers from any one peer | 2 |
+| Search rungs spent on one track | 4 |
+
+Ten subagents but five searches is deliberate. A subagent spends most of its
+life waiting on a transfer, not searching, and the server rate-limits searches
+harder than peers rate-limit uploads. You are already holding subagents at the
+pick, so hold them before the search the same way: hand out a search slot, take
+it back when results land.
+
 ### Search in parallel, download with a plan
 
-Give each track its own subagent, **at most ten at a time**. A subagent
-searches for its track and judges the candidates, because that is a judgement
+Give each track its own subagent, **at most ten at a time**. A subagent works
+the search ladder for its track and judges the candidates, because that is a judgement
 call every time: bitrate against file size, the right pressing against a live
 bootleg of the same name, a peer with a free slot against a faster one. A shell
 loop cannot make that call, so it takes the first hit or needs rules you would
@@ -279,7 +342,8 @@ resolve:
 - **The same file chosen twice**, which wastes a transfer slot on a duplicate.
 
 Cleared subagents download their own track, report where it landed, and are
-done. Hold the rest until a slot frees up.
+done. Hold the rest until a slot frees up: five transfers at once across the
+batch, and never more than two from one peer.
 
 **Report as you go.** Each subagent says when its search has found candidates
 and again when its download finishes. A batch that only reports at the end is
@@ -297,13 +361,15 @@ soulseek-rs download --stdin --json -c 5 < picks.ndjson
 It runs `-c` at a time from the list in order, so **order the lines to
 alternate between peers**. Consecutive lines naming the same user are what put
 several simultaneous transfers on one person; interleaving them spreads the
-load without slowing anything down. Keep `-c` at 5 or so.
+load without slowing anything down. `-c 5` matches the budget above; the
+tool's own default is 20, which is too many strangers at once for a batch you
+did not hand-pick.
 
 ### What not to do
 
 - **Do not search the same query twice.** The server rate-limits searches, which
   is why the wishlist has an interval, and a re-run returns what you already
-  have. Keep the results from the first search and pick again from
+  have. Widening it is a different query and is fine; repeating it is not. Keep the results from the first search and pick again from
   them.
 - **Do not retry a failed transfer against the same peer.** Exit 6 or 5 means
   they went offline, their queue is long, or they are not serving you. Take the
@@ -334,8 +400,9 @@ send you the file.
   foreground will hang you until the timeout.
 - **Every wait is bounded.** `--timeout` per command, `--search-timeout` for
   searches. There is no unbounded form.
-- **Exit 4 is not a failure.** A search that finds nothing means the query was
-  too narrow or misspelled. Widen it; use `whoami` to rule out the connection.
+- **Exit 4 is not a failure.** A search that finds nothing usually means the
+  query was more specific than anyone's filename. Take the next rung of the
+  search ladder; use `whoami` to rule out the connection.
 - **Exit 7 is not an answer.** The session ended mid-command, so nothing it saw
   counts. Something else logged in as you, almost always a second run of your
   own. Start a daemon and route through it rather than hunting for
