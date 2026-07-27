@@ -222,45 +222,105 @@ soulseek-rs user someuser --json
 `download --stdin` reads whole records, so filtering with `jq` and piping back
 is the normal way to be selective.
 
-## Several tracks at once
+## Downloading a list of tracks
 
-Asked for a list of tracks (an album, a playlist, "these ten songs"), **give
-each track its own subagent**, and run **at most ten at a time**. One subagent
-searches for its track, judges the candidates, downloads the one it picked, and
-reports back.
+Soulseek is people's home computers, and they can see what you are doing. The
+fast way and the safe way are mostly the same way, but where they differ, take
+the safe one: a peer who blocks you is gone for good, and being blocked by
+enough of them is worse for the user than a slow batch.
 
-**Report as you go, not only at the end.** Each subagent tells the main agent
-when its search has found candidates and again when its download completes, so
-progress is visible while the rest are still working. A batch that reports only
-once everything is finished looks indistinguishable from a batch that is stuck.
-One short line each is enough: what it searched for, what it picked and why,
-where the file landed, or which of the exit codes it hit and what that means
-for that track.
-
-Do this rather than writing a shell script that loops. Picking a file is a
-judgement call every time: bitrate against file size, a peer with a free slot
-against a faster one, the right pressing against a live bootleg with the same
-name. A loop cannot make that call, so it either takes the first hit or needs
-you to encode rules you would rather apply case by case. A subagent per track
-also means one failure is one track, not a dead pipeline, and each comes back
-with a sentence you can pass on.
-
-Ten at once, not more. Every peer you queue behind is someone's home machine,
-and the searches all share the daemon's one session.
+### Before you start: are you sharing anything?
 
 ```bash
-# What each subagent runs for its own track:
-soulseek-rs search 'gary beck fold' --json     # look
-soulseek-rs get 'gary beck fold' --json        # or search, pick and fetch in one
+soulseek-rs shares status --json
 ```
 
-This works because the daemon holds the session: ten subagents at once are ten
-commands sharing one login. Without a daemon they would displace each
-other (exit 7), and giving each its own `--username` would register a throwaway
+If `files` is 0, **stop and tell the user before downloading anything**. Sharing
+nothing is the single most common reason to get banned on Soulseek: plenty of
+users block non-sharers on sight, and some clients do it automatically. One
+line is enough ("you're not sharing anything, which gets you blocked; point
+`shares add` at a folder first"), then let them decide.
+
+### If the tracks are one album, look for one person
+
+Search once for the album or the artist, then `browse` whoever turns up with
+the most of it:
+
+```bash
+soulseek-rs search 'artist album' --json
+soulseek-rs browse someuser --json      # everything they share, as paths
+```
+
+One search and one browse beats twelve searches: fewer queries against a
+rate-limited server, and the missing tracks are visible in the listing rather
+than needing a query each. Taking several files from one person is also what
+their queue is *for* when you let it feed them to you a couple at a time,
+which is the opposite of opening ten transfers at once. Fall back to
+per-track searching for whatever that peer does not have.
+
+### Search in parallel, download with a plan
+
+Give each track its own subagent, **at most ten at a time**. A subagent
+searches for its track and judges the candidates, because that is a judgement
+call every time: bitrate against file size, the right pressing against a live
+bootleg of the same name, a peer with a free slot against a faster one. A shell
+loop cannot make that call, so it takes the first hit or needs rules you would
+rather apply case by case.
+
+Then each subagent **reports its pick and waits** before downloading: the user,
+the remote path, the size, and why it chose that one. This pause is the part
+that protects you. Only you can see every pick, and there are two collisions to
+resolve:
+
+- **The same peer chosen by several subagents.** Queueing many files at once
+  from one person is the classic way to be banned by them. Let at most two
+  through per peer at a time and hold the rest, or tell those subagents to take
+  their second choice from a different peer.
+- **The same file chosen twice**, which wastes a transfer slot on a duplicate.
+
+Cleared subagents download their own track, report where it landed, and are
+done. Hold the rest until a slot frees up.
+
+**Report as you go.** Each subagent says when its search has found candidates
+and again when its download finishes. A batch that only reports at the end is
+indistinguishable from a batch that is stuck.
+
+### Handing the whole batch to one command instead
+
+For a long list where the picks need no arguing, feed them to one command and
+let it manage the queue:
+
+```bash
+soulseek-rs download --stdin --json -c 5 < picks.ndjson
+```
+
+It runs `-c` at a time from the list in order, so **order the lines to
+alternate between peers**. Consecutive lines naming the same user are what put
+several simultaneous transfers on one person; interleaving them spreads the
+load without slowing anything down. Keep `-c` at 5 or so.
+
+### What not to do
+
+- **Do not search the same query twice.** The server rate-limits searches, which
+  is why the wishlist has an interval, and a re-run returns what you already
+  have. Keep the results from the first search and pick again from
+  them.
+- **Do not retry a failed transfer against the same peer.** Exit 6 or 5 means
+  they went offline, their queue is long, or they are not serving you. Take the
+  next candidate from your search results instead. A retry loop is a queue
+  hammer and gets noticed.
+- **Do not fetch what you were not asked for.** Confirm with the user before
+  `get --pick all` or any fetch whose size you do not know.
+
+Ten at once works only because the daemon holds the session: ten subagents are
+ten commands sharing one login. Without a daemon they would displace each other
+(exit 7), and giving each its own `--username` would register a throwaway
 account per track, which is worse. Start the daemon first.
 
 The listener port needs no care either way: a run that finds the configured
-port taken binds a free one and tells the server about that one instead.
+port taken binds a free one and tells the server about that one instead. Do
+keep the listener on, though: a peer that cannot connect back to you cannot
+send you the file.
 
 ## Rules
 
@@ -284,3 +344,12 @@ port taken binds a free one and tells the server about that one instead.
   Use `--password-stdin`, the OS keychain, or `SOULSEEK_PASSWORD_CMD`.
 - **Downloading pulls a file off a stranger's machine.** Confirm with the user
   before `get --pick all` or any fetch whose size is not known up front.
+- **Sharing nothing gets the user banned.** Check `shares status` before a
+  batch; if `files` is 0, say so before downloading. Users block leechers, and
+  some clients do it without being asked.
+- **One or two files at a time from any one peer.** Their queue is per-user and
+  they can see it. A pile of simultaneous transfers from one person reads as
+  abuse and is answered with a ban.
+- **Exit 6 means pick someone else.** The transfer died because that peer went
+  away or is not serving you. Take the next candidate from the results you
+  already have; retrying the same peer hammers their queue.
