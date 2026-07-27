@@ -30,9 +30,11 @@ const EXIT_SESSION_LOST: i32 = 7;
 
 /// Every environment variable the CLI reads, cleared for each run so a
 /// developer's shell (or a stray `.env`) cannot change what a test observes.
-const CLI_ENV_VARS: [&str; 13] = [
+const CLI_ENV_VARS: [&str; 15] = [
     "SOULSEEK_CONFIG_DIR",
     "SOULSEEK_STATE_DIR",
+    "SOULSEEK_DAEMON",
+    "SOULSEEK_DAEMON_TOKEN",
     "SOULSEEK_USERNAME",
     "SOULSEEK_PASSWORD",
     "SOULSEEK_PASSWORD_CMD",
@@ -48,14 +50,64 @@ const CLI_ENV_VARS: [&str; 13] = [
 
 /// Build a command for the binary, isolated from the developer's environment
 /// and from the repository's own working directory.
+///
+/// The state directory is not merely cleared but pointed somewhere empty: a
+/// client with no state directory of its own would look in the real one, find
+/// whatever daemon the developer happens to be running, and route the whole
+/// suite through their live Soulseek session.
 fn command(args: &[&str]) -> Command {
     let mut command = Command::new(BIN);
     for name in CLI_ENV_VARS {
         command.env_remove(name);
     }
+    command.env("SOULSEEK_STATE_DIR", isolated_state_dir());
     command.current_dir(std::env::temp_dir());
     command.args(args);
     command
+}
+
+/// An empty state directory shared by every run in this test process, so
+/// auto-routing finds nothing.
+fn isolated_state_dir() -> PathBuf {
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let path = std::env::temp_dir()
+            .join(format!("soulseek-cli-e2e-state-{}", std::process::id()));
+        std::fs::create_dir_all(&path).expect("state directory");
+        path
+    })
+    .clone()
+}
+
+/// Which kind of session the suite drives.
+///
+/// The point of the switch is that the *same* tests run both ways: identical
+/// records, identical exit codes, whether the session is this process's own or
+/// a daemon's. CI runs the suite twice, once per mode, and that equivalence is
+/// the guarantee daemon mode rests on.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum Mode {
+    Local,
+    Daemon,
+}
+
+fn mode() -> Mode {
+    match std::env::var("SOULSEEK_E2E_MODE").as_deref() {
+        Ok("daemon") => Mode::Daemon,
+        _ => Mode::Local,
+    }
+}
+
+/// Skip the rest of a test that has no meaning against a daemon — one about
+/// logging in, or about what happens when a listener port is taken, both of
+/// which are the daemon's business rather than a client's.
+macro_rules! local_only {
+    ($why:expr) => {
+        if mode() == Mode::Daemon {
+            println!("skipped in daemon mode: {}", $why);
+            return;
+        }
+    };
 }
 
 fn run(args: &[&str]) -> Output {
@@ -488,6 +540,121 @@ struct TestServer {
     child: Option<Child>,
     db: Option<PathBuf>,
     _gate: std::sync::MutexGuard<'static, ()>,
+    /// Daemons started for this server, one per (user, session flags). Dropped
+    /// with the server, which kills them.
+    daemons: std::sync::Mutex<std::collections::HashMap<String, DaemonFixture>>,
+}
+
+/// A `soulseek-rs daemon` running against the test server, with a state
+/// directory of its own so its socket and token cannot collide with another
+/// fixture's — or with the developer's.
+struct DaemonFixture {
+    child: Child,
+    socket: PathBuf,
+    state: PathBuf,
+}
+
+impl DaemonFixture {
+    fn start(
+        server: &TestServer,
+        user: &str,
+        session_flags: &[String],
+    ) -> Self {
+        static COUNTER: std::sync::atomic::AtomicU32 =
+            std::sync::atomic::AtomicU32::new(0);
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let state = std::env::temp_dir().join(format!(
+            "soulseek-e2e-daemon-{}-{n}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&state).expect("daemon state directory");
+
+        let mut args = vec![
+            "--no-config".to_string(),
+            "--server".to_string(),
+            server.address(),
+            "--username".to_string(),
+            user.to_string(),
+            "--password".to_string(),
+            "pw".to_string(),
+        ];
+        // A listener of its own unless the test asked for something specific:
+        // transfers arrive on a connection the uploader opens back to us.
+        if !session_flags.iter().any(|flag| {
+            flag == "--listener-port" || flag == "--no-listener"
+        }) {
+            args.push("--listener-port".to_string());
+            args.push(free_port().expect("listener port").to_string());
+        }
+        args.extend(session_flags.iter().cloned());
+        args.push("daemon".to_string());
+
+        let mut command = Command::new(BIN);
+        for name in CLI_ENV_VARS {
+            command.env_remove(name);
+        }
+        command.env("SOULSEEK_STATE_DIR", &state);
+        command.current_dir(std::env::temp_dir());
+        command.args(&args);
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+        let child = command.spawn().expect("the daemon should start");
+
+        let socket = state.join("daemon.sock");
+        let fixture = Self {
+            child,
+            socket,
+            state,
+        };
+        fixture.wait_until_ready();
+        fixture
+    }
+
+    /// Wait until the socket actually accepts, not merely exists: the daemon
+    /// binds before it logs in, so a client that connects too early would be
+    /// answering questions about a session that is not there yet.
+    fn wait_until_ready(&self) {
+        let deadline = Instant::now() + Duration::from_secs(45);
+        while Instant::now() < deadline {
+            #[cfg(unix)]
+            if std::os::unix::net::UnixStream::connect(&self.socket).is_ok() {
+                // Binding happens first, so also wait for the login to land.
+                if self.answers() {
+                    return;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        panic!("the daemon never became ready at {}", self.socket.display());
+    }
+
+    /// Whether the daemon answers `daemon status` with a session.
+    fn answers(&self) -> bool {
+        let mut command = Command::new(BIN);
+        for name in CLI_ENV_VARS {
+            command.env_remove(name);
+        }
+        command.env("SOULSEEK_STATE_DIR", &self.state);
+        command.current_dir(std::env::temp_dir());
+        command.args([
+            "--no-config",
+            "--json",
+            "--daemon",
+            &self.socket.display().to_string(),
+            "daemon",
+            "status",
+        ]);
+        command
+            .output()
+            .is_ok_and(|output| output.status.success())
+    }
+}
+
+impl Drop for DaemonFixture {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = std::fs::remove_dir_all(&self.state);
+    }
 }
 
 impl TestServer {
@@ -508,6 +675,9 @@ impl TestServer {
                 child: None,
                 db: None,
                 _gate: gate,
+                daemons: std::sync::Mutex::new(
+                    std::collections::HashMap::new(),
+                ),
             });
         }
 
@@ -540,6 +710,7 @@ impl TestServer {
             child: Some(child),
             db: Some(db),
             _gate: gate,
+            daemons: std::sync::Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -571,6 +742,34 @@ impl TestServer {
             "--listener-port".to_string(),
             port.to_string(),
         ]
+    }
+
+    /// Client arguments pointing at a daemon logged in as `user` with
+    /// `session_flags`, starting one if this combination has not been seen.
+    ///
+    /// Keyed by the flags as well as the user: a test that shares a different
+    /// folder needs a daemon that shares it, and reusing one configured for
+    /// something else would quietly test the wrong thing.
+    fn daemon_args(&self, user: &str, session_flags: &[String]) -> Vec<String> {
+        let socket = self.daemon_for(user, session_flags);
+        vec![
+            "--no-config".to_string(),
+            "--quiet".to_string(),
+            "--daemon".to_string(),
+            socket.display().to_string(),
+        ]
+    }
+
+    fn daemon_for(&self, user: &str, session_flags: &[String]) -> PathBuf {
+        let key = format!("{}|{user}|{}", self.address(), session_flags.join(" "));
+        let mut daemons = self.daemons.lock().expect("daemon registry");
+        if let Some(existing) = daemons.get(&key) {
+            return existing.socket.clone();
+        }
+        let handle = DaemonFixture::start(self, user, session_flags);
+        let socket = handle.socket.clone();
+        daemons.insert(key, handle);
+        socket
     }
 
     /// An in-process client, used to stand up the other end of a test.
@@ -700,11 +899,60 @@ fn probe_bytes() -> Vec<u8> {
 }
 
 /// Run the binary against `server` as `user`, appending `args`.
+///
+/// In daemon mode the same call is served by a daemon instead. The flags that
+/// shape a *session* rather than a command — shares, the listener, where
+/// downloads land — are handed to the daemon rather than the client, because
+/// that is where they now belong. The test itself does not change, which is
+/// the whole point: if the records and exit code come out the same either way,
+/// daemon mode is equivalent.
 fn cli(server: &TestServer, user: &str, args: &[&str]) -> Output {
-    let mut all = server.args(user);
-    all.extend(args.iter().map(|a| (*a).to_string()));
+    let mut all = match mode() {
+        Mode::Local => server.args(user),
+        Mode::Daemon => {
+            let (session_flags, _) = split_session_flags(args);
+            server.daemon_args(user, &session_flags)
+        }
+    };
+    let command_args: Vec<String> = match mode() {
+        Mode::Local => args.iter().map(|a| (*a).to_string()).collect(),
+        Mode::Daemon => split_session_flags(args).1,
+    };
+    all.extend(command_args);
     let refs: Vec<&str> = all.iter().map(String::as_str).collect();
     run(&refs)
+}
+
+/// Split arguments into the ones that configure a session and the ones that
+/// are the command. Only meaningful in daemon mode, where the two halves go to
+/// different processes.
+fn split_session_flags(args: &[&str]) -> (Vec<String>, Vec<String>) {
+    /// Flags that take a value and describe the session, not the command.
+    const SESSION_PAIRS: [&str; 4] = [
+        "--shared-dir",
+        "--listener-port",
+        "--download-dir",
+        "--max-concurrent-downloads",
+    ];
+    /// Session flags that stand alone.
+    const SESSION_SWITCHES: [&str; 2] = ["--no-listener", "--listener"];
+
+    let mut session = Vec::new();
+    let mut command = Vec::new();
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        if SESSION_PAIRS.contains(arg) {
+            session.push((*arg).to_string());
+            if let Some(value) = rest.next() {
+                session.push((*value).to_string());
+            }
+        } else if SESSION_SWITCHES.contains(arg) {
+            session.push((*arg).to_string());
+        } else {
+            command.push((*arg).to_string());
+        }
+    }
+    (session, command)
 }
 
 /// Wait out the SetWaitPort registrations so peer lookups resolve.

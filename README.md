@@ -58,7 +58,7 @@ them freely.
 
 ## Planned Features
 
-- [ ] Headless daemon mode with remote control
+- [x] Headless daemon mode with remote control
 
 ## Project Structure
 
@@ -115,6 +115,52 @@ soulseek-rs
 ```
 
 Everything else is a one-shot command that runs headless.
+
+### Daemon mode
+
+A one-shot command logs in, does its job, and exits, which means nothing
+outlives it and two commands at once fight over the server's one-session-per-
+account rule. Run a daemon instead and it holds the session while everything
+else borrows it:
+
+```bash
+soulseek-rs daemon                 # stays in the foreground; leave it running
+soulseek-rs search 'aphex twin'    # no login, no flags — uses the daemon
+soulseek-rs                        # the TUI attaches to the same session
+```
+
+Commands find it by themselves. The daemon listens on a Unix socket only your
+user can open, so there is nothing to configure and no secret to pass around —
+the same arrangement Docker and ssh-agent use. With no daemon running,
+everything behaves exactly as it did before; `--no-daemon` forces that for one
+run.
+
+What this buys: downloads that outlive the command that queued them, several
+clients (or agents) on one account at once, and a chat window that keeps
+collecting while nothing is attached.
+
+```bash
+soulseek-rs daemon status          # who it is, what it shares, who is attached
+soulseek-rs daemon stop
+```
+
+For a client on another machine, bind a TCP port as well and give it the
+token:
+
+```bash
+soulseek-rs daemon --bind 0.0.0.0:5030
+soulseek-rs daemon token           # the secret that connection needs
+```
+
+There is no transport encryption, so put SSH or a TLS proxy in front of
+anything non-loopback. Note that files land on the *daemon's* filesystem.
+
+Third-party clients are first-class: the daemon speaks newline-delimited
+JSON-RPC 2.0 described by an [OpenRPC](https://open-rpc.org) document
+([`docs/openrpc.json`](docs/openrpc.json), also served by `rpc.discover`), so
+a generator produces a client in any language.
+[`docs/daemon-protocol.md`](docs/daemon-protocol.md) covers the framing, the
+handshake, and how pushed events behave.
 
 ### Scripting
 
@@ -339,9 +385,8 @@ soulseek-rs serve --follow         # add --upload-slots N to widen the queue
 
 Uploads only show up inside a running `serve`; every other command is
 short-lived with nothing to serve, so there is no `uploads list`. Managing
-transfers across commands (pause, resume, a queue that outlives one
-invocation) needs the resident daemon `serve` would grow into, which is not
-there yet.
+transfers across commands — pause, resume, a queue that outlives one
+invocation — is what [daemon mode](#daemon-mode) is for.
 
 Downloads run under a deadline (`--timeout`, 300s by default) and
 `--max-concurrent-downloads` at a time, so an unattended run always ends.
