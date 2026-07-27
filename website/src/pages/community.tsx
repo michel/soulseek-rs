@@ -194,8 +194,7 @@ export const Community = () => {
           eyebrow="what this is not"
           title="Three good clients to point you elsewhere."
         >
-          soulseek-rs has no GUI and no daemon mode yet. If one of these fits you better,
-          use it.
+          soulseek-rs has no graphical interface. If one of these fits you better, use it.
         </SectionHead>
         <div className="grid grid-cols-1 gap-3.5">
           {ALTERNATIVES.map((alt) => (

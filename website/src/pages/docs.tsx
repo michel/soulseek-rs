@@ -171,12 +171,13 @@ const FromTheShell = () => (
         <p>
           The command groups: <Code>search</Code>, <Code>get</Code>, <Code>download</Code>,{' '}
           <Code>browse</Code>, <Code>room</Code>, <Code>message</Code>, <Code>serve</Code>,{' '}
-          <Code>user</Code>, <Code>whoami</Code>, <Code>shares</Code>, <Code>config</Code>,{' '}
-          <Code>portmap</Code>, <Code>skills</Code>, <Code>completions</Code>. Records are
+          <Code>user</Code>, <Code>whoami</Code>, <Code>shares</Code>, <Code>daemon</Code>,{' '}
+          <Code>config</Code>, <Code>portmap</Code>, <Code>skills</Code>,{' '}
+          <Code>completions</Code>. Records are
           tab-separated fields, one per line, or NDJSON with <Code>--json</Code>.
         </p>
         <p>
-          No TTY, no daemon. <Code>search --json</Code> pipes through <Code>jq</Code> into{' '}
+          No TTY required. <Code>search --json</Code> pipes through <Code>jq</Code> into{' '}
           <Code>download --stdin</Code>. Every ending has its own exit code: 4 found
           nothing, 3 could not reach the server, 6 the transfer died.
         </p>
@@ -222,6 +223,52 @@ const FromTheShell = () => (
   </Section>
 )
 
+const Daemon = () => (
+  <Section>
+    <SectionHead eyebrow="5 · the daemon" title="One login, however many commands.">
+      Soulseek allows one session per account. Run a daemon and everything else borrows
+      it &mdash; no second login, nothing to configure.
+    </SectionHead>
+    <Cols start>
+      <Terminal
+        label="shell"
+        lines={[
+          { t: 'cmd', text: 'soulseek-rs daemon &' },
+          { t: 'cm', text: '# once; it holds the session' },
+          { t: 'cmd', text: 'soulseek-rs search "netlabel 2004" --json' },
+          { t: 'cm', text: '# no login, no flags — it finds the daemon' },
+          { t: 'cmd', text: 'soulseek-rs' },
+          { t: 'cm', text: '# the TUI attaches to the same session' },
+          { t: 'cmd', text: 'soulseek-rs daemon status' },
+          { t: 'cmd', text: 'soulseek-rs daemon stop' },
+        ]}
+      />
+      <Prose>
+        <p>
+          Commands find it themselves: it listens on a Unix socket only your user can
+          open, so there is no address to pass and no token to handle. Without one
+          running, everything behaves exactly as it did before.
+        </p>
+        <p>
+          Why bother: the server permits a single session per account, so two one-off
+          commands at once either cut each other off or push you into a throwaway
+          username per run &mdash; account churn on a network other people maintain. A
+          daemon is one login for as long as you work, one share index instead of a
+          rescan every invocation, and downloads that outlive the command that queued
+          them. If you drive this from a script or an agent, start one.
+        </p>
+        <p>
+          It speaks newline-delimited JSON-RPC 2.0 described by an{' '}
+          <Code>openrpc.json</Code> the daemon serves itself, so a client generator gives
+          you one in any language. <Code>daemon --bind</Code> adds a TCP port for other
+          machines; those need the token from <Code>daemon token</Code>, while the local
+          socket never does.
+        </p>
+      </Prose>
+    </Cols>
+  </Section>
+)
+
 const TheRest = () => (
   <Section band>
     <Panel title="the rest" className="bg-raised [&>span]:bg-panel">
@@ -257,6 +304,7 @@ export const Docs = () => (
     <Layout />
     <Keys />
     <FromTheShell />
+    <Daemon />
     <TheRest />
   </>
 )

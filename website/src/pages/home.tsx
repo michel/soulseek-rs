@@ -60,6 +60,19 @@ const FEATURES = [
     ),
   },
   {
+    glyph: '◈',
+    color: 'var(--accent-text)',
+    title: 'Daemon mode',
+    cmd: 'soulseek-rs daemon',
+    body: (
+      <>
+        Hold one session and let every other command borrow it &mdash; the network allows
+        one login per account, so this is the neighbourly way to run several at once. It
+        speaks JSON-RPC, so other tools can drive it too.
+      </>
+    ),
+  },
+  {
     glyph: '›',
     color: 'var(--status-info)',
     title: 'Browse',
@@ -276,8 +289,10 @@ const Agents = () => (
         queueing behind before a 2 GB transfer.
       </p>
       <p>
-        It stays a CLI: no daemon, no MCP server, no API key. Upgrading the binary upgrades
-        the skill; rerun <Code>skills install</Code> to take it.{' '}
+        It stays a CLI: no MCP server, no API key. The skill tells your agent to start a
+        daemon first, so a batch of parallel requests is one login rather than one per
+        command. Upgrading the binary upgrades the skill; rerun <Code>skills install</Code>{' '}
+        to take it.{' '}
         <Link to="/docs" className="text-link hover:text-link-hover">
           See the commands
         </Link>

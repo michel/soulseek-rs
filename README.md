@@ -118,10 +118,8 @@ Everything else is a one-shot command that runs headless.
 
 ### Daemon mode
 
-A one-shot command logs in, does its job, and exits, which means nothing
-outlives it and two commands at once fight over the server's one-session-per-
-account rule. Run a daemon instead and it holds the session while everything
-else borrows it:
+A one-shot command logs in, does its job, and exits. Run a daemon instead and
+it holds the session while everything else borrows it:
 
 ```bash
 soulseek-rs daemon                 # stays in the foreground; leave it running
@@ -129,8 +127,21 @@ soulseek-rs search 'aphex twin'    # no login, no flags — uses the daemon
 soulseek-rs                        # the TUI attaches to the same session
 ```
 
-From a script, start it and wait for it — it takes a second or two to log in,
-and a command that arrives early opens a session of its own instead:
+**Why you want this.** The server allows one session per account. Without a
+daemon, two commands at once either cut each other off or push you into a
+throwaway username per run — account churn on infrastructure other people
+maintain and share. A daemon is one login for as long as you work, and one
+share index instead of a rescan every invocation. It also lets a download
+outlive the command that queued it, and keeps collecting chat while nothing is
+attached. If you drive this from a script or an agent, start one.
+
+Commands find it by themselves. It listens on a Unix socket only your user can
+open, so there is nothing to configure and no secret to pass around — the same
+arrangement Docker and ssh-agent use. With no daemon running, everything
+behaves exactly as it did before; `--no-daemon` forces that for one run.
+
+From a script, start it and *wait* for it: it takes a second or two to log in,
+and a command that arrives early opens a session of its own instead.
 
 ```bash
 soulseek-rs daemon status --json >/dev/null 2>&1 || {
@@ -142,27 +153,17 @@ soulseek-rs daemon status --json >/dev/null 2>&1 || {
 }
 ```
 
-Commands find it by themselves. The daemon listens on a Unix socket only your
-user can open, so there is nothing to configure and no secret to pass around —
-the same arrangement Docker and ssh-agent use. With no daemon running,
-everything behaves exactly as it did before; `--no-daemon` forces that for one
-run.
-
-What this buys: downloads that outlive the command that queued them, several
-clients (or agents) on one account at once, and a chat window that keeps
-collecting while nothing is attached.
-
-It is also the neighbourly way to use the network. The server allows one
-session per account, so parallel one-shot runs either displace each other or
-push you into registering a throwaway name per run — account churn on
-infrastructure other people maintain. A daemon is one login for as long as you
-work, and one share index instead of a rescan per invocation. If you are
-driving this from a script or an agent, start a daemon.
-
 ```bash
 soulseek-rs daemon status          # who it is, what it shares, who is attached
 soulseek-rs daemon stop
 ```
+
+Everything that touches the network goes through it. `config`, `skills`,
+`completions` and `portmap` stay local, because they are about this machine
+rather than a session. `shares add`/`remove` do both: they write the config
+file *and* update a running daemon, so a folder is served straight away rather
+than at its next start. Files land on the *daemon's* filesystem — `daemon
+status` reports where.
 
 For a client on another machine, bind a TCP port as well and give it the
 token:
@@ -173,7 +174,7 @@ soulseek-rs daemon token           # the secret that connection needs
 ```
 
 There is no transport encryption, so put SSH or a TLS proxy in front of
-anything non-loopback. Note that files land on the *daemon's* filesystem.
+anything non-loopback.
 
 Third-party clients are first-class: the daemon speaks newline-delimited
 JSON-RPC 2.0 described by an [OpenRPC](https://open-rpc.org) document
