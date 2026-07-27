@@ -2553,6 +2553,7 @@ dependencies = [
  "color-eyre",
  "directories",
  "dotenv",
+ "getrandom 0.4.3",
  "igd-next",
  "keyring",
  "ratatui",

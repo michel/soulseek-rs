@@ -881,10 +881,24 @@ pub struct Members {
     pub users: Vec<String>,
 }
 
+/// One line of chat history. Unlike a live [`UserMessageDto`] this carries a
+/// direction, because a conversation the daemon collected includes what this
+/// account sent as well as what it received.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct ChatMessageDto {
+    /// The other party, whichever way the message went.
+    pub peer: String,
+    pub outgoing: bool,
+    pub text: String,
+    /// Unix seconds.
+    pub at: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct Messages {
-    pub messages: Vec<UserMessageDto>,
+    pub messages: Vec<ChatMessageDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

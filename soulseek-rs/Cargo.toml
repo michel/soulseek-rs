@@ -42,6 +42,7 @@ directories = "6"
 # system libdbus and breaks builds without libdbus-1-dev.
 keyring = { version = "3", features = ["apple-native", "windows-native", "async-secret-service", "async-io", "crypto-rust"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde"] }
+getrandom = "0.4.3"
 
 [dev-dependencies]
 schemars = "1.2.1"

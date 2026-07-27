@@ -72,6 +72,33 @@
         ],
         "type": "object"
       },
+      "ChatMessageDto": {
+        "description": "One line of chat history. Unlike a live [`UserMessageDto`] this carries a\ndirection, because a conversation the daemon collected includes what this\naccount sent as well as what it received.",
+        "properties": {
+          "at": {
+            "description": "Unix seconds.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "outgoing": {
+            "type": "boolean"
+          },
+          "peer": {
+            "description": "The other party, whichever way the message went.",
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "peer",
+          "outgoing",
+          "text",
+          "at"
+        ],
+        "type": "object"
+      },
       "DaemonStatus": {
         "description": "What the daemon is and what its session is doing, from `daemon.status`.",
         "properties": {
@@ -509,7 +536,7 @@
         "properties": {
           "messages": {
             "items": {
-              "$ref": "#/components/schemas/UserMessageDto"
+              "$ref": "#/components/schemas/ChatMessageDto"
             },
             "type": "array"
           }
