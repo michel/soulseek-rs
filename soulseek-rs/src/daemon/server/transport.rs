@@ -162,16 +162,36 @@ fn spawn_connection(stream: Stream, daemon: Arc<Daemon>) {
         stream.shutdown();
         return;
     }
-    std::thread::spawn(move || {
-        if let Err(e) = handle(stream, daemon.as_ref()) {
-            // Loud, not debug: a client sees only "the connection closed", so
-            // this line is the only account of why it did.
-            soulseek_rs::warn!(
-                "control connection dropped before it could be served: {e}"
-            );
+
+    // A handle kept back so the connection can be closed if it never gets a
+    // thread to serve it.
+    let refused = stream.try_clone();
+    let slots = Arc::clone(&daemon.open);
+
+    // `Builder` rather than `thread::spawn`, which panics when the OS will not
+    // give us a thread. That panic would unwind through the accept loop and
+    // take the listener with it, so one exhausted moment on a busy client
+    // would end control for good. Refusing this one connection recovers.
+    let spawned = std::thread::Builder::new()
+        .name("soulseek-control".to_string())
+        .spawn(move || {
+            if let Err(e) = handle(stream, daemon.as_ref()) {
+                // Loud, not debug: a client sees only "the connection closed",
+                // so this line is the only account of why it did.
+                soulseek_rs::warn!(
+                    "control connection dropped before it could be served: {e}"
+                );
+            }
+            daemon.open.fetch_sub(1, Ordering::Relaxed);
+        });
+
+    if let Err(e) = spawned {
+        soulseek_rs::warn!("cannot serve a control connection: {e}");
+        if let Ok(refused) = refused {
+            refused.shutdown();
         }
-        daemon.open.fetch_sub(1, Ordering::Relaxed);
-    });
+        slots.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 /// Serve one connection: authenticate, then answer requests until it closes.
