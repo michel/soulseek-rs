@@ -265,7 +265,11 @@ soulseek-rs search 'bicep glue' --json --min-bitrate 320
 ```
 
 A track that survives all four rungs with nothing plausible is genuinely not
-there. Say so and move on; do not keep inventing spellings.
+there *today*. Say so and move on rather than inventing more spellings, and
+offer to put it on the wishlist: `wish add <query>` keeps looking on the
+server's own schedule, and `serve --wishlist` or `wish run` reports what turns
+up later. That is the right home for the one white label in a set that nobody
+is sharing this afternoon.
 
 ## Downloading a list of tracks
 
@@ -337,29 +341,36 @@ Four rungs is not a concurrency limit and does not move with the rest. It is
 the point past which a track is genuinely not on the network and more queries
 are just noise against a rate-limited server.
 
-### Search in parallel, download with a plan
+### Search and download as a pipeline, not two phases
 
 Give each track its own subagent, **at most twenty at a time**. A subagent works
-the search ladder for its track and judges the candidates, because that is a judgement
-call every time: bitrate against file size, the right pressing against a live
-bootleg of the same name, a peer with a free slot against a faster one. A shell
-loop cannot make that call, so it takes the first hit or needs rules you would
-rather apply case by case.
+the search ladder for its track and judges the candidates, because that is a
+judgement call every time: bitrate against file size, the right pressing against
+a live bootleg of the same name, a peer with a free slot against a faster one. A
+shell loop cannot make that call, so it takes the first hit or needs rules you
+would rather apply case by case.
 
-Then each subagent **reports its pick and waits** before downloading: the user,
-the remote path, the size, and why it chose that one. This pause is the part
-that protects you. Only you can see every pick, and there are two collisions to
-resolve:
+Each subagent then **reports its pick and waits for one word back** before
+downloading: the user, the remote path, the size, and why it chose that one.
 
-- **The same peer chosen by several subagents.** Queueing many files at once
-  from one person is the classic way to be banned by them. Let at most three
-  through per peer at a time and hold the rest, or tell those subagents to take
-  their second choice from a different peer.
-- **The same file chosen twice**, which wastes a transfer slot on a duplicate.
+**Clear each pick the moment it arrives. Do not wait for the rest.** A forty
+track set searched in waves of twenty, each search running its full window,
+takes a minute before the last pick lands; if nothing downloads until then, the
+whole first minute moves no bytes and the one track nobody is sharing holds up
+thirty-nine that are. The first pick should be transferring while the last
+track is still on its second rung.
 
-Cleared subagents download their own track, report where it landed, and are
-done. Hold the rest until a slot frees up: twenty transfers at once across the
-batch, and never more than three from one peer.
+Answering one pick needs only two running counts, not the whole set:
+
+- **How many transfers that peer already has.** Three is the cap, and it is the
+  one that gets you banned. At three, hold that pick or tell the subagent to
+  take its second choice from someone else. Release the held one when a
+  transfer to that peer finishes.
+- **How many transfers are running overall.** Twenty is the cap.
+
+Also drop a pick naming a file already cleared, which wastes a slot on a
+duplicate. A DJ set is usually spread across many peers, so most picks clear
+the instant they arrive and collisions are the exception.
 
 **Report as you go.** Each subagent says when its search has found candidates
 and again when its download finishes. A batch that only reports at the end is
