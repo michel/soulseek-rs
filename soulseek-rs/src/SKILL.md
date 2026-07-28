@@ -246,7 +246,17 @@ returns anything usable**:
 
 Each rung is a *different, wider* query, which is why this does not break the
 rule against re-running a search: never repeat a rung, and do not go past the
-fourth. Four searches is the most any one track should ever cost.
+fourth. Four searches is the most any one track should ever cost, and usually
+it is fewer, because two shortcuts apply:
+
+- **A rung that produces the same string as the one before it is not a rung.**
+  A title with no diacritics and no punctuation makes rung 3 identical to rung
+  2. Skip it rather than spending a search on it.
+- **No results at all is different from results that do not match.** An empty
+  answer means the tokens are wrong, not merely too many, so go straight to the
+  rarest-word rung instead of stepping. Results that came back but matched
+  nothing mean you are in the right area: look further down them before
+  widening.
 
 **Then match back.** Widening finds candidates; it does not choose. Compare each
 result against what the user actually asked for, folded the same way (lowercase,
@@ -275,8 +285,11 @@ is sharing this afternoon.
 
 Soulseek is people's home computers, and they can see what you are doing. The
 fast way and the safe way are mostly the same way, but where they differ, take
-the safe one: a peer who blocks you is gone for good, and being blocked by
-enough of them is worse for the user than a slow batch.
+the safe one: a peer who blocks you is gone for good.
+
+The other cost is your own. A list of thirty tracks can be done for a handful
+of commands or for millions of tokens, and the difference is almost entirely
+whether search results ever enter anyone's context. Keep them out of it.
 
 ### Before you start: are you sharing anything?
 
@@ -290,130 +303,151 @@ users block non-sharers on sight, and some clients do it automatically. One
 line is enough ("you're not sharing anything, which gets you blocked; point
 `shares add` at a folder first"), then let them decide.
 
-### If the tracks are one album, look for one person
+### Reach for `get` first
 
-Search once for the album or the artist, then `browse` whoever turns up with
-the most of it:
+`get` searches, ranks, and downloads in one command. The results never reach
+you, so a track costs one command and a line of output instead of a result set
+you have to read:
 
 ```bash
-soulseek-rs search 'artist album' --json
+soulseek-rs get 'gary beck fold' --json --timeout 120
+```
+
+Most tracks need nothing more. Run these several at a time, climbing the
+[search ladder](#searching-widen-by-rungs-then-match-back) with the query if
+one exits 4, and only escalate the ones that come back wrong.
+
+`get` picks the free slot first, then the highest bitrate, then the faster
+peer. What it cannot do is tell two versions apart. Escalate a track when:
+
+- the user asked for a particular mix, pressing, or year;
+- the title is a common phrase, or the artist has an album and a live record
+  with the same name;
+- it exited 4 on every rung;
+- several `get` runs in a row landed on the same peer, which is the point to
+  switch to browsing that peer instead.
+
+### When an artist repeats, browse one peer
+
+If any artist appears more than once in the list, search for them once and
+`browse` whoever turns up with the most:
+
+```bash
+soulseek-rs search 'artist' --json
 soulseek-rs browse someuser --json      # everything they share, as paths
 ```
 
-One search and one browse beats twelve searches: fewer queries against a
-rate-limited server, and the missing tracks are visible in the listing rather
-than needing a query each. Taking several files from one person is also what
-their queue is *for* when you let it feed them to you a couple at a time,
-which is the opposite of opening ten transfers at once. Fall back to
-per-track searching for whatever that peer does not have.
+One search and one browse replaces a search per track, and the listing shows
+which of them that peer does not have. Four tracks by one artist is enough to
+be worth it; a whole album certainly is. Taking several files from one person
+is also what their queue is for, as long as you keep to three at a time.
+
+### Never retype a remote path
+
+Remote paths belong to the peer. They are backslash-separated and may contain
+anything, and they will not survive being read out of one process, put through
+a second, and typed into a third. **So do not move the path. Move a line
+number.**
+
+```bash
+soulseek-rs search 'bicep glue' --json --search-timeout 25 >> raw.ndjson
+sed -n '7p' raw.ndjson > pick.ndjson     # choose by line, never by retyping
+soulseek-rs download --stdin --json < pick.ndjson
+```
+
+`download --stdin` reads exactly the records `search --json` writes, so the
+bytes go from the peer to the downloader without any hand touching them. Append
+every rung to the same file and the line numbers stay stable.
+
+This is also how a subagent hands a pick back: it reports *which line of which
+file*, plus its reasoning. It must never quote the path itself.
+
+### When judgement is needed: a subagent per track
+
+Escalated tracks get one subagent each, **at most twenty at a time**. A
+subagent works the search ladder, appends every rung to its own file, and
+judges the candidates: bitrate against file size, the right pressing against a
+live bootleg of the same name, a peer with a free slot against a faster one.
+
+Fan them out properly. Twenty subagents run one after another is slower than
+`get` would have been; use whatever your host gives you for running agents in
+parallel and collecting their results.
+
+Each subagent reports its pick as a file and a line number and **waits for one
+word back**. Clear each pick the moment it arrives; do not wait for the rest. A
+batch that holds every transfer until the last search finishes moves no bytes
+for the first minute, and one track nobody is sharing holds up the ones people
+are. Answering a pick needs two running counts, not the whole set:
+
+- **Transfers that peer already has.** Three is the cap, and it is the one that
+  gets you banned. At three, hold the pick or tell the subagent to take its
+  second choice elsewhere.
+- **Transfers running overall.** Twenty is the cap.
+
+Drop a pick naming a file already cleared. **Report as you go**: each subagent
+says when its search found candidates and again when its download finished, so
+a slow batch is distinguishable from a stuck one.
 
 ### How much to have in flight
 
-One table, because the two routes below must not disagree:
-
 | | At once |
 |---|---|
-| Subagents | 20 |
+| `get` runs, or subagents | 20 |
 | Searches on the wire | 10 |
 | Transfers running | 20 |
 | Transfers from any one peer | 3 |
 | Search rungs spent on one track | 4 |
 
-Twenty transfers is the client's own default, and the reasoning is in the
-code: a Soulseek transfer is paced by the peer sending it, usually a few
-hundred KiB/s, so a fast link is filled by many transfers at once rather than
-by faster ones. Twenty costs twenty sockets, which is nothing.
+Twenty transfers is the client's own default, and the reasoning is in the code:
+a Soulseek transfer is paced by the peer sending it, usually a few hundred
+KiB/s, so a fast link is filled by many transfers at once rather than by faster
+ones.
 
 The two numbers that are *not* just "as many as the machine can take":
 
 - **Three from one peer.** This is the one that gets you banned. A client
   serves ten upload slots by default, so three is a visible minority of one
-  person's capacity rather than a monopoly on it. Spread twenty transfers over
-  seven or more peers, not over two.
-- **Ten searches.** The server rate-limits searches, which is why the wishlist
-  has an interval, and it is the daemon's single connection making all of
-  them. Twenty subagents against ten search slots is deliberate: a subagent
-  spends most of its life waiting on a transfer, not searching. Hand out a
-  search slot and take it back when results land, the same way you already
-  hold subagents at the pick.
+  person's capacity rather than a monopoly on it. Twenty transfers is fine;
+  twenty transfers from two people is not.
+- **Ten searches.** The server rate-limits searches, and it is the daemon's
+  single connection making all of them.
 
-Four rungs is not a concurrency limit and does not move with the rest. It is
-the point past which a track is genuinely not on the network and more queries
-are just noise against a rate-limited server.
+### Handing a whole batch to one command
 
-### Search and download as a pipeline, not two phases
-
-Give each track its own subagent, **at most twenty at a time**. A subagent works
-the search ladder for its track and judges the candidates, because that is a
-judgement call every time: bitrate against file size, the right pressing against
-a live bootleg of the same name, a peer with a free slot against a faster one. A
-shell loop cannot make that call, so it takes the first hit or needs rules you
-would rather apply case by case.
-
-Each subagent then **reports its pick and waits for one word back** before
-downloading: the user, the remote path, the size, and why it chose that one.
-
-**Clear each pick the moment it arrives. Do not wait for the rest.** A forty
-track set searched in waves of twenty, each search running its full window,
-takes a minute before the last pick lands; if nothing downloads until then, the
-whole first minute moves no bytes and the one track nobody is sharing holds up
-thirty-nine that are. The first pick should be transferring while the last
-track is still on its second rung.
-
-Answering one pick needs only two running counts, not the whole set:
-
-- **How many transfers that peer already has.** Three is the cap, and it is the
-  one that gets you banned. At three, hold that pick or tell the subagent to
-  take its second choice from someone else. Release the held one when a
-  transfer to that peer finishes.
-- **How many transfers are running overall.** Twenty is the cap.
-
-Also drop a pick naming a file already cleared, which wastes a slot on a
-duplicate. A DJ set is usually spread across many peers, so most picks clear
-the instant they arrive and collisions are the exception.
-
-**Report as you go.** Each subagent says when its search has found candidates
-and again when its download finishes. A batch that only reports at the end is
-indistinguishable from a batch that is stuck.
-
-### Handing the whole batch to one command instead
-
-For a long list where the picks need no arguing, feed them to one command and
-let it manage the queue:
+Where the picks need no arguing, put them in one file and let the tool manage
+the queue:
 
 ```bash
 soulseek-rs download --stdin --json -c 20 < picks.ndjson
 ```
 
-It runs `-c` at a time from the list in order, so **order the lines to
-alternate between peers**. Consecutive lines naming the same user are what put
-several simultaneous transfers on one person; interleaving them spreads the
-load without slowing anything down. `-c 20` matches the budget above and is
-the tool's own default, so a well-interleaved list needs no flag at all. Lower
-it if the picks are concentrated on a few peers.
+It takes the list in order, so **order the lines to alternate between peers**.
+Consecutive lines naming the same user are what put several simultaneous
+transfers on one person.
 
 ### What not to do
 
-- **Do not search the same query twice.** The server rate-limits searches, which
-  is why the wishlist has an interval, and a re-run returns what you already
-  have. Widening it is a different query and is fine; repeating it is not. Keep the results from the first search and pick again from
-  them.
+- **Do not read a full result set into context when `get` would do.** That is
+  where the tokens go: thirty result sets is millions of them, and you needed
+  one line from each.
+- **Do not search the same query twice.** The server rate-limits searches, and
+  a re-run returns what you already have. Widening it is a different query;
+  repeating it is not.
+- **Do not spend a rung that changes nothing.** If folding diacritics and
+  punctuation leaves the same string, that rung is not a rung. Skip it.
 - **Do not retry a failed transfer against the same peer.** Exit 6 or 5 means
-  they went offline, their queue is long, or they are not serving you. Take the
-  next candidate from your search results instead. A retry loop is a queue
-  hammer and gets noticed.
-- **Do not fetch what you were not asked for.** Confirm with the user before
-  `get --pick all` or any fetch whose size you do not know.
+  they went offline or are not serving you. Take the next candidate from the
+  results you already have.
+- **Do not fetch what you were not asked for.** Confirm before `get --pick all`
+  or any fetch whose size you do not know.
 
-Twenty at once works only because the daemon holds the session: twenty
-subagents are twenty commands sharing one login. Without a daemon they would displace each other
-(exit 7), and giving each its own `--username` would register a throwaway
-account per track, which is worse. Start the daemon first.
+Twenty at once works only because the daemon holds the session: twenty commands
+sharing one login. Without a daemon they would displace each other (exit 7),
+and giving each its own `--username` would register a throwaway account per
+track, which is worse. Start the daemon first.
 
-The listener port needs no care either way: a run that finds the configured
-port taken binds a free one and tells the server about that one instead. Do
-keep the listener on, though: a peer that cannot connect back to you cannot
-send you the file.
+Keep the listener on: a peer that cannot connect back to you cannot send you
+the file.
 
 ## Rules
 
