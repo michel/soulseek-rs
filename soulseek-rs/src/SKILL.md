@@ -107,8 +107,10 @@ per finished transfer: `user`, `path`, `size`, `file` (the local path written).
 starting over, so retrying a failed download is cheap.
 
 **`get <query>`** — search, pick, and download in one step. `--pick
-best|first|all`, `-n/--limit`, plus every filter `search` accepts. Prefer this
-over `search` + `download` when the user just wants the file.
+best|first|all`, `-n/--limit`, plus every filter `search` accepts. Use it when
+any copy will do. It ranks on free slot, bitrate and peer speed, so it cannot
+tell a remix from its original: for a named track or version, search and choose
+yourself.
 
 **`wish list`** — one object per standing search: `query`.
 **`wish add <query>`** and **`wish remove <query>`** — change the wishlist in
@@ -202,7 +204,7 @@ again: `shell`, `path`, `action`. For a human at a prompt, not for you.
 ## Idioms
 
 ```bash
-# One shot: find it, pick the best, fetch it.
+# One shot, when any copy will do: find it, pick the best, fetch it.
 soulseek-rs get 'aphex twin xtal' --json
 
 # Filter precisely, then fetch what survived.
@@ -288,8 +290,8 @@ fast way and the safe way are mostly the same way, but where they differ, take
 the safe one: a peer who blocks you is gone for good.
 
 The other cost is your own. A list of thirty tracks can be done for a handful
-of commands or for millions of tokens, and the difference is almost entirely
-whether search results ever enter anyone's context. Keep them out of it.
+of commands or for millions of tokens, and the difference is how much of each
+result set you read. Narrow first, then read what is left.
 
 ### Before you start: are you sharing anything?
 
@@ -303,29 +305,61 @@ users block non-sharers on sight, and some clients do it automatically. One
 line is enough ("you're not sharing anything, which gets you blocked; point
 `shares add` at a folder first"), then let them decide.
 
-### Reach for `get` first
+### Search, narrow, then judge
 
-`get` searches, ranks, and downloads in one command. The results never reach
-you, so a track costs one command and a line of output instead of a result set
-you have to read:
+For a named tracklist, always look at the candidates. **Do not use `get`.** It
+ranks on free slot, bitrate and peer speed, which are facts about the transfer
+and say nothing about whether the file is the track that was asked for. On a
+setlist full of remixes, edits and white labels it does not miss, it *succeeds
+with the wrong file*: exit 0, a file on disk, and nobody finds out until they
+listen. A miss you can retry; a confident wrong answer you cannot.
+
+`get` is for when the user has not named anything in particular ("find me some
+deep house"). A tracklist is the opposite of that.
+
+The cost of looking is not the looking, it is reading three hundred results to
+choose one. So narrow before you read:
 
 ```bash
-soulseek-rs get 'gary beck fold' --json --timeout 120
+# 1. search, and keep the raw records in a file
+soulseek-rs search 'kalabrese rumpelzirkus' --json --search-timeout 25 \
+  >> raw.ndjson
+
+# 2. cut it to a handful without reading it
+jq -c 'select(.path | ascii_downcase | test("kalabrese"))' raw.ndjson \
+  | jq -c 'select(.size > 20000000)' | head -8
 ```
 
-Most tracks need nothing more. Run these several at a time, climbing the
-[search ladder](#searching-widen-by-rungs-then-match-back) with the query if
-one exits 4, and only escalate the ones that come back wrong.
+The search flags do the same job before the records are ever written:
+`--extension flac`, `--min-bitrate 320`, `--exclude live`, `--exclude snippet`,
+`--free-slots`, `--min-size`. Use them freely; a filter is free and a result
+set is not.
 
-`get` picks the free slot first, then the highest bitrate, then the faster
-peer. What it cannot do is tell two versions apart. Escalate a track when:
+Then read the handful that survives and choose. Eight lines is a judgement you
+can make; three hundred is a bill.
 
-- the user asked for a particular mix, pressing, or year;
-- the title is a common phrase, or the artist has an album and a live record
-  with the same name;
-- it exited 4 on every rung;
-- several `get` runs in a row landed on the same peer, which is the point to
-  switch to browsing that peer instead.
+### Fuzzy matching: what "the right one" means
+
+Fold both sides before comparing: lowercase, diacritics to ASCII, punctuation
+and underscores to spaces, runs of spaces collapsed. Then:
+
+- **Every distinctive word of the artist and title must appear** in the folded
+  path. Ignore word order; peers name files every possible way round.
+- **The version is what you match on, not what you dropped.** The ladder drops
+  `(Kalabrese Remix)` in order to *find* anything at all; the match must then
+  require `kalabrese`, or you will take the original and think you succeeded.
+  Same for `dub`, `extended`, `instrumental`, a year, a label catalogue number.
+- **Reject what you were not asked for**: `live`, `radio edit`, `snippet`,
+  `preview`, `continuous`, `dj mix`, `mixed by`. A DJ set's tracklist will
+  otherwise match the recording of the set itself.
+- **Prefer lossless** for anything a DJ will play: `flac`, `aiff`, `wav`. Fall
+  back to 320 kbps only when there is no lossless copy.
+- **Prefer a free slot** among candidates that are equally right, never over
+  one that is more right.
+
+When two candidates are both plausible and differ in ways you cannot resolve
+from the filename, say so and pick the larger lossless one. Do not download
+both.
 
 ### When an artist repeats, browse one peer
 
@@ -362,15 +396,16 @@ every rung to the same file and the line numbers stay stable.
 This is also how a subagent hands a pick back: it reports *which line of which
 file*, plus its reasoning. It must never quote the path itself.
 
-### When judgement is needed: a subagent per track
+### A subagent per track
 
-Escalated tracks get one subagent each, **at most twenty at a time**. A
-subagent works the search ladder, appends every rung to its own file, and
-judges the candidates: bitrate against file size, the right pressing against a
-live bootleg of the same name, a peer with a free slot against a faster one.
+Give each track its own subagent, **at most twenty at a time**. A subagent
+works the search ladder, appends every rung to its own file, narrows, and
+judges what is left. This is where the judgement belongs: a subagent reading
+eight candidates for one track costs little, and it is the only thing that
+tells a remix from its original.
 
 Fan them out properly. Twenty subagents run one after another is slower than
-`get` would have been; use whatever your host gives you for running agents in
+doing it yourself; use whatever your host gives you for running agents in
 parallel and collecting their results.
 
 Each subagent reports its pick as a file and a line number and **waits for one
@@ -392,7 +427,7 @@ a slow batch is distinguishable from a stuck one.
 
 | | At once |
 |---|---|
-| `get` runs, or subagents | 20 |
+| Subagents | 20 |
 | Searches on the wire | 10 |
 | Transfers running | 20 |
 | Transfers from any one peer | 3 |
@@ -427,9 +462,12 @@ transfers on one person.
 
 ### What not to do
 
-- **Do not read a full result set into context when `get` would do.** That is
-  where the tokens go: thirty result sets is millions of them, and you needed
-  one line from each.
+- **Do not read a full result set.** Narrow it with search flags or `jq`
+  first: thirty unfiltered result sets is millions of tokens, and you needed
+  eight lines from each.
+- **Do not let `get` choose a version for you.** It ranks on transfer facts,
+  not on whether the file is the right track, so on a tracklist it returns the
+  wrong one with exit 0.
 - **Do not search the same query twice.** The server rate-limits searches, and
   a re-run returns what you already have. Widening it is a different query;
   repeating it is not.
