@@ -392,9 +392,10 @@ pub enum ConfigCommand {
 }
 
 /// How to order search results.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum SortKey {
     /// Free slot first, then bitrate, peer speed, and size
+    #[default]
     Best,
     /// Largest file first
     Size,

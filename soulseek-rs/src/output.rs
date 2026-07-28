@@ -436,12 +436,11 @@ pub struct ConfigRecord {
 
 impl Record for ConfigRecord {
     fn text(&self) -> String {
-        match &self.value {
-            Some(value) => {
-                format!("{}\t{}", sanitize(&self.key), sanitize(value))
-            }
-            None => format!("{}\t", sanitize(&self.key)),
-        }
+        format!(
+            "{}\t{}",
+            sanitize(&self.key),
+            sanitize(self.value.as_deref().unwrap_or_default())
+        )
     }
 }
 

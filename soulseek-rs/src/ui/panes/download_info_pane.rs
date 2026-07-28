@@ -229,7 +229,12 @@ fn build_info_lines(
             speed_bytes_per_sec,
         } => {
             lines.push(Line::from(""));
-            push_progress_lines(&mut lines, *bytes_downloaded, *total_bytes);
+            push_transfer_progress(
+                &mut lines,
+                "Downloaded",
+                *bytes_downloaded,
+                *total_bytes,
+            );
             lines.push(label_value(
                 "Speed",
                 &format_speed(*speed_bytes_per_sec),
@@ -246,7 +251,12 @@ fn build_info_lines(
             total_bytes,
         } => {
             lines.push(Line::from(""));
-            push_progress_lines(&mut lines, *bytes_downloaded, *total_bytes);
+            push_transfer_progress(
+                &mut lines,
+                "Downloaded",
+                *bytes_downloaded,
+                *total_bytes,
+            );
         }
         DownloadStatus::Failed(reason) => {
             if let Some(reason) = reason {
@@ -268,10 +278,7 @@ fn build_info_lines(
 }
 
 fn label_value(label: &str, value: &str) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(format!("{label:<LABEL_WIDTH$}"), dimmed_style()),
-        Span::styled(value.to_string(), primary_style()),
-    ])
+    label_value_styled(label, value.to_string(), primary_style())
 }
 
 fn label_value_styled(
@@ -283,14 +290,6 @@ fn label_value_styled(
         Span::styled(format!("{label:<LABEL_WIDTH$}"), dimmed_style()),
         Span::styled(value, value_style),
     ])
-}
-
-fn push_progress_lines(
-    lines: &mut Vec<Line<'static>>,
-    bytes_downloaded: u64,
-    total_bytes: u64,
-) {
-    push_transfer_progress(lines, "Downloaded", bytes_downloaded, total_bytes);
 }
 
 /// A progress bar plus a `<label>  <done> / <total>` line, shared by the

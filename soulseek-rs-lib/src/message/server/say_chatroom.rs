@@ -26,16 +26,16 @@ impl MessageHandler<ServerMessage> for SayChatroomHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::message::framed;
 
     #[test]
     fn forwards_room_message() {
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut message = Message::new();
-        message.write_raw_bytes(vec![0u8; 8]);
-        message.write_string("jazz");
-        message.write_string("alice");
-        message.write_string("hello everyone");
-        message.set_pointer(8);
+        let mut message = framed(|m| {
+            m.write_string("jazz")
+                .write_string("alice")
+                .write_string("hello everyone");
+        });
 
         SayChatroomHandler.handle(&mut message, tx);
         match rx.try_recv() {

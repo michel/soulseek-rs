@@ -39,17 +39,13 @@ pub fn fetch_listing(
         CliError::connection(format!("cannot ask {user} for a listing: {e}"))
     })?;
 
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if let Some(directories) = client.take_browse_result(user) {
-            return Ok(directories);
-        }
-        std::thread::sleep(POLL);
-    }
-    Err(CliError::timeout(format!(
-        "{user} did not send a file list within {}s",
-        timeout.as_secs()
-    )))
+    super::poll_until(timeout, POLL, || client.take_browse_result(user))
+        .ok_or_else(|| {
+            CliError::timeout(format!(
+                "{user} did not send a file list within {}s",
+                timeout.as_secs()
+            ))
+        })
 }
 
 pub fn browse(ctx: &Ctx, args: &BrowseArgs) -> CliResult {
@@ -143,22 +139,18 @@ pub fn room_users(ctx: &Ctx, room: &str, timeout: Duration) -> CliResult {
     ctx.out
         .status(&format!("waiting for {room}'s member list…"));
 
-    let deadline = Instant::now() + timeout;
-    let mut members = Vec::new();
-    while Instant::now() < deadline && members.is_empty() {
-        members = session.client.room_members(room);
-        if members.is_empty() {
-            std::thread::sleep(POLL);
-        }
-    }
+    let listed = super::poll_until(timeout, POLL, || {
+        let members = session.client.room_members(room);
+        (!members.is_empty()).then_some(members)
+    });
     let _ = session.client.leave_room(room);
 
-    if members.is_empty() {
+    let Some(members) = listed else {
         return Err(CliError::timeout(format!(
             "{room} sent no member list within {}s",
             timeout.as_secs()
         )));
-    }
+    };
     for user in members {
         ctx.out.emit(&RoomMemberRecord {
             room: room.to_string(),

@@ -25,14 +25,14 @@ impl MessageHandler<PeerMessage> for PlaceInQueueRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::message::framed;
 
     #[test]
     fn the_asked_about_filename_is_forwarded() {
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut message = Message::new();
-        message.write_raw_bytes(vec![0u8; 8]);
-        message.write_string("@@share\\track.mp3");
-        message.set_pointer(8);
+        let mut message = framed(|m| {
+            m.write_string("@@share\\track.mp3");
+        });
 
         PlaceInQueueRequest.handle(&mut message, tx);
         match rx.try_recv() {

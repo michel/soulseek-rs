@@ -2,7 +2,7 @@ use super::{
     Arc, Client, ClientContext, ClientOperation, ConnectionType, DownloadPeer,
     DownloadStatus, Listen, Peer, PeerRegistry, Receiver, Result, RwLock,
     RwLockExt, Sender, ServerActor, ServerMessage, Shares, SoulseekRs,
-    TcpStream, debug, error, info, mpsc, thread, trace,
+    TcpStream, error, info, mpsc, thread, trace,
 };
 
 /// Ceiling on the wait for a login verdict. Generous enough for a slow server
@@ -18,7 +18,6 @@ impl Client {
         ) = mpsc::channel();
 
         let mut ctx = self.context.write_safe()?;
-        ctx.sender = Some(sender.clone());
         let peer_registry = PeerRegistry::new(
             ctx.actor_system.clone(),
             sender.clone(),
@@ -166,8 +165,6 @@ impl Client {
         own_username: String,
         stream: Option<TcpStream>,
     ) {
-        let client_context = client_context;
-
         let peer_clone = peer.clone();
         trace!(
             "[client] connecting to {}, with connection_type: {}, and token {:?}",
@@ -251,38 +248,5 @@ impl Client {
                 error!("ConnectionType::D not implemented");
             }
         }
-    }
-
-    pub(crate) fn pierce_firewall(
-        peer: Peer,
-        client_context: Arc<RwLock<ClientContext>>,
-        own_username: String,
-    ) {
-        debug!("Piercing firewall for peer: {:?}", peer);
-
-        let context = match client_context.read_safe() {
-            Ok(c) => c,
-            Err(e) => {
-                error!("[client] pierce_firewall read: {}", e);
-                return;
-            }
-        };
-        if let Some(server_sender) = &context.server_sender {
-            if let Some(token) = peer.token {
-                match server_sender.send(ServerMessage::PierceFirewall(token)) {
-                    Ok(()) => (),
-                    Err(e) => {
-                        error!("Failed to send PierceFirewall message: {}", e);
-                    }
-                }
-            } else {
-                error!("No token available for PierceFirewall");
-            }
-        } else {
-            error!("No server sender available for PierceFirewall");
-        }
-
-        drop(context);
-        Self::connect_to_peer(peer, client_context, own_username, None);
     }
 }

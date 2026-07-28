@@ -110,10 +110,9 @@ fn hostile_dir_count_does_not_hang() {
     // parse to empty promptly rather than looping into an OOM.
     let compressed =
         crate::utils::zlib::compress_stored(&u32::MAX.to_le_bytes());
-    let mut message = Message::new();
-    message.write_raw_bytes(vec![0u8; 8]);
-    message.write_raw_bytes(compressed);
-    message.set_pointer(8);
+    let mut message = crate::message::framed(|m| {
+        m.write_raw_bytes(compressed);
+    });
     assert!(parse_shared_file_list(&mut message).is_empty());
 }
 

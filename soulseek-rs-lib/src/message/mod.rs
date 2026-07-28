@@ -51,47 +51,6 @@ impl Message {
         }
     }
 
-    pub fn print_hex(&self) {
-        const BYTES_PER_LINE: usize = 16;
-        let data = &self.data;
-
-        let chunks = data.chunks(BYTES_PER_LINE);
-        for (i, chunk) in chunks.enumerate() {
-            print!("{:04x}  ", i * BYTES_PER_LINE);
-
-            for j in 0..BYTES_PER_LINE {
-                if j < chunk.len() {
-                    print!("{:02x} ", chunk[j]);
-                } else {
-                    print!(" ");
-                }
-
-                // Add extra space in the middle
-                if j == 7 {
-                    print!(" ");
-                }
-            }
-
-            print!("  ");
-
-            let mut i = 0;
-            for &byte in chunk {
-                i += 1;
-                if byte.is_ascii_graphic() || byte.is_ascii_whitespace() {
-                    print!("{}", byte as char);
-                } else {
-                    print!(".");
-                }
-
-                if i == 8 {
-                    print!(" ");
-                }
-            }
-
-            trace!("");
-        }
-    }
-
     #[allow(dead_code)]
     #[must_use]
     pub fn get_message_code_u32(&self) -> u32 {
@@ -110,20 +69,8 @@ impl Message {
     }
 
     #[must_use]
-    pub fn get_message_code_send(&self) -> u8 {
-        if self.data.is_empty() {
-            return 0;
-        }
-        self.data[0]
-    }
-
-    #[must_use]
     pub const fn new_with_data(data: Vec<u8>) -> Self {
         Self { data, pointer: 0 }
-    }
-    #[allow(dead_code)]
-    pub const fn reset_pointer(&mut self) {
-        self.pointer = 0;
     }
     pub const fn set_pointer(&mut self, pointer: usize) {
         self.pointer = pointer;
@@ -215,21 +162,6 @@ impl Message {
         val
     }
 
-    pub fn read_raw_byte(&mut self) -> Vec<u8> {
-        if self.pointer + 4 > self.data.len() {
-            return vec![];
-        }
-
-        let val = vec![
-            self.data[self.pointer],
-            self.data[self.pointer + 1],
-            self.data[self.pointer + 2],
-            self.data[self.pointer + 3],
-        ];
-        self.pointer += 4;
-        val
-    }
-
     pub fn read_int32(&mut self) -> u32 {
         if self.pointer + 4 > self.data.len() {
             return 0;
@@ -283,20 +215,6 @@ impl Message {
 
     pub fn write_bool(&mut self, value: bool) -> &mut Self {
         self.data.push(u8::from(value));
-        self
-    }
-
-    #[allow(dead_code)]
-    pub fn write_raw_hex_string(&mut self, val: &str) -> &mut Self {
-        let mut b = Vec::new();
-        for i in (0..val.len()).step_by(2) {
-            let byte_str = &val[i..i + 2];
-            let byte =
-                u8::from_str_radix(byte_str, 16).expect("Invalid hex string");
-            b.push(byte);
-        }
-        self.data.extend_from_slice(&b);
-        self.pointer += b.len();
         self
     }
 
@@ -376,6 +294,18 @@ impl Message {
             },
         }
     }
+}
+
+/// Build a received message the way the dispatcher hands one to a handler:
+/// 8 bytes of frame header, then the fields, with the pointer parked at the
+/// start of the payload.
+#[cfg(test)]
+pub fn framed(build: impl FnOnce(&mut Message)) -> Message {
+    let mut message = Message::new();
+    message.write_raw_bytes(vec![0u8; 8]);
+    build(&mut message);
+    message.set_pointer(8);
+    message
 }
 
 #[test]
@@ -462,8 +392,6 @@ fn get_message_code_on_short_message_does_not_panic() {
     let msg = Message::new_with_data(vec![0, 0, 0, 0]);
     assert_eq!(msg.get_message_code(), 0);
     assert_eq!(msg.get_message_code_u32(), 0);
-    let empty = Message::new_with_data(vec![]);
-    assert_eq!(empty.get_message_code_send(), 0);
 }
 
 #[test]

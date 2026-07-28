@@ -47,14 +47,9 @@ fn own_privileges(client: &dyn crate::api::SessionApi) -> Option<u32> {
     if client.check_privileges().is_err() {
         return None;
     }
-    let deadline = Instant::now() + PRIVILEGE_TIMEOUT;
-    while Instant::now() < deadline {
-        if let Some(seconds) = client.own_privilege_seconds() {
-            return Some(seconds);
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    None
+    super::poll_until(PRIVILEGE_TIMEOUT, Duration::from_millis(50), || {
+        client.own_privilege_seconds()
+    })
 }
 
 pub fn user(ctx: &Ctx, args: &UserArgs) -> CliResult {
@@ -141,7 +136,7 @@ pub fn serve(
             .warn("the share index is empty — peers will find nothing");
     }
 
-    let span = (!args.follow).then(|| Duration::from_secs(args.duration));
+    let span = super::listen_span(args.duration, args.follow);
     ctx.out.status(&match span {
         Some(span) => format!("online for {}s…", span.as_secs()),
         None => "online until interrupted…".to_string(),
@@ -155,20 +150,10 @@ pub fn serve(
         // served well inside one poll, and "it had to wait" is precisely what a
         // transfer log exists to report.
         for queued in session.client.take_upload_events() {
-            let record = upload_record(&queued);
-            let key = (record.user.clone(), record.path.clone());
-            if reported.get(&key) != Some(&record) {
-                ctx.out.emit(&record);
-                reported.insert(key, record);
-            }
+            emit_changed(&mut reported, upload_record(&queued), &ctx.out);
         }
         for upload in session.client.uploads() {
-            let record = upload_record(&upload);
-            let key = (record.user.clone(), record.path.clone());
-            if reported.get(&key) != Some(&record) {
-                ctx.out.emit(&record);
-                reported.insert(key, record);
-            }
+            emit_changed(&mut reported, upload_record(&upload), &ctx.out);
         }
         if let Some(sweeper) = sweeper.as_mut() {
             sweeper.tick(ctx, session.client.as_ref());
@@ -211,8 +196,7 @@ fn upload_record(upload: &UploadInfo) -> UploadRecord {
 }
 
 /// Emit `record` only when it differs from the last one reported for that
-/// (user, file). Exposed for tests; the serve loop inlines the same rule.
-#[cfg(test)]
+/// (user, file).
 fn emit_changed(
     reported: &mut HashMap<(String, String), UploadRecord>,
     record: UploadRecord,

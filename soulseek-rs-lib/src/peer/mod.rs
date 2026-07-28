@@ -10,33 +10,7 @@ pub use download_peer::DownloadPeer;
 
 use crate::message::Message;
 use core::fmt;
-use std::{net::TcpStream, str::FromStr};
-
-#[derive(Debug)]
-#[allow(dead_code)]
-pub struct NewPeer {
-    pub username: String,
-    pub connection_type: ConnectionType,
-    pub token: u32,
-    pub tcp_stream: TcpStream,
-}
-impl NewPeer {
-    pub fn new_from_message(
-        message: &mut Message,
-        tcp_stream: TcpStream,
-    ) -> Option<Self> {
-        let username = message.read_string();
-        let connection_type = message.read_string().parse().ok()?;
-        let token = message.read_int32();
-
-        Some(Self {
-            username,
-            connection_type,
-            token,
-            tcp_stream,
-        })
-    }
-}
+use std::str::FromStr;
 
 #[derive(Debug, Clone)]
 pub enum ConnectionType {
@@ -81,7 +55,6 @@ impl fmt::Display for ConnectionType {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct Peer {
     pub username: String,
     pub connection_type: ConnectionType,
@@ -93,7 +66,7 @@ pub struct Peer {
     pub obfuscated_port: Option<u16>,
 }
 impl Peer {
-    #[allow(clippy::too_many_arguments, dead_code)]
+    #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub const fn new(
         username: String,
@@ -116,7 +89,6 @@ impl Peer {
             obfuscated_port: Some(obfuscated_port),
         }
     }
-    #[allow(dead_code)]
     pub fn new_from_message(message: &mut Message) -> Option<Self> {
         let username = message.read_string();
         // The connection type is an untrusted string; an unknown value must not

@@ -369,6 +369,19 @@ pub fn init_logging(cli: &Cli) {
     }
 }
 
+/// Clear the screen, turn on mouse reporting and take over the terminal.
+fn enter_terminal() -> ratatui::DefaultTerminal {
+    use ratatui::crossterm::{
+        event::EnableMouseCapture,
+        execute,
+        terminal::{Clear, ClearType},
+    };
+
+    let _ =
+        execute!(std::io::stdout(), Clear(ClearType::All), EnableMouseCapture);
+    ratatui::init()
+}
+
 /// Run the interactive TUI (the default no-subcommand path): bring the
 /// terminal up first, run the login/registration screen (skipped past when
 /// stored credentials work), persist whatever logged in, then enter the
@@ -379,12 +392,6 @@ fn run_default_tui(
     config_path: Option<PathBuf>,
     file_config: &crate::persist::config::FileConfig,
 ) -> CliResult {
-    use ratatui::crossterm::{
-        event::EnableMouseCapture,
-        execute,
-        terminal::{Clear, ClearType},
-    };
-
     let out = Out::new(false, false);
     let (server_host, server_port) =
         parse_server_address(&resolved.server).map_err(CliError::usage)?;
@@ -419,10 +426,7 @@ fn run_default_tui(
             version: ClientVersion::REFERENCE_CLIENT,
         };
 
-    // Clear screen and enable mouse capture before initializing TUI
-    let _ =
-        execute!(std::io::stdout(), Clear(ClearType::All), EnableMouseCapture);
-    let mut terminal = ratatui::init();
+    let mut terminal = enter_terminal();
 
     let outcome = crate::ui::login::run_login_flow(
         &mut terminal,
@@ -468,7 +472,6 @@ fn run_default_tui(
         terminal,
         Arc::new(outcome.client),
         resolved.download_dir.clone(),
-        resolved.max_concurrent_downloads,
         Duration::from_secs(resolved.search_timeout),
         store,
         config_path,
@@ -486,12 +489,6 @@ fn run_attached_tui(
     endpoint: &crate::remote::Endpoint,
     config_path: Option<PathBuf>,
 ) -> CliResult {
-    use ratatui::crossterm::{
-        event::EnableMouseCapture,
-        execute,
-        terminal::{Clear, ClearType},
-    };
-
     // The resolved token, not the flag alone: `daemon_token` in config.toml
     // is the documented remote setup, and the flag/env are layered into it.
     let token = resolved
@@ -521,9 +518,7 @@ fn run_attached_tui(
         })?;
 
     soulseek_rs::utils::logger::enable_buffering();
-    let _ =
-        execute!(std::io::stdout(), Clear(ClearType::All), EnableMouseCapture);
-    let terminal = ratatui::init();
+    let terminal = enter_terminal();
 
     // No StateStore: the daemon owns what survives a restart, so a second
     // writer here would fight it for the same files.
@@ -531,7 +526,6 @@ fn run_attached_tui(
         terminal,
         Arc::new(session),
         download_dir,
-        resolved.max_concurrent_downloads,
         Duration::from_secs(resolved.search_timeout),
         None,
         config_path,

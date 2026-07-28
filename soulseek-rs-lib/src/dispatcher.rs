@@ -31,9 +31,8 @@ impl<Op> MessageDispatcher<Op> {
             handler.handle(message, self.sender.clone());
         } else {
             warn!(
-                "[{}:dispatcher] No handler found for message code: {}",
-                self.owner_name,
-                message.get_message_code()
+                "[{}:dispatcher] No handler found for message code: {code}",
+                self.owner_name
             );
         }
     }

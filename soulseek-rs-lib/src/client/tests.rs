@@ -1,22 +1,37 @@
 use super::*;
 
+fn download(
+    username: &str,
+    filename: &str,
+    token: u32,
+    status: DownloadStatus,
+    sender: Sender<DownloadStatus>,
+) -> Download {
+    Download {
+        username: username.to_string(),
+        filename: filename.to_string(),
+        token,
+        size: 100,
+        download_directory: "test".to_string(),
+        status,
+        sender,
+        queue_position: None,
+        metadata: DownloadMetadata::default(),
+    }
+}
+
 #[test]
 fn test_client_context_downloads() {
     let mut context = ClientContext::new();
     let token = 123;
     let new_token = 1234;
-    let download = Download {
-        username: "test".to_string(),
-        filename: "test.txt".to_string(),
+    context.add_download(download(
+        "test",
+        "test.txt",
         token,
-        size: 100,
-        download_directory: "test".to_string(),
-        status: DownloadStatus::Queued,
-        sender: mpsc::channel().0,
-        queue_position: None,
-        metadata: DownloadMetadata::default(),
-    };
-    context.add_download(download);
+        DownloadStatus::Queued,
+        mpsc::channel().0,
+    ));
     assert!(context.get_download_by_token(123).is_some());
     assert_eq!(context.get_download_tokens(), vec![123]);
     assert_eq!(context.get_downloads().len(), 1);
@@ -35,23 +50,18 @@ fn test_client_context_downloads() {
 fn test_client_pause_and_resume_download() {
     let client = Client::new("test-user", "test-password");
     let (download_sender, download_receiver) = mpsc::channel();
-    let download = Download {
-        username: "peer".to_string(),
-        filename: "song.mp3".to_string(),
-        token: 123,
-        size: 100,
-        download_directory: "test".to_string(),
-        status: DownloadStatus::InProgress {
+
+    client.context.write().unwrap().add_download(download(
+        "peer",
+        "song.mp3",
+        123,
+        DownloadStatus::InProgress {
             bytes_downloaded: 25,
             total_bytes: 100,
             speed_bytes_per_sec: 10.0,
         },
-        sender: download_sender,
-        queue_position: None,
-        metadata: DownloadMetadata::default(),
-    };
-
-    client.context.write().unwrap().add_download(download);
+        download_sender,
+    ));
 
     assert!(client.pause_download("peer", "song.mp3"));
     assert!(matches!(
@@ -118,17 +128,13 @@ fn fail_queued_downloads_notifies_receiver_and_store() {
     // must resolve to Failed both on its channel and in the store.
     let client = Client::new("u", "p");
     let (sender, receiver) = mpsc::channel();
-    client.context.write().unwrap().add_download(Download {
-        username: "peer".to_string(),
-        filename: "f.mp3".to_string(),
-        token: 7,
-        size: 10,
-        download_directory: "d".to_string(),
-        status: DownloadStatus::Queued,
+    client.context.write().unwrap().add_download(download(
+        "peer",
+        "f.mp3",
+        7,
+        DownloadStatus::Queued,
         sender,
-        queue_position: None,
-        metadata: DownloadMetadata::default(),
-    });
+    ));
 
     Client::fail_queued_downloads(&client.context, "peer");
 
@@ -171,37 +177,26 @@ fn build_search_response_matches_shares_and_echoes_token() {
 #[test]
 fn test_client_removes_only_queued_downloads() {
     let client = Client::new("test-user", "test-password");
-    let queued_download = Download {
-        username: "peer".to_string(),
-        filename: "queued.mp3".to_string(),
-        token: 123,
-        size: 100,
-        download_directory: "test".to_string(),
-        status: DownloadStatus::Queued,
-        sender: mpsc::channel().0,
-        queue_position: None,
-        metadata: DownloadMetadata::default(),
-    };
-    let active_download = Download {
-        username: "peer".to_string(),
-        filename: "active.mp3".to_string(),
-        token: 456,
-        size: 100,
-        download_directory: "test".to_string(),
-        status: DownloadStatus::InProgress {
-            bytes_downloaded: 25,
-            total_bytes: 100,
-            speed_bytes_per_sec: 10.0,
-        },
-        sender: mpsc::channel().0,
-        queue_position: None,
-        metadata: DownloadMetadata::default(),
-    };
-
     {
         let mut context = client.context.write().unwrap();
-        context.add_download(queued_download);
-        context.add_download(active_download);
+        context.add_download(download(
+            "peer",
+            "queued.mp3",
+            123,
+            DownloadStatus::Queued,
+            mpsc::channel().0,
+        ));
+        context.add_download(download(
+            "peer",
+            "active.mp3",
+            456,
+            DownloadStatus::InProgress {
+                bytes_downloaded: 25,
+                total_bytes: 100,
+                speed_bytes_per_sec: 10.0,
+            },
+            mpsc::channel().0,
+        ));
     }
 
     assert!(client.remove_queued_download("peer", "queued.mp3"));

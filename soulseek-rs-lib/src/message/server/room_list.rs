@@ -53,16 +53,7 @@ pub fn parse_room_list(message: &mut Message) -> Vec<RoomInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Build a received message (8-byte header + payload) and position it the
-    /// way the dispatcher would.
-    fn framed(build: impl FnOnce(&mut Message)) -> Message {
-        let mut message = Message::new();
-        message.write_raw_bytes(vec![0u8; 8]);
-        build(&mut message);
-        message.set_pointer(8);
-        message
-    }
+    use crate::message::framed;
 
     #[test]
     fn parses_names_zipped_with_counts() {

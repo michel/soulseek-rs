@@ -27,7 +27,6 @@ impl MessageHandler<ServerMessage> for MessageUser {
         );
 
         info!("[MessageUser] User message received:{:?}", user_message);
-        user_message.print();
 
         // Acknowledge freshly delivered messages so the server does not keep
         // re-sending them on every reconnect.

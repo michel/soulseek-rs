@@ -6,6 +6,7 @@
 //! get one `source` line appended to their rc file, marked so `uninstall` can
 //! take back exactly what was added and nothing else.
 
+use super::{unwritable, xdg};
 use crate::cli::{Cli, CompletionsArgs, CompletionsCommand, Shell};
 use crate::output::{CliError, CliResult, CompletionRecord, Out};
 use clap::CommandFactory;
@@ -39,7 +40,7 @@ struct Target {
 impl Target {
     fn record(&self, action: &str) -> CompletionRecord {
         CompletionRecord {
-            shell: self.shell.name().to_string(),
+            shell: self.shell.generator().to_string(),
             path: self.script.display().to_string(),
             action: action.to_string(),
         }
@@ -51,14 +52,6 @@ impl Target {
 }
 
 impl Shell {
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Bash => "bash",
-            Self::Zsh => "zsh",
-            Self::Fish => "fish",
-        }
-    }
-
     const fn generator(self) -> clap_complete::Shell {
         match self {
             Self::Bash => clap_complete::Shell::Bash,
@@ -213,14 +206,6 @@ impl Dirs {
     }
 }
 
-/// Shells follow the XDG layout on every platform, unlike this client's own
-/// config, which follows each platform's convention (see `persist::paths`).
-fn xdg(variable: &str, home: &Path, fallback: &str) -> PathBuf {
-    std::env::var_os(variable)
-        .filter(|dir| !dir.is_empty())
-        .map_or_else(|| home.join(fallback), PathBuf::from)
-}
-
 fn write_script(path: &Path, script: &[u8]) -> CliResult<bool> {
     if std::fs::read(path).is_ok_and(|found| found == script) {
         return Ok(false);
@@ -286,10 +271,6 @@ fn create_parent(path: &Path) -> CliResult {
         }
         None => Ok(()),
     }
-}
-
-fn unwritable(path: &Path, error: &std::io::Error) -> CliError {
-    CliError::usage(format!("cannot write {}: {error}", path.display()))
 }
 
 #[cfg(test)]

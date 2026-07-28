@@ -43,16 +43,6 @@ impl Default for ClientVersion {
     }
 }
 
-pub struct UploadFailed {
-    pub filename: String,
-}
-impl UploadFailed {
-    pub fn new_from_message(message: &mut Message) -> Self {
-        let filename = message.read_string();
-
-        Self { filename }
-    }
-}
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct SearchResult {

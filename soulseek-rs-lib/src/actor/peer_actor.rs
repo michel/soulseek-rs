@@ -184,13 +184,7 @@ impl PeerActor {
         let messages: Vec<PeerMessage> = self
             .dispatcher_receiver
             .as_ref()
-            .map_or_else(Vec::new, |receiver| {
-                let mut msgs = Vec::new();
-                while let Ok(msg) = receiver.try_recv() {
-                    msgs.push(msg);
-                }
-                msgs
-            });
+            .map_or_else(Vec::new, |receiver| receiver.try_iter().collect());
 
         for msg in &messages {
             self.handle_message(msg.clone());
@@ -690,45 +684,20 @@ impl PeerActor {
         }
     }
 
-    fn initiate_connection(&mut self) -> bool {
+    fn initiate_connection(&mut self) {
         let (username, host, port) = match self.peer.read_safe() {
             Ok(peer) => (peer.username.clone(), peer.host.clone(), peer.port),
             Err(e) => {
                 error!("[peer_actor] initiate_connection peer lock: {}", e);
-                return false;
+                return;
             }
         };
 
         let socket_addr =
             format!("{host}:{port}").parse::<std::net::SocketAddr>();
 
-        match socket_addr {
-            Ok(addr) => {
-                // Use connect_timeout to prevent blocking the thread for too long
-                let timeout = Duration::from_secs(5);
-                match TcpStream::connect_timeout(&addr, timeout) {
-                    Ok(stream) => {
-                        if let Err(e) = stream.set_nonblocking(true) {
-                            error!(
-                                "[peer:{}] Failed to set non-blocking: {}",
-                                username, e
-                            );
-                            self.disconnect_with_error(e);
-                            return false;
-                        }
-                        stream.set_nodelay(true).ok();
-                        self.stream = Some(stream);
-                        self.connection_state = ConnectionState::Connecting {
-                            since: Instant::now(),
-                        };
-                        true
-                    }
-                    Err(e) => {
-                        self.disconnect_with_error(e);
-                        false
-                    }
-                }
-            }
+        let addr = match socket_addr {
+            Ok(addr) => addr,
             Err(e) => {
                 error!(
                     "[peer:{}] Invalid socket address {}:{} - {}",
@@ -738,9 +707,30 @@ impl PeerActor {
                     io::ErrorKind::InvalidInput,
                     e,
                 ));
-                false
+                return;
             }
+        };
+
+        // Use connect_timeout to prevent blocking the thread for too long
+        let timeout = Duration::from_secs(5);
+        let stream = match TcpStream::connect_timeout(&addr, timeout) {
+            Ok(stream) => stream,
+            Err(e) => {
+                self.disconnect_with_error(e);
+                return;
+            }
+        };
+
+        if let Err(e) = stream.set_nonblocking(true) {
+            error!("[peer:{}] Failed to set non-blocking: {}", username, e);
+            self.disconnect_with_error(e);
+            return;
         }
+        stream.set_nodelay(true).ok();
+        self.stream = Some(stream);
+        self.connection_state = ConnectionState::Connecting {
+            since: Instant::now(),
+        };
     }
 
     fn check_connection_status(&mut self) {

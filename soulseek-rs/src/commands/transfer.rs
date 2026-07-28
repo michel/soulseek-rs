@@ -310,13 +310,9 @@ fn collect(
         })
     };
 
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if client.get_search_results_count(query) > 0 {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    super::poll_until(timeout, Duration::from_millis(100), || {
+        (client.get_search_results_count(query) > 0).then_some(())
+    });
     cancel.store(true, Ordering::Relaxed);
     let _ = worker.join();
     Ok(client.get_search_results(query))
@@ -334,29 +330,26 @@ fn dedupe(
     download_dir: &str,
     out: &Out,
 ) -> Vec<Request> {
-    let mut paths: HashMap<String, String> = HashMap::new();
-    let mut targets: HashMap<PathBuf, String> = HashMap::new();
+    let mut targets: HashMap<PathBuf, Request> = HashMap::new();
     let mut kept = Vec::new();
     for request in requests {
-        if let Some(user) = paths.get(&request.path) {
-            out.warn(&format!(
-                "skipping {} from {}: same remote path already queued from \
-                 {user}",
-                request.path, request.user
-            ));
-            continue;
-        }
         let target = local_path(download_dir, &request.path);
-        if let Some(other) = targets.get(&target) {
+        if let Some(queued) = targets.get(&target) {
+            let collision = if queued.path == request.path {
+                format!("same remote path already queued from {}", queued.user)
+            } else {
+                format!(
+                    "would overwrite the file already queued from {}",
+                    queued.user
+                )
+            };
             out.warn(&format!(
-                "skipping {} from {}: would overwrite the file already queued \
-                 from {other}",
+                "skipping {} from {}: {collision}",
                 request.path, request.user
             ));
             continue;
         }
-        paths.insert(request.path.clone(), request.user.clone());
-        targets.insert(target, request.user.clone());
+        targets.insert(target, request.clone());
         kept.push(request);
     }
     kept
@@ -617,9 +610,8 @@ fn read_requests(
 }
 
 /// `Ok(None)` for a blank line, `Err` for something unusable.
-// aislop-ignore-next-line complexity/function-too-long -- scanner bug, not a long function: the `'{'` char literal below reads as an opening brace, so aislop's counter never closes and measures to EOF. It is 34 lines.
+// aislop-ignore-next-line complexity/function-too-long -- scanner bug, not a long function: the `'{'` char literal below reads as an opening brace, so aislop's counter never closes and measures to EOF. It is 33 lines.
 fn parse_request(line: &str) -> Result<Option<Request>, String> {
-    let line = line.trim_end_matches(['\r', '\n']);
     if line.trim().is_empty() {
         return Ok(None);
     }

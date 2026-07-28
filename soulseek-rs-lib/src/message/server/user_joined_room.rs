@@ -23,15 +23,14 @@ impl MessageHandler<ServerMessage> for UserJoinedRoomHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::message::framed;
 
     #[test]
     fn forwards_user_joined() {
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut message = Message::new();
-        message.write_raw_bytes(vec![0u8; 8]);
-        message.write_string("jazz");
-        message.write_string("carol");
-        message.set_pointer(8);
+        let mut message = framed(|m| {
+            m.write_string("jazz").write_string("carol");
+        });
 
         UserJoinedRoomHandler.handle(&mut message, tx);
         match rx.try_recv() {

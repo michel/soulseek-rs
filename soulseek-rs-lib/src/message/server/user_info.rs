@@ -56,21 +56,12 @@ impl MessageHandler<ServerMessage> for GetUserStatsHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Build a payload the dispatcher would hand a handler: 8 bytes of frame
-    /// header, then the fields, with the pointer parked at the payload.
-    fn payload(build: impl FnOnce(&mut Message)) -> Message {
-        let mut message = Message::new();
-        message.write_raw_bytes(vec![0u8; 8]);
-        build(&mut message);
-        message.set_pointer(8);
-        message
-    }
+    use crate::message::framed;
 
     #[test]
     fn user_status_is_parsed_with_its_privileged_flag() {
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut message = payload(|m| {
+        let mut message = framed(|m| {
             m.write_string("alice").write_int32(2).write_int8(1);
         });
 
@@ -93,7 +84,7 @@ mod tests {
     fn user_stats_skip_the_two_obsolete_fields() {
         let (tx, rx) = std::sync::mpsc::channel();
         // username, speed, obsolete, obsolete, files, folders
-        let mut message = payload(|m| {
+        let mut message = framed(|m| {
             m.write_string("bob")
                 .write_int32(1024)
                 .write_int32(0)

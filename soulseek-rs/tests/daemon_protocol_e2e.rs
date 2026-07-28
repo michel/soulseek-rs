@@ -11,39 +11,23 @@
 //! Like the rest of the e2e suite this needs a soulfind server and skips
 //! without one; `SOULSEEK_E2E_REQUIRED=1` turns that skip into a failure.
 
+mod common;
+
+use common::{CLI_ENV_VARS, free_port, soulfind_binary};
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
+use tempfile::TempDir;
 
 const BIN: &str = env!("CARGO_BIN_EXE_soulseek-rs");
-
-/// Every environment variable the binary reads, cleared so a developer's shell
-/// cannot change what a test observes — and so no run finds a real daemon.
-const CLI_ENV_VARS: [&str; 15] = [
-    "SOULSEEK_CONFIG_DIR",
-    "SOULSEEK_STATE_DIR",
-    "SOULSEEK_DAEMON",
-    "SOULSEEK_DAEMON_TOKEN",
-    "SOULSEEK_USERNAME",
-    "SOULSEEK_PASSWORD",
-    "SOULSEEK_PASSWORD_CMD",
-    "SOULSEEK_SERVER",
-    "SOULSEEK_NO_LISTENER",
-    "SOULSEEK_LISTENER_PORT",
-    "SOULSEEK_DOWNLOAD_DIR",
-    "SOULSEEK_SHARED_DIR",
-    "SOULSEEK_MAX_CONCURRENT_DOWNLOADS",
-    "SOULSEEK_SEARCH_TIMEOUT",
-    "SOULSEEK_CONFIG",
-];
 
 /// A daemon bound to loopback TCP as well as its socket, so both transports
 /// can be exercised against one session.
 struct Daemon {
     child: Child,
-    state: PathBuf,
+    state: TempDir,
     port: u16,
     _server: Soulfind,
 }
@@ -63,10 +47,10 @@ fn cli_command(state: &Path) -> Command {
 impl Daemon {
     fn start() -> Option<Self> {
         let server = Soulfind::start()?;
-        let state = scratch("daemon-proto");
+        let state = tempfile::tempdir().ok()?;
         let port = free_port()?;
 
-        let mut command = cli_command(&state);
+        let mut command = cli_command(state.path());
         command.args([
             "--no-config",
             "--server",
@@ -78,7 +62,7 @@ impl Daemon {
             "--listener-port",
             &free_port()?.to_string(),
             "--download-dir",
-            state.join("downloads").to_str()?,
+            state.path().join("downloads").to_str()?,
             "daemon",
             "--bind",
             &format!("127.0.0.1:{port}"),
@@ -121,13 +105,13 @@ impl Daemon {
     }
 
     fn token(&self) -> String {
-        std::fs::read_to_string(self.state.join("daemon.token"))
+        std::fs::read_to_string(self.state.path().join("daemon.token"))
             .map(|token| token.trim().to_string())
             .unwrap_or_default()
     }
 
     fn socket_path(&self) -> PathBuf {
-        self.state.join("daemon.sock")
+        self.state.path().join("daemon.sock")
     }
 
     fn connect_tcp(&self) -> Option<Connection> {
@@ -152,7 +136,6 @@ impl Drop for Daemon {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
-        let _ = std::fs::remove_dir_all(&self.state);
     }
 }
 
@@ -426,7 +409,7 @@ fn discover_serves_a_contract_whose_parameters_match_what_is_accepted() {
 // ---------------------------------------------------------------------------
 
 struct Soulfind {
-    child: Option<Child>,
+    child: Child,
     db: PathBuf,
     port: u16,
 }
@@ -438,7 +421,7 @@ impl Soulfind {
         let db = std::env::temp_dir().join(format!("soulfind-proto-{port}.db"));
         let _ = std::fs::remove_file(&db);
 
-        let child = Command::new(bin)
+        let mut child = Command::new(bin)
             .args(["-d", db.to_str()?, "-p", &port.to_string()])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -448,15 +431,10 @@ impl Soulfind {
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline {
             if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                return Some(Self {
-                    child: Some(child),
-                    db,
-                    port,
-                });
+                return Some(Self { child, db, port });
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        let mut child = child;
         let _ = child.kill();
         let _ = child.wait();
         None
@@ -469,41 +447,10 @@ impl Soulfind {
 
 impl Drop for Soulfind {
     fn drop(&mut self) {
-        if let Some(child) = self.child.as_mut() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
         let _ = std::fs::remove_file(&self.db);
     }
-}
-
-fn soulfind_binary() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("SOULFIND_BIN") {
-        let path = PathBuf::from(path);
-        return path.exists().then_some(path);
-    }
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .map(|dir| dir.join("soulfind/bin/soulfind"))
-        .find(|candidate| candidate.exists())
-}
-
-fn free_port() -> Option<u16> {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .ok()?
-        .local_addr()
-        .ok()
-        .map(|addr| addr.port())
-}
-
-fn scratch(label: &str) -> PathBuf {
-    static COUNTER: std::sync::atomic::AtomicU32 =
-        std::sync::atomic::AtomicU32::new(0);
-    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let path = std::env::temp_dir()
-        .join(format!("soulseek-{label}-{}-{n}", std::process::id()));
-    std::fs::create_dir_all(&path).expect("scratch directory");
-    path
 }
 
 /// A client configured for a remote daemon reports the *daemon's* world.
@@ -517,13 +464,13 @@ fn scratch(label: &str) -> PathBuf {
 #[test]
 fn a_config_driven_remote_client_reports_the_daemons_world() {
     let daemon = daemon_or_skip!();
-    let config = scratch("remote-client-config");
-    let state = scratch("remote-client-state");
+    let config = tempfile::tempdir().expect("config directory");
+    let state = tempfile::tempdir().expect("state directory");
 
     // A laptop that knows only where the daemon is. No username, no password,
     // no server — exactly what the documented setup produces.
     std::fs::write(
-        config.join("config.toml"),
+        config.path().join("config.toml"),
         format!(
             "daemon = \"127.0.0.1:{}\"\ndaemon_token = \"{}\"\n",
             daemon.port,
@@ -532,8 +479,8 @@ fn a_config_driven_remote_client_reports_the_daemons_world() {
     )
     .expect("config file");
 
-    let mut command = cli_command(&state);
-    command.env("SOULSEEK_CONFIG_DIR", &config);
+    let mut command = cli_command(state.path());
+    command.env("SOULSEEK_CONFIG_DIR", config.path());
     command.args(["--json", "whoami"]);
     let output = command.output().expect("the binary should run");
 
@@ -567,9 +514,6 @@ fn a_config_driven_remote_client_reports_the_daemons_world() {
         "the directory the bytes actually land in, on the daemon's host, not \
          this machine's Downloads folder: {record}"
     );
-
-    let _ = std::fs::remove_dir_all(&config);
-    let _ = std::fs::remove_dir_all(&state);
 }
 
 /// Several clients at once, all seeing the same session.
@@ -813,7 +757,8 @@ fn the_download_folder_moves_when_asked_and_status_says_so() {
     let mut connection = daemon.connect_socket().expect("socket");
     connection.authenticate(None).expect("an answer");
 
-    let moved = scratch("moved-downloads").join("deeper");
+    let downloads = tempfile::tempdir().expect("downloads directory");
+    let moved = downloads.path().join("deeper");
     let reply = connection
         .call(&format!(
             r#"{{"jsonrpc":"2.0","id":2,"method":"download.set_dir","params":{{"directory":{}}}}}"#,
@@ -844,7 +789,6 @@ fn the_download_folder_moves_when_asked_and_status_says_so() {
         )
         .expect("an answer");
     assert!(refused.contains("-32602"), "got {refused}");
-    let _ = std::fs::remove_dir_all(moved.parent().expect("parent"));
 }
 
 /// A wishlist search must read as *running* to the other windows.
@@ -906,9 +850,9 @@ fn the_upload_slot_limit_can_be_retuned_live() {
 #[test]
 fn the_cli_reports_a_bad_token_as_a_connection_error() {
     let daemon = daemon_or_skip!();
-    let state = scratch("cli-bad-token");
+    let state = tempfile::tempdir().expect("state directory");
     let run = |token: Option<&str>| {
-        let mut command = cli_command(&state);
+        let mut command = cli_command(state.path());
         command.args([
             "--no-config",
             "--daemon",
@@ -951,5 +895,4 @@ fn the_cli_reports_a_bad_token_as_a_connection_error() {
         "the real token must keep working: {}",
         String::from_utf8_lossy(&right.stderr)
     );
-    let _ = std::fs::remove_dir_all(&state);
 }

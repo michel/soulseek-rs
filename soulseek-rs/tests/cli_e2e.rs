@@ -9,8 +9,9 @@
 //! with a notice. `SOULSEEK_E2E_REQUIRED=1` turns a missing server into a
 //! failure, which is how CI guarantees these actually run.
 
-#![allow(clippy::doc_markdown)]
+mod common;
 
+use common::{CLI_ENV_VARS, free_port, soulfind_binary};
 use soulseek_rs::{Client, ClientSettings, PeerAddress};
 use std::io::Write;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -27,26 +28,6 @@ const EXIT_USAGE: i32 = 2;
 const EXIT_CONNECTION: i32 = 3;
 const EXIT_NO_RESULTS: i32 = 4;
 const EXIT_SESSION_LOST: i32 = 7;
-
-/// Every environment variable the CLI reads, cleared for each run so a
-/// developer's shell (or a stray `.env`) cannot change what a test observes.
-const CLI_ENV_VARS: [&str; 15] = [
-    "SOULSEEK_CONFIG_DIR",
-    "SOULSEEK_STATE_DIR",
-    "SOULSEEK_DAEMON",
-    "SOULSEEK_DAEMON_TOKEN",
-    "SOULSEEK_USERNAME",
-    "SOULSEEK_PASSWORD",
-    "SOULSEEK_PASSWORD_CMD",
-    "SOULSEEK_SERVER",
-    "SOULSEEK_NO_LISTENER",
-    "SOULSEEK_LISTENER_PORT",
-    "SOULSEEK_DOWNLOAD_DIR",
-    "SOULSEEK_SHARED_DIR",
-    "SOULSEEK_MAX_CONCURRENT_DOWNLOADS",
-    "SOULSEEK_SEARCH_TIMEOUT",
-    "SOULSEEK_CONFIG",
-];
 
 /// Build a command for the binary, isolated from the developer's environment
 /// and from the repository's own working directory.
@@ -281,9 +262,7 @@ fn without_a_terminal_the_tui_reports_instead_of_panicking() {
 #[test]
 fn portmap_emits_a_record_whose_verdict_matches_the_exit_code() {
     let output = run(&["--no-config", "--quiet", "--json", "portmap"]);
-    let record: serde_json::Value =
-        serde_json::from_str(records(&output).first().expect("one record"))
-            .expect("portmap should emit valid JSON");
+    let record = json_record(&output);
 
     assert!(record["port"].is_number());
     let ok = record["ok"].as_bool().expect("ok should be a boolean");
@@ -316,10 +295,7 @@ fn quiet_keeps_progress_off_stderr() {
 
 /// What the first record says happened, parsed rather than matched as text.
 fn action(output: &Output) -> String {
-    let record: serde_json::Value =
-        serde_json::from_str(records(output).first().expect("one record"))
-            .expect("valid JSON");
-    record["action"]
+    json_record(output)["action"]
         .as_str()
         .expect("a record carries an action")
         .to_string()
@@ -826,25 +802,6 @@ impl Drop for TestServer {
             let _ = std::fs::remove_file(db);
         }
     }
-}
-
-fn soulfind_binary() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("SOULFIND_BIN") {
-        let path = PathBuf::from(path);
-        return path.exists().then_some(path);
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .map(|dir| dir.join("soulfind/bin/soulfind"))
-        .find(|candidate| candidate.exists())
-}
-
-fn free_port() -> Option<u16> {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .ok()?
-        .local_addr()
-        .ok()
-        .map(|addr| addr.port())
 }
 
 fn wait_until_listening(
@@ -1993,9 +1950,7 @@ fn whoami_confirms_the_login_and_reports_what_we_offer() {
     );
     assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
 
-    let record: serde_json::Value =
-        serde_json::from_str(records(&output).first().expect("one record"))
-            .expect("valid JSON");
+    let record = json_record(&output);
     assert_eq!(record["user"], "cli_e2e_whoami");
     assert_eq!(record["shared_files"], 1, "the shared file is indexed");
     assert!(record["server"].as_str().is_some_and(|s| s.contains(':')));
@@ -2009,8 +1964,7 @@ fn whoami_reports_how_much_privilege_time_the_account_has() {
     let output = cli(&server, "cli_e2e_priv_owner", &["--json", "whoami"]);
     assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
 
-    let record: serde_json::Value =
-        serde_json::from_str(&records(&output)[0]).expect("valid JSON");
+    let record = json_record(&output);
     // Zero, not null: the server answered, and the answer is "no privileges".
     // Null would mean it never said, which is a different fact.
     assert_eq!(
@@ -2156,9 +2110,7 @@ fn user_reports_a_peers_status_and_share_counts() {
     );
     assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
 
-    let record: serde_json::Value =
-        serde_json::from_str(records(&output).first().expect("one record"))
-            .expect("valid JSON");
+    let record = json_record(&output);
     assert_eq!(record["user"], "cli_e2e_subject");
     assert_ne!(record["status"], "offline", "the subject is logged in");
     assert_eq!(record["shared_files"], 2);
@@ -2292,9 +2244,7 @@ fn shares_status_reports_what_the_network_will_see() {
     );
     assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
 
-    let record: serde_json::Value =
-        serde_json::from_str(records(&output).first().expect("one record"))
-            .expect("valid JSON");
+    let record = json_record(&output);
     assert_eq!(record["files"], 3);
     assert!(record["folders"].as_u64().is_some_and(|n| n >= 1));
 }
@@ -2321,9 +2271,7 @@ fn shares_reindex_picks_up_a_file_added_after_startup() {
     );
     assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
 
-    let record: serde_json::Value =
-        serde_json::from_str(records(&output).first().expect("one record"))
-            .expect("valid JSON");
+    let record = json_record(&output);
     assert_eq!(record["files"], 2, "re-indexing should see both files");
 }
 
@@ -2569,9 +2517,7 @@ fn asking_about_an_unknown_user_succeeds_with_an_offline_record() {
     );
 
     assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
-    let record: serde_json::Value =
-        serde_json::from_str(records(&output).first().expect("one record"))
-            .expect("valid JSON");
+    let record = json_record(&output);
     assert_eq!(record["status"], "offline");
     assert_eq!(record["shared_files"], 0);
 }
@@ -2585,10 +2531,7 @@ fn assert_record_keys(output: &Output, label: &str, keys: &[&str]) {
         "`{label}` should succeed, stderr: {}",
         stderr(output)
     );
-    let record: serde_json::Value = serde_json::from_str(
-        records(output).first().expect("at least one record"),
-    )
-    .expect("valid JSON");
+    let record = json_record(output);
     for key in keys {
         assert!(
             record.get(*key).is_some(),
@@ -3071,9 +3014,7 @@ fn json_records_carry_every_extra_field_the_readme_names() {
     // `portmap` adds the port it probed; the verdict lives in the exit code,
     // which is `EXIT_NO_RESULTS` on a network with no cooperating router.
     let portmap = cli(&server, "cli_e2e_keys", &["--json", "portmap"]);
-    let record: serde_json::Value =
-        serde_json::from_str(records(&portmap).first().expect("one record"))
-            .expect("valid JSON");
+    let record = json_record(&portmap);
     for key in ["ok", "backend", "external", "port"] {
         assert!(record.get(key).is_some(), "portmap should carry `{key}`");
     }
@@ -3347,9 +3288,7 @@ fn a_daemon_reports_its_session_and_stops_on_request() {
     let status =
         run(&["--no-config", "--json", "--daemon", &at, "daemon", "status"]);
     assert_eq!(code(&status), EXIT_OK, "stderr: {}", stderr(&status));
-    let record: serde_json::Value =
-        serde_json::from_str(records(&status).first().expect("one record"))
-            .expect("valid JSON");
+    let record = json_record(&status);
     assert_eq!(record["user"], user);
     assert_eq!(record["server"], server.address());
     assert!(
@@ -3443,19 +3382,14 @@ fn adding_a_share_takes_effect_on_a_running_daemon() {
 
     // The daemon re-indexes on the way through, so the folder is visible to
     // the network now rather than after a restart.
-    let after: serde_json::Value = serde_json::from_str(
-        records(&run(&[
-            "--no-config",
-            "--json",
-            "--daemon",
-            &at,
-            "shares",
-            "status",
-        ]))
-        .first()
-        .expect("one record"),
-    )
-    .expect("valid JSON");
+    let after = json_record(&run(&[
+        "--no-config",
+        "--json",
+        "--daemon",
+        &at,
+        "shares",
+        "status",
+    ]));
     let listed = after["directories"]
         .as_array()
         .expect("directories is an array");

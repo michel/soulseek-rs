@@ -50,19 +50,12 @@ impl MessageHandler<ServerMessage> for CheckPrivilegesHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn payload(build: impl FnOnce(&mut Message)) -> Message {
-        let mut message = Message::new();
-        message.write_raw_bytes(vec![0u8; 8]);
-        build(&mut message);
-        message.set_pointer(8);
-        message
-    }
+    use crate::message::framed;
 
     #[test]
     fn the_user_list_is_kept_not_just_counted() {
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut message = payload(|m| {
+        let mut message = framed(|m| {
             m.write_int32(2)
                 .write_string("donor_a")
                 .write_string("donor_b");
@@ -80,7 +73,7 @@ mod tests {
     #[test]
     fn an_empty_list_is_still_an_answer() {
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut message = payload(|m| {
+        let mut message = framed(|m| {
             m.write_int32(0);
         });
 
@@ -98,7 +91,7 @@ mod tests {
         // count=u32::MAX with no names: the guard must return promptly rather
         // than loop four billion times.
         let (tx, _rx) = std::sync::mpsc::channel();
-        let mut message = payload(|m| {
+        let mut message = framed(|m| {
             m.write_int32(u32::MAX);
         });
         PrivilegedUsersHandler.handle(&mut message, tx);
@@ -107,7 +100,7 @@ mod tests {
     #[test]
     fn our_own_remaining_privilege_time_is_reported() {
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut message = payload(|m| {
+        let mut message = framed(|m| {
             m.write_int32(86_400);
         });
 

@@ -149,8 +149,11 @@ pub trait SessionApi: Send + Sync {
         Vec::new()
     }
 
+    // aislop-ignore-next-line complexity/function-too-long -- scanner bug: a bodyless trait signature followed only by more signatures has no closing brace, so the counter runs to EOF. One line.
     fn shared_counts(&self) -> (u32, u32);
+    // aislop-ignore-next-line complexity/function-too-long -- same scanner bug: bodyless signature measured to EOF. One line.
     fn shared_directories(&self) -> Vec<String>;
+    // aislop-ignore-next-line complexity/function-too-long -- same scanner bug: bodyless signature measured to EOF. One line.
     fn set_shared_directories(&self, directories: Vec<String>) -> Result<()>;
 
     /// Point future transfers at `directory`.
@@ -158,6 +161,7 @@ pub trait SessionApi: Send + Sync {
     /// Only a daemon holds a download folder of its own — locally every
     /// download call names its directory, so the local session has nothing to
     /// store and accepts silently.
+    // aislop-ignore-next-line complexity/function-too-long -- same scanner bug: bodyless signature measured to EOF. One line.
     fn set_download_directory(&self, directory: String) -> Result<()>;
 }
 

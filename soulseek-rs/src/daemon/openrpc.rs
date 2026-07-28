@@ -23,11 +23,6 @@ use serde_json::{Value, json};
 /// `components/schemas`, the same place OpenAPI does.
 const DEFINITIONS_PATH: &str = "#/components/schemas/";
 
-/// A method that takes no parameters.
-fn nothing() -> Value {
-    json!({ "type": "null" })
-}
-
 fn schema_of<T: JsonSchema>(generator: &mut SchemaGenerator) -> Value {
     generator.subschema_for::<T>().to_value()
 }
@@ -60,6 +55,7 @@ fn params_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
             schema_of::<UserRef>(generator)
         }
         Method::SharesSet => schema_of::<DirectoriesParams>(generator),
+        // Methods that take no parameters.
         Method::DaemonStatus
         | Method::DaemonStop
         | Method::RpcDiscover
@@ -72,7 +68,7 @@ fn params_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         | Method::MessageHistory
         | Method::SearchList
         | Method::SharesStatusOf
-        | Method::SharesReindex => nothing(),
+        | Method::SharesReindex => json!({ "type": "null" }),
     }
 }
 

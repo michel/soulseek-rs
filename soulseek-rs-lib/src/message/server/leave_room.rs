@@ -20,14 +20,14 @@ impl MessageHandler<ServerMessage> for LeaveRoomHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::message::framed;
 
     #[test]
     fn forwards_left_room() {
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut message = Message::new();
-        message.write_raw_bytes(vec![0u8; 8]);
-        message.write_string("jazz");
-        message.set_pointer(8);
+        let mut message = framed(|m| {
+            m.write_string("jazz");
+        });
 
         LeaveRoomHandler.handle(&mut message, tx);
         match rx.try_recv() {

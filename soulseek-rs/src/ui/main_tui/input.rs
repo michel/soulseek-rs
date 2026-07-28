@@ -3,6 +3,8 @@ use crate::models::{CommandBarMode, FocusedPane};
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
+use ratatui::layout::Position;
+use ratatui::widgets::TableState;
 
 impl MainTui {
     pub(super) fn handle_key_event(&mut self, key: KeyEvent) {
@@ -189,10 +191,10 @@ impl MainTui {
             KeyCode::Backspace => {
                 let cursor_position = self.state.command_bar_cursor_position;
                 if cursor_position > 0 {
-                    let previous_position = previous_char_boundary(
-                        &self.state.command_bar_input,
-                        cursor_position,
-                    );
+                    let previous_position = self
+                        .state
+                        .command_bar_input
+                        .floor_char_boundary(cursor_position.saturating_sub(1));
                     self.state
                         .command_bar_input
                         .drain(previous_position..cursor_position);
@@ -202,26 +204,26 @@ impl MainTui {
             KeyCode::Delete => {
                 let cursor_position = self.state.command_bar_cursor_position;
                 if cursor_position < self.state.command_bar_input.len() {
-                    let next_position = next_char_boundary(
-                        &self.state.command_bar_input,
-                        cursor_position,
-                    );
+                    let next_position = self
+                        .state
+                        .command_bar_input
+                        .ceil_char_boundary(cursor_position + 1);
                     self.state
                         .command_bar_input
                         .drain(cursor_position..next_position);
                 }
             }
             KeyCode::Left => {
-                self.state.command_bar_cursor_position = previous_char_boundary(
-                    &self.state.command_bar_input,
-                    self.state.command_bar_cursor_position,
-                );
+                let previous =
+                    self.state.command_bar_cursor_position.saturating_sub(1);
+                self.state.command_bar_cursor_position =
+                    self.state.command_bar_input.floor_char_boundary(previous);
             }
             KeyCode::Right => {
-                self.state.command_bar_cursor_position = next_char_boundary(
-                    &self.state.command_bar_input,
-                    self.state.command_bar_cursor_position,
-                );
+                let input = &self.state.command_bar_input;
+                let next = self.state.command_bar_cursor_position + 1;
+                self.state.command_bar_cursor_position =
+                    input.ceil_char_boundary(next.min(input.len()));
             }
             KeyCode::Home => {
                 self.state.command_bar_cursor_position = 0;
@@ -288,26 +290,13 @@ impl MainTui {
     }
 
     fn handle_searches_input(&mut self, key: KeyEvent) {
+        let rows = self.state.searches.len();
         match key.code {
-            KeyCode::Up | KeyCode::Char('k')
-                if !self.state.searches.is_empty() =>
-            {
-                let current =
-                    self.state.searches_table_state.selected().unwrap_or(0);
-                let new = if current == 0 {
-                    self.state.searches.len() - 1
-                } else {
-                    current - 1
-                };
-                self.state.searches_table_state.select(Some(new));
+            KeyCode::Up | KeyCode::Char('k') => {
+                cycle(&mut self.state.searches_table_state, rows, false);
             }
-            KeyCode::Down | KeyCode::Char('j')
-                if !self.state.searches.is_empty() =>
-            {
-                let current =
-                    self.state.searches_table_state.selected().unwrap_or(0);
-                let new = (current + 1) % self.state.searches.len();
-                self.state.searches_table_state.select(Some(new));
+            KeyCode::Down | KeyCode::Char('j') => {
+                cycle(&mut self.state.searches_table_state, rows, true);
             }
             KeyCode::Enter => {
                 if let Some(selected) =
@@ -348,21 +337,11 @@ impl MainTui {
         };
 
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') if items_count > 0 => {
-                let current =
-                    self.state.results_table_state.selected().unwrap_or(0);
-                let new = if current == 0 {
-                    items_count - 1
-                } else {
-                    current - 1
-                };
-                self.state.results_table_state.select(Some(new));
+            KeyCode::Up | KeyCode::Char('k') => {
+                cycle(&mut self.state.results_table_state, items_count, false);
             }
-            KeyCode::Down | KeyCode::Char('j') if items_count > 0 => {
-                let current =
-                    self.state.results_table_state.selected().unwrap_or(0);
-                let new = (current + 1) % items_count;
-                self.state.results_table_state.select(Some(new));
+            KeyCode::Down | KeyCode::Char('j') => {
+                cycle(&mut self.state.results_table_state, items_count, true);
             }
             KeyCode::Char(' ') => {
                 if let Some(current) = self.state.results_table_state.selected()
@@ -416,17 +395,11 @@ impl MainTui {
         // The pane lists downloads first, then uploads; navigation spans both.
         let rows = self.state.downloads.len() + self.state.uploads.len();
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') if rows > 0 => {
-                let current =
-                    self.state.downloads_table_state.selected().unwrap_or(0);
-                let new = if current == 0 { rows - 1 } else { current - 1 };
-                self.state.downloads_table_state.select(Some(new));
+            KeyCode::Up | KeyCode::Char('k') => {
+                cycle(&mut self.state.downloads_table_state, rows, false);
             }
-            KeyCode::Down | KeyCode::Char('j') if rows > 0 => {
-                let current =
-                    self.state.downloads_table_state.selected().unwrap_or(0);
-                let new = (current + 1) % rows;
-                self.state.downloads_table_state.select(Some(new));
+            KeyCode::Down | KeyCode::Char('j') => {
+                cycle(&mut self.state.downloads_table_state, rows, true);
             }
             KeyCode::Char('x') => {
                 self.cancel_selected_upload();
@@ -448,63 +421,35 @@ impl MainTui {
     }
 
     pub(super) fn handle_mouse_event(&mut self, mouse: MouseEvent) {
-        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-            let (col, row) = (mouse.column, mouse.row);
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return;
+        }
 
-            // Check if click is within searches pane
-            if let Some(area) = self.state.searches_pane_area
-                && col >= area.x
-                && col < area.x + area.width
-                && row >= area.y
-                && row < area.y + area.height
-            {
-                self.state.focused_pane = FocusedPane::Searches;
+        let clicked = Position::new(mouse.column, mouse.row);
+        let panes = [
+            (self.state.searches_pane_area, FocusedPane::Searches),
+            (self.state.results_pane_area, FocusedPane::Results),
+            (self.state.downloads_pane_area, FocusedPane::Downloads),
+        ];
+        for (area, pane) in panes {
+            if area.is_some_and(|area| area.contains(clicked)) {
+                self.state.focused_pane = pane;
                 return;
-            }
-
-            // Check if click is within results pane
-            if let Some(area) = self.state.results_pane_area
-                && col >= area.x
-                && col < area.x + area.width
-                && row >= area.y
-                && row < area.y + area.height
-            {
-                self.state.focused_pane = FocusedPane::Results;
-                return;
-            }
-
-            // Check if click is within downloads pane
-            if let Some(area) = self.state.downloads_pane_area
-                && col >= area.x
-                && col < area.x + area.width
-                && row >= area.y
-                && row < area.y + area.height
-            {
-                self.state.focused_pane = FocusedPane::Downloads;
             }
         }
     }
 }
 
-fn previous_char_boundary(input: &str, cursor_position: usize) -> usize {
-    let cursor_position = input.floor_char_boundary(cursor_position);
-
-    input[..cursor_position]
-        .char_indices()
-        .last()
-        .map_or(0, |(index, _)| index)
-}
-
-fn next_char_boundary(input: &str, cursor_position: usize) -> usize {
-    let cursor_position = input.floor_char_boundary(cursor_position);
-
-    if cursor_position >= input.len() {
-        return input.len();
+/// Move a table's selection one row, wrapping at either end.
+fn cycle(table: &mut TableState, len: usize, forward: bool) {
+    if len == 0 {
+        return;
     }
-
-    cursor_position
-        + input[cursor_position..]
-            .chars()
-            .next()
-            .map_or(0, char::len_utf8)
+    let current = table.selected().unwrap_or(0);
+    let next = if forward {
+        (current + 1) % len
+    } else {
+        (current + len - 1) % len
+    };
+    table.select(Some(next));
 }

@@ -66,64 +66,42 @@ impl std::fmt::Display for DownloadError {
 
 impl std::error::Error for DownloadError {}
 
-impl From<io::Error> for DownloadError {
-    fn from(error: io::Error) -> Self {
-        Self::StreamReadError(error)
-    }
+fn extract_filename_from_path(full_path: &str) -> &str {
+    full_path
+        .split(['/', '\\'])
+        .next_back()
+        .unwrap_or(full_path)
 }
 
-struct FileManager;
+/// Where a download's bytes end up: its configured directory (falling back
+/// to the parent if it names a file) joined with the remote basename.
+fn resolve_download_path(download: &Download) -> Result<String, DownloadError> {
+    let mut expanded_path = expand_tilde(&download.download_directory);
 
-impl FileManager {
-    fn extract_filename_from_path(full_path: &str) -> &str {
-        full_path
-            .split(['/', '\\'])
-            .next_back()
-            .unwrap_or(full_path)
-    }
-
-    fn create_download_path_from_filename(
-        output_directory: PathBuf,
-        filename: &str,
-    ) -> PathBuf {
-        let filename_only = Self::extract_filename_from_path(filename);
-        output_directory.join(filename_only)
-    }
-
-    /// Where a download's bytes end up: its configured directory (falling back
-    /// to the parent if it names a file) joined with the remote basename.
-    fn resolve_download_path(
-        download: &Download,
-    ) -> Result<String, DownloadError> {
-        let mut expanded_path = expand_tilde(&download.download_directory);
-
-        if !expanded_path.is_dir() {
-            expanded_path = expanded_path
-                .parent()
-                .ok_or_else(|| {
-                    DownloadError::PathResolutionError(format!(
-                        "Cannot resolve parent directory for: {}",
-                        expanded_path.display()
-                    ))
-                })?
-                .to_path_buf();
-        }
-
-        let final_path = Self::create_download_path_from_filename(
-            expanded_path,
-            &download.filename,
-        );
-
-        final_path
-            .to_str()
+    if !expanded_path.is_dir() {
+        expanded_path = expanded_path
+            .parent()
             .ok_or_else(|| {
                 DownloadError::PathResolutionError(format!(
-                    "Path contains invalid UTF-8: {}",
-                    final_path.display()
+                    "Cannot resolve parent directory for: {}",
+                    expanded_path.display()
                 ))
-            })
-            .map(String::from)
+            })?
+            .to_path_buf();
     }
+
+    let final_path =
+        expanded_path.join(extract_filename_from_path(&download.filename));
+
+    final_path
+        .to_str()
+        .ok_or_else(|| {
+            DownloadError::PathResolutionError(format!(
+                "Path contains invalid UTF-8: {}",
+                final_path.display()
+            ))
+        })
+        .map(String::from)
 }
 
 /// The `.part` file a transfer streams into, so an interrupted transfer leaves
@@ -137,7 +115,7 @@ struct PartFile {
 
 impl PartFile {
     fn open(download: &Download) -> Result<Self, DownloadError> {
-        let final_path = FileManager::resolve_download_path(download)?;
+        let final_path = resolve_download_path(download)?;
         let path = PathBuf::from(format!("{final_path}{PART_SUFFIX}"));
 
         if let Some(parent) = path.parent() {
@@ -521,7 +499,9 @@ impl DownloadPeer {
 
 #[cfg(test)]
 mod tests {
-    use super::{DownloadError, DownloadPeer, FileManager, PartFile};
+    use super::{
+        DownloadError, DownloadPeer, PartFile, extract_filename_from_path,
+    };
     use crate::types::{Download, DownloadMetadata, DownloadStatus};
     use std::sync::mpsc;
 
@@ -636,23 +616,17 @@ mod tests {
 
     #[test]
     fn test_extract_filename_from_path() {
+        assert_eq!(extract_filename_from_path("/path/to/file.mp3"), "file.mp3");
         assert_eq!(
-            FileManager::extract_filename_from_path("/path/to/file.mp3"),
+            extract_filename_from_path("C:\\path\\to\\file.mp3"),
             "file.mp3"
         );
         assert_eq!(
-            FileManager::extract_filename_from_path("C:\\path\\to\\file.mp3"),
-            "file.mp3"
-        );
-        assert_eq!(
-            FileManager::extract_filename_from_path(
+            extract_filename_from_path(
                 "@@bhfrv\\Soulseek Downloads\\complete\\Beatport Top Deep House (2021)\\michel test file.mp3"
             ),
             "michel test file.mp3"
         );
-        assert_eq!(
-            FileManager::extract_filename_from_path("file.mp3"),
-            "file.mp3"
-        );
+        assert_eq!(extract_filename_from_path("file.mp3"), "file.mp3");
     }
 }

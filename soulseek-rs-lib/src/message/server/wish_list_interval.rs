@@ -26,14 +26,14 @@ impl MessageHandler<ServerMessage> for WishListIntervalHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::message::framed;
 
     #[test]
     fn the_announced_interval_is_reported_not_discarded() {
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut message = Message::new();
-        message.write_raw_bytes(vec![0u8; 8]);
-        message.write_int32(720);
-        message.set_pointer(8);
+        let mut message = framed(|m| {
+            m.write_int32(720);
+        });
 
         WishListIntervalHandler.handle(&mut message, tx);
         match rx.try_recv() {

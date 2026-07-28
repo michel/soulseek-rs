@@ -24,7 +24,6 @@ pub struct SearchEntry {
     /// finishes; for the rest the session is the authority.
     pub owned: bool,
     pub start_time: Instant,
-    #[allow(dead_code)]
     pub cancel_flag: Arc<AtomicBool>,
 }
 
@@ -248,19 +247,6 @@ impl AppState {
         };
         let peer = peers[next].to_string();
         self.chat_peer = Some(peer);
-    }
-
-    #[allow(dead_code)]
-    #[must_use]
-    pub fn get_selected_search(&self) -> Option<&SearchEntry> {
-        self.selected_search_index
-            .and_then(|idx| self.searches.get(idx))
-    }
-
-    #[allow(dead_code)]
-    pub fn get_selected_search_mut(&mut self) -> Option<&mut SearchEntry> {
-        self.selected_search_index
-            .and_then(|idx| self.searches.get_mut(idx))
     }
 }
 

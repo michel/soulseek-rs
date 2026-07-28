@@ -1,13 +1,13 @@
 use crate::models::{AppState, MessageDirection};
 use crate::ui::{
-    accent_style, border_style, border_type, dimmed_style, highlight_style,
-    info_style, primary_style,
+    accent_style, border_style, dimmed_style, highlight_style, info_style,
+    primary_style,
 };
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, BorderType, Borders, Paragraph},
 };
 
 /// Render the private-message chat box: title is the conversation partner,
@@ -28,7 +28,7 @@ pub fn render_chat_pane(
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(border_style(true))
-        .border_type(border_type(true))
+        .border_type(BorderType::Rounded)
         .title(title);
     let inner = block.inner(area);
     frame.render_widget(block, area);

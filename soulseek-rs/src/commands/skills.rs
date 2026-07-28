@@ -4,6 +4,7 @@
 //! inside it and is written out on demand. Installing over an older copy is
 //! what updating means, which is why there is no separate verb for it.
 
+use super::{unwritable, xdg};
 use crate::cli::{SkillsArgs, SkillsCommand};
 use crate::output::{CliError, CliResult, Out, SkillRecord};
 use directories::UserDirs;
@@ -122,7 +123,7 @@ fn targets(args: &SkillsArgs) -> CliResult<Vec<Target>> {
             )
         })?;
 
-    let found = detected(&home, &config_home(&home));
+    let found = detected(&home, &xdg("XDG_CONFIG_HOME", &home, ".config"));
     if found.is_empty() {
         return Err(CliError::no_results(
             "no coding agent found in your home directory; name a skills \
@@ -149,15 +150,6 @@ fn detected(home: &Path, config_home: &Path) -> Vec<Target> {
     .collect()
 }
 
-/// Where an agent keeps its own configuration, which is the XDG location on
-/// every platform — unlike this client's config, which follows each platform's
-/// own convention (see `persist::paths`).
-fn config_home(home: &Path) -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|dir| !dir.is_empty())
-        .map_or_else(|| home.join(".config"), PathBuf::from)
-}
-
 fn current(file: &Path) -> bool {
     std::fs::read_to_string(file).is_ok_and(|found| found == SKILL)
 }
@@ -165,10 +157,6 @@ fn current(file: &Path) -> bool {
 fn ours(file: &Path) -> bool {
     std::fs::read_to_string(file)
         .is_ok_and(|found| found.contains(FRONTMATTER_NAME))
-}
-
-fn unwritable(path: &Path, error: &std::io::Error) -> CliError {
-    CliError::usage(format!("cannot write {}: {error}", path.display()))
 }
 
 #[cfg(test)]

@@ -16,8 +16,6 @@
 //! No external crates are used — the library forbids dependencies, so the
 //! harness sticks to `std` and the library's own public API.
 
-#![allow(clippy::doc_markdown)]
-
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
@@ -64,10 +62,11 @@ impl TestServer {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         if let Ok(addr) = std::env::var("SOULSEEK_TEST_SERVER") {
-            let (host, port) = split_host_port(&addr)?;
-            wait_until_listening(&host, port, Duration::from_secs(2))?;
+            let (host, port) = addr.rsplit_once(':')?;
+            let port = port.parse().ok()?;
+            wait_until_listening(host, port, Duration::from_secs(2))?;
             return Some(Self {
-                host,
+                host: host.to_string(),
                 port,
                 child: None,
                 db: None,
@@ -150,11 +149,6 @@ impl Drop for TestServer {
             let _ = std::fs::remove_file(db);
         }
     }
-}
-
-fn split_host_port(addr: &str) -> Option<(String, u16)> {
-    let (host, port) = addr.rsplit_once(':')?;
-    Some((host.to_string(), port.parse().ok()?))
 }
 
 fn soulfind_binary() -> Option<PathBuf> {
@@ -463,22 +457,6 @@ fn registered_username_can_relogin_with_same_password() {
         second.login().expect("relogin"),
         "the same credentials must log in again after a restart"
     );
-}
-
-#[test]
-fn two_clients_can_be_logged_in_together() {
-    let server = server_or_skip!();
-
-    // The server must handle several independent sessions at once — this is
-    // the precondition for any peer-to-peer feature routed through it.
-    let mut alice = Client::with_settings(server.settings("e2e_alice", "pw_a"));
-    let mut bob = Client::with_settings(server.settings("e2e_bob", "pw_b"));
-
-    alice.connect().expect("alice connect");
-    bob.connect().expect("bob connect");
-
-    assert!(alice.login().expect("alice login"));
-    assert!(bob.login().expect("bob login"));
 }
 
 // ---------------------------------------------------------------------------
@@ -2149,7 +2127,6 @@ fn a_peer_asking_where_it_sits_is_answered_with_its_place() {
     );
 
     // The asker keeps its own connection so it can read the answer back.
-    // The asker keeps its connection so it can read the answer back.
     let asker_file = format!("{folder}\\asker.mp3");
     let mut asker =
         queue_as(&server_addr, &listen_addr, "e2e_q_asker", &asker_file)

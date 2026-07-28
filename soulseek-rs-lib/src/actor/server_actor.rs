@@ -31,8 +31,8 @@ use crate::types::{
 };
 use crate::utils::lock::RwLockExt;
 
-use std::io::{self, Error, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::io::{self, Write};
+use std::net::TcpStream;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -109,17 +109,6 @@ impl UserMessage {
             new_message,
         }
     }
-    pub fn print(&self) {
-        debug!(
-            "Timestamp: {}. User: {}, Id: #{}, New message: {} Message: {}",
-            self.timestamp,
-            self.username,
-            self.id,
-            self.new_message,
-            self.message
-        );
-    }
-
     /// The server-assigned id of this message (used to acknowledge it).
     #[must_use]
     pub const fn id(&self) -> u32 {
@@ -320,60 +309,23 @@ impl ServerActor {
         self.session = session;
     }
 
-    #[must_use]
-    pub const fn get_address(&self) -> &PeerAddress {
-        &self.address
-    }
-
-    #[must_use]
-    pub const fn get_sender(&self) -> Option<&Sender<ServerMessage>> {
-        self.dispatcher_sender.as_ref()
-    }
-
-    fn initiate_connection(&mut self) -> bool {
-        let host = self.address.host.clone();
-        let port = self.address.port;
-
-        let addr_str = format!("{host}:{port}");
-
-        let mut socket_addrs = match addr_str.to_socket_addrs() {
-            Ok(addrs) => addrs,
-            Err(e) => {
-                error!("[server] Failed to resolve address: {}", e);
-
-                self.disconnect_with_error(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    e,
-                ));
-                return false;
-            }
-        };
-
-        let socket_addr = socket_addrs.next();
-
-        let Some(addr) = socket_addr else {
-            let error_msg =
-                format!("No socket addresses found for {host}:{port}");
-            error!("[server] {}", error_msg);
-            self.disconnect_with_error(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                error_msg,
-            ));
-            return false;
-        };
-
-        let stream = match TcpStream::connect(addr) {
+    fn initiate_connection(&mut self) {
+        let stream = match TcpStream::connect((
+            self.address.host.as_str(),
+            self.address.port,
+        )) {
             Ok(s) => s,
             Err(e) => {
-                self.disconnect_with_error(e);
-                return false;
+                error!("[server] Failed to connect to {}: {}", self.address, e);
+                self.disconnect_with_error();
+                return;
             }
         };
 
         if let Err(e) = stream.set_nonblocking(true) {
             error!("[server] Failed to set non-blocking: {}", e);
-            self.disconnect_with_error(e);
-            return false;
+            self.disconnect_with_error();
+            return;
         }
         stream.set_nodelay(true).ok();
 
@@ -381,7 +333,6 @@ impl ServerActor {
         self.connection_state = ConnectionState::Connecting {
             since: Instant::now(),
         };
-        true
     }
 
     pub fn set_self_handle(&mut self, handle: ActorHandle<ServerMessage>) {
@@ -436,13 +387,7 @@ impl ServerActor {
         let messages: Vec<ServerMessage> = self
             .dispatcher_receiver
             .as_ref()
-            .map_or_else(Vec::new, |receiver| {
-                let mut msgs = Vec::new();
-                while let Ok(msg) = receiver.try_recv() {
-                    msgs.push(msg);
-                }
-                msgs
-            });
+            .map_or_else(Vec::new, |receiver| receiver.try_iter().collect());
 
         for msg in &messages {
             self.handle_message(msg.clone());
@@ -783,7 +728,7 @@ impl ServerActor {
                         e,
                         e.kind()
                     );
-                    self.disconnect_with_error(e);
+                    self.disconnect_with_error();
                     return;
                 }
             }
@@ -818,7 +763,7 @@ impl ServerActor {
                         "[server] Error extracting message: {}. Disconnecting.",
                         e
                     );
-                    self.disconnect_with_error(e);
+                    self.disconnect_with_error();
                     return;
                 }
                 Ok(None) => {
@@ -871,13 +816,13 @@ impl ServerActor {
 
         if let Err(e) = stream.write_all(&message.get_buffer()) {
             error!("[server] Error writing message: {}. Disconnecting.", e);
-            self.disconnect_with_error(e);
+            self.disconnect_with_error();
             return;
         }
 
         if let Err(e) = stream.flush() {
             error!("[server] Error flushing stream: {}. Disconnecting.", e);
-            self.disconnect_with_error(e);
+            self.disconnect_with_error();
         }
     }
 
@@ -893,7 +838,7 @@ impl ServerActor {
         self.disconnect();
     }
 
-    fn disconnect_with_error(&mut self, _error: Error) {
+    fn disconnect_with_error(&mut self) {
         debug!("[server] disconnect");
 
         // Losing an established connection ends the session: nothing reconnects
@@ -919,10 +864,7 @@ impl ServerActor {
 
         if since.elapsed() > Duration::from_secs(20) {
             error!("[server] Connection timeout after 20 seconds");
-            self.disconnect_with_error(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "Connection timeout",
-            ));
+            self.disconnect_with_error();
             return;
         }
 
@@ -938,16 +880,12 @@ impl ServerActor {
             Err(ref e) if e.kind() == io::ErrorKind::NotConnected => {}
             Err(e) => {
                 error!("[server] Connection failed: {}", e);
-                self.disconnect_with_error(e);
+                self.disconnect_with_error();
             }
         }
     }
 
     fn on_connection_established(&mut self) {
-        let Some(_) = self.stream else {
-            panic!("Stream should be available here")
-        };
-
         self.initialize_dispatcher();
 
         let queued = std::mem::take(&mut self.queued_messages);

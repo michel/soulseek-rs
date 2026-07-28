@@ -332,48 +332,42 @@ const fn raise_open_file_limit() -> std::io::Result<u64> {
 /// afterwards is a poor first experience. stdout stays empty either way, so
 /// `daemon` still composes in a pipeline.
 fn ready(ctx: &Ctx, bind: Option<&str>, token: &str) {
-    ctx.out.status("");
-    ctx.out.status("ready — leave this running.");
-    ctx.out.status("");
-    ctx.out
-        .status("  On this machine, nothing else to do. Other commands find");
-    ctx.out
-        .status("  it on their own and share this one login:");
-    ctx.out.status("");
-    ctx.out.status("      soulseek-rs search 'aphex twin'");
-    ctx.out
-        .status("      soulseek-rs                       (the TUI attaches)");
-    ctx.out.status("      soulseek-rs daemon status");
-    ctx.out.status("      soulseek-rs daemon stop");
-    ctx.out.status("");
+    const BANNER: &str = "
+ready — leave this running.
+
+  On this machine, nothing else to do. Other commands find
+  it on their own and share this one login:
+
+      soulseek-rs search 'aphex twin'
+      soulseek-rs                       (the TUI attaches)
+      soulseek-rs daemon status
+      soulseek-rs daemon stop
+";
+    const LOCAL_ONLY: &str =
+        "  To drive it from another machine, restart with --bind ADDR;
+  `soulseek-rs daemon token` prints the secret it needs.
+";
+
+    ctx.out.status(BANNER);
 
     let Some(address) = bind else {
-        ctx.out.status(
-            "  To drive it from another machine, restart with --bind ADDR;",
-        );
-        ctx.out
-            .status("  `soulseek-rs daemon token` prints the secret it needs.");
-        ctx.out.status("");
+        ctx.out.status(LOCAL_ONLY);
         return;
     };
 
     ctx.out.status(&format!(
-        "  From another machine, point a client at {address} with"
+        "  From another machine, point a client at {address} with
+  this token:
+
+      {token}
+
+      soulseek-rs config set daemon <this-host>:PORT
+      soulseek-rs config set daemon_token <token above>
+
+  That port has no encryption. Keep it off the open internet and \
+         reach it over SSH instead.
+"
     ));
-    ctx.out.status("  this token:");
-    ctx.out.status("");
-    ctx.out.status(&format!("      {token}"));
-    ctx.out.status("");
-    ctx.out
-        .status("      soulseek-rs config set daemon <this-host>:PORT");
-    ctx.out
-        .status("      soulseek-rs config set daemon_token <token above>");
-    ctx.out.status("");
-    ctx.out.status(
-        "  That port has no encryption. Keep it off the open internet and \
-         reach it over SSH instead.",
-    );
-    ctx.out.status("");
 }
 
 /// Remove the socket file so the next start does not have to reason about

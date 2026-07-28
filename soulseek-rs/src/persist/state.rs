@@ -1,20 +1,19 @@
 //! Versioned JSON state files (downloads, search queries, open rooms,
 //! private-message history).
 //!
-//! Each file is an envelope `{ "version": N, "data": ... }`. On load the
-//! data passes through the migration chain from its stored version up to
-//! current. State is disposable: a missing, corrupt, or newer-than-known
-//! file loads as empty rather than failing startup. Writes are atomic
-//! (tmp file + rename) so a crash never leaves a torn file.
+//! Each file is an envelope `{ "version": N, "data": ... }`. State is
+//! disposable: a missing, corrupt, or newer-than-known file loads as empty
+//! rather than failing startup. Writes are atomic (tmp file + rename) so a
+//! crash never leaves a torn file.
 
 use color_eyre::Result;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-/// A migration takes the `data` value at version `i` and returns it at
-/// version `i + 1`.
-type Migration = fn(Value) -> Value;
+/// The shape every file is written in today. Bump it — and convert the older
+/// shapes in `load` — when one of them changes.
+const VERSION: u32 = 0;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct PersistedDownload {
@@ -45,86 +44,59 @@ impl StateStore {
         Self { dir }
     }
 
+    #[must_use]
     pub fn load_downloads(&self) -> Vec<PersistedDownload> {
-        load(&self.dir.join("downloads.json"), DOWNLOADS_MIGRATIONS)
+        load(&self.dir.join("downloads.json"))
     }
 
     pub fn save_downloads(
         &self,
         downloads: &[PersistedDownload],
     ) -> Result<()> {
-        save(
-            &self.dir.join("downloads.json"),
-            DOWNLOADS_MIGRATIONS.len() as u32,
-            &downloads,
-        )
+        save(&self.dir.join("downloads.json"), VERSION, &downloads)
     }
 
+    #[must_use]
     pub fn load_search_queries(&self) -> Vec<String> {
-        load(&self.dir.join("searches.json"), SEARCHES_MIGRATIONS)
+        load(&self.dir.join("searches.json"))
     }
 
     pub fn save_search_queries(&self, queries: &[String]) -> Result<()> {
-        save(
-            &self.dir.join("searches.json"),
-            SEARCHES_MIGRATIONS.len() as u32,
-            &queries,
-        )
+        save(&self.dir.join("searches.json"), VERSION, &queries)
     }
 
+    #[must_use]
     pub fn load_rooms(&self) -> Vec<String> {
-        load(&self.dir.join("rooms.json"), ROOMS_MIGRATIONS)
+        load(&self.dir.join("rooms.json"))
     }
 
     pub fn save_rooms(&self, rooms: &[String]) -> Result<()> {
-        save(
-            &self.dir.join("rooms.json"),
-            ROOMS_MIGRATIONS.len() as u32,
-            &rooms,
-        )
+        save(&self.dir.join("rooms.json"), VERSION, &rooms)
     }
 
+    #[must_use]
     pub fn load_messages(&self) -> Vec<PersistedMessage> {
-        load(&self.dir.join("messages.json"), MESSAGES_MIGRATIONS)
+        load(&self.dir.join("messages.json"))
     }
 
     pub fn save_messages(&self, messages: &[PersistedMessage]) -> Result<()> {
-        save(
-            &self.dir.join("messages.json"),
-            MESSAGES_MIGRATIONS.len() as u32,
-            &messages,
-        )
+        save(&self.dir.join("messages.json"), VERSION, &messages)
     }
 
     /// The unread private-message count, so the badge survives a restart.
+    #[must_use]
     pub fn load_unread(&self) -> usize {
-        load(&self.dir.join("unread.json"), UNREAD_MIGRATIONS)
+        load(&self.dir.join("unread.json"))
     }
 
     pub fn save_unread(&self, unread: usize) -> Result<()> {
-        save(
-            &self.dir.join("unread.json"),
-            UNREAD_MIGRATIONS.len() as u32,
-            &unread,
-        )
+        save(&self.dir.join("unread.json"), VERSION, &unread)
     }
 }
 
-/// Per-file migration chains. `data` at version `i` is upgraded by
-/// `MIGRATIONS[i]`; the current version is the chain length. All formats
-/// are at version 0 today — add a fn here when the schema changes.
-const DOWNLOADS_MIGRATIONS: &[Migration] = &[];
-const SEARCHES_MIGRATIONS: &[Migration] = &[];
-const ROOMS_MIGRATIONS: &[Migration] = &[];
-const MESSAGES_MIGRATIONS: &[Migration] = &[];
-const UNREAD_MIGRATIONS: &[Migration] = &[];
-
-/// Load `data` from an envelope file, migrating old versions forward.
-/// Missing, corrupt, or newer-than-known files all yield `T::default()`.
-fn load<T: DeserializeOwned + Default>(
-    path: &Path,
-    migrations: &[Migration],
-) -> T {
+/// Load `data` from an envelope file. Missing, corrupt, or newer-than-known
+/// files all yield `T::default()`.
+fn load<T: DeserializeOwned + Default>(path: &Path) -> T {
     let Ok(text) = std::fs::read_to_string(path) else {
         return T::default();
     };
@@ -135,15 +107,12 @@ fn load<T: DeserializeOwned + Default>(
     let version = envelope
         .get("version")
         .and_then(Value::as_u64)
-        .unwrap_or(u64::MAX) as usize;
-    if version > migrations.len() {
+        .unwrap_or(u64::MAX);
+    if version > u64::from(VERSION) {
         set_aside(path, "from a newer version");
         return T::default();
     }
-    let mut data = envelope.get("data").cloned().unwrap_or(Value::Null);
-    for migration in &migrations[version..] {
-        data = migration(data);
-    }
+    let data = envelope.get("data").cloned().unwrap_or(Value::Null);
     serde_json::from_value(data).unwrap_or_else(|_| {
         set_aside(path, "unreadable");
         T::default()
@@ -295,34 +264,6 @@ mod tests {
         assert_eq!(store.load_rooms(), Vec::<String>::new());
         assert!(!path.exists());
         assert!(path.with_extension("json.bak").exists());
-    }
-
-    #[test]
-    fn migrations_upgrade_old_data() {
-        // Machinery test with a synthetic chain: v0 stored plain strings,
-        // v1 wraps each in an object {"name": ...}.
-        #[derive(Debug, PartialEq, Default, Serialize, serde::Deserialize)]
-        struct Named {
-            name: String,
-        }
-        let chain: &[Migration] = &[|data| {
-            Value::Array(
-                data.as_array()
-                    .cloned()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|s| serde_json::json!({ "name": s }))
-                    .collect(),
-            )
-        }];
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("things.json");
-        std::fs::write(&path, r#"{"version": 0, "data": ["a", "b"]}"#).unwrap();
-        let loaded: Vec<Named> = load(&path, chain);
-        assert_eq!(
-            loaded,
-            vec![Named { name: "a".into() }, Named { name: "b".into() }]
-        );
     }
 
     #[test]

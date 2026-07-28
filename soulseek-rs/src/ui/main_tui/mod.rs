@@ -23,8 +23,6 @@ pub struct MainTui {
     client: Arc<dyn SessionApi>,
     state: AppState,
     download_dir: String,
-    #[allow(dead_code)]
-    max_concurrent_downloads: usize,
     search_timeout: Duration,
     spinner_state: usize,
     store: Option<StateStore>,
@@ -39,7 +37,6 @@ impl MainTui {
     pub fn new(
         client: Arc<dyn SessionApi>,
         download_dir: String,
-        max_concurrent_downloads: usize,
         search_timeout: Duration,
         store: Option<StateStore>,
         config_path: Option<std::path::PathBuf>,
@@ -48,7 +45,6 @@ impl MainTui {
             client,
             state: AppState::new(),
             download_dir,
-            max_concurrent_downloads,
             search_timeout,
             spinner_state: 0,
             store,
@@ -256,19 +252,12 @@ pub fn launch_main_tui(
     terminal: DefaultTerminal,
     client: Arc<dyn SessionApi>,
     download_dir: String,
-    max_concurrent_downloads: usize,
     search_timeout: Duration,
     store: Option<StateStore>,
     config_path: Option<std::path::PathBuf>,
 ) -> Result<()> {
-    let tui = MainTui::new(
-        client,
-        download_dir,
-        max_concurrent_downloads,
-        search_timeout,
-        store,
-        config_path,
-    );
+    let tui =
+        MainTui::new(client, download_dir, search_timeout, store, config_path);
     tui.run(terminal)
 }
 
@@ -526,7 +515,6 @@ mod tests {
         MainTui::new(
             Arc::new(session),
             "/tmp".to_string(),
-            1,
             Duration::from_secs(1),
             None,
             None,
@@ -746,7 +734,6 @@ mod tests {
         let mut tui = MainTui::new(
             session.clone(),
             "/daemon/old".to_string(),
-            1,
             Duration::from_secs(1),
             None,
             Some(config_path.clone()),
@@ -803,7 +790,6 @@ mod tests {
         let mut tui = MainTui::new(
             session.clone(),
             "/tmp".to_string(),
-            1,
             Duration::from_secs(1),
             None,
             Some(config_path),

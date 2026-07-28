@@ -193,16 +193,14 @@ const BROWSE_PATIENCE: Duration = Duration::from_mins(2);
 /// `take_browse_result` is per-user and destructive, so the daemon has to know
 /// who to ask about.
 #[derive(Default)]
-pub struct PendingBrowses(Mutex<Vec<(String, Instant)>>);
+pub struct PendingBrowses(Mutex<HashMap<String, Instant>>);
 
 impl PendingBrowses {
     pub fn expect(&self, username: &str) {
-        let Ok(mut pending) = self.0.lock() else {
-            return;
-        };
-        // Asking again restarts the clock: it is a fresh request.
-        pending.retain(|(name, _)| name != username);
-        pending.push((username.to_string(), Instant::now()));
+        if let Ok(mut pending) = self.0.lock() {
+            // Asking again restarts the clock: it is a fresh request.
+            pending.insert(username.to_string(), Instant::now());
+        }
     }
 
     /// Who to ask about this tick, forgetting the ones that have run out of
@@ -211,15 +209,15 @@ impl PendingBrowses {
         let Ok(mut pending) = self.0.lock() else {
             return Vec::new();
         };
-        pending.retain(|(_, asked)| asked.elapsed() < BROWSE_PATIENCE);
-        pending.iter().map(|(name, _)| name.clone()).collect()
+        pending.retain(|_, asked| asked.elapsed() < BROWSE_PATIENCE);
+        pending.keys().cloned().collect()
     }
 
     /// Stop waiting on a peer — because it answered, or because its request
     /// never reached the wire.
     pub fn forget(&self, username: &str) {
         if let Ok(mut pending) = self.0.lock() {
-            pending.retain(|(name, _)| name != username);
+            pending.remove(username);
         }
     }
 }
@@ -511,8 +509,10 @@ mod tests {
         let asked = Instant::now()
             .checked_sub(BROWSE_PATIENCE + Duration::from_secs(1))
             .expect("the clock is past the epoch");
-        let pending =
-            PendingBrowses(Mutex::new(vec![("ghost".to_string(), asked)]));
+        let pending = PendingBrowses(Mutex::new(HashMap::from([(
+            "ghost".to_string(),
+            asked,
+        )])));
         assert!(pending.snapshot().is_empty());
     }
 }

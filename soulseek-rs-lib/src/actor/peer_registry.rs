@@ -146,28 +146,6 @@ impl PeerRegistry {
     }
 
     #[must_use]
-    pub fn get_all_usernames(&self) -> Vec<String> {
-        match self.peers.lock_safe() {
-            Ok(peers) => peers.keys().cloned().collect(),
-            Err(e) => {
-                error!("[peer_registry] get_all_usernames: {}", e);
-                Vec::new()
-            }
-        }
-    }
-
-    #[must_use]
-    pub fn count(&self) -> usize {
-        match self.peers.lock_safe() {
-            Ok(peers) => peers.len(),
-            Err(e) => {
-                error!("[peer_registry] count: {}", e);
-                0
-            }
-        }
-    }
-
-    #[must_use]
     pub fn contains(&self, username: &str) -> bool {
         match self.peers.lock_safe() {
             Ok(peers) => peers.contains_key(username),

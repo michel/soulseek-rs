@@ -17,18 +17,6 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-const COMMAND_BAR_PREFIX: &str = "search: ";
-const MESSAGE_BAR_PREFIX: &str = "message (to: recipient text): ";
-const BROWSE_BAR_PREFIX: &str = "browse user: ";
-
-const fn command_bar_prefix(mode: CommandBarMode) -> &'static str {
-    match mode {
-        CommandBarMode::Search => COMMAND_BAR_PREFIX,
-        CommandBarMode::Message => MESSAGE_BAR_PREFIX,
-        CommandBarMode::Browse => BROWSE_BAR_PREFIX,
-    }
-}
-
 impl MainTui {
     pub(super) fn render(&mut self, frame: &mut Frame) {
         let mut constraints = vec![
@@ -458,7 +446,11 @@ impl MainTui {
     }
 
     fn render_command_bar(&self, frame: &mut Frame, area: Rect) {
-        let prefix = command_bar_prefix(self.state.command_bar_mode);
+        let prefix = match self.state.command_bar_mode {
+            CommandBarMode::Search => "search: ",
+            CommandBarMode::Message => "message (to: recipient text): ",
+            CommandBarMode::Browse => "browse user: ",
+        };
         let block = pane_block(true);
         // Derive from the block's inner rect so borders and padding stay in
         // one place; the cursor follows whatever the pane reserves.

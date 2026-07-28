@@ -102,17 +102,13 @@ impl MainTui {
         self.state.results_is_filtering = false;
     }
 
-    fn recompute_results_filter(&mut self) {
+    pub(super) fn apply_filter(&mut self) {
         let (items, indices) = filter_results(
             &self.state.results_items,
             &self.state.results_filter_query,
         );
         self.state.results_filtered_items = items;
         self.state.results_filtered_indices = indices;
-    }
-
-    pub(super) fn apply_filter(&mut self) {
-        self.recompute_results_filter();
         if !self.state.results_filtered_items.is_empty() {
             self.state.results_table_state.select(Some(0));
         }

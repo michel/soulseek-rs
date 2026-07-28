@@ -68,20 +68,11 @@ pub fn run(ctx: &Ctx, store: &Store, args: &WishRunArgs) -> CliResult {
 /// How to narrow and order what a sweep prints — the parts of `wish run`'s flags
 /// that outlive the command, so `serve --wishlist` can sweep without inventing
 /// a set of command-line arguments it never received.
+#[derive(Default)]
 struct Sweep {
     filter: transfer::Filter,
     sort: SortKey,
     limit: usize,
-}
-
-impl Default for Sweep {
-    fn default() -> Self {
-        Self {
-            filter: transfer::Filter::default(),
-            sort: SortKey::Best,
-            limit: 0,
-        }
-    }
 }
 
 impl From<&WishRunArgs> for Sweep {

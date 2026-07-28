@@ -13,10 +13,7 @@ use crate::{
     actor::{ActorSystem, peer_registry::PeerRegistry},
     error::{Result, SoulseekRs},
     message::peer::{FileEntry, SharedDirectory, build_file_search_response},
-    peer::{
-        ConnectionType, DownloadPeer, NewPeer, Peer, PeerMessage,
-        listen::Listen,
-    },
+    peer::{ConnectionType, DownloadPeer, Peer, PeerMessage, listen::Listen},
     shares::Shares,
     types::{Download, Search, SearchResult},
     utils::{lock::RwLockExt, md5},
@@ -25,14 +22,11 @@ use std::{
     collections::{HashMap, HashSet},
     net::TcpStream,
     sync::{
-        RwLock,
+        Arc, RwLock,
         atomic::{AtomicBool, AtomicU32, Ordering},
-        mpsc::{Receiver, Sender},
+        mpsc::{self, Receiver, Sender},
     },
     thread::{self, sleep},
-};
-use std::{
-    sync::{Arc, mpsc},
     time::{Duration, Instant},
 };
 use upload_queue::QueuedUpload;
@@ -213,11 +207,9 @@ impl Default for ClientSettings {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ClientOperation {
-    NewPeer(NewPeer),
     ConnectToPeer(Peer),
     SearchResult(SearchResult),
     PeerDisconnected(u64, String, Option<SoulseekRs>),
-    PierceFireWall(Peer),
     DownloadFromPeer(u32, Peer, bool),
     UpdateDownloadTokens(Transfer, String),
     GetPeerAddressResponse {
@@ -298,7 +290,6 @@ pub enum ClientOperation {
 pub struct ClientContext {
     pub peer_registry: Option<PeerRegistry>,
     pub downloads: DownloadStore,
-    sender: Option<Sender<ClientOperation>>,
     server_sender: Option<Sender<ServerMessage>>,
     searches: HashMap<String, Search>,
     private_messages: Vec<UserMessage>,
@@ -376,13 +367,6 @@ impl ClientContext {
     ) -> Option<&mut Download> {
         self.downloads.get_by_token_mut(token)
     }
-    pub fn get_download_by_file_mut(
-        &mut self,
-        username: &str,
-        filename: &str,
-    ) -> Option<&mut Download> {
-        self.downloads.get_by_file_mut(username, filename)
-    }
     #[must_use]
     pub fn get_download_tokens(&self) -> Vec<u32> {
         self.downloads.tokens()
@@ -398,13 +382,6 @@ impl ClientContext {
     ) {
         self.downloads.update_status(token, status);
     }
-    pub fn remove_queued_download_by_file(
-        &mut self,
-        username: &str,
-        filename: &str,
-    ) -> bool {
-        self.downloads.remove_queued_by_file(username, filename)
-    }
 }
 
 impl ClientContext {
@@ -414,7 +391,6 @@ impl ClientContext {
 
         Self {
             peer_registry: None,
-            sender: None,
             server_sender: None,
             searches: HashMap::new(),
             private_messages: Vec::new(),

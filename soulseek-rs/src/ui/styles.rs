@@ -1,5 +1,4 @@
 // Reusable styles and colors for consistent UI appearance
-#![allow(dead_code)]
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -103,27 +102,11 @@ pub fn unfocused_border_style() -> Style {
     Style::default().fg(DUST)
 }
 
-pub const fn focused_border_type() -> BorderType {
-    BorderType::Rounded
-}
-
-pub const fn unfocused_border_type() -> BorderType {
-    BorderType::Rounded
-}
-
 pub fn border_style(focused: bool) -> Style {
     if focused {
         focused_border_style()
     } else {
         unfocused_border_style()
-    }
-}
-
-pub const fn border_type(focused: bool) -> BorderType {
-    if focused {
-        focused_border_type()
-    } else {
-        unfocused_border_type()
     }
 }
 
@@ -159,7 +142,7 @@ pub fn pane_block(focused: bool) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .border_style(border_style(focused))
-        .border_type(border_type(focused))
+        .border_type(BorderType::Rounded)
         .padding(PANE_PADDING)
 }
 

@@ -47,8 +47,6 @@ impl Client {
             .and_then(|ctx| ctx.own_privileges)
     }
 
-    /// How many uploads run at once. Lowering it does not interrupt transfers
-    /// already in flight; the queue simply refills more slowly.
     /// Queued-upload states recorded since the last call, for a caller that
     /// samples [`Client::uploads`] and would otherwise miss a peer that queued
     /// and was served between two samples.
@@ -60,6 +58,8 @@ impl Client {
             .unwrap_or_default()
     }
 
+    /// How many uploads run at once. Lowering it does not interrupt transfers
+    /// already in flight; the queue simply refills more slowly.
     pub fn set_upload_slots(&self, slots: usize) {
         if let Ok(mut ctx) = self.context.write_safe() {
             ctx.upload_slots = slots.max(1);

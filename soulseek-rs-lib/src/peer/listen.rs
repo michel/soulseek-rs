@@ -77,16 +77,6 @@ fn parse_peer_init_message(mut message: Message) -> Option<PeerInitData> {
     })
 }
 
-fn parse_token_from_buffer(buffer: &[u8], username: &str) -> Option<u32> {
-    let token_bytes = buffer.get(0..4)?;
-    let token = u32::from_le_bytes(
-        token_bytes
-            .try_into()
-            .unwrap_or_else(|_| panic!("[listener:{username}] slice with incorrect length, can't extract transfer_token")),
-    );
-    Some(token)
-}
-
 fn extract_download_from_buffer(
     reader: &mut MessageReader,
     client_context: &Arc<RwLock<ClientContext>>,
@@ -98,7 +88,7 @@ fn extract_download_from_buffer(
         return None;
     }
     let buffer = reader.get_buffer();
-    let token = parse_token_from_buffer(&buffer, username)?;
+    let token = u32::from_le_bytes(buffer.get(0..4)?.try_into().ok()?);
     trace!(
         "[listener:{}] got transfer_token: {} from data chunk",
         username, token
@@ -129,8 +119,6 @@ fn handle_peer_connection(
     stream: TcpStream,
     reader: MessageReader,
     context: &ConnectionContext,
-    _peer_ip: &str,
-    _peer_port: u16,
 ) {
     // The peer actor multiplexes socket reads with its mailbox on a single
     // thread: `tick()` reads the socket, but outgoing messages (e.g. a queued
@@ -283,7 +271,7 @@ fn handle_pierce_firewall(
         0,
         0,
     );
-    handle_peer_connection(peer, stream, reader, context, peer_ip, peer_port);
+    handle_peer_connection(peer, stream, reader, context);
 
     // Inbound peers don't self-announce, so nudge the client to flush any
     // downloads queued for this now-connected peer.
@@ -292,7 +280,10 @@ fn handle_pierce_firewall(
         .send(ClientOperation::PeerConnected(username));
 }
 
-fn handle_incoming_connection(stream: TcpStream, context: ConnectionContext) {
+fn handle_incoming_connection(
+    mut stream: TcpStream,
+    context: ConnectionContext,
+) {
     let Ok(peer_addr) = stream.peer_addr() else {
         error!("[listener] failed to get peer address");
         return;
@@ -300,7 +291,6 @@ fn handle_incoming_connection(stream: TcpStream, context: ConnectionContext) {
 
     let peer_ip = peer_addr.ip().to_string();
     let peer_port = peer_addr.port();
-    let mut stream = stream;
     let mut reader = MessageReader::new();
 
     // A peer that dials and then goes away is routine, not an error.
@@ -337,7 +327,6 @@ fn handle_incoming_connection(stream: TcpStream, context: ConnectionContext) {
 
     let peer = Peer::new(
         format!("{}:direct", init_data.username),
-        // init_data.username.clone(),
         init_data.connection_type.clone(),
         peer_ip.clone(),
         peer_port.into(),
@@ -348,9 +337,9 @@ fn handle_incoming_connection(stream: TcpStream, context: ConnectionContext) {
     );
 
     match init_data.connection_type {
-        ConnectionType::P => handle_peer_connection(
-            peer, stream, reader, &context, &peer_ip, peer_port,
-        ),
+        ConnectionType::P => {
+            handle_peer_connection(peer, stream, reader, &context);
+        }
 
         ConnectionType::F => handle_file_connection(
             peer,

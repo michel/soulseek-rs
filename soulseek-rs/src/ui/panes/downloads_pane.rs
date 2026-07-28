@@ -56,7 +56,16 @@ pub fn render_downloads_pane(
 
             let progress_text = match &download.status {
                 DownloadStatus::Queued => "Queued".to_string(),
-                DownloadStatus::InProgress { .. } => {
+                DownloadStatus::InProgress { .. }
+                | DownloadStatus::Paused { .. } => {
+                    let prefix = if matches!(
+                        download.status,
+                        DownloadStatus::Paused { .. }
+                    ) {
+                        "Paused "
+                    } else {
+                        ""
+                    };
                     let percent = if download.size > 0 {
                         (download.bytes_downloaded() as f64
                             / download.size as f64
@@ -65,22 +74,7 @@ pub fn render_downloads_pane(
                         0
                     };
                     format!(
-                        "{}/{} ({}%)",
-                        format_bytes(download.bytes_downloaded()),
-                        format_bytes(download.size),
-                        percent
-                    )
-                }
-                DownloadStatus::Paused { .. } => {
-                    let percent = if download.size > 0 {
-                        (download.bytes_downloaded() as f64
-                            / download.size as f64
-                            * 100.0) as u8
-                    } else {
-                        0
-                    };
-                    format!(
-                        "Paused {}/{} ({}%)",
+                        "{prefix}{}/{} ({}%)",
                         format_bytes(download.bytes_downloaded()),
                         format_bytes(download.size),
                         percent

@@ -137,14 +137,6 @@ impl MessageFactory {
             .write_int32(port.into())
             .clone()
     }
-    #[must_use]
-    pub fn build_watch_user(token: u32) -> Message {
-        Message::new()
-            .write_raw_bytes([5, 0, 0, 0, 0].to_vec())
-            .write_int32(token)
-            .clone()
-    }
-
     /// Ask the server (code 7) for a user's online status.
     #[must_use]
     pub fn build_get_user_status(username: &str) -> Message {
@@ -277,15 +269,6 @@ fn test_build_get_user_status() {
 fn test_build_get_user_stats() {
     let message = MessageFactory::build_get_user_stats("bob");
     let expect: Vec<u8> = [36, 0, 0, 0, 3, 0, 0, 0, b'b', b'o', b'b'].to_vec();
-    assert_eq!(expect, message.get_data());
-}
-
-#[test]
-fn test_build_watch_user() {
-    let token: u32 = 223;
-    let message = MessageFactory::build_watch_user(token);
-    let expect: Vec<u8> = [5, 0, 0, 0, 0, 223, 0, 0, 0].to_vec();
-
     assert_eq!(expect, message.get_data());
 }
 

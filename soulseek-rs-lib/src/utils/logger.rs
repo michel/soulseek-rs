@@ -87,12 +87,12 @@ fn has_log_file() -> bool {
 pub fn log(level: LogLevel, message: &str) {
     unsafe {
         if level <= LOG_LEVEL {
-            let level_str = match level {
-                LogLevel::Error => "\x1b[31mERROR\x1b[0m", // Red
-                LogLevel::Warn => "\x1b[33mWARN\x1b[0m",   // Yellow
-                LogLevel::Info => "\x1b[32mINFO\x1b[0m",   // Green
-                LogLevel::Debug => "\x1b[34mDEBUG\x1b[0m", // Blue
-                LogLevel::Trace => "\x1b[35mTRACE\x1b[0m", // Magenta
+            let (name, colour) = match level {
+                LogLevel::Error => ("ERROR", "\x1b[31m"), // Red
+                LogLevel::Warn => ("WARN", "\x1b[33m"),   // Yellow
+                LogLevel::Info => ("INFO", "\x1b[32m"),   // Green
+                LogLevel::Debug => ("DEBUG", "\x1b[34m"), // Blue
+                LogLevel::Trace => ("TRACE", "\x1b[35m"), // Magenta
             };
 
             let now = std::time::SystemTime::now();
@@ -149,20 +149,8 @@ pub fn log(level: LogLevel, message: &str) {
             let minutes = (seconds_in_day % 3600) / 60;
             let seconds = seconds_in_day % 60;
 
-            let level_str_plain = match level {
-                LogLevel::Error => "ERROR",
-                LogLevel::Warn => "WARN",
-                LogLevel::Info => "INFO",
-                LogLevel::Debug => "DEBUG",
-                LogLevel::Trace => "TRACE",
-            };
-
-            let formatted_message = format!(
-                "[{year:04}-{month:02}-{day:02} {hours:02}:{minutes:02}:{seconds:02}.{subsec_millis:03}] [{level_str}] {message}"
-            );
-
-            let formatted_message_plain = format!(
-                "[{year:04}-{month:02}-{day:02} {hours:02}:{minutes:02}:{seconds:02}.{subsec_millis:03}] [{level_str_plain}] {message}"
+            let timestamp = format!(
+                "{year:04}-{month:02}-{day:02} {hours:02}:{minutes:02}:{seconds:02}.{subsec_millis:03}"
             );
 
             match choose_sink(BUFFERING.load(Ordering::Relaxed), has_log_file())
@@ -171,17 +159,22 @@ pub fn log(level: LogLevel, message: &str) {
                     if let Ok(mut log_file) = LOG_FILE.lock()
                         && let Some(file) = log_file.as_mut()
                     {
-                        let _ = writeln!(file, "{formatted_message_plain}");
+                        let _ =
+                            writeln!(file, "[{timestamp}] [{name}] {message}");
                         let _ = file.flush();
                     }
                 }
                 LogSink::Buffer => {
                     if let Ok(mut buffer) = BUFFER.lock() {
-                        buffer.push(formatted_message);
+                        buffer.push(format!(
+                            "[{timestamp}] [{colour}{name}\x1b[0m] {message}"
+                        ));
                     }
                 }
                 LogSink::Stderr => {
-                    eprintln!("{formatted_message}");
+                    eprintln!(
+                        "[{timestamp}] [{colour}{name}\x1b[0m] {message}"
+                    );
                 }
             }
         }
@@ -196,56 +189,17 @@ pub fn disable_buffering() {
     BUFFERING.store(false, Ordering::Relaxed);
 }
 
+/// Only lines that were buffered land here, and a line is buffered only when
+/// no log file is configured, so the buffer is always stderr-bound.
 pub fn flush_buffered_logs() {
     disable_buffering();
 
     if let Ok(mut buffer) = BUFFER.lock() {
-        // Write to file if configured, otherwise to stderr
-        if let Ok(mut log_file) = LOG_FILE.lock() {
-            if let Some(file) = log_file.as_mut() {
-                for message in buffer.iter() {
-                    // Strip ANSI codes for file output
-                    let plain_message = strip_ansi_codes(message);
-                    let _ = writeln!(file, "{plain_message}");
-                }
-                let _ = file.flush();
-            } else {
-                for message in buffer.iter() {
-                    eprintln!("{message}");
-                }
-            }
-        } else {
-            // If lock fails, fall back to stderr
-            for message in buffer.iter() {
-                eprintln!("{message}");
-            }
+        for message in buffer.iter() {
+            eprintln!("{message}");
         }
         buffer.clear();
     }
-}
-
-fn strip_ansi_codes(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c == '\x1b' {
-            // Skip ANSI escape sequence
-            if chars.peek() == Some(&'[') {
-                chars.next(); // consume '['
-                while let Some(&ch) = chars.peek() {
-                    chars.next();
-                    if ch.is_ascii_alphabetic() {
-                        break;
-                    }
-                }
-            }
-        } else {
-            result.push(c);
-        }
-    }
-
-    result
 }
 
 #[macro_export]

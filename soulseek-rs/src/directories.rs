@@ -37,7 +37,6 @@ pub fn resolve_shared_directory(
 
 /// Validate several configured share paths; invalid ones are skipped with a
 /// warning instead of aborting (the client just shares less).
-#[cfg_attr(not(test), allow(dead_code))]
 #[must_use]
 pub fn resolve_shared_directories(dirs: &[String]) -> Vec<String> {
     let mut resolved = Vec::new();

@@ -52,7 +52,6 @@ impl Daemon {
     ///
     /// The match is exhaustive over [`Method`], so a new method cannot be added
     /// to the protocol without being implemented here.
-    #[allow(clippy::too_many_lines)]
     pub fn call(
         &self,
         method: Method,

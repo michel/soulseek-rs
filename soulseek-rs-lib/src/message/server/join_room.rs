@@ -33,17 +33,16 @@ impl MessageHandler<ServerMessage> for JoinRoomHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::message::framed;
 
     #[test]
     fn hostile_user_count_does_not_hang() {
         // room="" then user_count=u32::MAX with no usernames: must return
         // promptly instead of looping ~4 billion times.
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut message = Message::new();
-        message.write_raw_bytes(vec![0u8; 8]);
-        message.write_string("");
-        message.write_int32(u32::MAX);
-        message.set_pointer(8);
+        let mut message = framed(|m| {
+            m.write_string("").write_int32(u32::MAX);
+        });
 
         JoinRoomHandler.handle(&mut message, tx);
         match rx.try_recv() {
@@ -57,13 +56,12 @@ mod tests {
     #[test]
     fn forwards_room_and_member_list() {
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut message = Message::new();
-        message.write_raw_bytes(vec![0u8; 8]);
-        message.write_string("nicotine");
-        message.write_int32(2);
-        message.write_string("alice");
-        message.write_string("bob");
-        message.set_pointer(8);
+        let mut message = framed(|m| {
+            m.write_string("nicotine")
+                .write_int32(2)
+                .write_string("alice")
+                .write_string("bob");
+        });
 
         JoinRoomHandler.handle(&mut message, tx);
         match rx.try_recv() {

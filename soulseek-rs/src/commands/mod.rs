@@ -22,6 +22,7 @@ use crate::remote::{Endpoint, RemoteSession};
 use soulseek_rs::types::{RoomEvent, RoomInfo};
 use soulseek_rs::{Client, ClientSettings, SessionLoss};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -223,6 +224,26 @@ fn login(settings: ClientSettings, address: &str) -> CliResult<Client> {
     }
 }
 
+/// Ask `f` every `poll` until it answers or `timeout` runs out.
+///
+/// The library reports what the network sent by handing it over on the next
+/// call, so a command that wants one answer has to keep asking. Checking first
+/// and sleeping after means an answer already waiting costs nothing.
+fn poll_until<T>(
+    timeout: Duration,
+    poll: Duration,
+    mut f: impl FnMut() -> Option<T>,
+) -> Option<T> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if let Some(answer) = f() {
+            return Some(answer);
+        }
+        std::thread::sleep(poll);
+    }
+    None
+}
+
 /// Ask for the room list and wait for the server's reply.
 ///
 /// Events already queued are discarded first: servers push a room list at
@@ -235,21 +256,15 @@ pub fn await_room_list(
     let _ = client.take_room_events();
     client.request_room_list().ok()?;
 
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        let listed =
-            client.take_room_events().into_iter().find_map(
-                |event| match event {
-                    RoomEvent::List(rooms) => Some(rooms),
-                    _ => None,
-                },
-            );
-        if listed.is_some() {
-            return listed;
-        }
-        std::thread::sleep(poll);
-    }
-    None
+    poll_until(timeout, poll, || {
+        client
+            .take_room_events()
+            .into_iter()
+            .find_map(|event| match event {
+                RoomEvent::List(rooms) => Some(rooms),
+                _ => None,
+            })
+    })
 }
 
 /// Wait until the server has answered something we asked for after `send`.
@@ -295,12 +310,10 @@ fn dispatch(ctx: &Ctx, command: Commands) -> CliResult {
         }
         Commands::User(args) => peer::user(ctx, &args),
         Commands::Whoami => peer::whoami(ctx),
-        // These need no account, so main.rs answers them before asking for
-        // credentials; the arms exist only to keep the match exhaustive.
-        Commands::Portmap => portmap(&ctx.out, ctx.settings.listen_port),
-        // These need the config file as well as a session, so main.rs runs
-        // them where the store is in scope.
-        Commands::Serve(_)
+        // main.rs runs these itself: some need no account, the rest need the
+        // config store in scope. The arms only keep the match exhaustive.
+        Commands::Portmap
+        | Commands::Serve(_)
         | Commands::Daemon(_)
         | Commands::Wish(_)
         | Commands::Config(_)
@@ -315,6 +328,19 @@ fn dispatch(ctx: &Ctx, command: Commands) -> CliResult {
 /// `--follow` means "until interrupted": a span nothing will outlive.
 fn listen_span(duration: u64, follow: bool) -> Option<Duration> {
     (!follow).then(|| Duration::from_secs(duration))
+}
+
+/// Where shells and coding agents keep their configuration: the XDG layout on
+/// every platform, unlike this client's own config, which follows each
+/// platform's convention (see `persist::paths`).
+fn xdg(variable: &str, home: &Path, fallback: &str) -> PathBuf {
+    std::env::var_os(variable)
+        .filter(|dir| !dir.is_empty())
+        .map_or_else(|| home.join(fallback), PathBuf::from)
+}
+
+fn unwritable(path: &Path, error: &std::io::Error) -> CliError {
+    CliError::usage(format!("cannot write {}: {error}", path.display()))
 }
 
 /// Probe automatic port mapping. A router that does not answer is a negative

@@ -44,15 +44,7 @@ impl Shares {
         // Fail fast if the root is unreadable; deeper failures are skipped.
         let _ = std::fs::read_dir(root)?;
 
-        let mut files = Vec::new();
-        let mut folder_count = 0;
-        scan_root(
-            root,
-            &root_display_name(root),
-            &mut files,
-            &mut folder_count,
-        );
-        Ok(Self::from_files(files, folder_count))
+        Ok(Self::scan_many(&[root.to_path_buf()]))
     }
 
     /// Scan several roots into one merged index. Unreadable roots are

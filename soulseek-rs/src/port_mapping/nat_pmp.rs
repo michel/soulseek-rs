@@ -52,8 +52,6 @@ impl From<io::Error> for NatPmpError {
 /// a shorter lifetime than requested, so callers must use these values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MapResponse {
-    /// Seconds since the gateway's port table was initialised (reboot detector).
-    pub epoch: u32,
     pub internal_port: u16,
     pub external_port: u16,
     pub lifetime: u32,
@@ -87,12 +85,6 @@ pub fn map_tcp(
         return Err(NatPmpError::ShortResponse);
     }
     Ok(MapResponse {
-        epoch: u32::from_be_bytes([
-            response[4],
-            response[5],
-            response[6],
-            response[7],
-        ]),
         internal_port: u16::from_be_bytes([response[8], response[9]]),
         external_port: u16::from_be_bytes([response[10], response[11]]),
         lifetime: u32::from_be_bytes([
