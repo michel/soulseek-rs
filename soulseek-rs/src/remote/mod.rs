@@ -10,11 +10,12 @@ mod mirror;
 use crate::api::{SessionApi, SessionSearch};
 use crate::daemon::proto::{
     Ack, AuthParams, AuthResult, CODE_APPLICATION, ChatMessageDto,
-    DaemonStatus, DirectoriesParams, DownloadDto, DownloadStartParams,
-    DownloadStarted, Downloads, Event, IntervalSeconds, Members, MessageParams,
-    Messages, Method, PROTOCOL_VERSION, QueryParams, Request, Response,
-    RoomRef, RpcError, SayParams, SearchResults, Searches, Seconds,
-    SharesStatus, SlotsParams, TransferRef, Uploads, UserRef, UserResult,
+    DaemonStatus, DirectoriesParams, DirectoryParams, DownloadDto,
+    DownloadStartParams, DownloadStarted, Downloads, Event, IntervalSeconds,
+    Members, MessageParams, Messages, Method, PROTOCOL_VERSION, QueryParams,
+    Request, Response, RoomRef, RpcError, SayParams, SearchResults, Searches,
+    Seconds, SharesStatus, SlotsParams, TransferRef, Uploads, UserRef,
+    UserResult,
 };
 use mirror::Mirror;
 use serde::de::DeserializeOwned;
@@ -780,6 +781,10 @@ impl SessionApi for RemoteSession {
 
     fn set_shared_directories(&self, directories: Vec<String>) -> Result<()> {
         self.tell(Method::SharesSet, DirectoriesParams { directories })
+    }
+
+    fn set_download_directory(&self, directory: String) -> Result<()> {
+        self.tell(Method::DownloadSetDir, DirectoryParams { directory })
     }
 }
 

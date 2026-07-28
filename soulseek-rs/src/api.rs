@@ -152,6 +152,13 @@ pub trait SessionApi: Send + Sync {
     fn shared_counts(&self) -> (u32, u32);
     fn shared_directories(&self) -> Vec<String>;
     fn set_shared_directories(&self, directories: Vec<String>) -> Result<()>;
+
+    /// Point future transfers at `directory`.
+    ///
+    /// Only a daemon holds a download folder of its own — locally every
+    /// download call names its directory, so the local session has nothing to
+    /// store and accepts silently.
+    fn set_download_directory(&self, directory: String) -> Result<()>;
 }
 
 /// The local session: the library client itself, so `Arc<Client>` is already an
@@ -352,5 +359,9 @@ impl SessionApi for Client {
 
     fn set_shared_directories(&self, directories: Vec<String>) -> Result<()> {
         Self::set_shared_directories(self, directories)
+    }
+
+    fn set_download_directory(&self, _directory: String) -> Result<()> {
+        Ok(())
     }
 }

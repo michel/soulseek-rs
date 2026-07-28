@@ -8,12 +8,12 @@
 use super::hub::{Hub, PendingBrowses, PendingDownload};
 use super::proto::{
     Ack, AuthResult, CODE_APPLICATION, CODE_INVALID_PARAMS, ChatMessageDto,
-    DaemonStatus, DirectoriesParams, DownloadDto, DownloadStartParams,
-    DownloadStarted, Downloads, IntervalSeconds, Members, MessageParams,
-    Messages, Method, OPENRPC, PROTOCOL_VERSION, QueryParams, RoomRef,
-    RpcError, SayParams, SearchResultDto, SearchResults, SearchSummary,
-    Searches, Seconds, SharesStatus, SlotsParams, TransferRef, UploadInfoDto,
-    Uploads, UserInfoDto, UserRef, UserResult,
+    DaemonStatus, DirectoriesParams, DirectoryParams, DownloadDto,
+    DownloadStartParams, DownloadStarted, Downloads, IntervalSeconds, Members,
+    MessageParams, Messages, Method, OPENRPC, PROTOCOL_VERSION, QueryParams,
+    RoomRef, RpcError, SayParams, SearchResultDto, SearchResults,
+    SearchSummary, Searches, Seconds, SharesStatus, SlotsParams, TransferRef,
+    UploadInfoDto, Uploads, UserInfoDto, UserRef, UserResult,
 };
 use crate::api::SessionApi;
 use crate::output::Exit;
@@ -29,9 +29,9 @@ pub struct Daemon {
     pub hub: Arc<Hub>,
     pub browses: Arc<PendingBrowses>,
     pub downloads: Arc<Mutex<Vec<PendingDownload>>>,
-    /// Where transfers land, on *this* machine. A remote caller cannot see
-    /// this filesystem, so it does not get to choose.
-    pub download_dir: String,
+    /// Where transfers land, on *this* machine. A caller may point it at a
+    /// different folder with `download.set_dir`, but never per download.
+    pub download_dir: Mutex<String>,
     pub server: String,
     pub token: String,
     pub started: Instant,
@@ -126,6 +126,9 @@ impl Daemon {
                 self.session.start_wishlist_search(&query.query).map_err(
                     |e| RpcError::application(Exit::Connection, e.to_string()),
                 )?;
+                // Without a start time every other window would render this
+                // search as finished the moment it goes out.
+                self.record_search_start(&query.query);
                 ok(Ack::OK)
             }
             Method::SearchWishlistInterval => ok(IntervalSeconds {
@@ -133,6 +136,11 @@ impl Daemon {
             }),
 
             Method::DownloadStart => self.start_download(parse(params)?),
+            Method::DownloadSetDir => {
+                let dir: DirectoryParams = parse(params)?;
+                self.set_download_dir(dir.directory)?;
+                ok(Ack::OK)
+            }
             Method::DownloadList => ok(Downloads {
                 downloads: self
                     .session
@@ -344,10 +352,10 @@ impl Daemon {
         params: DownloadStartParams,
     ) -> Result<Value, RpcError> {
         // The daemon's own directory, always. Letting a caller name a path
-        // would hand any authenticated client an arbitrary write on this
-        // host's filesystem, and a remote one cannot see that filesystem to
-        // choose sensibly anyway.
-        let directory = self.download_dir.clone();
+        // per download would scatter transfers in ways `daemon.status` cannot
+        // report; changing the folder is a deliberate session-wide act,
+        // `download.set_dir`.
+        let directory = self.download_dir();
         let (download, updates) = self
             .session
             .download_with_metadata(
@@ -374,6 +382,35 @@ impl Daemon {
         ok(DownloadStarted {
             download: DownloadDto::from(&download),
         })
+    }
+
+    fn download_dir(&self) -> String {
+        self.download_dir
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Point future transfers at `directory`, creating it on *this* host.
+    /// The same trust boundary as `shares.set`: authenticated means owner.
+    fn set_download_dir(&self, directory: String) -> Result<(), RpcError> {
+        if directory.trim().is_empty() {
+            return Err(RpcError::new(
+                CODE_INVALID_PARAMS,
+                "the download directory cannot be empty".to_string(),
+            ));
+        }
+        std::fs::create_dir_all(&directory).map_err(|e| {
+            RpcError::application(
+                Exit::Usage,
+                format!("cannot create {directory}: {e}"),
+            )
+        })?;
+        *self
+            .download_dir
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = directory;
+        Ok(())
     }
 
     fn shares(&self) -> SharesStatus {
@@ -427,7 +464,7 @@ impl Daemon {
             listen_port: self.session.listen_port(),
             shared_folders: folders,
             shared_files: files,
-            download_dir: self.download_dir.clone(),
+            download_dir: self.download_dir(),
             session_loss: self.session.session_loss().map(Into::into),
             clients: self.hub.subscribers(),
             uptime_secs: self.started.elapsed().as_secs(),
@@ -577,7 +614,7 @@ mod tests {
             hub: Arc::new(Hub::new()),
             browses: Arc::new(PendingBrowses::default()),
             downloads: Arc::new(Mutex::new(Vec::new())),
-            download_dir: "/tmp".to_string(),
+            download_dir: Mutex::new("/tmp".to_string()),
             server: "server.invalid:2416".to_string(),
             token: token.to_string(),
             started: Instant::now(),
@@ -768,6 +805,12 @@ mod tests {
         fn set_shared_directories(
             &self,
             _directories: Vec<String>,
+        ) -> soulseek_rs::Result<()> {
+            Ok(())
+        }
+        fn set_download_directory(
+            &self,
+            _directory: String,
         ) -> soulseek_rs::Result<()> {
             Ok(())
         }

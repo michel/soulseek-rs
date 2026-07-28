@@ -167,10 +167,11 @@ daemon.
 
 Everything that touches the network goes through it. `config`, `skills`,
 `completions` and `portmap` stay local, because they are about this machine
-rather than a session. `shares add`/`remove` do both: they write the config
-file *and* update a running daemon, so a folder is served straight away rather
-than at its next start. Files land on the *daemon's* filesystem, and `daemon
-status` reports where.
+rather than a session. `shares add`/`remove` and `config set download_dir` do
+both: they write the config file *and* update a running daemon, so a folder is
+served — or downloaded into — straight away rather than at the daemon's next
+start. Files land on the *daemon's* filesystem, and `daemon status` reports
+where.
 
 #### A download box you drive from your laptop
 

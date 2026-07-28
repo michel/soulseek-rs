@@ -90,6 +90,7 @@ wire_vocabulary! {
         DownloadResume => "download.resume",
         DownloadRemove => "download.remove",
         DownloadRemoveQueued => "download.remove_queued",
+        DownloadSetDir => "download.set_dir",
         UploadList => "upload.list",
         UploadCancel => "upload.cancel",
         UploadSlots => "upload.slots",

@@ -1,5 +1,6 @@
-//! Settings popup behavior: open, key handling, and applying changes
-//! (persist to config.toml + live share rescan on the client).
+//! Settings popup behavior: open, key handling, and applying changes —
+//! persisted to config.toml, applied live to the session (pushed over the
+//! socket when the session is a daemon's).
 
 use super::MainTui;
 use crate::models::{SettingsAction, SettingsState};
@@ -25,38 +26,68 @@ impl MainTui {
         }
     }
 
-    /// Persist the edited settings and apply the share set live.
-    fn apply_settings(&mut self) {
+    /// Persist the edited settings and apply them live.
+    ///
+    /// Attached to a daemon, both folders name paths on the *daemon's*
+    /// machine: they are pushed over the socket and validated there, and no
+    /// directory is created on this one. Locally they are this machine's and
+    /// are validated here.
+    pub(super) fn apply_settings(&mut self) {
         let Some(settings) = self.state.settings.as_ref() else {
             return;
         };
         let download_dir = settings.download_dir.clone();
         let share_dirs = settings.share_dirs.clone();
 
-        if let Err(e) = std::fs::create_dir_all(&download_dir) {
-            self.set_settings_status(format!(
-                "Cannot create {download_dir}: {e}"
-            ));
-            return;
-        }
-        self.download_dir.clone_from(&download_dir);
-
-        // Validate the share paths (tilde-expand, must exist) and apply.
-        let valid = crate::directories::resolve_shared_directories(&share_dirs);
-        let dropped = share_dirs.len() - valid.len();
-        let mut status = match self.client.set_shared_directories(valid) {
-            Ok(()) if dropped > 0 => {
-                format!("Applied ({dropped} invalid path(s) ignored)")
+        let shares = if self.client.daemon_endpoint().is_some() {
+            share_dirs.clone()
+        } else {
+            if let Err(e) = std::fs::create_dir_all(&download_dir) {
+                self.set_settings_status(format!(
+                    "Cannot create {download_dir}: {e}"
+                ));
+                return;
             }
-            Ok(()) => format!("Applied · sharing {}", self.share_counts()),
-            Err(e) => format!("Could not apply shares: {e}"),
+            // Validate the share paths (tilde-expand, must exist).
+            crate::directories::resolve_shared_directories(&share_dirs)
         };
+        let dropped = share_dirs.len() - shares.len();
 
-        // Persist to config.toml so the change survives a restart.
-        if let Some(path) = crate::persist::paths::config_file() {
+        // Two independent applies: a failure of one must not misreport or
+        // silently discard the other, so both run and both are told.
+        let mut refused = Vec::new();
+        let dir_applied =
+            match self.client.set_download_directory(download_dir.clone()) {
+                Ok(()) => true,
+                Err(e) => {
+                    refused.push(format!("download folder: {e}"));
+                    false
+                }
+            };
+        if let Err(e) = self.client.set_shared_directories(shares) {
+            refused.push(format!("shares: {e}"));
+        }
+
+        let mut status = if !refused.is_empty() {
+            format!("Could not apply {}", refused.join("; "))
+        } else if dropped > 0 {
+            format!("Applied ({dropped} invalid path(s) ignored)")
+        } else {
+            format!("Applied · sharing {}", self.share_counts())
+        };
+        if dir_applied {
+            self.download_dir.clone_from(&download_dir);
+        }
+
+        // Persist to config.toml so the change survives a restart. What was
+        // refused live is not written either: the file must not promise a
+        // folder the session never accepted.
+        if let Some(path) = self.config_path.clone() {
             let result = crate::persist::config::FileConfig::load(&path)
                 .and_then(|mut config| {
-                    config.download_dir = Some(download_dir);
+                    if dir_applied {
+                        config.download_dir = Some(download_dir);
+                    }
                     // The singular `shared_dir` is merged with `shared_dirs` on
                     // load, so leaving it would resurrect a removed folder.
                     config.shared_dir = None;

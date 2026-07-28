@@ -81,6 +81,14 @@ pub struct DirectoriesParams {
     pub directories: Vec<String>,
 }
 
+/// Where the daemon should land transfers from now on, on *its* filesystem.
+/// The same trust as `shares.set`: an authenticated caller is the owner.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct DirectoryParams {
+    pub directory: String,
+}
+
 /// Every search this session has run, newest last. Shared by all clients, so
 /// a second one attaching sees what the first has been looking for.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

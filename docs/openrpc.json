@@ -189,6 +189,18 @@
         ],
         "type": "object"
       },
+      "DirectoryParams": {
+        "description": "Where the daemon should land transfers from now on, on *its* filesystem.\nThe same trust as `shares.set`: an authenticated caller is the owner.",
+        "properties": {
+          "directory": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "directory"
+        ],
+        "type": "object"
+      },
       "DownloadDto": {
         "properties": {
           "download_directory": {
@@ -1559,6 +1571,26 @@
         }
       },
       "summary": "Drop a transfer that has not started."
+    },
+    {
+      "name": "download.set_dir",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "directory",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Land future transfers in a different folder on the daemon's host."
     },
     {
       "name": "upload.list",

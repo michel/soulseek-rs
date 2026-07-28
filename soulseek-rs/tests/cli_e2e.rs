@@ -126,6 +126,12 @@ fn records(output: &Output) -> Vec<String> {
         .collect()
 }
 
+/// The first record of a `--json` run, parsed.
+fn json_record(output: &Output) -> serde_json::Value {
+    serde_json::from_str(records(output).first().expect("one record"))
+        .expect("valid JSON")
+}
+
 // ---------------------------------------------------------------------------
 // No server required
 // ---------------------------------------------------------------------------
@@ -3460,5 +3466,337 @@ fn adding_a_share_takes_effect_on_a_running_daemon() {
     assert!(
         after["files"].as_u64().is_some_and(|files| files >= 1),
         "and should have indexed what is in it: {after}"
+    );
+}
+
+/// Setting the download folder reaches a daemon that is already running.
+///
+/// Locally `config set download_dir` means "from the next run on". A daemon
+/// *is* that next run and it is already going, so without pushing the change
+/// every transfer would keep landing in the old folder while the config file
+/// claims otherwise — the trap `shares add` already closes.
+#[test]
+fn setting_the_download_folder_takes_effect_on_a_running_daemon() {
+    if mode() != Mode::Daemon {
+        println!(
+            "skipped: there is no running session to update in local mode"
+        );
+        return;
+    }
+    let server = server_or_skip!();
+    let user = "cli_e2e_live_dl_dir";
+    let socket = server.daemon_state(user).join("daemon.sock");
+    let at = socket.display().to_string();
+    let config = Scratch::new("live-dl-config");
+    let config_file = config.path().join("config.toml");
+    let moved = Scratch::new("live-dl-target");
+
+    let set = run(&[
+        "--config",
+        config_file.to_str().expect("utf-8 path"),
+        "--daemon",
+        &at,
+        "config",
+        "set",
+        "download_dir",
+        &moved.display(),
+    ]);
+    assert_eq!(code(&set), EXIT_OK, "stderr: {}", stderr(&set));
+
+    // The daemon reports the new folder as its own...
+    let status =
+        run(&["--no-config", "--json", "--daemon", &at, "daemon", "status"]);
+    assert_eq!(code(&status), EXIT_OK, "stderr: {}", stderr(&status));
+    assert_eq!(
+        json_record(&status)["download_dir"],
+        moved.display(),
+        "status must name the folder transfers will now land in"
+    );
+
+    // `config set shared_dirs` reaches the same running daemon: the folder
+    // is indexed now, not at the next restart.
+    let offered = Scratch::new("live-dl-offered");
+    std::fs::write(offered.path().join("cli_probe_offered.bin"), probe_bytes())
+        .expect("share file");
+    let set_shares = run(&[
+        "--config",
+        config_file.to_str().expect("utf-8 path"),
+        "--daemon",
+        &at,
+        "config",
+        "set",
+        "shared_dirs",
+        &offered.display(),
+    ]);
+    assert_eq!(
+        code(&set_shares),
+        EXIT_OK,
+        "stderr: {}",
+        stderr(&set_shares)
+    );
+    let listing =
+        run(&["--no-config", "--json", "--daemon", &at, "shares", "status"]);
+    assert_eq!(code(&listing), EXIT_OK, "stderr: {}", stderr(&listing));
+    let indexed = json_record(&listing);
+    assert!(
+        indexed["directories"]
+            .as_array()
+            .expect("directories is an array")
+            .iter()
+            .any(|d| d == &offered.display()),
+        "the daemon should serve the folder the config now names: {indexed}"
+    );
+
+    // ...and the next transfer actually lands there.
+    let share = Scratch::new("live-dl-share");
+    std::fs::write(share.path().join("cli_probe_moved.bin"), probe_bytes())
+        .expect("share file");
+    let _sharer = server.client("cli_e2e_sharer_moved", vec![share.display()]);
+    settle();
+
+    let fetched = run(&[
+        "--no-config",
+        "--quiet",
+        "--daemon",
+        &at,
+        "get",
+        "cli_probe_moved",
+        "--timeout",
+        "40",
+    ]);
+    assert_eq!(code(&fetched), EXIT_OK, "stderr: {}", stderr(&fetched));
+    let reported = records(&fetched);
+    assert_eq!(reported.len(), 1, "one file, one record");
+    assert!(
+        reported[0].trim().starts_with(&moved.display()),
+        "the bytes must land in the folder that was just set, got {}",
+        reported[0]
+    );
+    assert_eq!(
+        std::fs::read(reported[0].trim()).expect("downloaded file"),
+        probe_bytes()
+    );
+}
+
+/// The configured `download_dir` is where a download lands when no flag names
+/// one — the local half of the promise the daemon test above makes.
+#[test]
+fn a_download_lands_in_the_folder_the_config_names() {
+    if mode() != Mode::Local {
+        println!("skipped: the daemon's folder wins in daemon mode");
+        return;
+    }
+    let server = server_or_skip!();
+    let share = Scratch::new("share");
+    let target = Scratch::new("configured-downloads");
+    std::fs::write(share.path().join("cli_probe_cfgdir.bin"), probe_bytes())
+        .expect("share file");
+    let _sharer = server.client("cli_e2e_sharer_cfg", vec![share.display()]);
+    settle();
+
+    let config = Scratch::new("dl-dir-config");
+    let config_file = config.path().join("config.toml");
+    let set = run(&[
+        "--config",
+        config_file.to_str().expect("utf-8 path"),
+        "config",
+        "set",
+        "download_dir",
+        &target.display(),
+    ]);
+    assert_eq!(code(&set), EXIT_OK, "stderr: {}", stderr(&set));
+
+    let fetched = cli_with_config(
+        &server,
+        "cli_e2e_cfg_fetcher",
+        &config_file,
+        &["get", "cli_probe_cfgdir", "--timeout", "40"],
+    );
+    assert_eq!(code(&fetched), EXIT_OK, "stderr: {}", stderr(&fetched));
+    let reported = records(&fetched);
+    assert_eq!(reported.len(), 1, "one file, one record");
+    assert!(
+        reported[0].trim().starts_with(&target.display()),
+        "the config file names where downloads go, got {}",
+        reported[0]
+    );
+}
+
+/// With nothing running, the daemon control commands say so and exit with the
+/// connection code — a script must be able to branch on "is it up?".
+#[test]
+fn daemon_status_and_stop_without_a_daemon_are_connection_errors() {
+    for command in ["status", "stop"] {
+        let output = run(&["--no-config", "daemon", command]);
+        assert_eq!(
+            code(&output),
+            EXIT_CONNECTION,
+            "daemon {command}: {}",
+            stderr(&output)
+        );
+        assert!(
+            stderr(&output).contains("no daemon is running"),
+            "daemon {command} should say what is wrong, got: {}",
+            stderr(&output)
+        );
+        assert!(stdout(&output).is_empty(), "stdout must stay data-only");
+    }
+}
+
+/// `--sort size` leads with the largest file, which is what a script that
+/// wants "the full album rip, not the sample" branches on.
+#[test]
+fn search_sorted_by_size_leads_with_the_largest_file() {
+    let server = server_or_skip!();
+    let share = Scratch::new("share");
+    std::fs::write(share.path().join("cli_probe_sort_small.bin"), [7u8; 64])
+        .expect("share file");
+    std::fs::write(
+        share.path().join("cli_probe_sort_large.bin"),
+        vec![7u8; 4096],
+    )
+    .expect("share file");
+    let _sharer = server.client("cli_e2e_sharer_sort", vec![share.display()]);
+    settle();
+
+    let output = cli(
+        &server,
+        "cli_e2e_sorter",
+        &[
+            "--search-timeout",
+            "5",
+            "search",
+            "cli_probe_sort",
+            "--sort",
+            "size",
+        ],
+    );
+    assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+    let reported = records(&output);
+    assert!(reported.len() >= 2, "both files answer, got {reported:?}");
+    assert!(
+        reported[0].contains("cli_probe_sort_large"),
+        "largest first under --sort size, got {reported:?}"
+    );
+
+    // `--limit 1` keeps only the leader.
+    let capped = cli(
+        &server,
+        "cli_e2e_sorter",
+        &[
+            "--search-timeout",
+            "5",
+            "search",
+            "cli_probe_sort",
+            "--sort",
+            "size",
+            "--limit",
+            "1",
+        ],
+    );
+    assert_eq!(code(&capped), EXIT_OK, "stderr: {}", stderr(&capped));
+    let capped = records(&capped);
+    assert_eq!(capped.len(), 1, "--limit 1 keeps one record");
+    assert!(
+        capped[0].contains("cli_probe_sort_large"),
+        "and it is the ranked leader, got {capped:?}"
+    );
+}
+
+/// `--pick first` takes the first arrival without waiting out the window.
+#[test]
+fn get_pick_first_downloads_the_first_arrival() {
+    let server = server_or_skip!();
+    let share = Scratch::new("share");
+    let target = Scratch::new("downloads");
+    std::fs::write(share.path().join("cli_probe_first.bin"), probe_bytes())
+        .expect("share file");
+    let _sharer = server.client("cli_e2e_sharer_first", vec![share.display()]);
+    settle();
+
+    let output = cli(
+        &server,
+        "cli_e2e_first_picker",
+        &[
+            "--download-dir",
+            &target.display(),
+            "get",
+            "cli_probe_first",
+            "--pick",
+            "first",
+            "--timeout",
+            "40",
+        ],
+    );
+    assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+    let reported = records(&output);
+    assert_eq!(reported.len(), 1, "--pick first downloads one file");
+    assert_eq!(
+        std::fs::read(reported[0].trim()).expect("downloaded file"),
+        probe_bytes()
+    );
+}
+
+/// The password can come from a command, `pass`-manager style: nothing
+/// sensitive in argv, nothing in the environment.
+#[test]
+fn the_password_can_come_from_a_command() {
+    let server = server_or_skip!();
+    let _owner = server.client("cli_e2e_cmd_pw", Vec::new());
+
+    let output = run(&[
+        "--no-config",
+        "--quiet",
+        "--server",
+        &server.address(),
+        "--username",
+        "cli_e2e_cmd_pw",
+        "--password-cmd",
+        "echo pw",
+        "--no-listener",
+        "whoami",
+    ]);
+    assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+    assert!(
+        records(&output)[0].starts_with("cli_e2e_cmd_pw\t"),
+        "got {:?}",
+        records(&output)
+    );
+}
+
+/// `--log-file` keeps diagnostics out of stderr and in a file a bug report
+/// can attach.
+#[test]
+fn a_log_file_captures_what_verbose_would_print() {
+    let server = server_or_skip!();
+    let _owner = server.client("cli_e2e_logged", Vec::new());
+    let logs = Scratch::new("logs");
+    let log_file = logs.path().join("run.log");
+    let output = run(&[
+        "--no-config",
+        "--quiet",
+        "-vvv",
+        "--log-file",
+        log_file.to_str().expect("utf-8 path"),
+        "--username",
+        "cli_e2e_logged",
+        "--password",
+        "pw",
+        "--server",
+        &server.address(),
+        "--no-listener",
+        "whoami",
+    ]);
+    assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+    let written =
+        std::fs::read_to_string(&log_file).expect("the log file is created");
+    assert!(
+        !written.trim().is_empty(),
+        "-vvv must leave diagnostics in the file"
+    );
+    assert!(
+        !stderr(&output).contains("DEBUG"),
+        "with a log file, diagnostics stay out of stderr: {}",
+        stderr(&output)
     );
 }

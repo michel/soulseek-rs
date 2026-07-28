@@ -48,18 +48,25 @@ struct Daemon {
     _server: Soulfind,
 }
 
+/// The binary with a scrubbed environment: no test may see the developer's
+/// real daemon, and `state` decides which one it does see.
+fn cli_command(state: &Path) -> Command {
+    let mut command = Command::new(BIN);
+    for name in CLI_ENV_VARS {
+        command.env_remove(name);
+    }
+    command.env("SOULSEEK_STATE_DIR", state);
+    command.current_dir(std::env::temp_dir());
+    command
+}
+
 impl Daemon {
     fn start() -> Option<Self> {
         let server = Soulfind::start()?;
         let state = scratch("daemon-proto");
         let port = free_port()?;
 
-        let mut command = Command::new(BIN);
-        for name in CLI_ENV_VARS {
-            command.env_remove(name);
-        }
-        command.env("SOULSEEK_STATE_DIR", &state);
-        command.current_dir(std::env::temp_dir());
+        let mut command = cli_command(&state);
         command.args([
             "--no-config",
             "--server",
@@ -75,6 +82,10 @@ impl Daemon {
             "daemon",
             "--bind",
             &format!("127.0.0.1:{port}"),
+            // Exercised on every boot: the limit must parse and apply
+            // without disturbing anything else the suite observes.
+            "--upload-slots",
+            "8",
         ]);
         command.stdout(Stdio::null()).stderr(Stdio::null());
         let child = command.spawn().ok()?;
@@ -521,13 +532,8 @@ fn a_config_driven_remote_client_reports_the_daemons_world() {
     )
     .expect("config file");
 
-    let mut command = Command::new(BIN);
-    for name in CLI_ENV_VARS {
-        command.env_remove(name);
-    }
+    let mut command = cli_command(&state);
     command.env("SOULSEEK_CONFIG_DIR", &config);
-    command.env("SOULSEEK_STATE_DIR", &state);
-    command.current_dir(std::env::temp_dir());
     command.args(["--json", "whoami"]);
     let output = command.output().expect("the binary should run");
 
@@ -792,4 +798,158 @@ fn a_client_that_attaches_later_sees_what_is_already_there() {
             "both windows read one queue: {reply}"
         );
     }
+}
+
+/// The download folder is a session setting, settable over the wire.
+///
+/// `download.start` deliberately refuses a per-transfer destination, so
+/// `download.set_dir` is the only way a remote owner can move where bytes
+/// land — and `daemon.status` has to report the move, because that status is
+/// what every attached client trusts for "where did my file go".
+#[test]
+#[cfg(unix)]
+fn the_download_folder_moves_when_asked_and_status_says_so() {
+    let daemon = daemon_or_skip!();
+    let mut connection = daemon.connect_socket().expect("socket");
+    connection.authenticate(None).expect("an answer");
+
+    let moved = scratch("moved-downloads").join("deeper");
+    let reply = connection
+        .call(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"download.set_dir","params":{{"directory":{}}}}}"#,
+            serde_json::json!(moved.to_str().expect("utf-8 path"))
+        ))
+        .expect("an answer");
+    assert!(reply.contains(r#""ok":true"#), "got {reply}");
+    assert!(
+        moved.is_dir(),
+        "the daemon creates the folder it will download into"
+    );
+
+    let status = connection
+        .call(r#"{"jsonrpc":"2.0","id":3,"method":"daemon.status"}"#)
+        .expect("an answer");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&status).expect("valid JSON");
+    assert_eq!(
+        parsed["result"]["download_dir"],
+        moved.to_str().expect("utf-8 path"),
+        "status must name the folder transfers now land in: {status}"
+    );
+
+    // An empty path is refused as bad parameters, not applied as "here".
+    let refused = connection
+        .call(
+            r#"{"jsonrpc":"2.0","id":4,"method":"download.set_dir","params":{"directory":"  "}}"#,
+        )
+        .expect("an answer");
+    assert!(refused.contains("-32602"), "got {refused}");
+    let _ = std::fs::remove_dir_all(moved.parent().expect("parent"));
+}
+
+/// A wishlist search must read as *running* to the other windows.
+///
+/// The daemon can only tell a running search from a finished one by the start
+/// time it recorded; a wishlist search that never records one renders as
+/// completed everywhere the moment it goes out.
+#[test]
+#[cfg(unix)]
+fn a_wishlist_search_is_reported_as_just_started() {
+    let daemon = daemon_or_skip!();
+    let mut connection = daemon.connect_socket().expect("socket");
+    connection.authenticate(None).expect("an answer");
+
+    let sent = connection
+        .call(
+            r#"{"jsonrpc":"2.0","id":2,"method":"search.wishlist","params":{"query":"wishlist_probe"}}"#,
+        )
+        .expect("an answer");
+    assert!(sent.contains(r#""ok":true"#), "got {sent}");
+
+    let listed = connection
+        .call(r#"{"jsonrpc":"2.0","id":3,"method":"search.list"}"#)
+        .expect("an answer");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&listed).expect("valid JSON");
+    let age = parsed["result"]["searches"]
+        .as_array()
+        .expect("searches is an array")
+        .iter()
+        .find(|search| search["query"] == "wishlist_probe")
+        .and_then(|search| search["started_secs_ago"].as_u64())
+        .expect("the wishlist search is listed with an age");
+    assert!(
+        age < 60,
+        "a search sent moments ago must read as just started, got {age}s"
+    );
+}
+
+/// The upload-slot limit is retunable on a live session.
+#[test]
+fn the_upload_slot_limit_can_be_retuned_live() {
+    let daemon = daemon_or_skip!();
+    let mut connection = daemon.connect_tcp().expect("tcp");
+    connection
+        .authenticate(Some(&daemon.token()))
+        .expect("an answer");
+    let reply = connection
+        .call(
+            r#"{"jsonrpc":"2.0","id":2,"method":"upload.slots","params":{"slots":3}}"#,
+        )
+        .expect("an answer");
+    assert!(reply.contains(r#""ok":true"#), "got {reply}");
+}
+
+/// A wrong or missing token is the CLI's problem to explain, not just the
+/// wire's: the user typed `--daemon-token`, so the failure has to come back
+/// as a connection error rather than a hang or a fallback to local defaults.
+#[test]
+fn the_cli_reports_a_bad_token_as_a_connection_error() {
+    let daemon = daemon_or_skip!();
+    let state = scratch("cli-bad-token");
+    let run = |token: Option<&str>| {
+        let mut command = cli_command(&state);
+        command.args([
+            "--no-config",
+            "--daemon",
+            &format!("127.0.0.1:{}", daemon.port),
+        ]);
+        if let Some(token) = token {
+            command.args(["--daemon-token", token]);
+        }
+        command.arg("whoami");
+        command.output().expect("the binary should run")
+    };
+
+    let wrong = run(Some(&"0".repeat(64)));
+    assert_eq!(
+        wrong.status.code(),
+        Some(3),
+        "a rejected token is a connection error: {}",
+        String::from_utf8_lossy(&wrong.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&wrong.stdout).trim().is_empty(),
+        "a failing command must write nothing to stdout"
+    );
+
+    // No token at all: this state dir never ran a daemon, so there is no
+    // cookie file to fall back on, and TCP without a token is a hard no.
+    let missing = run(None);
+    assert_eq!(
+        missing.status.code(),
+        Some(3),
+        "TCP with no token to offer is a connection error: {}",
+        String::from_utf8_lossy(&missing.stderr)
+    );
+
+    // The right token still works from the same machine state.
+    let right = run(Some(&daemon.token()));
+    assert_eq!(
+        right.status.code(),
+        Some(0),
+        "the real token must keep working: {}",
+        String::from_utf8_lossy(&right.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&state);
 }

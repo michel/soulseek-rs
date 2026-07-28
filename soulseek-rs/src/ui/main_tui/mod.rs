@@ -28,6 +28,9 @@ pub struct MainTui {
     search_timeout: Duration,
     spinner_state: usize,
     store: Option<StateStore>,
+    /// Where settings changes are persisted — the config file this run
+    /// resolved, so `--config` is honoured.
+    config_path: Option<std::path::PathBuf>,
     /// Last snapshot written to disk, to skip no-op saves.
     saved_snapshot: Snapshot,
 }
@@ -39,6 +42,7 @@ impl MainTui {
         max_concurrent_downloads: usize,
         search_timeout: Duration,
         store: Option<StateStore>,
+        config_path: Option<std::path::PathBuf>,
     ) -> Self {
         let mut tui = Self {
             client,
@@ -48,6 +52,7 @@ impl MainTui {
             search_timeout,
             spinner_state: 0,
             store,
+            config_path,
             saved_snapshot: Snapshot::default(),
         };
         tui.restore_persisted_state();
@@ -254,6 +259,7 @@ pub fn launch_main_tui(
     max_concurrent_downloads: usize,
     search_timeout: Duration,
     store: Option<StateStore>,
+    config_path: Option<std::path::PathBuf>,
 ) -> Result<()> {
     let tui = MainTui::new(
         client,
@@ -261,6 +267,7 @@ pub fn launch_main_tui(
         max_concurrent_downloads,
         search_timeout,
         store,
+        config_path,
     );
     tui.run(terminal)
 }
@@ -280,6 +287,10 @@ mod tests {
         searches: std::sync::Mutex<Vec<crate::api::SessionSearch>>,
         /// Whether this session is a daemon's. Local sessions do not sync.
         shared: bool,
+        /// What `set_download_directory` was last asked for, if anything.
+        download_dir_set: std::sync::Mutex<Option<String>>,
+        /// What `set_shared_directories` was last asked for, if anything.
+        shares_set: std::sync::Mutex<Option<Vec<String>>>,
     }
 
     fn queued(username: &str, filename: &str) -> soulseek_rs::types::Download {
@@ -468,8 +479,17 @@ mod tests {
         }
         fn set_shared_directories(
             &self,
-            _directories: Vec<String>,
+            directories: Vec<String>,
         ) -> soulseek_rs::Result<()> {
+            *self.shares_set.lock().expect("not poisoned") = Some(directories);
+            Ok(())
+        }
+        fn set_download_directory(
+            &self,
+            directory: String,
+        ) -> soulseek_rs::Result<()> {
+            *self.download_dir_set.lock().expect("not poisoned") =
+                Some(directory);
             Ok(())
         }
     }
@@ -508,6 +528,7 @@ mod tests {
             "/tmp".to_string(),
             1,
             Duration::from_secs(1),
+            None,
             None,
         )
     }
@@ -709,5 +730,110 @@ mod tests {
         // Locally the session knows no history and the state file is the whole
         // record, so nothing is invented.
         assert!(tui(Vec::new()).state.messages.is_empty());
+    }
+
+    /// Attached, both folders in the settings form name paths on the
+    /// *daemon's* machine: they go over the socket exactly as typed, and
+    /// nothing is created or validated against this machine's filesystem.
+    #[test]
+    fn applying_settings_attached_pushes_both_folders_to_the_daemon() {
+        let session = Arc::new(TalkativeSession {
+            shared: true,
+            ..TalkativeSession::default()
+        });
+        let scratch = tempfile::tempdir().expect("a temp dir");
+        let config_path = scratch.path().join("config.toml");
+        let mut tui = MainTui::new(
+            session.clone(),
+            "/daemon/old".to_string(),
+            1,
+            Duration::from_secs(1),
+            None,
+            Some(config_path.clone()),
+        );
+
+        let daemon_only = scratch.path().join("only-on-the-daemon");
+        let daemon_dir = daemon_only.to_str().expect("utf-8").to_string();
+        tui.open_settings();
+        {
+            let settings = tui.state.settings.as_mut().expect("open");
+            settings.download_dir.clone_from(&daemon_dir);
+            settings.share_dirs = vec!["/not-here-either".to_string()];
+        }
+        tui.apply_settings();
+
+        assert_eq!(
+            *session.download_dir_set.lock().expect("not poisoned"),
+            Some(daemon_dir.clone()),
+            "the folder is pushed to the daemon"
+        );
+        assert_eq!(
+            *session.shares_set.lock().expect("not poisoned"),
+            Some(vec!["/not-here-either".to_string()]),
+            "shares go over as typed — the daemon's filesystem judges them"
+        );
+        assert!(
+            !daemon_only.exists(),
+            "no directory is created on this machine for a daemon's path"
+        );
+        assert_eq!(tui.download_dir, daemon_dir);
+
+        let saved = crate::persist::config::FileConfig::load(&config_path)
+            .expect("config readable");
+        assert_eq!(
+            saved.download_dir.as_deref(),
+            Some(daemon_dir.as_str()),
+            "the change still lands in config.toml for the next restart"
+        );
+    }
+
+    /// Locally the same form works on this machine: the folder is created
+    /// here and share paths that do not exist here are dropped before the
+    /// session hears about them.
+    #[test]
+    fn applying_settings_locally_stays_on_this_machine() {
+        let session = Arc::new(TalkativeSession {
+            shared: false,
+            ..TalkativeSession::default()
+        });
+        let scratch = tempfile::tempdir().expect("a temp dir");
+        let config_path = scratch.path().join("config.toml");
+        let share = scratch.path().join("music");
+        std::fs::create_dir_all(&share).expect("share dir");
+        let mut tui = MainTui::new(
+            session.clone(),
+            "/tmp".to_string(),
+            1,
+            Duration::from_secs(1),
+            None,
+            Some(config_path),
+        );
+
+        let downloads = scratch.path().join("downloads");
+        let downloads_dir = downloads.to_str().expect("utf-8").to_string();
+        tui.open_settings();
+        {
+            let settings = tui.state.settings.as_mut().expect("open");
+            settings.download_dir.clone_from(&downloads_dir);
+            settings.share_dirs = vec![
+                share.to_str().expect("utf-8").to_string(),
+                "/definitely-not-a-real-share".to_string(),
+            ];
+        }
+        tui.apply_settings();
+
+        // The seam is told in both modes; a local session accepts and takes
+        // the directory per download instead of storing it.
+        assert_eq!(
+            *session.download_dir_set.lock().expect("not poisoned"),
+            Some(downloads_dir.clone())
+        );
+        assert_eq!(
+            *session.shares_set.lock().expect("not poisoned"),
+            Some(vec![share.to_str().expect("utf-8").to_string()]),
+            "paths missing on this machine are dropped before applying"
+        );
+        assert!(downloads.is_dir(), "the folder is created here");
+        assert_eq!(tui.download_dir, downloads_dir);
     }
 }

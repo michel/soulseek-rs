@@ -58,8 +58,9 @@ So: **one daemon, then as many commands as you like.** Reach for `--no-daemon`
 only when you deliberately want an isolated session, and expect to justify it.
 
 Two things change while a daemon is running: files land in the *daemon's*
-download directory (`daemon status` reports which), and `shares add` updates it
-straight away rather than at its next start.
+download directory (`daemon status` reports which), and `shares add` or
+`config set download_dir` update it straight away rather than at its next
+start.
 
 ## The contract
 

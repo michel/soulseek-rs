@@ -55,27 +55,43 @@ pub struct LiveDaemon {
     pub token: Option<String>,
 }
 
-/// Tell a running daemon what this machine now shares.
+/// Tell a running daemon about a change it should apply now.
 ///
-/// Locally, `shares add` means "shared from the next run on", because there is
-/// no session yet. A daemon *is* that next run and it is already going, so
-/// leaving it on its startup list would make the command look like it had
-/// done nothing — the folder configured, and still invisible to the network.
-fn push_to_daemon(out: &Out, daemon: &LiveDaemon, directories: Vec<String>) {
+/// Locally a config change means "from the next run on", because there is no
+/// session yet. A daemon *is* that next run and it is already going, so
+/// leaving it on its startup settings would make the command look like it
+/// had done nothing — the folder configured, and the network none the wiser.
+fn push_to_daemon(
+    out: &Out,
+    daemon: &LiveDaemon,
+    applied: &str,
+    kept: &str,
+    apply: impl FnOnce(&RemoteSession) -> soulseek_rs::Result<()>,
+) {
     let Some(endpoint) = daemon.endpoint.as_ref() else {
         return;
     };
     let token = daemon.token.clone().or_else(crate::daemon::stored_token);
     let outcome = RemoteSession::connect(endpoint, token)
-        .and_then(|session| session.set_shared_directories(directories));
+        .and_then(|session| apply(&session));
     match outcome {
-        Ok(()) => out.status("the running daemon is re-indexing"),
+        Ok(()) => out.status(applied),
         // Not fatal: the config file is written either way, so the change
         // still takes effect when the daemon next starts.
         Err(e) => out.warn(&format!(
-            "the daemon kept its own shares ({e}); restart it to pick this up"
+            "the daemon kept {kept} ({e}); restart it to pick this up"
         )),
     }
+}
+
+fn push_shares(out: &Out, daemon: &LiveDaemon, directories: Vec<String>) {
+    push_to_daemon(
+        out,
+        daemon,
+        "the running daemon is re-indexing",
+        "its own shares",
+        move |session| session.set_shared_directories(directories),
+    );
 }
 
 pub fn shares_add(
@@ -104,7 +120,7 @@ pub fn shares_add(
     updated.shared_dir = None;
     store.save(&updated)?;
     out.status(&format!("sharing {directory}"));
-    push_to_daemon(out, daemon, dirs);
+    push_shares(out, daemon, dirs);
     Ok(())
 }
 
@@ -128,7 +144,7 @@ pub fn shares_remove(
     updated.shared_dir = None;
     store.save(&updated)?;
     out.status(&format!("no longer sharing {directory}"));
-    push_to_daemon(out, daemon, dirs);
+    push_shares(out, daemon, dirs);
     Ok(())
 }
 
@@ -228,14 +244,36 @@ pub fn config_set(
     store: &Store,
     key: &str,
     value: &str,
+    daemon: impl FnOnce() -> LiveDaemon,
 ) -> CliResult {
     let mut updated = store.config.clone();
     updated.set(key, value).map_err(CliError::usage)?;
     store.save(&updated)?;
+    let current = updated.get(key);
     out.emit(&ConfigRecord {
         key: key.to_string(),
-        value: updated.get(key),
+        value: current.clone(),
     });
+    // A running daemon holds the live settings, so for the keys it owns a
+    // config write alone would look like it did nothing until its next
+    // restart — the same trap `shares add` closes by pushing to the session.
+    // `daemon` is resolved lazily: finding one means connecting to a socket,
+    // which the other keys should not pay for.
+    match key {
+        "download_dir" => {
+            if let Some(directory) = current {
+                push_to_daemon(
+                    out,
+                    &daemon(),
+                    "the running daemon will download there now",
+                    "its own download folder",
+                    move |session| session.set_download_directory(directory),
+                );
+            }
+        }
+        "shared_dirs" => push_shares(out, &daemon(), share_list(&updated)),
+        _ => {}
+    }
     Ok(())
 }
 

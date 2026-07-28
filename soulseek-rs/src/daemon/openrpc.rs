@@ -10,11 +10,11 @@
 
 use super::proto::{
     Ack, AuthParams, AuthResult, BrowseEvent, DaemonStatus, DirectoriesParams,
-    DownloadStartParams, DownloadStarted, DownloadStatusEvent, Downloads,
-    Event, IntervalSeconds, Members, MessageParams, Messages, Method,
-    QueryParams, RoomEventDto, RoomRef, SayParams, SearchResults, Searches,
-    Seconds, SessionLossEvent, SharesStatus, SlotsParams, TransferRef,
-    UploadInfoDto, Uploads, UserMessageDto, UserRef, UserResult,
+    DirectoryParams, DownloadStartParams, DownloadStarted, DownloadStatusEvent,
+    Downloads, Event, IntervalSeconds, Members, MessageParams, Messages,
+    Method, QueryParams, RoomEventDto, RoomRef, SayParams, SearchResults,
+    Searches, Seconds, SessionLossEvent, SharesStatus, SlotsParams,
+    TransferRef, UploadInfoDto, Uploads, UserMessageDto, UserRef, UserResult,
 };
 use schemars::{JsonSchema, SchemaGenerator, generate::SchemaSettings};
 use serde_json::{Value, json};
@@ -49,6 +49,7 @@ fn params_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         | Method::DownloadRemove
         | Method::DownloadRemoveQueued
         | Method::UploadCancel => schema_of::<TransferRef>(generator),
+        Method::DownloadSetDir => schema_of::<DirectoryParams>(generator),
         Method::UploadSlots => schema_of::<SlotsParams>(generator),
         Method::RoomJoin | Method::RoomLeave | Method::RoomMembers => {
             schema_of::<RoomRef>(generator)
@@ -104,6 +105,7 @@ fn result_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         | Method::DownloadResume
         | Method::DownloadRemove
         | Method::DownloadRemoveQueued
+        | Method::DownloadSetDir
         | Method::UploadCancel
         | Method::UploadSlots
         | Method::PrivilegesCheck
@@ -155,6 +157,9 @@ fn summary(method: Method) -> &'static str {
         Method::DownloadResume => "Resume a paused transfer.",
         Method::DownloadRemove => "Forget a transfer entirely.",
         Method::DownloadRemoveQueued => "Drop a transfer that has not started.",
+        Method::DownloadSetDir => {
+            "Land future transfers in a different folder on the daemon's host."
+        }
         Method::UploadList => "Uploads being served, active first.",
         Method::UploadCancel => "Stop serving an upload in progress.",
         Method::UploadSlots => "How many uploads may run at once.",

@@ -10,7 +10,7 @@ use crate::output::{CliError, CliResult, Exit, Out};
 use crate::ui::launch_main_tui;
 use soulseek_rs::{ClientSettings, ClientVersion, PeerAddress};
 use std::io::{BufRead, IsTerminal};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{env, io};
@@ -38,7 +38,7 @@ pub fn run(mut cli: Cli, out: &Out) -> CliResult {
         // rather than logging in a second time, which the server would answer
         // by cutting the daemon off.
         if let Some(endpoint) = daemon_endpoint(&cli, &resolved) {
-            return run_attached_tui(&cli, &resolved, &endpoint);
+            return run_attached_tui(&resolved, &endpoint, config_path);
         }
         return run_default_tui(&cli, &resolved, config_path, &file_config);
     };
@@ -72,7 +72,11 @@ pub fn run(mut cli: Cli, out: &Out) -> CliResult {
         }
         Commands::Config(ConfigCommand::Set { ref key, ref value }) => {
             return crate::commands::settings::config_set(
-                out, &store, key, value,
+                out,
+                &store,
+                key,
+                value,
+                || live_daemon(&cli, &resolved),
             );
         }
         Commands::Shares(SharesCommand::List) => {
@@ -442,7 +446,12 @@ fn run_default_tui(
         }
     };
 
-    persist_credentials(&outcome, config_path, file_config, &secret_store);
+    persist_credentials(
+        &outcome,
+        config_path.as_deref(),
+        file_config,
+        &secret_store,
+    );
 
     // Best-effort: make ourselves reachable behind a home router so firewalled
     // peers can connect back. Mapped only once the listener is up, and for the
@@ -462,6 +471,7 @@ fn run_default_tui(
         resolved.max_concurrent_downloads,
         Duration::from_secs(resolved.search_timeout),
         store,
+        config_path,
     )
     .map_err(|e| CliError::new(Exit::Failure, e.to_string()))
 }
@@ -472,9 +482,9 @@ fn run_default_tui(
 /// ask for and nothing to store. Everything the UI shows comes back over the
 /// socket, and what it persists stays daemon-side.
 fn run_attached_tui(
-    cli: &Cli,
     resolved: &crate::persist::config::Resolved,
     endpoint: &crate::remote::Endpoint,
+    config_path: Option<PathBuf>,
 ) -> CliResult {
     use ratatui::crossterm::{
         event::EnableMouseCapture,
@@ -482,7 +492,9 @@ fn run_attached_tui(
         terminal::{Clear, ClearType},
     };
 
-    let token = cli
+    // The resolved token, not the flag alone: `daemon_token` in config.toml
+    // is the documented remote setup, and the flag/env are layered into it.
+    let token = resolved
         .daemon_token
         .clone()
         .or_else(crate::daemon::stored_token);
@@ -490,6 +502,21 @@ fn run_attached_tui(
         .map_err(|e| {
             CliError::connection(format!(
                 "cannot use the daemon at {endpoint}: {e}"
+            ))
+        })?;
+
+    // The settings form shows and edits the *daemon's* download folder — the
+    // one transfers actually land in — not this machine's configured default.
+    // The connect above just succeeded, so a daemon that cannot answer this
+    // is a real problem to report, not one to paper over with a local path.
+    let download_dir = session
+        .ask_for::<crate::daemon::proto::DaemonStatus>(
+            crate::daemon::proto::Method::DaemonStatus,
+        )
+        .map(|status| status.download_dir)
+        .map_err(|e| {
+            CliError::connection(format!(
+                "the daemon at {endpoint} did not report its status: {e}"
             ))
         })?;
 
@@ -503,10 +530,11 @@ fn run_attached_tui(
     launch_main_tui(
         terminal,
         Arc::new(session),
-        resolved.download_dir.clone(),
+        download_dir,
         resolved.max_concurrent_downloads,
         Duration::from_secs(resolved.search_timeout),
         None,
+        config_path,
     )
     .map_err(|e| CliError::new(Exit::Failure, e.to_string()))
 }
@@ -516,7 +544,7 @@ fn run_attached_tui(
 /// best-effort: failing to persist must not break a working session.
 fn persist_credentials(
     outcome: &crate::ui::login::LoginOutcome,
-    config_path: Option<PathBuf>,
+    config_path: Option<&Path>,
     file_config: &crate::persist::config::FileConfig,
     secret_store: &dyn crate::persist::secret::SecretStore,
 ) {
@@ -525,7 +553,7 @@ fn persist_credentials(
     {
         let mut updated = file_config.clone();
         updated.username = Some(outcome.username.clone());
-        if let Err(e) = updated.save(&path) {
+        if let Err(e) = updated.save(path) {
             eprintln!("⚠️  Could not save config: {e}");
         }
     }
