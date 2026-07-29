@@ -17,7 +17,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 /// The OpenRPC document, served by `rpc.discover` so a generator can point at
 /// a running daemon instead of needing this repository.
-pub const OPENRPC: &str = include_str!("../../../../docs/openrpc.json");
+pub const OPENRPC: &str = include_str!("../../../docs/openrpc.json");
 
 mod dto;
 mod envelope;

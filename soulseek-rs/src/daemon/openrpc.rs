@@ -348,10 +348,10 @@ fn document() -> Value {
     })
 }
 
-/// Where the published document lives, relative to this source file.
+/// Where the published document lives. Inside this crate, not the repository's
+/// docs/: `include_str!` has to find it in the published package too.
 fn document_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
         .join("docs")
         .join("openrpc.json")
 }

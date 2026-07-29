@@ -360,8 +360,8 @@ const Daemon = () => (
           <ExtLink href="https://open-rpc.org">OpenRPC</ExtLink> document. The daemon serves
           that document itself through <Code>rpc.discover</Code>, so a client can ask it what
           it can do. The same document is checked in at{' '}
-          <ExtLink href={`${LINKS.gh}/blob/master/docs/openrpc.json`}>
-            docs/openrpc.json
+          <ExtLink href={`${LINKS.gh}/blob/master/soulseek-rs/docs/openrpc.json`}>
+            soulseek-rs/docs/openrpc.json
           </ExtLink>{' '}
           on GitHub. <Code>auth</Code> answers with the protocol version, 1 today, so a
           client written against an older shape learns it at connect time.

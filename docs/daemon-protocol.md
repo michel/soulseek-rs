@@ -2,7 +2,7 @@
 
 `soulseek-rs daemon` stays logged in and answers JSON-RPC over a socket, so
 several clients can share one Soulseek session. The machine-readable contract
-is [`openrpc.json`](openrpc.json), an [OpenRPC](https://open-rpc.org)
+is [`openrpc.json`](../soulseek-rs/docs/openrpc.json), an [OpenRPC](https://open-rpc.org)
 document and the JSON-RPC counterpart to OpenAPI. Point a client generator at it,
 or at a running daemon via `rpc.discover`, and you have a client in your
 language.

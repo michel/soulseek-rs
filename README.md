@@ -202,7 +202,7 @@ the internet. Reach it over SSH instead, with a tunnel
 
 The daemon speaks newline-delimited JSON-RPC 2.0, described by an
 [OpenRPC](https://open-rpc.org) document,
-[`docs/openrpc.json`](docs/openrpc.json), which it also serves over
+[`soulseek-rs/docs/openrpc.json`](soulseek-rs/docs/openrpc.json), which it also serves over
 `rpc.discover`. Point a client generator at it for typed bindings in your
 language. Searches, transfers, rooms, private messages and shares are all on
 the interface this CLI uses, with no private back channel, and live updates are
