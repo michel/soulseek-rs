@@ -89,7 +89,9 @@ const FirstRun = () => (
       <Prose>
         <p>
           On first run you get a login screen: sign in with an existing Soulseek account or
-          register a new one. Your password goes to the OS keychain, not a plain-text file.
+          register a new one, unless a daemon is already running, in which case the TUI
+          attaches to it and asks for nothing. Your password goes to the OS keychain, not a
+          plain-text file.
         </p>
         <p>
           Downloads land in a conventional folder, and TUI state (searches, downloads,
@@ -158,6 +160,8 @@ const FromTheShell = () => (
           { t: 'cm', text: '# search, pick the best, download it' },
           { t: 'cmd', text: 'soulseek-rs search "netlabel 2004" --min-bitrate 320' },
           { t: 'cmd', text: 'soulseek-rs browse <username> --json' },
+          { t: 'cmd', text: 'soulseek-rs wish add "rare pressing"' },
+          { t: 'cm', text: '# a standing search, re-run by serve --wishlist' },
           { t: 'cmd', text: 'soulseek-rs room list' },
           { t: 'cm', text: '# public rooms, busiest first' },
           { t: 'cmd', text: 'soulseek-rs room say <room> "hello room"' },
@@ -171,16 +175,17 @@ const FromTheShell = () => (
       <Prose>
         <p>
           The command groups: <Code>search</Code>, <Code>get</Code>, <Code>download</Code>,{' '}
-          <Code>browse</Code>, <Code>room</Code>, <Code>message</Code>, <Code>serve</Code>,{' '}
-          <Code>user</Code>, <Code>whoami</Code>, <Code>shares</Code>, <Code>daemon</Code>,{' '}
-          <Code>config</Code>, <Code>portmap</Code>, <Code>skills</Code>,{' '}
-          <Code>completions</Code>. Records are
-          tab-separated fields, one per line, or NDJSON with <Code>--json</Code>.
+          <Code>browse</Code>, <Code>wish</Code>, <Code>room</Code>, <Code>message</Code>,{' '}
+          <Code>serve</Code>, <Code>user</Code>, <Code>whoami</Code>, <Code>shares</Code>,{' '}
+          <Code>daemon</Code>, <Code>config</Code>, <Code>portmap</Code>,{' '}
+          <Code>skills</Code>, <Code>completions</Code>. Records are tab-separated fields,
+          one per line, or NDJSON with <Code>--json</Code>.
         </p>
         <p>
           No TTY required. <Code>search --json</Code> pipes through <Code>jq</Code> into{' '}
           <Code>download --stdin</Code>. Every ending has its own exit code: 4 found
-          nothing, 3 could not reach the server, 6 the transfer died.
+          nothing, 3 could not reach the server, 6 the transfer died, 7 another login took
+          the session away, which is the one a daemon spares you.
         </p>
         <p>
           <Code>completions install</Code> gives bash, zsh and fish tab completion for all
@@ -238,6 +243,8 @@ const Daemon = () => (
           { t: 'cm', text: '# once; it holds the session' },
           { t: 'cmd', text: 'soulseek-rs search "netlabel 2004" --json' },
           { t: 'cm', text: '# no login, no flags; it finds the daemon' },
+          { t: 'cmd', text: 'soulseek-rs search "netlabel 2004" --no-daemon' },
+          { t: 'cm', text: "# opt out; open this run's own session" },
           { t: 'cmd', text: 'soulseek-rs' },
           { t: 'cm', text: '# the TUI attaches to the same session' },
           { t: 'cmd', text: 'soulseek-rs daemon status' },
@@ -248,13 +255,29 @@ const Daemon = () => (
         <p>
           Commands find it themselves: it listens on a Unix socket only your user can
           open, so there is no address to pass and no token to handle. Without one
-          running, everything behaves exactly as it did before.
+          running, everything behaves exactly as it did before, and{' '}
+          <Code>--no-daemon</Code> gets that back for a single command.{' '}
+          <Code>daemon status</Code> exits 3 when none is running, which is how a script
+          decides whether to start one. That socket is a Unix one: on Windows, start the
+          daemon with <Code>--bind 127.0.0.1:5030</Code> and point commands at it with{' '}
+          <Code>config set daemon</Code> and <Code>config set daemon_token</Code>.
         </p>
         <p>
           Every window is a view of the same session. Open a second TUI and it shows the
           searches and transfers already running; queue something in either and both see
-          it. The status bar names the daemon, and closing a window leaves its downloads
-          going, because they belong to the daemon rather than the window.
+          it. There is no login screen, because the daemon is already signed in, and the
+          inbox opens on the private messages it collected while nobody was watching. The
+          settings form edits the daemon&rsquo;s download folder and share list, so the
+          paths you type there name its filesystem rather than this machine&rsquo;s. The
+          status bar names the daemon, and closing a window leaves its downloads going,
+          because they belong to the daemon rather than the window.
+        </p>
+        <p>
+          Attach one and commands report its world: <Code>whoami</Code> names its account
+          and server, <Code>download</Code> prints the path on its disk, and{' '}
+          <Code>serve --follow</Code> watches its uploads instead of starting a second
+          server. It holds the session rather than the wishlist: standing searches re-run
+          under <Code>serve --wishlist</Code>, or when you call <Code>wish run</Code>.
         </p>
         <p>
           Why bother: the server permits a single session per account. Two one-off
@@ -306,12 +329,30 @@ const DownloadBox = () => (
           files are on the box, which is where you wanted them.
         </p>
         <p>
+          The two <Code>config set</Code> lines are the one-time version;{' '}
+          <Code>--daemon ADDR</Code> and <Code>SOULSEEK_DAEMON</Code> point a single
+          command at a different box. On the box itself,{' '}
+          <Code>daemon --upload-slots N</Code> sets how many uploads it serves at once.
+        </p>
+        <p>
           There is no encryption on that port. On a home network that is usually fine.
           Over the internet, reach it through SSH instead:{' '}
           <Code>ssh -L 5030:localhost:5030 nas</Code>, or run the commands on the box.
         </p>
       </Prose>
     </Cols>
+    <div className="mt-6">
+      <Callout tone="warn" title="pushed settings are live only">
+        <p>
+          <Code>config set download_dir</Code> and <Code>shares add</Code> reach the
+          running daemon and take effect at once, but the box reads its own{' '}
+          <Code>config.toml</Code> when it restarts, so make the lasting changes there.{' '}
+          <Code>shares add</Code> also checks the folder on the machine you type it on, so
+          a path that exists only on the box fails from your laptop: add shares on the box,
+          or in the attached TUI&rsquo;s settings form, which sends paths through as typed.
+        </p>
+      </Callout>
+    </div>
   </Section>
 )
 
@@ -327,7 +368,12 @@ const OpenSchema = () => (
           It speaks newline-delimited JSON-RPC 2.0, described by an{' '}
           <ExtLink href="https://open-rpc.org">OpenRPC</ExtLink> document. The daemon
           serves that document itself through <Code>rpc.discover</Code>, so a client can
-          ask a running daemon what it can do.
+          ask a running daemon what it can do. The same document is checked in at{' '}
+          <ExtLink href={`${LINKS.gh}/blob/master/docs/openrpc.json`}>
+            docs/openrpc.json
+          </ExtLink>{' '}
+          on GitHub. <Code>auth</Code> answers with the protocol version, 1 today, so a
+          client written against an older shape learns it at connect time.
         </p>
         <p>
           OpenRPC is the JSON-RPC counterpart to OpenAPI: point a generator at it and you
@@ -338,7 +384,12 @@ const OpenSchema = () => (
         <p>
           Searches, transfers, rooms, private messages and shares are all on the same
           interface this CLI uses. There is no private back channel it keeps for itself,
-          and live updates are pushed to every connected client rather than polled for.
+          and live updates are pushed to every connected client rather than polled for:{' '}
+          <Code>event.room</Code>, <Code>event.message</Code>, <Code>event.upload</Code>,{' '}
+          <Code>event.download_status</Code>, <Code>event.browse</Code> and{' '}
+          <Code>event.session_loss</Code>. One rule to write against: the download folder
+          belongs to the daemon, so <Code>download.set_dir</Code> moves it for every
+          transfer and a per-download destination is ignored.
         </p>
       </Prose>
       <Terminal

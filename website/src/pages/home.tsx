@@ -232,8 +232,10 @@ const About = () => (
         <Callout title="agents and automation">
           <p>
             Every command runs as a one-off from the shell. Point cron, a script, or an
-            agent at them and read JSON records back off stdout. No daemon, no API to stand
-            up. <Code>skills install</Code> teaches the agent the surface for you.{' '}
+            agent at them and read JSON records back off stdout. Nothing to stand up first;{' '}
+            <Code>soulseek-rs daemon</Code> is one command when a batch of them should share
+            a single login, and the agent skill starts one for you.{' '}
+            <Code>skills install</Code> teaches the agent the surface.{' '}
             <Link to="/docs" className="text-link hover:text-link-hover">
               See the commands
             </Link>

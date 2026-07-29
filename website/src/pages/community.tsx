@@ -36,8 +36,9 @@ const ALTERNATIVES: readonly Alternative[] = [
     question: 'Want a queue that outlives the command?',
     answer: (
       <>
-        Every command runs one-shot and exits: JSON on stdout, an exit code, nothing left
-        running. No resident queue to pause, resume, or drive remotely. slskd has that.
+        <Code>soulseek-rs daemon</Code> holds one: pause, resume and remove act on it from
+        the TUI or over JSON-RPC, and <Code>--bind</Code> lets another machine drive it.
+        slskd still has the web interface and accounts for several people.
       </>
     ),
     links: [{ label: 'slskd', href: LINKS.slskd }],

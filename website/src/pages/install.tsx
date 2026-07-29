@@ -125,7 +125,7 @@ const PLATFORMS: readonly PlatformNote[] = [
     config: '%APPDATA%\\soulseek-rs\\config\\config.toml',
     state: '%APPDATA%\\soulseek-rs\\data\\state',
     downloads: '%USERPROFILE%\\Downloads\\Soulseek',
-    note: 'Uses the standard known-folder locations for roaming app data.',
+    note: 'Uses the standard known-folder locations for roaming app data. Without Unix sockets, a daemon here needs --bind 127.0.0.1:5030, and clients reach it with config set daemon plus config set daemon_token; that token file carries no permissions of its own.',
   },
 ]
 
@@ -204,6 +204,26 @@ const SETTINGS: readonly Setting[] = [
       <>
         A shell command whose stdout is the password, used when the keychain has none.
         The password itself never belongs in this file.
+      </>
+    ),
+  },
+  {
+    key: 'daemon',
+    fallback: 'the local socket, if one is running',
+    body: (
+      <>
+        A daemon to drive instead of logging in here, as <code>host:port</code> or a Unix
+        socket path.
+      </>
+    ),
+  },
+  {
+    key: 'daemon_token',
+    fallback: 'unset',
+    body: (
+      <>
+        The secret a remote daemon asks for, printed by <code>daemon token</code> on the
+        machine running it. A local socket needs none.
       </>
     ),
   },
@@ -431,14 +451,17 @@ const Platforms = () => (
         <code>config.toml</code> is layered: flags beat environment variables, which
         beat the file, which beats the defaults. State (searches, downloads, rooms) is
         versioned JSON and restores on restart; soulseek-rs sets anything unreadable
-        aside as <code>.bak</code> rather than overwriting it.
+        aside as <code>.bak</code> rather than overwriting it. Attached to a daemon, that
+        state is the daemon&rsquo;s, and the state folder also holds its{' '}
+        <code>daemon.sock</code> and <code>daemon.token</code>, both 0600 on macOS and
+        Linux.
       </FeatureCard>
     </Cols>
   </Section>
 )
 const Config = () => (
   <Section id="config">
-    <SectionHead eyebrow="config.toml" title="Nine settings, all optional.">
+    <SectionHead eyebrow="config.toml" title="Eleven settings, all optional.">
       Every one has a working default, so an empty file, or no file at all, is valid.{' '}
       <Code>config list</Code> prints the effective value of each.
     </SectionHead>
@@ -471,7 +494,9 @@ const Config = () => (
             reads one setting and <Code>config set</Code> writes one. It rejects
             unknown keys, so a typo fails instead of doing nothing.{' '}
             <Code>--no-config</Code> ignores the file entirely and{' '}
-            <Code>--config FILE</Code> points at another one.
+            <Code>--config FILE</Code> points at another one. <Code>wishlist</Code> is in
+            the file too, written by <Code>wish add</Code> rather than{' '}
+            <Code>config set</Code>, since a standing search may itself contain a comma.
           </p>
         </Callout>
       </div>
@@ -497,7 +522,8 @@ const Uninstall = () => (
           { t: 'cmd', text: 'cargo uninstall soulseek-rs' },
           { t: 'cm', text: '# brew only: drop the tap it came from' },
           { t: 'cmd', text: 'brew untap michel/tap' },
-          { t: 'cm', text: '# config and state: searches, downloads, rooms, messages' },
+          { t: 'cm', text: '# config and state: searches, downloads, rooms,' },
+          { t: 'cm', text: '# messages, the daemon token' },
           {
             t: 'cmd',
             text: 'rm -rf ~/.config/soulseek-rs ~/.local/share/soulseek-rs',
