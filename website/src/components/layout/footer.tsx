@@ -90,8 +90,7 @@ export const Footer = () => (
       </div>
 
       <div className="mt-5.5 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-hairline pt-4 text-[11.5px] text-muted sm:mt-11 sm:gap-x-6 sm:gap-y-2 sm:pt-5.5 sm:text-[12.5px]">
-        <span>MIT · © 2026 Michel de Graaf</span>
-        <span className="text-success">No telemetry. Ever.</span>
+        <span>MIT · © 2026 soulseek-rs contributors</span>
         <span className="sm:ml-auto">{VERSION}</span>
       </div>
     </Wrap>

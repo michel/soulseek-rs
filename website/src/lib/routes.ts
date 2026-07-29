@@ -27,7 +27,7 @@ export const ROUTES = [
     path: '/community',
     title: 'soulseek-rs, community',
     description:
-      'How to help with soulseek-rs, and where to go when another Soulseek client fits you better. MIT licensed. No telemetry.',
+      'Soulseek etiquette: what sharing asks of you, how to help with soulseek-rs, and where to go when another client fits you better.',
   },
 ] as const satisfies readonly RouteMeta[]
 

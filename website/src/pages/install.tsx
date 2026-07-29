@@ -298,10 +298,10 @@ const Steps = () => (
           instead.
         </p>
         <p className="text-[13px] text-muted">
-          <Code>soulseek-rs completions install</Code> then adds tab completion to
-          whichever of bash, zsh and fish this machine uses &mdash; generated from the
-          same definition the binary parses with, so it never drifts from{' '}
-          <Code>--help</Code>. Open a new shell to pick it up.
+          <Code>soulseek-rs completions install</Code> adds tab completion for whichever of
+          bash, zsh and fish this machine uses, generated from the same definition the
+          binary parses with, so it never drifts from <Code>--help</Code>. Open a new shell
+          to pick it up.
         </p>
         <div className="flex flex-wrap gap-2 sm:gap-3">
           <Button href={LINKS.releases}>Prebuilt binaries</Button>
@@ -320,8 +320,8 @@ const Steps = () => (
           ]}
         />
         <p className="text-[13px] text-muted">
-          You&rsquo;ll find the binary at <Code>target/release/soulseek-rs</Code>.
-          Prebuilt archives for tagged releases are on the{' '}
+          The binary lands at <Code>target/release/soulseek-rs</Code>. Prebuilt archives for
+          tagged releases are on the{' '}
           <ExtLink href={LINKS.releases}>releases page</ExtLink>.
         </p>
       </Step>
@@ -506,9 +506,9 @@ const Config = () => (
 const Uninstall = () => (
   <Section band>
     <SectionHead eyebrow="uninstall" title="Removing it completely.">
-      Three things exist on disk: the binary, the config, and the state &mdash; plus
-      the completion scripts and the agent skill, if you asked for those. Nothing else,
-      unless you point <Code>--log-file</Code> somewhere. No telemetry to opt out of.
+      Three things exist on disk: the binary, the config, and the state, plus the completion
+      scripts and the agent skill if you asked for those. Nothing else, unless you point{' '}
+      <Code>--log-file</Code> somewhere. No telemetry to opt out of.
     </SectionHead>
     <Cols start>
       <Terminal

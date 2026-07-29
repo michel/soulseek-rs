@@ -1,12 +1,12 @@
 import { Link } from 'react-router'
 
+import { HeroTerminal } from '@/components/tui/hero-terminal'
 import { Button } from '@/components/ui/button'
 import { ExtLink } from '@/components/ui/ext-link'
 import { Code } from '@/components/ui/inline-code'
 import {
   Cols,
   Eyebrow,
-  PageHead,
   Prose,
   Section,
   SectionHead,
@@ -73,15 +73,17 @@ const KeyRow = ({ combo, description }: { combo: string; description: string }) 
 )
 
 const FirstRun = () => (
-  <Section>
-    <SectionHead eyebrow="1 · first run" title="Two commands to a running client.">
-      Homebrew puts the binary on your PATH. With a Rust toolchain,{' '}
-      <Code>cargo install soulseek-rs</Code> does the same.
+  <Section flush className="pt-10">
+    <SectionHead eyebrow="1 · first run" title="One command to a running client.">
+      With <Code>soulseek-rs</Code> on your PATH, running it opens the TUI.{' '}
+      <Link to="/install" className="text-link hover:text-link-hover">
+        Installing it
+      </Link>{' '}
+      is one command on macOS, Linux and Windows.
     </SectionHead>
     <Cols start>
       <Terminal
         lines={[
-          { t: 'cmd', text: 'brew install michel/tap/soulseek-rs' },
           { t: 'cmd', text: 'soulseek-rs' },
           { t: 'cm', text: '# the TUI opens; log in or register on first run' },
         ]}
@@ -89,9 +91,8 @@ const FirstRun = () => (
       <Prose>
         <p>
           On first run you get a login screen: sign in with an existing Soulseek account or
-          register a new one, unless a daemon is already running, in which case the TUI
-          attaches to it and asks for nothing. Your password goes to the OS keychain, not a
-          plain-text file.
+          register a new one. If a daemon is already running, the TUI attaches to it and
+          asks for nothing. Your password goes to the OS keychain, not a plain-text file.
         </p>
         <p>
           Downloads land in a conventional folder, and TUI state (searches, downloads,
@@ -108,13 +109,18 @@ const Layout = () => (
       The whole client is these four boxes. Press <Code>1</Code>–<Code>3</Code> to focus
       one; the focused pane&rsquo;s legend turns green.
     </SectionHead>
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-      {PANES.map((pane) => (
-        <Panel key={pane.title} num={pane.num} title={pane.title}>
-          <p className="text-[13px] leading-[22px] text-secondary">{pane.body}</p>
-        </Panel>
-      ))}
-    </div>
+    <Cols start>
+      <div className="overflow-hidden">
+        <HeroTerminal />
+      </div>
+      <div className="grid grid-cols-1 gap-4">
+        {PANES.map((pane) => (
+          <Panel key={pane.title} num={pane.num} title={pane.title}>
+            <p className="text-[13px] leading-[22px] text-secondary">{pane.body}</p>
+          </Panel>
+        ))}
+      </div>
+    </Cols>
   </Section>
 )
 
@@ -185,7 +191,7 @@ const FromTheShell = () => (
           No TTY required. <Code>search --json</Code> pipes through <Code>jq</Code> into{' '}
           <Code>download --stdin</Code>. Every ending has its own exit code: 4 found
           nothing, 3 could not reach the server, 6 the transfer died, 7 another login took
-          the session away, which is the one a daemon spares you.
+          the session away, the one a daemon spares you.
         </p>
         <p>
           <Code>completions install</Code> gives bash, zsh and fish tab completion for all
@@ -202,22 +208,6 @@ const FromTheShell = () => (
       </Prose>
     </Cols>
     <div className="mt-6">
-      <Callout title="give it to your agent">
-        <p>
-          <Code>soulseek-rs skills install</Code> writes a <Code>SKILL.md</Code> into every
-          coding agent on the machine: Claude Code and opencode today, <Code>--dir</Code>{' '}
-          for anything else. After it lands you describe the outcome instead of the
-          pipeline: &ldquo;mirror that peer&rsquo;s FLAC folder&rdquo;, &ldquo;watch this
-          room for an hour and save anything mentioning the label&rdquo;.
-        </p>
-        <p>
-          It carries what <Code>--help</Code> cannot: the JSON keys of every record, and
-          what each exit code means. Rerun it after an upgrade;{' '}
-          <Code>skills uninstall</Code> takes it back out.
-        </p>
-      </Callout>
-    </div>
-    <div className="mt-4">
       <Callout tone="warn" title="the one limit worth knowing up front">
         <p>
           If both you and a peer are behind routers with no forwarded port, browsing that
@@ -227,6 +217,24 @@ const FromTheShell = () => (
       </Callout>
     </div>
   </Section>
+)
+
+const SubHead = ({
+  eyebrow,
+  title,
+  children,
+}: {
+  eyebrow: string
+  title: string
+  children: React.ReactNode
+}) => (
+  <div className="mt-13 mb-9 flex max-w-[660px] flex-col gap-3">
+    <Eyebrow>{eyebrow}</Eyebrow>
+    <h3 className="text-[20px] leading-[28px] font-medium tracking-[-0.005em] text-balance">
+      {title}
+    </h3>
+    <p className="text-base leading-[26px] text-pretty text-secondary">{children}</p>
+  </div>
 )
 
 const Daemon = () => (
@@ -253,58 +261,52 @@ const Daemon = () => (
       />
       <Prose>
         <p>
-          Commands find it themselves: it listens on a Unix socket only your user can
-          open, so there is no address to pass and no token to handle. Without one
-          running, everything behaves exactly as it did before, and{' '}
-          <Code>--no-daemon</Code> gets that back for a single command.{' '}
-          <Code>daemon status</Code> exits 3 when none is running, which is how a script
-          decides whether to start one. That socket is a Unix one: on Windows, start the
+          Commands find it themselves: it listens on a Unix socket only your user can open,
+          so there is no address to pass and no token to handle. Without one running,
+          everything works as it did before, and <Code>--no-daemon</Code> gets that back for
+          a single command. <Code>daemon status</Code> exits 3 when none is running, which is
+          how a script decides whether to start one. Windows has no Unix sockets: start the
           daemon with <Code>--bind 127.0.0.1:5030</Code> and point commands at it with{' '}
           <Code>config set daemon</Code> and <Code>config set daemon_token</Code>.
         </p>
         <p>
           Every window is a view of the same session. Open a second TUI and it shows the
-          searches and transfers already running; queue something in either and both see
-          it. There is no login screen, because the daemon is already signed in, and the
-          inbox opens on the private messages it collected while nobody was watching. The
-          settings form edits the daemon&rsquo;s download folder and share list, so the
-          paths you type there name its filesystem rather than this machine&rsquo;s. The
-          status bar names the daemon, and closing a window leaves its downloads going,
-          because they belong to the daemon rather than the window.
+          searches and transfers already running; queue something in either and both see it.
+          No login screen, because the daemon is already signed in, and the inbox opens on
+          the private messages it collected while nobody was watching. The settings form
+          edits the daemon&rsquo;s download folder and share list, so paths you type there
+          name its filesystem, not this machine&rsquo;s. Close a window and its downloads
+          keep going: they belong to the daemon.
         </p>
         <p>
           Attach one and commands report its world: <Code>whoami</Code> names its account
           and server, <Code>download</Code> prints the path on its disk, and{' '}
           <Code>serve --follow</Code> watches its uploads instead of starting a second
-          server. It holds the session rather than the wishlist: standing searches re-run
-          under <Code>serve --wishlist</Code>, or when you call <Code>wish run</Code>.
+          server. It holds the session, not the wishlist: standing searches re-run under{' '}
+          <Code>serve --wishlist</Code>, or when you call <Code>wish run</Code>.
         </p>
         <p>
-          Why bother: the server permits a single session per account. Two one-off
-          commands at once either cut each other off, or push you into a throwaway
-          username per run, which is account churn on a network other people maintain.
-          A daemon is one login for as long as you work, one share index instead of a
-          rescan every invocation, and downloads that outlive the command that queued
-          them. If you drive this from a script or an agent, start one.
+          Your username is your standing on Soulseek, and the server permits one session per
+          account, so two one-off commands at once cut each other off. A daemon is one login
+          under that name for as long as you work, shares indexed once and reachable the
+          whole time instead of going dark between invocations, and downloads that outlive
+          the command that queued them. If you drive this from a script or an agent, start
+          one.
         </p>
       </Prose>
     </Cols>
-  </Section>
-)
 
-const DownloadBox = () => (
-  <Section>
-    <SectionHead
-      eyebrow="6 · a download box"
-      title="Put it on the machine that should be downloading."
-    >
-      A home server, a NAS, a Raspberry Pi. It needs no terminal and nobody logged in.
-      You drive it from your laptop, and it keeps working after you close the lid.
-    </SectionHead>
+    <SubHead eyebrow="use case · an always-on box" title="Put it on a machine you never turn off.">
+      A home server, a NAS, a Raspberry Pi. No terminal, nobody logged in. Downloads keep
+      going after you close the lid, and your shares stay reachable instead of vanishing
+      when the laptop sleeps.
+    </SubHead>
     <Cols start>
       <Terminal
         label="on the box"
         lines={[
+          { t: 'cmd', text: 'soulseek-rs shares add /srv/music' },
+          { t: 'cm', text: '# what the box offers the network' },
           { t: 'cmd', text: 'soulseek-rs daemon --bind 0.0.0.0:5030' },
           { t: 'cmd', text: 'soulseek-rs daemon token' },
           { t: 'cm', text: '# copy this once' },
@@ -323,52 +325,41 @@ const DownloadBox = () => (
       <Prose>
         <p>
           Your laptop needs no Soulseek account of its own; it uses the box&rsquo;s. Queue
-          what you want, then close the lid. The downloads keep going, because they
-          belong to the daemon rather than to the command that asked for them. Come back
-          tomorrow, run <Code>daemon status</Code>, and pick up where you left off. The
-          files are on the box, which is where you wanted them.
+          what you want and close the lid: the downloads belong to the daemon, not the
+          command that asked for them. The box answers searches and serves uploads the whole
+          time, which a sleeping laptop cannot.
         </p>
         <p>
-          The two <Code>config set</Code> lines are the one-time version;{' '}
-          <Code>--daemon ADDR</Code> and <Code>SOULSEEK_DAEMON</Code> point a single
-          command at a different box. On the box itself,{' '}
-          <Code>daemon --upload-slots N</Code> sets how many uploads it serves at once.
-        </p>
-        <p>
-          There is no encryption on that port. On a home network that is usually fine.
-          Over the internet, reach it through SSH instead:{' '}
-          <Code>ssh -L 5030:localhost:5030 nas</Code>, or run the commands on the box.
+          That port has no encryption. Fine on a home network. Over the internet, reach it
+          through SSH instead: <Code>ssh -L 5030:localhost:5030 nas</Code>, or run the
+          commands on the box.
         </p>
       </Prose>
     </Cols>
     <div className="mt-6">
       <Callout tone="warn" title="pushed settings are live only">
         <p>
-          <Code>config set download_dir</Code> and <Code>shares add</Code> reach the
-          running daemon and take effect at once, but the box reads its own{' '}
-          <Code>config.toml</Code> when it restarts, so make the lasting changes there.{' '}
-          <Code>shares add</Code> also checks the folder on the machine you type it on, so
-          a path that exists only on the box fails from your laptop: add shares on the box,
-          or in the attached TUI&rsquo;s settings form, which sends paths through as typed.
+          <Code>config set download_dir</Code> and <Code>shares add</Code> reach the running
+          daemon and take effect at once, but the box reads its own <Code>config.toml</Code>{' '}
+          when it restarts, so make lasting changes there. <Code>shares add</Code> also
+          checks the folder on the machine you type it on, so a path that exists only on the
+          box fails from your laptop: add shares on the box, or in the attached TUI&rsquo;s
+          settings form, which sends paths through as typed.
         </p>
       </Callout>
     </div>
-  </Section>
-)
 
-const OpenSchema = () => (
-  <Section>
-    <SectionHead eyebrow="7 · build your own" title="The interface is open.">
+    <SubHead eyebrow="build your own" title="The interface is open.">
       Nothing about the daemon is specific to this CLI. Point a client generator at its
       schema and write your own remote.
-    </SectionHead>
+    </SubHead>
     <Cols start>
       <Prose>
         <p>
           It speaks newline-delimited JSON-RPC 2.0, described by an{' '}
-          <ExtLink href="https://open-rpc.org">OpenRPC</ExtLink> document. The daemon
-          serves that document itself through <Code>rpc.discover</Code>, so a client can
-          ask a running daemon what it can do. The same document is checked in at{' '}
+          <ExtLink href="https://open-rpc.org">OpenRPC</ExtLink> document. The daemon serves
+          that document itself through <Code>rpc.discover</Code>, so a client can ask it what
+          it can do. The same document is checked in at{' '}
           <ExtLink href={`${LINKS.gh}/blob/master/docs/openrpc.json`}>
             docs/openrpc.json
           </ExtLink>{' '}
@@ -377,14 +368,14 @@ const OpenSchema = () => (
         </p>
         <p>
           OpenRPC is the JSON-RPC counterpart to OpenAPI: point a generator at it and you
-          get typed bindings in whatever language you are working in. Want an Android or
-          iOS app that queues downloads on your home server from the sofa, or a web page
-          showing what is transferring? You have what you need and nobody to ask.
+          get typed bindings in whatever language you work in. Build the phone app that
+          queues downloads on your home server from the sofa, or a web page showing what is
+          transferring. Nobody to ask first.
         </p>
         <p>
-          Searches, transfers, rooms, private messages and shares are all on the same
-          interface this CLI uses. There is no private back channel it keeps for itself,
-          and live updates are pushed to every connected client rather than polled for:{' '}
+          Searches, transfers, rooms, private messages and shares all sit on the same
+          interface this CLI uses, with no private back channel it keeps for itself. Live
+          updates are pushed to every connected client rather than polled for:{' '}
           <Code>event.room</Code>, <Code>event.message</Code>, <Code>event.upload</Code>,{' '}
           <Code>event.download_status</Code>, <Code>event.browse</Code> and{' '}
           <Code>event.session_loss</Code>. One rule to write against: the download folder
@@ -432,20 +423,11 @@ const TheRest = () => (
 
 export const Docs = () => (
   <>
-    <PageHead
-      eyebrow="docs · quick start"
-      title="Install it, run it, drive it from the keyboard."
-    >
-      This is the short version. The full reference (every flag, every message) lives in the
-      README and on docs.rs.
-    </PageHead>
     <FirstRun />
     <Layout />
     <Keys />
     <FromTheShell />
     <Daemon />
-    <DownloadBox />
-    <OpenSchema />
     <TheRest />
   </>
 )

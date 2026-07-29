@@ -29,9 +29,9 @@ const FEATURES = [
     body: (
       <>
         Run it once and your agent knows the record shapes, the exit codes, and the
-        filters: &ldquo;find the 1998 pressing, lossless only&rdquo; becomes a pipeline it
-        writes itself. No MCP server, no wrapper. The skill ships in the binary and finds
-        Claude Code and opencode on its own.
+        filters, so &ldquo;find the 1998 pressing, lossless only&rdquo; becomes a pipeline
+        it writes itself. The skill ships in the binary and finds your coding agents on its
+        own. No MCP server.
       </>
     ),
   },
@@ -66,9 +66,9 @@ const FEATURES = [
     cmd: 'soulseek-rs daemon',
     body: (
       <>
-        Hold one session and let every other command borrow it. The network allows one
-        login per account, so this is the neighbourly way to run several at once. It
-        speaks JSON-RPC, so other tools can drive it too.
+        One session every other command borrows. Leave it on a NAS to share and download
+        around the clock, or let an agent fan out twenty commands on one login. It speaks
+        JSON-RPC, so your own tools can drive it too.
       </>
     ),
   },
@@ -139,7 +139,7 @@ const Hero = () => (
         <div className="flex items-center gap-3.5 sm:gap-6 md:items-start md:gap-11">
           <Logo size={172} className="max-md:!h-32 md:mt-2" />
           <h1 className="text-[29px] leading-[37px] font-bold tracking-[-0.01em] text-balance sm:text-[34px] sm:leading-[42px] md:text-display md:leading-[var(--text-display--line-height)]">
-            A soulseek client for the terminal. Built for agents and people who live there.
+            A Soulseek client for the terminal. Built for agents and people who live there.
           </h1>
         </div>
         <p className="text-lg leading-[29px] text-pretty text-secondary max-md:hidden">
@@ -214,9 +214,13 @@ const About = () => (
           nowhere else.
         </p>
         <p>
-          soulseek-rs speaks that protocol. It&rsquo;s a third-party client, not the
-          official app. It shares, browses, and does rooms and private messages, because a
-          client that only downloads takes without giving anything back.
+          soulseek-rs speaks that protocol, as a third-party client rather than the
+          official app. It shares, browses, does rooms and private messages, because a
+          client that only downloads makes you a leech on people who left their machines on
+          for you.{' '}
+          <Link to="/community" className="text-link hover:text-link-hover">
+            What sharing asks of you
+          </Link>
         </p>
       </Prose>
       <div className="flex flex-col gap-4">
@@ -231,11 +235,11 @@ const About = () => (
         </Callout>
         <Callout title="agents and automation">
           <p>
-            Every command runs as a one-off from the shell. Point cron, a script, or an
-            agent at them and read JSON records back off stdout. Nothing to stand up first;{' '}
-            <Code>soulseek-rs daemon</Code> is one command when a batch of them should share
-            a single login, and the agent skill starts one for you.{' '}
-            <Code>skills install</Code> teaches the agent the surface.{' '}
+            Every command runs as a one-off. Point a script or an agent at it and read JSON
+            records off stdout. Start <Code>soulseek-rs daemon</Code> first when several run
+            at once, so they share one login instead of cutting each other off.{' '}
+            <Code>skills install</Code> hands your agent that habit, plus the JSON keys and
+            exit codes <Code>--help</Code> leaves out.{' '}
             <Link to="/docs" className="text-link hover:text-link-hover">
               See the commands
             </Link>
@@ -249,8 +253,7 @@ const About = () => (
 const Features = () => (
   <Section id="features">
     <SectionHead eyebrow="features" title="What it does.">
-      Everything happens in the TUI, and every command also runs as a one-off from the
-      shell.
+      Everything happens in the TUI, and every command also runs as a one-off.
     </SectionHead>
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {FEATURES.map((feature, i) => (
@@ -282,19 +285,19 @@ const Agents = () => (
     <Prose className="mt-11 max-w-[660px]">
       <p>
         <Code>--help</Code> lists flags. It cannot say which JSON keys a record carries, or
-        that exit 4 means widen the query rather than retry it. An agent without that
-        guesses, and guessing against a stranger&rsquo;s file server hangs the job.
+        that exit 4 means widen the query rather than retry it. An agent guesses instead,
+        and guessing against a stranger&rsquo;s file server hangs the job.
       </p>
       <p>
-        <Code>skills install</Code> fills that in. The requests stop being pipelines you
-        write: mirror a peer&rsquo;s FLAC folder overnight, or check whether a user is worth
-        queueing behind before a 2 GB transfer.
+        <Code>skills install</Code> fills that in, so you ask for outcomes instead of
+        writing pipelines: fill the gaps in a discography from whoever has a free slot, or
+        read a peer&rsquo;s profile for their limits before queueing 2 GB behind them.
       </p>
       <p>
-        It stays a CLI: no MCP server, no API key. The skill tells your agent to start a
-        daemon first, so a batch of parallel requests is one login rather than one per
-        command. Upgrading the binary upgrades the skill; rerun <Code>skills install</Code>{' '}
-        to take it.{' '}
+        Still a CLI: no MCP server, no API key. The skill tells your agent to start a daemon
+        first, so a batch of parallel requests is one login rather than one per command.
+        Upgrading the binary upgrades the skill; rerun <Code>skills install</Code> to take
+        it.{' '}
         <Link to="/docs" className="text-link hover:text-link-hover">
           See the commands
         </Link>

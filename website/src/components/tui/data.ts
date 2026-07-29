@@ -30,7 +30,7 @@ export interface TransferRow {
   rateMbps?: number
 }
 
-export const SHARE = '/Users/micheldegraaf/Downloads/Soulseek'
+export const SHARE = '~/Downloads/Soulseek'
 
 export const SEARCHES: readonly SearchRow[] = [
   { id: 's1', query: 'public domain field recordings', results: 606, status: 'Done' },

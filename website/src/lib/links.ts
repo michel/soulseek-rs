@@ -12,6 +12,7 @@ export const LINKS = {
   nicotine: 'https://nicotine-plus.org',
   slskd: 'https://github.com/slskd/slskd',
   slsknet: 'https://www.slsknet.org',
+  seeleseek: 'https://seeleseek.net',
 } as const
 
 export const VERSION = __APP_VERSION__

@@ -23,6 +23,16 @@ const ALTERNATIVES: readonly Alternative[] = [
     ],
   },
   {
+    question: 'On a Mac and want it to feel like one?',
+    answer: (
+      <>
+        SeeleSeek is native Swift and SwiftUI rather than Qt or Python, so it opens like
+        any other Mac app. macOS 15 or later, MIT licensed.
+      </>
+    ),
+    links: [{ label: 'SeeleSeek', href: LINKS.seeleseek }],
+  },
+  {
     question: 'Want feature completeness?',
     answer: (
       <>
@@ -49,22 +59,25 @@ const CITIZENSHIP = [
   {
     glyph: '↑',
     color: 'var(--status-success)',
-    title: 'Share, and share real files',
+    title: 'Share something, anything',
     body: (
       <>
         Point <code>shares add</code> at the collection you listen to. Full albums,
-        honest bitrates, nothing transcoded up from a lossy source and relabelled.
+        honest bitrates, nothing transcoded up from a lossy source and relabelled. Nobody
+        checks whether you reshared the exact file you took, only whether you offer
+        anything at all.
       </>
     ),
   },
   {
     glyph: '≡',
     color: 'var(--status-info)',
-    title: 'Organize so others can find it',
+    title: 'Name it so a search can find it',
     body: (
       <>
-        Artist and album folders, tagged files, readable names. Someone else&rsquo;s search
-        only reaches you if your filenames say what the music is.
+        Artist, album, year, track. Most people search rather than browse, so your
+        filenames are the only route to you. One flat folder of untagged rips is
+        invisible.
       </>
     ),
   },
@@ -74,8 +87,9 @@ const CITIZENSHIP = [
     title: 'Stay online',
     body: (
       <>
-        Leave <code>serve --follow</code> running in a tmux session on the box that is
-        already on. A share that appears for an hour a week is close to no share at all.
+        Leave <code>serve --follow</code> running in tmux on the box that is already on,
+        or hand <code>daemon</code> to systemd. A share that appears an hour a week barely
+        counts.
       </>
     ),
   },
@@ -93,11 +107,24 @@ const CITIZENSHIP = [
   {
     glyph: '@',
     color: 'var(--status-info)',
-    title: 'Answer people',
+    title: 'Ask before you take a discography',
     body: (
       <>
-        Rooms and private messages are part of the client for a reason. Someone asking
-        where the rest of a discography went is worth a reply.
+        <code>user &lt;name&gt;</code> shows how someone is set up, and many spell out
+        their limits in their profile. One line from <code>message send</code> beats
+        getting banned mid-queue. Answer the people who write to you, too.
+      </>
+    ),
+  },
+  {
+    glyph: '⇅',
+    color: 'var(--status-success)',
+    title: 'Size your slots for your uplink',
+    body: (
+      <>
+        <code>--upload-slots</code> is not a score. Set it past what your uplink can feed
+        and everyone in the queue gets a trickle. Start low, raise it when uploads finish
+        fast.
       </>
     ),
   },
@@ -107,8 +134,21 @@ const CITIZENSHIP = [
     title: 'Wait your turn',
     body: (
       <>
-        Queues are one person&rsquo;s upload bandwidth being divided up. Queue it, leave it,
-        come back later. Do not requeue the same file to jump the line.
+        A queue is one person&rsquo;s upload bandwidth divided up. Queue it, leave it,
+        come back later. Requeuing to jump the line burns a slot someone else was waiting
+        on.
+      </>
+    ),
+  },
+  {
+    glyph: '⚑',
+    color: 'var(--status-warning)',
+    title: 'Keep the files reachable',
+    body: (
+      <>
+        Sharing off an external drive works until it is unmounted. Run{' '}
+        <code>shares reindex</code> once it is back, or your listing promises files that
+        error out when somebody asks.
       </>
     ),
   },
@@ -117,16 +157,71 @@ const CITIZENSHIP = [
 export const Community = () => {
   return (
     <>
-      <PageHead
-        eyebrow="community"
-        title="Help out, or go where you’re better served."
-      >
-        It&rsquo;s mostly one person who&rsquo;s been on Soulseek since the early 2000s.
-        Issues and pull requests are welcome, and if another client fits you better, use it.
+      <PageHead eyebrow="community" title="Share what you take.">
+        Soulseek exists because its users leave their collections open to each other. What
+        that asks of you, how to help with the client, and where to go if another one fits
+        you better.
       </PageHead>
 
       <Section>
-        <SectionHead eyebrow="contributing" title="How to help.">
+        <SectionHead
+          eyebrow="sharing is caring"
+          title="The network is other people's hard drives."
+        >
+          Every file you pull came off a machine somebody left running and spent years
+          filling. Records and live sets that exist nowhere else stay online because those
+          people keep them there. Download and share nothing back and you are a leech.
+        </SectionHead>
+        <Cols start className="mb-9">
+          <Prose>
+            <p>
+              The protocol has no ratio and no tracker. Users decide for themselves who to
+              serve, and they check what you share before they queue you.
+            </p>
+            <p>
+              Sharing costs you a directory and a process that stays up. It buys you a
+              catalogue that still exists in ten years, and peers who move you up the
+              queue because they browsed your files first.
+            </p>
+          </Prose>
+          <Terminal
+            label="stop being a leech"
+            lines={[
+              { t: 'cmd', text: 'soulseek-rs shares add ~/Music' },
+              { t: 'cmd', text: 'soulseek-rs shares status' },
+              { t: 'cm', text: '# folders and files the network will see' },
+              { t: 'cmd', text: 'soulseek-rs serve --follow' },
+              { t: 'cm', text: '# stay online; every upload as it happens' },
+            ]}
+          />
+        </Cols>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {CITIZENSHIP.map((item) => (
+            <FeatureCard
+              key={item.title}
+              glyph={item.glyph}
+              color={item.color}
+              title={item.title}
+            >
+              {item.body}
+            </FeatureCard>
+          ))}
+        </div>
+        <div className="mt-4">
+          <Callout tone="warn" title="locked shares, traders and sellers">
+            <p>
+              Some users restrict their files to buddies, often for fair reasons. A few sit
+              on rare releases and ask you to trade or pay for access. Read their profile,
+              then walk away from the ones charging admission; they thin out when people
+              stop playing along.
+            </p>
+          </Callout>
+        </div>
+      </Section>
+
+      <Section>
+        <SectionHead eyebrow="contributing" title="How to help with the client.">
+          It&rsquo;s mostly one person who&rsquo;s been on Soulseek since the early 2000s.
           File an issue, open a pull request, or just say what&rsquo;s missing. No
           contributor agreement, no template gymnastics.
         </SectionHead>
@@ -139,13 +234,10 @@ export const Community = () => {
             </p>
             <p>
               Format and Clippy run clean on every push, and unit tests plus an end-to-end
-              suite against{' '}
-              <ExtLink href={LINKS.soulfind}>soulfind</ExtLink>{' '}
-              run in CI, so a green checkmark means it built and talked to a server.
-            </p>
-            <p>
-              soulfind is an open-source Soulseek server. Run it locally and you develop
-              against a real protocol implementation without touching the public network.
+              suite against <ExtLink href={LINKS.soulfind}>soulfind</ExtLink> run in CI, so a
+              green checkmark means it built and talked to a server. soulfind is an
+              open-source Soulseek server; run it locally to develop against a real protocol
+              implementation without touching the public network.
             </p>
             <div className="mt-1 flex flex-wrap gap-2 sm:gap-3">
               <Button href={LINKS.issues} variant="accent">
@@ -169,31 +261,8 @@ export const Community = () => {
 
       <Section>
         <SectionHead
-          eyebrow="being a good member"
-          title="The network is other people's hard drives."
-        >
-          Decades of records, live sets, and pressings that never made it anywhere else,
-          kept online by people who care about them. None of this is enforced. It is just
-          how the network stays worth using.
-        </SectionHead>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {CITIZENSHIP.map((item) => (
-            <FeatureCard
-              key={item.title}
-              glyph={item.glyph}
-              color={item.color}
-              title={item.title}
-            >
-              {item.body}
-            </FeatureCard>
-          ))}
-        </div>
-      </Section>
-
-      <Section>
-        <SectionHead
           eyebrow="what this is not"
-          title="Three good clients to point you elsewhere."
+          title="Four good clients to point you elsewhere."
         >
           soulseek-rs has no graphical interface. If one of these fits you better, use it.
         </SectionHead>
@@ -231,7 +300,7 @@ export const Community = () => {
               MIT, and no strings.
             </h2>
             <p className="text-secondary">
-              Free to use, copy, modify, and distribute. Copyright © 2026 Michel de Graaf.
+              Free to use, copy, modify, and distribute. Copyright © 2026 soulseek-rs contributors.
             </p>
             <div className="mt-1 flex flex-wrap gap-2 sm:gap-3">
               <Button href={LINKS.license} variant="accent">
