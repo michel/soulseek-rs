@@ -2124,20 +2124,19 @@ fn serve_stays_online_and_reports_an_upload_a_peer_pulls() {
     std::fs::write(share.path().join("served.bin"), probe_bytes())
         .expect("share file");
 
-    // A serving process: online, sharing, streaming upload records.
-    let mut args = server.args("cli_e2e_server");
+    // A serving process: online, sharing, streaming upload records. The share
+    // is a session flag: in daemon mode it must reach the daemon, whose
+    // session does the sharing — handed to the run itself it would be
+    // silently ignored and the daemon would serve its default folder.
+    let mut args = server.args_with(
+        "cli_e2e_server",
+        &["--shared-dir".to_string(), share.display()],
+    );
     args.retain(|arg| arg != "--quiet");
     args.extend(
-        [
-            "--shared-dir",
-            &share.display(),
-            "--json",
-            "serve",
-            "--duration",
-            "25",
-        ]
-        .iter()
-        .map(|a| (*a).to_string()),
+        ["--json", "serve", "--duration", "25"]
+            .iter()
+            .map(|a| (*a).to_string()),
     );
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let child = command(&refs)
