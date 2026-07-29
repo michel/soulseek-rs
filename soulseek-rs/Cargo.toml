@@ -25,7 +25,7 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-soulseek-rs-lib = { version = "12.0.0", path = "../soulseek-rs-lib" }
+soulseek-rs-lib = { version = "13.0.0", path = "../soulseek-rs-lib" }
 
 clap = { version = "4.6.2", features = ["derive", "color", "wrap_help", "env"] }
 clap_complete = "4.6.7"
