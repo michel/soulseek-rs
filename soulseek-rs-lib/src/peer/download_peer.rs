@@ -75,10 +75,15 @@ fn extract_filename_from_path(full_path: &str) -> &str {
 
 /// Where a download's bytes end up: its configured directory (falling back
 /// to the parent if it names a file) joined with the remote basename.
+///
+/// A directory that does not exist yet stays the target — `PartFile::open`
+/// creates it. Treating it as "not a directory" and dodging to the parent
+/// made a daemon whose folder was never created download into `~/Downloads`
+/// while reporting `~/Downloads/Soulseek`.
 fn resolve_download_path(download: &Download) -> Result<String, DownloadError> {
     let mut expanded_path = expand_tilde(&download.download_directory);
 
-    if !expanded_path.is_dir() {
+    if expanded_path.is_file() {
         expanded_path = expanded_path
             .parent()
             .ok_or_else(|| {
@@ -525,6 +530,23 @@ mod tests {
             queue_position: None,
             metadata: DownloadMetadata::default(),
         }
+    }
+
+    #[test]
+    fn a_directory_that_does_not_exist_yet_is_created_not_dodged() {
+        let dir = scratch_dir("fresh").join("Soulseek");
+
+        let mut part = PartFile::open(&download_into(&dir, 4)).unwrap();
+        part.write(b"data").unwrap();
+        let final_path = part.finish().unwrap();
+
+        assert_eq!(
+            std::path::Path::new(&final_path).parent(),
+            Some(dir.as_path()),
+            "the bytes belong in the configured directory, not its parent"
+        );
+        assert_eq!(std::fs::read(&final_path).unwrap(), b"data");
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap());
     }
 
     #[test]
