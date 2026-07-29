@@ -24,85 +24,51 @@ does, how to install it, and every `config.toml` setting.
 
 ## Features
 
-- **Search & download**: search the network and queue downloads in the TUI,
-  or fetch a track in one command with `get`; narrow results by bitrate, size,
-  file type, free slots, or terms to exclude
-- **Wishlist**: `wish add` something the network doesn't have today, and
-  `wish run` (or `serve --wishlist`) keeps looking for it on the interval the
-  server sets
-- **Sharing**: `shares add` a directory and your files show up in searches;
-  `serve` stays online so peers can browse and download them
-- **Upload queue**: a slot cap with users the server lists as privileged served
-  first, and peers get a truthful answer when they ask their place in line
+- **Search & download**: queue from the TUI or fetch in one command with `get`;
+  filter by bitrate, size, file type, free slots, or terms to exclude
+- **Wishlist**: `wish add` what nobody has today; `wish run` and
+  `serve --wishlist` keep looking on the interval the server sets
+- **Sharing**: `shares add` a directory and your files show up in searches,
+  with `serve` online so peers can browse and download them
+- **Upload queue**: a slot cap, server-listed privileged users first, and a
+  truthful answer when a peer asks their place in line
 - **Browse**: list any user's shared files and download straight from the tree
-- **Resumable downloads**: a transfer that dies leaves a `.part` file, and
-  re-running the download asks the peer to send only what is missing
+- **Resumable downloads**: a dead transfer leaves a `.part`, and re-running it
+  asks the peer for only what is missing
 - **Chat rooms**: list, join, and talk in public rooms, several open at once
-- **Private messages**: send and receive messages, with an inbox in the TUI
-- **Firewalled peers**: downloads and browsing fall back to server-brokered
-  connections when a peer can't be reached directly
-- **Automatic port mapping**: opens your listen port via UPnP-IGD and
-  NAT-PMP, with a `portmap` subcommand to test your router
-- **TUI and CLI**: a full terminal interface, plus one-shot commands for
-  scripts and agents: every feature reachable without a terminal, stdout
-  carrying records, the exit code saying what happened
-- **Daemon mode**: one login several clients share, on this machine or over
-  the network, so a download outlives the command that queued it
+- **Private messages**: send and receive, with an inbox in the TUI
+- **Firewalled peers**: browsing and downloads fall back to server-brokered
+  connections when a peer is unreachable directly
+- **Automatic port mapping**: UPnP-IGD and NAT-PMP, with `portmap` to test your
+  router
+- **TUI and CLI**: every feature reachable without a terminal, records on
+  stdout, the exit code saying what happened
+- **Daemon mode**: one login several clients share, locally or over the network,
+  so a download outlives the command that queued it
 
-## Project Goals
+## About
 
 A learning exercise in Rust. I've been on Soulseek since the early 2000s, and
 its closed-source protocol is a good way to learn asynchronous network
 programming and reverse engineering.
 
-The library stays lean on dependencies and has none today; the client takes
-them freely.
-
-## Project Structure
-
-A Cargo workspace with two crates:
-
-- **soulseek-rs-lib** - the protocol implementation, for anyone building their
-  own client
-- **soulseek-rs** - the client built on it, installable with Homebrew or
-  `cargo install`
+A Cargo workspace with two crates: **soulseek-rs-lib**, the protocol
+implementation for anyone building their own client, and **soulseek-rs**, the
+client built on it. The library stays lean on dependencies and has none today;
+the client takes them freely.
 
 ## Installation
 
-### For Users
-
-Homebrew, on macOS or Linux. A prebuilt binary, so no Rust toolchain:
+Homebrew ships a prebuilt binary, so no Rust toolchain:
 
 ```bash
-brew install michel/tap/soulseek-rs
+brew install michel/tap/soulseek-rs   # macOS and Linux
+cargo install soulseek-rs             # or from crates.io
 ```
 
-Or with cargo:
-
-```bash
-cargo install soulseek-rs
-```
-
-### For Developers
-
-Clone and build from source:
-
-```bash
-git clone git@github.com:michel/soulseek-rs.git
-cd soulseek-rs
-cargo build --release
-```
-
-The binary lands at `target/release/soulseek-rs`.
-
-### For Library Users
-
-To build your own Soulseek client, add to your `Cargo.toml`:
-
-```toml
-[dependencies]
-soulseek-rs-lib = "8"
-```
+From source, `cargo build --release` leaves the binary at
+`target/release/soulseek-rs`. To build your own client on the protocol library,
+add `soulseek-rs-lib = "8"` to your `Cargo.toml`.
 
 ## Usage
 
@@ -125,29 +91,25 @@ soulseek-rs search 'aphex twin'    # no login, no flags; uses the daemon
 soulseek-rs                        # the TUI attaches to the same session
 ```
 
-**Why you want this.** The server allows one session per account. Without a
-daemon, two commands at once either cut each other off, or push you into a
-throwaway username per run. That second option is account churn on
-infrastructure other people maintain and share. A daemon is one login for as
-long as you work, and one share index instead of a rescan every invocation. It also lets a download
-outlive the command that queued it, and keeps collecting chat while nothing is
-attached. If you drive this from a script or an agent, start one.
+**Why you want this.** The server allows one session per account, so without a
+daemon two commands at once cut each other off. A daemon is one login for as
+long as you work, your shares indexed once instead of rescanned every
+invocation, downloads that outlive the command that queued them, and chat
+collected while nothing is attached. Driving this from a script or an agent,
+start one.
 
-Commands find it by themselves. It listens on a Unix socket only your user can
-open, so there is nothing to configure and no secret to pass around. Docker and
-ssh-agent make the same arrangement. The socket is `daemon.sock` in the state
-directory (`~/.local/share/soulseek-rs/state`, or wherever `SOULSEEK_STATE_DIR`
-points), with the token remote clients need beside it in `daemon.token`. With
-no daemon running, everything behaves exactly as it did before; `--no-daemon`
-forces that for one run.
+Commands find it themselves. It listens on `daemon.sock` in the state directory
+(`~/.local/share/soulseek-rs/state`, or wherever `SOULSEEK_STATE_DIR` points),
+openable only by your user, with the token remote clients need beside it in
+`daemon.token`. Without one running everything behaves as it did before, and
+`--no-daemon` forces that for a single run.
 
 Windows has no Unix socket. A daemon there needs `--bind ADDR`, and every
 client needs `--daemon ADDR` and the token even on the same machine.
 
-From a script, start it and *wait* for it: it takes a second or two to log in,
-and the socket is there before the login finishes. A command that arrives early
-attaches to it and then waits on the handshake, up to 30 seconds. Poll
-`daemon status` until it answers first.
+From a script, start it and *wait* for it. The socket appears before the login
+finishes, and a command arriving early waits on the handshake for up to 30
+seconds. Poll `daemon status` first.
 
 ```bash
 soulseek-rs daemon status --json >/dev/null 2>&1 || {
@@ -164,57 +126,45 @@ soulseek-rs daemon status          # who it is, what it shares, who is attached
 soulseek-rs daemon stop
 ```
 
-Every window is a view of the same session, not a session of its own. Open a
-second TUI and it shows the searches and transfers already running, including
-ones the first started; queue something in either and both see it. The status
-bar names the daemon it is attached to, so it is obvious which you are looking
-at. Closing a window leaves its downloads running, because they belong to the
-daemon. The settings popup edits the daemon's folders while you are attached:
-the paths are the daemon's, they are validated there, and nothing is created on
-this machine. Applying them also writes those paths into this machine's
-`config.toml`, which becomes your local download folder the next time you run
-without a daemon.
+Every window is a view of the same session. A second TUI shows the searches and
+transfers already running, queueing in either shows up in both, and the status
+bar names the daemon it attached to. Closing a window leaves its downloads
+running. The settings popup edits the daemon's folders, validated there and
+created nowhere on this machine, and writes the same paths into this machine's
+`config.toml` for the next run without a daemon.
 
-Everything that touches the network goes through it. `config`, `skills`,
-`completions` and `portmap` stay local, because they are about this machine
-rather than a session. `shares add`/`remove`, `config set download_dir` and
-`config set shared_dirs` do both: they write the config file *and* update a
-running daemon, so a folder is served — or downloaded into — straight away
-rather than at the daemon's next start. Files land on the *daemon's*
+Everything touching the network goes through it. `config`, `skills`,
+`completions` and `portmap` stay local. `shares add`/`remove`,
+`config set download_dir` and `config set shared_dirs` do both: they write the
+config file *and* update a running daemon, so a folder is served or downloaded
+into straight away rather than at the next start. Files land on the *daemon's*
 filesystem, and `daemon status` reports where.
 
 It does not sweep the wishlist. Standing searches re-run inside
-`serve --wishlist` or a one-off `wish run`, both of which use the daemon's
-session when one is up, so put either on a schedule if you want the list worked
-through. With a remote daemon the list itself lives in the client's
-`config.toml`, so `wish run` from the laptop drives the daemon against the
-laptop's wishes.
+`serve --wishlist` or a one-off `wish run`, both of which borrow the daemon's
+session, so schedule either one to work the list through. With a remote daemon
+the list lives in the client's `config.toml`, so `wish run` from the laptop
+drives the daemon against the laptop's wishes.
 
-`soulseek-rs daemon --upload-slots N` sizes the upload queue for the session it
-holds: 1 to 1000, where `serve` stops at 64.
+`daemon --upload-slots N` sizes the upload queue for the session it holds, 1 to
+1000, where `serve` stops at 64.
 
 #### A download box you drive from your laptop
 
-This is what daemon mode is really for. Put soulseek-rs on the machine that
-should be doing the downloading: a home server, a NAS, a Raspberry Pi, a
-seedbox. Then drive it from wherever you happen to be.
-
-**On that machine**, run the daemon and let it accept connections from your
-network:
+Put soulseek-rs on the machine that should be downloading: a home server, a
+NAS, a Raspberry Pi. **On that machine**, let the daemon take connections from
+your network:
 
 ```bash
 soulseek-rs daemon --bind 0.0.0.0:5030
 ```
 
-It stays in the foreground and prints the token on stderr as it starts, with
-the two `config set` lines to paste on the other machine. `daemon token` prints
-it again, and always *this* machine's token, so run it on the box rather than
-on the laptop.
-
-It needs no terminal and no one logged in; hand it to systemd or launchd and
-forget about it. Run the unit as the user who types the commands, or export the
-same `SOULSEEK_STATE_DIR` in both, because a client looks for the socket under
-its own state directory and finds nothing under someone else's.
+It prints the token on stderr at startup, with the two `config set` lines to
+paste on the other machine. `daemon token` prints it again, always *this*
+machine's, so run it on the box. It needs no terminal and nobody logged in;
+hand it to systemd or launchd. Run the unit as the user who types the commands,
+or export the same `SOULSEEK_STATE_DIR` in both, because a client looks for the
+socket under its own state directory.
 
 **On your laptop**, say once where it lives:
 
@@ -223,71 +173,46 @@ soulseek-rs config set daemon nas.local:5030
 soulseek-rs config set daemon_token <the token you copied>
 ```
 
-That is the whole setup. Every command from now on is the normal command. Your
-laptop needs no Soulseek account of its own, because it uses the server's:
+Every command after that is the normal command, and the laptop needs no
+Soulseek account of its own:
 
 ```bash
-soulseek-rs search 'aphex twin' --json
 soulseek-rs get 'selected ambient works'
 soulseek-rs daemon status          # what it's doing right now
-```
-
-`shares add` resolves the folder against the filesystem of the machine you type
-it on, so `shares add /srv/music` from the laptop exits 2 unless the laptop has
-that path too. Add the box's folders on the box, or over `ssh`.
-
-A share list or download folder pushed to a remote daemon changes its live
-session, and the config file the command wrote is the laptop's. The daemon
-reads its own `config.toml` at the next start, so put the change there as well,
-or push it again after a restart.
-
-Then close the lid. **The downloads keep going**, because they belong to the
-daemon, not to the command that asked for them or to the laptop that ran it.
-Come back tomorrow, run `soulseek-rs daemon status` again, and pick up where
-you left off. The files are on the download box, which is where you wanted
-them.
-
-A transfer outlives the command being killed and the laptop going away, but not
-the command's own deadline. A `download` or `get` that reaches `--timeout`
-(300s by default) tells the daemon to drop the transfer before it exits 5.
-Raise `--timeout` for a big file, or queue it from the attached TUI and quit.
-
-When you are finished with it:
-
-```bash
 soulseek-rs daemon stop            # shuts down the remote daemon
 ```
 
-One caution: there is no encryption on that TCP port. On a home network that
-is usually fine. Over the internet, don't expose it. Reach it through SSH
-instead, either with a tunnel (`ssh -L 5030:localhost:5030 nas`) or by running
-the commands over `ssh` on the box itself.
+Downloads belong to the daemon, so closing the lid does not stop them. They
+still honour the *command's* deadline: a `download` or `get` reaching
+`--timeout` (300s) tells the daemon to drop the transfer before it exits 5.
+Raise it for a big file, or queue from the attached TUI and quit.
+
+`shares add` resolves paths against the machine you type it on, so
+`shares add /srv/music` from the laptop exits 2 unless the laptop has that path
+too. Add the box's folders on the box. Pushing a share list or download folder
+to a remote daemon changes its live session while writing the *laptop's* config
+file, so put the change in the daemon's own `config.toml` as well, or push it
+again after a restart.
+
+That TCP port has no encryption. Fine on a home network; do not expose it to
+the internet. Reach it over SSH instead, with a tunnel
+(`ssh -L 5030:localhost:5030 nas`) or by running the commands on the box.
 
 #### Build your own remote
 
-The daemon's interface is open and documented, so nothing about it is specific
-to this CLI. It speaks newline-delimited JSON-RPC 2.0 over a socket, described
-by an [OpenRPC](https://open-rpc.org) document,
-[`docs/openrpc.json`](docs/openrpc.json). The daemon serves that document
-itself via `rpc.discover`, so a client can ask a running daemon what it can
-do.
+The daemon speaks newline-delimited JSON-RPC 2.0, described by an
+[OpenRPC](https://open-rpc.org) document,
+[`docs/openrpc.json`](docs/openrpc.json), which it also serves over
+`rpc.discover`. Point a client generator at it for typed bindings in your
+language. Searches, transfers, rooms, private messages and shares are all on
+the interface this CLI uses, with no private back channel, and live updates are
+pushed rather than polled.
 
-OpenRPC is the JSON-RPC counterpart to OpenAPI: point a client generator at
-that document and you get typed bindings in whatever language you are working
-in. If you want an Android or iOS app that queues downloads on your home
-server from the sofa, or a small web page that shows what is transferring, you
-have everything you need and no permission to ask for. Searches, transfers,
-rooms, private messages and shares are all on the same interface this CLI
-uses. There is no private back channel it keeps for itself, and live updates
-are pushed to every connected client rather than polled for.
-
-The handshake refuses a client and a daemon on different protocol versions, so
-keep both ends on the same release. A destination is session-wide:
-`download.set_dir` moves it for every transfer, and `download.start` ignores
-any directory the caller names.
-
-[`docs/daemon-protocol.md`](docs/daemon-protocol.md) covers the parts a schema
-cannot state: the framing, the handshake, and how pushed events behave.
+Keep both ends on the same release; the handshake refuses mismatched protocol
+versions. The destination is session-wide, so `download.set_dir` moves it for
+every transfer and `download.start` ignores any directory the caller names.
+[`docs/daemon-protocol.md`](docs/daemon-protocol.md) covers the framing, the
+handshake, and how pushed events behave.
 
 ### Scripting
 
@@ -338,31 +263,29 @@ soulseek-rs skills install|uninstall|list # teach a coding agent this CLI
 soulseek-rs completions install|uninstall # tab completion for bash/zsh/fish
 ```
 
-`whoami`, `config` and `shares list|add|remove` are the ones a script runs
-first: the config commands need no account at all, and `whoami` answers
-"are these credentials good and what am I offering" in one call.
+A script usually starts with `whoami`, which answers "are these credentials
+good and what am I offering" in one call.
 
-With a daemon attached, every command reports the daemon's world. The run
-borrows its session, so `--username` and `--password` go unread and `whoami`
-names the daemon's account, server and download folder; pass `--no-daemon` when
-you want to test this machine's own login. `shares list` stays local either
-way, because it reads the config file, while `shares status` and
-`shares reindex` ask the session and so report what peers can see.
+With a daemon attached every command reports the daemon's world: `--username`
+and `--password` go unread, and `whoami` names the daemon's account, server and
+download folder. `--no-daemon` tests this machine's own login instead.
+`shares list` reads the config file either way, while `shares status` and
+`shares reindex` ask the session and report what peers can see.
 
-Nineteen of these need no credentials: `config path|list|get|set`,
+Nineteen need no credentials: `config path|list|get|set`,
 `shares list|add|remove`, `wish add|remove|list`, `portmap`,
 `skills install|uninstall|list`, `completions install|uninstall` and
-`daemon token|status|stop`. Most never touch the network at all;
-`daemon status` and `daemon stop` talk to a daemon that is already logged in,
-so a machine with no Soulseek account of its own can still ask whether one is
-running. `shares status` and `shares reindex` are not among them: they report
-what the network will see, which means logging in and scanning the folders.
+`daemon token|status|stop`. Most never touch the network; `daemon status` and
+`daemon stop` talk to a daemon that is already logged in, so a machine with no
+account of its own can still ask whether one is running. `shares status` and
+`shares reindex` are not among them, because reporting what the network sees
+means logging in and scanning the folders.
 
-Every command emits records except the six that perform an action.
-`room say`, `message send`, `shares add`, `shares remove`, `wish remove` and
-`daemon stop` say nothing on stdout and answer with their exit code alone.
-`room listen`, `message read` and `serve` stream records as they arrive, until
-`--duration` seconds pass or, with `--follow`, until they are interrupted.
+Six commands perform an action and print nothing, answering with their exit
+code alone: `room say`, `message send`, `shares add`, `shares remove`,
+`wish remove` and `daemon stop`. `room listen`, `message read` and `serve`
+stream records until `--duration` seconds pass or, with `--follow`, until
+interrupted. The rest print records and exit.
 
 #### Record shapes
 
@@ -394,17 +317,23 @@ the message field empty. `serve`'s `status` is `queued`, `uploading`,
 `completed`, `cancelled` or `failed`. `user`'s `status` is `online`, `away` or
 `offline`, and any field the server did not answer prints as `-`.
 
-`--json` carries more than text does: `search` adds `duration`, `slots`,
-`speed` and `free_slot`; `browse` adds `directory`; `download` adds the `user`,
-remote `path` and `size` alongside the local `file`; `whoami` adds `listening`,
-`listen_port`, `download_dir` and `privilege_seconds`; `user` adds `privileged`
-and `shared_folders`; `shares status` adds the `directories` array; `serve`
-adds `bytes_sent`, `size`, `speed` and a `reason` carrying the queue place or
-the failure; `daemon status` adds `version`, `protocol`, `listening`,
-`listen_port`, `shared_folders`, `shared_files`, `download_dir` and
-`session_loss` (`displaced`, `disconnected`, or `null` while the session
-holds); `portmap` adds `port`. Fields the server never answered are `null`
-rather than absent, so a missing reply cannot be misread as a zero.
+`--json` carries more than text does:
+
+| Command            | Extra fields                                                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `search`           | `duration`, `slots`, `speed`, `free_slot`                                                                                       |
+| `browse`           | `directory`                                                                                                                     |
+| `download` / `get` | `user`, remote `path`, `size`, beside the local `file`                                                                          |
+| `whoami`           | `listening`, `listen_port`, `download_dir`, `privilege_seconds`                                                                 |
+| `user`             | `privileged`, `shared_folders`                                                                                                  |
+| `shares status`    | the `directories` array                                                                                                         |
+| `serve`            | `bytes_sent`, `size`, `speed`, `reason` (queue place or failure)                                                                |
+| `daemon status`    | `version`, `protocol`, `listening`, `listen_port`, `shared_folders`, `shared_files`, `download_dir`, `session_loss`              |
+| `portmap`          | `port`                                                                                                                          |
+
+`session_loss` is `displaced`, `disconnected`, or `null` while the session
+holds. Fields the server never answered are `null` rather than absent, so a
+missing reply cannot be misread as a zero.
 
 `download --stdin` reads back either shape it emits: a JSON object per line,
 or tab-separated text whose first field is the user and last field is the
@@ -457,30 +386,25 @@ soulseek-rs user someuser --json | jq -e '.status != "offline"'
 
 [![an agent loading the soulseek-rs skill and downloading tracks](website/public/agent-demo.svg)](https://re-invention.nl/soulseek-rs/#agents)
 
-Coding agents drive the surface above as readily as shell scripts do, but
-`--help` cannot tell an agent which JSON keys a record carries or what exit 4
-means. That lives in a skill file shipped inside the binary, so `cargo install`
-is all it takes to hand it over:
+`--help` lists flags but cannot say which JSON keys a record carries or what
+exit 4 means. That lives in a skill file shipped inside the binary:
 
 ```bash
 soulseek-rs skills install
 ```
 
-That writes `SKILL.md` into every agent it finds in your home directory,
-currently Claude Code (`~/.claude/skills`) and opencode
-(`~/.config/opencode/skill`), and prints one record per target:
+It writes `SKILL.md` into every agent it finds in your home directory, today
+Claude Code (`~/.claude/skills`) and opencode (`~/.config/opencode/skill`), and
+prints one record per target:
 
 ```
 installed   claude     /home/you/.claude/skills/soulseek-rs/SKILL.md
 unchanged   opencode   /home/you/.config/opencode/skill/soulseek-rs/SKILL.md
 ```
 
-Running it again is how you update after upgrading the binary; an identical
-copy reports `unchanged` rather than rewriting it. `skills list` shows what is
-there without touching anything, and `skills uninstall` removes it again, but
-only when the file it finds is the one this binary wrote.
-
-For an agent this table does not cover, name the directory yourself, or commit
+Rerun it after upgrading the binary; an identical copy reports `unchanged`.
+`skills list` shows what is there, and `skills uninstall` removes only the file
+this binary wrote. For any other agent, name the directory yourself, or commit
 the skill next to a project so everyone working on it gets the same brief:
 
 ```bash
@@ -490,18 +414,18 @@ soulseek-rs skills install --dir .claude/skills   # commit it with the repo
 
 ### Shell completions
 
-Tab completion is generated from the same `clap` definition the binary parses
-with, so it never drifts from `--help`:
+Tab completion comes from the same `clap` definition the binary parses with, so
+it never drifts from `--help`:
 
 ```bash
 soulseek-rs completions install
 ```
 
-That covers whichever of bash, zsh and fish this machine uses, writing each
-script where that shell already looks — `~/.config/fish/completions` is scanned
-unprompted, while bash and zsh also get one marked `source` line appended to
-`~/.bashrc` or `~/.zshrc`, because nothing else puts a per-user directory on
-their search path. Open a new shell and `soulseek-rs sh<TAB>` completes.
+It covers whichever of bash, zsh and fish this machine uses, writing each script
+where that shell already looks. `~/.config/fish/completions` is scanned
+unprompted; bash and zsh also get one marked `source` line appended to
+`~/.bashrc` or `~/.zshrc`, since nothing else puts a per-user directory on their
+search path. Open a new shell and `soulseek-rs sh<TAB>` completes.
 
 ```
 installed   zsh    /home/you/.local/share/zsh/site-functions/_soulseek-rs
@@ -515,11 +439,10 @@ to act on one shell rather than the ones detected.
 ### Sharing
 
 `serve` is the mode that makes this client a source: it stays logged in, keeps
-the listener and the share index alive, answers searches and browse requests
-from the network, and prints one record per upload as it changes state
-(`queued`, `uploading`, `completed`, `cancelled`, `failed`). It ends after
-`--duration` seconds (an hour by default), or runs until interrupted with
-`--follow`.
+the listener and share index alive, answers searches and browse requests, and
+prints one record per upload as it changes state (`queued`, `uploading`,
+`completed`, `cancelled`, `failed`). It ends after `--duration` seconds (an
+hour by default), or runs until interrupted with `--follow`.
 
 ```bash
 soulseek-rs shares add ~/Music     # remembered in config.toml
@@ -528,24 +451,21 @@ soulseek-rs shares reindex         # after adding files on disk
 soulseek-rs serve --follow         # add --upload-slots N to widen the queue
 ```
 
-Uploads only show up inside a running `serve`; every other command is
-short-lived with nothing to serve, so there is no `uploads list`. Managing
-transfers across commands (pause, resume, a queue that outlives one
-invocation) is what [daemon mode](#daemon-mode) is for.
+Uploads only appear inside a running `serve`, since every other command is
+short-lived with nothing to serve, so there is no `uploads list`. Pausing,
+resuming, and a queue that outlives one invocation are
+[daemon mode](#daemon-mode).
 
-With a daemon running, `serve` starts no second server. It attaches and streams
-the daemon's uploads, `--upload-slots` re-sizes the daemon's queue, and the
-local "nothing to share" and "needs the listener" checks are skipped, because
-the daemon's shares and listener are the ones peers reach.
+With a daemon running `serve` starts no second server. It attaches and streams
+the daemon's uploads, `--upload-slots` resizes the daemon's queue, and the local
+"nothing to share" and "needs the listener" checks are skipped because the
+daemon's shares and listener are the ones peers reach.
 
-Downloads run under a deadline (`--timeout`, 300s by default) and
-`--max-concurrent-downloads` at a time, so an unattended run always ends.
-
-An interrupted download is picked up where it stopped. Bytes stream into
-`<file>.part` as they arrive and it is renamed only once the file is whole, so
-re-running the same `download` asks the peer to start at the offset already on
-disk. Partial files are never offered to other peers, and deleting the `.part`
-starts the transfer over.
+Downloads run under `--timeout` (300s) and `--max-concurrent-downloads` at a
+time, so an unattended run always ends. An interrupted one resumes: bytes stream
+into `<file>.part` and it is renamed only once whole, so re-running the same
+`download` asks the peer to start at the offset already on disk. Partial files
+are never offered to peers, and deleting the `.part` starts over.
 
 ### Configuration
 
@@ -569,24 +489,22 @@ file, in that order of precedence. Flags work before or after the subcommand.
 | `--no-daemon`                  | —                                   | —                            | attach if one is running  |
 | `--log-file`                   | `SOULSEEK_LOG_FILE`                 | not a config key             | stderr                    |
 
-Boolean environment variables accept the usual `1`/`0`/`true`/`false`/`yes`/`no`.
-`--config <FILE>` (or `SOULSEEK_CONFIG`) reads a different config file and
-`--no-config` ignores it entirely, which is what an isolated or containerised
-run wants. The config file lives at `~/.config/soulseek-rs/config.toml` on
-macOS and Linux; `SOULSEEK_CONFIG_DIR` and `SOULSEEK_STATE_DIR` relocate the
-config and state directories wholesale. Every variable above is also read from
-a `.env` file in the working directory, which is often the tidiest way to hand
-a container its credentials.
+Boolean environment variables accept `1`/`0`/`true`/`false`/`yes`/`no`.
+`--config <FILE>` (or `SOULSEEK_CONFIG`) reads a different file, `--no-config`
+ignores it entirely, and `SOULSEEK_CONFIG_DIR` and `SOULSEEK_STATE_DIR` relocate
+the config and state directories wholesale. The file lives at
+`~/.config/soulseek-rs/config.toml` on macOS and Linux. Every variable above is
+also read from a `.env` in the working directory, usually the tidiest way to
+hand a container its credentials.
 
-`config get` and `config set` cover the eleven settings the file can hold
+`config get` and `config set` cover the eleven settings the file holds
 (`username`, `server`, `listener_port`, `disable_listener`, `download_dir`,
 `shared_dirs`, `max_concurrent_downloads`, `search_timeout`, `password_cmd`,
-`daemon`, `daemon_token`), and name the lot back at you when you ask for
-something else. Setting a key to
-an empty string clears it, and `shared_dirs` takes a comma-separated list.
-Every wait expressed in seconds (`--search-timeout`, each `--timeout`, each
-`--duration`) is bounded to one day, so a mistyped flag is rejected rather than
-hanging until the heat death of the universe.
+`daemon`, `daemon_token`), and list them back at you when you name something
+else. An empty string clears a key, and `shared_dirs` takes a comma-separated
+list. Waits expressed in seconds (`--search-timeout`, `--timeout`,
+`--duration`) are bounded to one day, so a mistyped flag is rejected rather
+than hanging.
 
 #### Credentials for unattended runs
 
@@ -610,80 +528,50 @@ Logging stays at errors only unless you ask for more: `-v` through `-vvvv`
 raise it, and `LOG_LEVEL`/`RUST_LOG` are honoured when no `-v` is given.
 `NO_COLOR` and a non-terminal stderr both disable colour.
 
-### Private messages
-
-Send and read private messages from the command line:
+### Chat and messages
 
 ```bash
 soulseek-rs message send <username> "hello there"
-soulseek-rs message read --duration 60      # or --follow to run until killed
-```
-
-In the interactive TUI:
-
-- press `m` to compose, then type `<recipient> <message>` and `Enter` to send;
-- press `i` to open the inbox popup listing sent and received messages
-  (the TUI receives incoming messages while it is open). The `i`
-  shortcut shows an unread counter, e.g. `i inbox (3)`.
-
-### Chat rooms
-
-From the command line:
-
-```bash
+soulseek-rs message read --duration 60    # or --follow until killed
 soulseek-rs room list                     # public rooms with user counts
-soulseek-rs room listen <room>            # stream messages, joins, and leaves
+soulseek-rs room listen <room>            # stream messages, joins, leaves
 soulseek-rs room say <room> "hello room"  # post one message and exit
 ```
 
-In the interactive TUI, press `c` to open the chat-rooms popup:
+In the TUI, `m` composes a private message and `i` opens the inbox with an
+unread counter. `c` opens the chat-rooms popup: a `/`-filterable room list
+busiest first, `Enter` to join, several rooms open at once as tabs
+(`Tab`/`Shift-Tab` to switch, `x` to leave, `l` back to the list), and `↑`/`↓`
+through the member list with `b` to browse someone or `m` to message them.
+Unread counts appear on the tabs and on the `c chat (n)` shortcut.
 
-- the **room list** is browsable and `/`-filterable and shows each room's
-  user count (busiest first); press `Enter` to join the highlighted room;
-- several rooms can be **open at once** as tabs: `Tab`/`Shift-Tab` switch
-  between them, `x` leaves the active room, `l` returns to the room list;
-- in a room, press `Enter` to type a message and `Enter` again to send;
-- the room's **member list** is selectable with `↑`/`↓`; press `b` to browse
-  the highlighted user's shared files or `m` to send them a private message;
-- **unread messages** bold a room's tab and add a `room (n)` badge, and the
-  `c chat (n)` shortcut counts unread across all open rooms.
+### Connectivity
 
-### Connectivity (being reachable)
+Browsing and downloading are peer-to-peer, so one side has to accept an incoming
+connection. With the listener on (the default) the client opens its listen port
+via **UPnP-IGD** and **NAT-PMP**, renews it while running, and removes it on
+exit. Best-effort: a router with both disabled makes it a no-op, and a log line
+says to forward the port yourself.
 
-Browsing and downloading are peer-to-peer, so at least one side must accept an
-incoming connection. When the listener is enabled (the default), the client
-tries to open its listen port on your router via **UPnP-IGD** and **NAT-PMP**,
-so firewalled peers and the server can connect back. This is best-effort: if
-your router has UPnP/NAT-PMP disabled it's a no-op, and a log line tells you to
-forward the port yourself.
-
-- The mapped/forwarded port is your `--listener-port` (env
-  `SOULSEEK_LISTENER_PORT`, default `2234`); the client renews it while it runs
-  and removes it on exit.
-- If auto-mapping can't get that port, forward **TCP 2234** (or whatever
-  `--listener-port` you chose) to this machine on your router.
-- Pass `--no-listener` to turn the listener (and port mapping) off, or
-  `--listener` to force it on when the config file disables it.
-- If another process on this machine already holds that port — the usual case
-  when several one-shot commands run at once — the client takes one the OS
-  picks instead, says so on stderr, and advertises and maps that one. `whoami`
-  reports the port it really holds.
-
-Check whether it works on your network without launching the whole client:
+- The port is `--listener-port` (`SOULSEEK_LISTENER_PORT`, default `2234`).
+  Forward that TCP port when auto-mapping cannot get it.
+- `--no-listener` turns the listener and port mapping off; `--listener` forces
+  it on when the config file disables it.
+- When another process already holds the port, the usual case with several
+  one-shot commands at once, the client takes one the OS picks, says so on
+  stderr, and advertises that one. `whoami` reports what it really holds.
 
 ```bash
 soulseek-rs portmap            # exits 0 when mapping works, 4 when it does not
 soulseek-rs portmap --json     # {"ok":true,"backend":"upnp","external":"…"}
 ```
 
-It tries to open the port via UPnP/NAT-PMP, reports whether your router allowed
-it (and your external address), then removes the test mapping. Because the
-verdict is in the exit code, `soulseek-rs portmap || notify-me` works as a
-health check.
+`portmap` opens the port, reports whether the router allowed it and your
+external address, then removes the test mapping. The verdict is the exit code,
+so `soulseek-rs portmap || notify-me` works as a health check.
 
-If both you and a peer are behind routers with no forwarded port, browsing that
-peer can't work. That's a fundamental Soulseek/peer-to-peer limitation, not a
-bug.
+Two peers both behind routers with no forwarded port cannot browse each other.
+That is a Soulseek limitation, not a bug.
 
 ## Development
 
@@ -696,13 +584,11 @@ cargo fmt
 
 ### End-to-end tests
 
-Two suites exercise the client against a real Soulseek server using
-[soulfind](https://github.com/soulfind-dev/soulfind), a local server
-implementation: `soulseek-rs-lib/tests/e2e.rs` covers the protocol library, and
-`soulseek-rs/tests/cli_e2e.rs` drives the actual binary the way a script would
-(records on stdout, exit codes, real searches, downloads, and chat). The tests
-are **server-optional**: they run when a server is available and otherwise skip
-(so `cargo test` stays green everywhere).
+Two suites run against [soulfind](https://github.com/soulfind-dev/soulfind), a
+local Soulseek server: `soulseek-rs-lib/tests/e2e.rs` covers the protocol
+library, and `soulseek-rs/tests/cli_e2e.rs` drives the binary the way a script
+would. Both are **server-optional**, running when a server is available and
+skipping otherwise, so `cargo test` stays green everywhere.
 
 They locate a server in this order:
 

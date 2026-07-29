@@ -41,18 +41,19 @@ by themselves. It listens on a Unix socket only your user can open, so there is
 nothing to configure, no address to pass, and no token to handle.
 
 **Why this matters, and why it is not optional for you.** Soulseek is a real
-network of other people's computers, and the server allows **one session per
-account**. Without a daemon, every invocation is its own login, and running two
-at once leaves you two bad choices: share a username and they silently cut each
-other off (exit 7), or give each run a throwaway name and *register a new
-account on a public server for every search you make*. The second is what a
-naive script does, and it is the antisocial one: account churn on
-infrastructure other people maintain and share.
+network of other people's computers, and you arrive on it under the user's one
+account. That name is their standing: peers see what it shares, add it to their
+lists, and queue it again later. The server allows **one session per account**,
+so without a daemon every invocation is its own login and two at once silently
+cut each other off (exit 7). Never work around that by inventing usernames — an
+account per command is churn on infrastructure other people maintain, and it
+throws away the standing the user built.
 
 A daemon is one login for as long as you work, however many commands you run
-against it. It also indexes your shared folders once instead of re-scanning
-them on every invocation, and downloads it starts outlive the command that
-asked for them, so a transfer survives the process that queued it.
+against it. It also keeps the user's shared folders indexed and reachable
+instead of re-scanning them on every invocation, and downloads it starts
+outlive the command that asked for them, so a transfer survives the process
+that queued it.
 
 So: **one daemon, then as many commands as you like.** Reach for `--no-daemon`
 only when you deliberately want an isolated session, and expect to justify it.
@@ -86,7 +87,7 @@ that form; the columns are a subset of the JSON keys.
 | 4 | It worked and found nothing | Widen or correct the query — retrying it verbatim will not help |
 | 5 | Gave up waiting | Raise `--timeout`, or `--search-timeout` for searches |
 | 6 | A transfer started and did not finish | The peer stalled; try another result |
-| 7 | The session ended mid-command (usually another login took the username) | Nothing this run saw is reliable; retry, and give each concurrent run its own `--username` |
+| 7 | The session ended mid-command (usually another login took the username) | Nothing this run saw is reliable; start a daemon so concurrent runs share the one login, then retry — never invent a second username |
 
 ## Commands
 
@@ -481,9 +482,9 @@ transfers on one person.
   or any fetch whose size you do not know.
 
 Twenty at once works only because the daemon holds the session: twenty commands
-sharing one login. Without a daemon they would displace each other (exit 7),
-and giving each its own `--username` would register a throwaway account per
-track, which is worse. Start the daemon first.
+sharing one login. Without a daemon they displace each other (exit 7). Do not
+reach for `--username` to get around it: that registers an account per track on
+someone else's server. Start the daemon first.
 
 Keep the listener on: a peer that cannot connect back to you cannot send you
 the file.
