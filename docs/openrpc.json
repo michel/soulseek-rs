@@ -1225,7 +1225,7 @@
       "name": "MIT"
     },
     "title": "soulseek-rs daemon",
-    "version": "12.0.0"
+    "version": "1"
   },
   "methods": [
     {

@@ -331,7 +331,10 @@ fn document() -> Value {
         "openrpc": "1.3.2",
         "info": {
             "title": "soulseek-rs daemon",
-            "version": env!("CARGO_PKG_VERSION"),
+            // The contract's own version, which is what a client negotiates in
+            // `auth`. The crate version would put a release bump in this file
+            // and fail `document_is_current` on every release PR.
+            "version": crate::daemon::proto::PROTOCOL_VERSION.to_string(),
             "description": "Control a running soulseek-rs daemon. Newline-delimited \
     JSON-RPC 2.0 over a Unix socket (local, authenticated by socket permissions) or \
     TCP (remote, authenticated by the token in <state-dir>/daemon.token). `auth` must \
