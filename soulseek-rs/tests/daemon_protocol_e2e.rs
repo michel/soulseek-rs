@@ -158,9 +158,21 @@ impl Connection {
     }
 
     /// Send one line and read the reply, `None` if the daemon hung up first.
+    ///
+    /// Events share the socket with replies, so a subscribed connection can
+    /// have a notification land between the request and its answer. Only a
+    /// reply carries an `id`; skip everything that does not.
     fn call(&mut self, line: &str) -> Option<String> {
         self.send(line)?;
-        self.read()
+        loop {
+            let reply = self.read()?;
+            let is_notification =
+                serde_json::from_str::<serde_json::Value>(&reply)
+                    .is_ok_and(|parsed| parsed.get("id").is_none());
+            if !is_notification {
+                return Some(reply);
+            }
+        }
     }
 
     fn send(&mut self, line: &str) -> Option<()> {
