@@ -6,7 +6,7 @@ import { Cols, PageHead, Prose, Section, SectionHead } from '@/components/ui/lay
 import { OsIcon, type OsName } from '@/components/ui/os-icon'
 import { Callout } from '@/components/ui/panel'
 import { Terminal, type TermLine } from '@/components/ui/terminal'
-import { LINKS } from '@/lib/links'
+import { INSTALL_CMD, LINKS, SITE_URL } from '@/lib/links'
 
 const LIB_SRC = `use soulseek_rs::Client;
 use std::time::Duration;
@@ -266,7 +266,18 @@ const Steps = () => (
     <div className="flex flex-col gap-9">
       <Step n={1} title="Install the client">
         <p className="text-secondary">
-          One command per platform. Cargo needs a Rust toolchain from{' '}
+          One command on macOS and Linux. The script installs through Homebrew when you
+          have it; otherwise it downloads the latest release binary for your platform,
+          checks its sha256, and puts it on your PATH.
+        </p>
+        <Terminal lines={[{ t: 'cmd', text: INSTALL_CMD }]} wrap />
+        <p className="text-[13px] text-muted">
+          No curl? <Code>{`wget -qO- ${SITE_URL}install.sh | sh`}</Code> does the same.
+          Piping to a shell asks for trust; read the script first at{' '}
+          <ExtLink href={`${SITE_URL}install.sh`}>{`${SITE_URL}install.sh`}</ExtLink>.
+        </p>
+        <p className="text-secondary">
+          Or pick a route per platform. Cargo needs a Rust toolchain from{' '}
           <ExtLink href={LINKS.rustup}>rustup.rs</ExtLink>; the other routes don&rsquo;t.
         </p>
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -520,6 +531,8 @@ const Uninstall = () => (
           { t: 'cm', text: '# whichever way you installed it' },
           { t: 'cmd', text: 'brew uninstall soulseek-rs' },
           { t: 'cmd', text: 'cargo uninstall soulseek-rs' },
+          { t: 'cm', text: '# script install without brew: the binary itself' },
+          { t: 'cmd', text: 'rm -f /usr/local/bin/soulseek-rs ~/.local/bin/soulseek-rs' },
           { t: 'cm', text: '# brew only: drop the tap it came from' },
           { t: 'cmd', text: 'brew untap michel/tap' },
           { t: 'cm', text: '# config and state: searches, downloads, rooms,' },
@@ -560,8 +573,8 @@ const Uninstall = () => (
 export const Install = () => (
   <>
     <PageHead eyebrow="install" title="Three ways in.">
-      One command with Homebrew or cargo. Build from source if you&rsquo;d rather. Or depend
-      on the library and write your own client.
+      One command with the install script, Homebrew or cargo. Build from source if
+      you&rsquo;d rather. Or depend on the library and write your own client.
     </PageHead>
     <Steps />
     <Reachable />

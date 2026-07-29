@@ -10,12 +10,12 @@ import { Cols, Eyebrow, Prose, Section, SectionHead, Wrap } from '@/components/u
 import { OsIcon, type OsName } from '@/components/ui/os-icon'
 import { Callout } from '@/components/ui/panel'
 import { Terminal } from '@/components/ui/terminal'
-import { LINKS } from '@/lib/links'
+import { INSTALL_CMD, LINKS } from '@/lib/links'
 import { cn } from '@/lib/utils'
 
 const PLATFORMS: readonly { name: OsName; note: string; anchor: string }[] = [
-  { name: 'macOS', note: 'brew or cargo', anchor: 'macos' },
-  { name: 'Linux', note: 'cargo install', anchor: 'linux' },
+  { name: 'macOS', note: 'script or brew', anchor: 'macos' },
+  { name: 'Linux', note: 'script or cargo', anchor: 'linux' },
   { name: 'Windows', note: 'cargo or .exe', anchor: 'windows' },
 ]
 
@@ -154,7 +154,7 @@ const Hero = () => (
             <Button href="/docs">Read the docs</Button>
             <Button href={LINKS.gh}>GitHub</Button>
           </div>
-          <CommandPill text="brew install michel/tap/soulseek-rs" />
+          <CommandPill text={INSTALL_CMD} />
         </div>
       </div>
 
@@ -327,9 +327,10 @@ const GetStarted = () => (
       <Terminal
         label="quick start"
         lines={[
-          { t: 'cmd', text: 'brew install michel/tap/soulseek-rs' },
+          { t: 'cmd', text: INSTALL_CMD },
           { t: 'cmd', text: 'soulseek-rs' },
         ]}
+        wrap
       />
     </Cols>
   </Section>

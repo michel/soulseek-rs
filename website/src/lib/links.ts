@@ -18,3 +18,5 @@ export const LINKS = {
 export const VERSION = __APP_VERSION__
 
 export const SITE_URL = 'https://re-invention.nl/soulseek-rs/'
+
+export const INSTALL_CMD = `curl -fsSL ${SITE_URL}install.sh | sh`
