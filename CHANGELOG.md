@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [13.0.0](https://github.com/michel/soulseek-rs/compare/v12.0.0...v13.0.0) - 2026-07-29
+
+### Added
+
+- *(daemon)* make the download folder a live setting in both modes
+- *(daemon)* make every window a view of one shared session
+- *(daemon)* say what to do next on startup, and prove multiple clients agree
+- *(config)* remember which daemon to use, and document the download box
+- *(daemon)* route commands and the TUI through a running daemon
+- *(daemon)* resident session, auth-gated control socket, and event fan-out
+- *(daemon)* wire protocol with a type-safe method vocabulary and a generated OpenRPC contract
+
+### Fixed
+
+- *(daemon)* version the contract by its protocol, not by the crate
+- *(daemon)* ask the OS for enough open files, and stop spinning when it says no
+- *(daemon)* a thread the OS refuses must not take the listener with it
+- *(shares)* let add and remove reach a running daemon
+- *(daemon)* correct the published contract and harden the control socket
+
+### Other
+
+- *(daemon)* match a reply by its id instead of taking the next line
+- cut what a whole-repo audit proved dead, padded, or hand-rolled
+- *(skill)* choose the track yourself; narrow the results instead of skipping them
+- *(skill)* make the cheap path the default and stop moving paths by hand
+- *(skill)* stream picks into transfers instead of batching them
+- *(skill)* raise the batch limits to what the client is actually built for
+- *(skill)* add the search ladder, and one budget both batch routes obey
+- *(skill)* teach the agent to fetch a list without getting the user banned
+- *(skill)* make the daemon the default way an agent works
+- *(daemon)* route the suite at its chokepoint and cover the protocol directly
+- *(daemon)* drive the whole CLI suite against a daemon, and fix what it caught
+- publish the daemon protocol and describe daemon mode in the README
+- *(api)* put a SessionApi seam between the commands, the TUI, and the client
+
 ## [12.0.0](https://github.com/michel/soulseek-rs/compare/v11.0.0...v12.0.0) - 2026-07-26
 
 ### Added
