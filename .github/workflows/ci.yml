@@ -73,7 +73,9 @@ jobs:
 
   e2e:
     name: End-to-end (soulfind)
-    timeout-minutes: 15
+    # The CLI suite runs twice (own login + against a daemon), ~8 minutes per
+    # pass, plus the library and protocol suites and a soulfind build.
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
