@@ -156,4 +156,33 @@ impl Client {
             .map(|ctx| ctx.searches.clone())
             .unwrap_or_default()
     }
+
+    /// Every registered search and how many files it has collected, without
+    /// copying the result sets.
+    ///
+    /// This is the accessor to poll. [`Client::get_all_searches`] clones every
+    /// result of every search, which for a popular query is megabytes per
+    /// call — a caller that only wants to know what exists and whether
+    /// anything new arrived reads the counts instead.
+    #[must_use]
+    pub fn search_file_counts(&self) -> Vec<(String, usize)> {
+        self.context
+            .read_safe()
+            .map(|ctx| {
+                ctx.searches
+                    .iter()
+                    .map(|(query, search)| {
+                        (
+                            query.clone(),
+                            search
+                                .results
+                                .iter()
+                                .map(|result| result.files.len())
+                                .sum(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }

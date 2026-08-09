@@ -544,7 +544,12 @@ impl SessionApi for RemoteSession {
     }
 
     fn get_search_results_count(&self, key: &str) -> usize {
-        self.get_search_results(key).len()
+        // The summary's file count, not the full set: callers poll this to
+        // ask whether anything has arrived, and the set can be megabytes.
+        self.all_searches()
+            .into_iter()
+            .find(|search| search.query == key)
+            .map_or(0, |search| search.files)
     }
 
     fn try_get_search_results(&self, key: &str) -> Option<Vec<SearchResult>> {

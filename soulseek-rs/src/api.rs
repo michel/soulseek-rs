@@ -86,6 +86,8 @@ pub trait SessionApi: Send + Sync {
     /// Drop a search from the session, so every window loses it rather than
     /// only the one that dismissed it.
     fn forget_search(&self, query: &str) -> bool;
+    /// How many files a search has collected so far — a count cheap enough
+    /// to poll, never a copy of the results.
     fn get_search_results_count(&self, key: &str) -> usize;
     fn try_get_search_results(&self, key: &str) -> Option<Vec<SearchResult>>;
     fn start_wishlist_search(&self, query: &str) -> Result<()>;
@@ -198,11 +200,15 @@ impl SessionApi for Client {
     }
 
     fn all_searches(&self) -> Vec<SessionSearch> {
-        Self::get_all_searches(self)
+        // Counts, not copies: the daemon answers this for every attached
+        // client many times a second, and cloning every result set to sum
+        // its lengths held the context lock against the thread storing new
+        // results.
+        Self::search_file_counts(self)
             .into_iter()
-            .map(|(query, search)| SessionSearch {
+            .map(|(query, files)| SessionSearch {
                 query,
-                files: search.results.iter().map(|r| r.files.len()).sum(),
+                files,
                 // A local window started every search it can see, so it
                 // already knows which are still running.
                 started_secs_ago: None,
@@ -211,7 +217,12 @@ impl SessionApi for Client {
     }
 
     fn get_search_results_count(&self, key: &str) -> usize {
-        Self::get_search_results_count(self, key)
+        // Files, agreeing with the remote session — the library's own
+        // accessor of this name counts per-peer responses instead.
+        Self::search_file_counts(self)
+            .into_iter()
+            .find(|(query, _)| query == key)
+            .map_or(0, |(_, files)| files)
     }
 
     fn try_get_search_results(&self, key: &str) -> Option<Vec<SearchResult>> {

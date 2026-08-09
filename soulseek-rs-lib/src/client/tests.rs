@@ -175,6 +175,57 @@ fn build_search_response_matches_shares_and_echoes_token() {
 }
 
 #[test]
+fn search_file_counts_cover_every_search_without_the_results() {
+    // The daemon polls these counts many times a second; they must come from
+    // a walk of the cache, never a copy of it.
+    fn peer_files(count: usize) -> SearchResult {
+        SearchResult {
+            token: 1,
+            files: (0..count)
+                .map(|i| crate::types::File {
+                    username: "bob".to_string(),
+                    name: format!("song-{i}.mp3"),
+                    size: 1,
+                    attribs: std::collections::HashMap::new(),
+                })
+                .collect(),
+            slots: 1,
+            speed: 0,
+            username: "bob".to_string(),
+        }
+    }
+
+    let client = Client::new("u", "p");
+    {
+        let mut context = client.context.write().unwrap();
+        context.searches.insert(
+            "aphex twin".to_string(),
+            Search {
+                token: 1,
+                results: vec![peer_files(2), peer_files(1)],
+            },
+        );
+        context.searches.insert(
+            "nothing yet".to_string(),
+            Search {
+                token: 2,
+                results: Vec::new(),
+            },
+        );
+    }
+
+    let mut counts = client.search_file_counts();
+    counts.sort();
+    assert_eq!(
+        counts,
+        [
+            ("aphex twin".to_string(), 3),
+            ("nothing yet".to_string(), 0)
+        ]
+    );
+}
+
+#[test]
 fn test_client_removes_only_queued_downloads() {
     let client = Client::new("test-user", "test-password");
     {
