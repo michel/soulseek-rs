@@ -734,14 +734,14 @@ fn a_file_downloads_from_a_peer_over_p_and_f_connections() {
         .recv_timeout(Duration::from_secs(5))
         .expect("mock uploader P connection");
 
-    // The listener registers an incoming peer under "<username>:direct"; give
+    // The listener registers an incoming peer under its plain username; give
     // that registration a moment to complete before queuing the download.
     std::thread::sleep(Duration::from_millis(1500));
 
     let (_download, status_rx) = client
         .download(
             filename.to_string(),
-            "e2e_mockpeer:direct".to_string(),
+            "e2e_mockpeer".to_string(),
             size,
             download_dir.display().to_string(),
         )
@@ -811,7 +811,7 @@ fn an_interrupted_download_resumes_from_its_partial_file() {
     let (_download, status_rx) = client
         .download(
             filename.to_string(),
-            "e2e_resume_peer:direct".to_string(),
+            "e2e_resume_peer".to_string(),
             size,
             download_dir.display().to_string(),
         )

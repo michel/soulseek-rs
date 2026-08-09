@@ -5,14 +5,6 @@ use super::{
 use crate::types::UploadStatus;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 
-/// The peer behind a registry key, which may carry a `:direct` suffix the
-/// server never sees.
-pub fn downloader_of(requester_key: &str) -> &str {
-    requester_key
-        .strip_suffix(":direct")
-        .unwrap_or(requester_key)
-}
-
 impl Client {
     /// Whether the server listed `username` as privileged. Privileged peers are
     /// served before everyone else.

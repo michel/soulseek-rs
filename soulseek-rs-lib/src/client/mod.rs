@@ -248,7 +248,7 @@ pub enum ClientOperation {
         query: String,
     },
     /// A peer queued one of our shared files; `requester_key` is the registry
-    /// key of the peer actor (may carry a `:direct` suffix).
+    /// key of the peer actor — the peer's username.
     QueueUpload {
         requester_key: String,
         filename: String,

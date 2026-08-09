@@ -31,9 +31,7 @@ pub struct UploadOffer {
 /// A file a peer has asked us for and is waiting on.
 #[derive(Debug, Clone)]
 pub struct QueuedUpload {
-    /// Registry key of the asking peer's actor, which may carry a `:direct`
-    /// suffix — not the same string as `downloader`.
-    pub requester_key: String,
+    /// The asking peer's username — also the registry key of its actor.
     pub downloader: String,
     pub virtual_path: String,
     pub real_path: PathBuf,
@@ -98,7 +96,6 @@ impl ClientContext {
     /// for a file we do not have never reaches the queue.
     pub fn enqueue_upload(
         &mut self,
-        requester_key: &str,
         downloader: &str,
         filename: &str,
         real_path: std::path::PathBuf,
@@ -106,7 +103,6 @@ impl ClientContext {
     ) {
         self.upload_seq += 1;
         self.upload_queue.push(QueuedUpload {
-            requester_key: requester_key.to_string(),
             downloader: downloader.to_string(),
             virtual_path: filename.to_string(),
             real_path,
@@ -134,7 +130,7 @@ impl ClientContext {
             let job = self.upload_queue.remove(index);
             let token = next_token();
             offers.push(UploadOffer {
-                requester_key: job.requester_key,
+                requester_key: job.downloader.clone(),
                 token,
                 virtual_path: job.virtual_path.clone(),
                 size: job.size,
@@ -259,7 +255,6 @@ mod tests {
 
     fn queued(user: &str, privileged: bool, seq: u64) -> QueuedUpload {
         QueuedUpload {
-            requester_key: user.to_string(),
             downloader: user.to_string(),
             virtual_path: format!("@@share\\{user}.mp3"),
             real_path: PathBuf::from("/tmp/x.mp3"),
@@ -365,7 +360,7 @@ mod context_tests {
     }
 
     fn ask(ctx: &mut ClientContext, user: &str, file: &str) {
-        ctx.enqueue_upload(user, user, file, PathBuf::from("/tmp/x"), 4096);
+        ctx.enqueue_upload(user, file, PathBuf::from("/tmp/x"), 4096);
     }
 
     /// Who the pump offered to, by the order it offered them.

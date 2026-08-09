@@ -1,4 +1,3 @@
-use super::uploads::downloader_of;
 use super::{
     Arc, BROKER_CONNECT_TIMEOUT, Client, ClientContext, ClientOperation,
     ConnectionType, Download, DownloadPeer, DownloadStatus, Peer, PeerMessage,
@@ -75,6 +74,14 @@ impl Client {
                                 let _ = handle.stop();
                             }
                         }
+                        // Only an error is evidence the peer is gone. A clean
+                        // close — our idle reaper, or a remote client tidying
+                        // an idle socket while it waits in our queue — must
+                        // not throw away everything that peer has queued: the
+                        // connection comes back, the queue cannot. A departed
+                        // peer wedging uploads shut is still covered: its
+                        // erroring transfer fails within the socket deadlines
+                        // and the error branch here frees its slots.
                         if let Some(error) = error {
                             warn!(
                                 "[client] Peer {} disconnected with error: {:?}",
@@ -85,12 +92,11 @@ impl Client {
                                 &username,
                                 None,
                             );
+                            Self::release_upload_slots(
+                                &client_context,
+                                &username,
+                            );
                         }
-                        // A peer that leaves must not keep occupying an
-                        // upload slot: with a slot cap, a couple of
-                        // departed peers would otherwise wedge uploads
-                        // shut for the rest of the session.
-                        Self::release_upload_slots(&client_context, &username);
                     }
                     ClientOperation::DownloadFromPeer(token, peer, allowed) => {
                         let maybe_download = match client_context.read_safe() {
@@ -440,10 +446,11 @@ impl Client {
                         }
                     }
                     ClientOperation::PeerConnected(username) => {
-                        // An outbound control connection just handshook.
-                        // Flush any downloads that were queued for this
-                        // peer while we were still connecting. Collect
-                        // under a read guard, then act without it held.
+                        // A control connection just came up — one we dialled,
+                        // or an inbound one the listener registered. Flush any
+                        // downloads that were queued for this peer while it
+                        // was unreachable. Collect under a read guard, then
+                        // act without it held.
                         let (registry, files): (
                             Option<PeerRegistry>,
                             Vec<String>,
@@ -547,8 +554,6 @@ impl Client {
                         filename,
                     } => {
                         // The peer served next may not be this one.
-                        let downloader =
-                            downloader_of(&requester_key).to_string();
                         match client_context.write_safe() {
                             Ok(mut ctx) => {
                                 let Some(file) = ctx.shares.get(&filename)
@@ -563,7 +568,6 @@ impl Client {
                                 let real_path = file.real_path.clone();
                                 ctx.enqueue_upload(
                                     &requester_key,
-                                    &downloader,
                                     &filename,
                                     real_path,
                                     size,
@@ -580,12 +584,11 @@ impl Client {
                         requester_key,
                         filename,
                     } => {
-                        let downloader = downloader_of(&requester_key);
                         let (registry, place) = match client_context.read_safe()
                         {
                             Ok(ctx) => (
                                 ctx.peer_registry.clone(),
-                                ctx.place_in_queue(downloader, &filename),
+                                ctx.place_in_queue(&requester_key, &filename),
                             ),
                             Err(_) => continue,
                         };

@@ -178,7 +178,7 @@ fn handle_file_connection(
     let failure_token = download.as_ref().map(|d| d.token);
 
     let download_peer = DownloadPeer::new(
-        format!("{}:direct", peer.username),
+        peer.username.clone(),
         peer.host.clone(),
         peer.port,
         token,
@@ -325,8 +325,13 @@ fn handle_incoming_connection(
         init_data.username, init_data.connection_type, init_data.token
     );
 
+    // Register under the plain username, the same key outbound connections
+    // use. A suffixed key ("user:direct") put the same peer in the registry
+    // twice — two sockets, two threads — and made every "already connected?"
+    // check miss, so an inbound searcher still got a second, outbound
+    // connection dialled at them.
     let peer = Peer::new(
-        format!("{}:direct", init_data.username),
+        init_data.username.clone(),
         init_data.connection_type.clone(),
         peer_ip.clone(),
         peer_port.into(),
@@ -339,6 +344,12 @@ fn handle_incoming_connection(
     match init_data.connection_type {
         ConnectionType::P => {
             handle_peer_connection(peer, stream, reader, &context);
+            // Inbound peers don't self-announce, so nudge the client to flush
+            // anything queued for this now-connected peer — same as the
+            // PierceFirewall path.
+            let _ = context
+                .client_sender
+                .send(ClientOperation::PeerConnected(init_data.username));
         }
 
         ConnectionType::F => handle_file_connection(
