@@ -88,11 +88,22 @@ pub struct PeerActor {
     /// larger than the send buffer — a full share listing is easily megabytes —
     /// only partly fits; the rest drains on later ticks.
     pending_write: Vec<u8>,
+    /// When bytes last moved on this connection, in either direction. A peer
+    /// that goes quiet is eventually reaped: nothing else ever closes an idle
+    /// control connection, and each one holds a descriptor and a thread for
+    /// the life of the process.
+    last_activity: Instant,
 }
 
 /// Cap on queued outbound bytes. A peer that stops reading must not be able to
 /// grow this without bound; dropping that connection is the right answer.
 const MAX_PENDING_WRITE: usize = 32 * 1024 * 1024;
+
+/// How long a connected peer may stay silent before its control connection is
+/// closed. Transfers run on their own sockets, and a peer that wants us again
+/// simply reconnects — every serious client reaps idle peers this way. Five
+/// minutes comfortably outlives a search's chatter and queue updates.
+const IDLE_DISCONNECT: Duration = Duration::from_mins(5);
 
 impl PeerActor {
     #[must_use]
@@ -128,6 +139,7 @@ impl PeerActor {
             id,
             serving_tokens: std::collections::HashSet::new(),
             pending_write: Vec::new(),
+            last_activity: Instant::now(),
         }
     }
 
@@ -460,7 +472,9 @@ impl PeerActor {
             };
 
             match self.reader.read_from_socket(stream) {
-                Ok(()) => {}
+                Ok(()) => {
+                    self.last_activity = Instant::now();
+                }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
                 Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {
                     if let Ok(peer_lock) = self.peer.read_safe() {
@@ -609,6 +623,9 @@ impl PeerActor {
             }
         };
         self.pending_write.drain(..written);
+        if written > 0 {
+            self.last_activity = Instant::now();
+        }
 
         if let Err(e) = outcome {
             error!(
@@ -876,9 +893,75 @@ impl Actor for PeerActor {
                     self.flush_pending_write();
                     self.process_read();
                     self.flush_pending_write();
+
+                    if self.stream.is_some()
+                        && self.last_activity.elapsed() > IDLE_DISCONNECT
+                    {
+                        debug!(
+                            "[peer:{}] idle for {}s, closing",
+                            self.peer_username(),
+                            IDLE_DISCONNECT.as_secs()
+                        );
+                        self.disconnect();
+                    }
                 }
             }
             ConnectionState::Disconnected => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::peer::{ConnectionType, Peer};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::mpsc::Receiver;
+
+    /// A connected inbound actor over a real loopback socket, plus the far
+    /// end (kept alive so reads see silence, not EOF).
+    fn connected_actor() -> (PeerActor, Receiver<ClientOperation>, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stream = TcpStream::connect(addr).unwrap();
+        stream.set_nonblocking(true).unwrap();
+        let (far_end, _) = listener.accept().unwrap();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let peer = Peer::new(
+            "bob".to_string(),
+            ConnectionType::P,
+            "127.0.0.1".to_string(),
+            u32::from(addr.port()),
+            None,
+            0,
+            0,
+            0,
+        );
+        let mut actor =
+            PeerActor::new(peer, Some(stream), None, tx, "me".to_string(), 7);
+        actor.on_start();
+        (actor, rx, far_end)
+    }
+
+    #[test]
+    fn tick_reaps_a_peer_idle_past_the_deadline() {
+        let (mut actor, rx, _far_end) = connected_actor();
+
+        actor.tick();
+        assert!(actor.stream.is_some(), "a fresh connection stays open");
+
+        actor.last_activity = Instant::now()
+            .checked_sub(IDLE_DISCONNECT + Duration::from_secs(1))
+            .unwrap();
+        actor.tick();
+
+        assert!(actor.stream.is_none(), "an idle stream must be closed");
+        match rx.try_recv() {
+            Ok(ClientOperation::PeerDisconnected(7, username, None)) => {
+                assert_eq!(username, "bob");
+            }
+            other => panic!("expected a clean PeerDisconnected, got {other:?}"),
         }
     }
 }

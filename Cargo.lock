@@ -2569,6 +2569,9 @@ dependencies = [
 [[package]]
 name = "soulseek-rs-lib"
 version = "13.0.0"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "stable_deref_trait"

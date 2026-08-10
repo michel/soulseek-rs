@@ -87,9 +87,34 @@ impl ActorSystem {
     /// The callback receives the actor handle before `on_start` is called
     pub fn spawn_with_handle<A: Actor, F>(
         &self,
-        mut actor: A,
+        actor: A,
         init: F,
     ) -> ActorHandle<A::Message>
+    where
+        F: FnOnce(&mut A, ActorHandle<A::Message>) + Send + 'static,
+    {
+        match self.try_spawn_with_handle(actor, init) {
+            Ok(handle) => handle,
+            Err(e) => {
+                error!("[actor_system] failed to spawn actor thread: {}", e);
+                // A handle nobody serves: sends fail, which callers of the
+                // infallible spawn already tolerate.
+                let (sender, _) = channel();
+                ActorHandle { sender }
+            }
+        }
+    }
+
+    /// Like [`Self::spawn_with_handle`], but hands a thread-spawn failure back
+    /// to the caller instead of returning a handle no actor will ever serve.
+    /// Storing such a dead handle is how a registry entry becomes a zombie
+    /// that claims its username for the rest of the process.
+    #[allow(clippy::unused_self)] // method for symmetry with the spawn family
+    pub(crate) fn try_spawn_with_handle<A: Actor, F>(
+        &self,
+        mut actor: A,
+        init: F,
+    ) -> std::io::Result<ActorHandle<A::Message>>
     where
         F: FnOnce(&mut A, ActorHandle<A::Message>) + Send + 'static,
     {
@@ -97,7 +122,7 @@ impl ActorSystem {
         let handle = ActorHandle { sender };
         let handle_for_init = handle.clone();
 
-        let spawned = thread::Builder::new()
+        thread::Builder::new()
             .name("soulseek-actor".to_string())
             .stack_size(ACTOR_STACK_SIZE)
             .spawn(move || {
@@ -105,13 +130,9 @@ impl ActorSystem {
                 actor.on_start();
                 Self::run_actor_loop(&mut actor, receiver);
                 actor.on_stop();
-            });
+            })?;
 
-        if let Err(e) = spawned {
-            error!("[actor_system] failed to spawn actor thread: {}", e);
-        }
-
-        handle
+        Ok(handle)
     }
 
     fn run_actor_loop<A: Actor>(

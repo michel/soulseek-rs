@@ -411,3 +411,71 @@ fn upload_speed_is_reported_only_while_running() {
         "unexpected rate {rate}"
     );
 }
+
+// A clean disconnect — the idle reaper, or a remote client tidying an idle
+// socket while it waits in our queue — must keep the peer's queued uploads;
+// only an error disconnect is evidence the peer is gone.
+#[test]
+fn a_clean_disconnect_keeps_queued_uploads_an_error_drops_them() {
+    let client = Client::new("test-user", "test-password");
+    let (ops, ops_rx) = mpsc::channel();
+    Client::listen_to_client_operations(
+        ops_rx,
+        client.context.clone(),
+        "me".to_string(),
+    );
+
+    client.context.write().unwrap().enqueue_upload(
+        "amy",
+        "@@share\\f.mp3",
+        std::path::PathBuf::from("/tmp/f.mp3"),
+        4096,
+    );
+
+    ops.send(ClientOperation::PeerDisconnected(
+        1,
+        "amy".to_string(),
+        None,
+    ))
+    .unwrap();
+    // The loop is serial, so once this fence op is visible the disconnect
+    // before it has been handled.
+    ops.send(ClientOperation::OwnPrivileges(7)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while client.own_privilege_seconds() != Some(7) {
+        assert!(Instant::now() < deadline, "ops loop never caught up");
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        client
+            .context
+            .read()
+            .unwrap()
+            .place_in_queue("amy", "@@share\\f.mp3"),
+        Some(1),
+        "a clean disconnect must keep the queue"
+    );
+
+    ops.send(ClientOperation::PeerDisconnected(
+        1,
+        "amy".to_string(),
+        Some(crate::error::SoulseekRs::NotConnected),
+    ))
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let place = client
+            .context
+            .read()
+            .unwrap()
+            .place_in_queue("amy", "@@share\\f.mp3");
+        if place.is_none() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "an error disconnect must drop the queue"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}

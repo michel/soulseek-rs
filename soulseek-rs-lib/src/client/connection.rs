@@ -2,7 +2,7 @@ use super::{
     Arc, Client, ClientContext, ClientOperation, ConnectionType, DownloadPeer,
     DownloadStatus, Listen, Peer, PeerRegistry, Receiver, Result, RwLock,
     RwLockExt, Sender, ServerActor, ServerMessage, Shares, SoulseekRs,
-    TcpStream, error, info, mpsc, thread, trace,
+    TcpStream, error, info, mpsc, thread, trace, warn,
 };
 
 /// Ceiling on the wait for a login verdict. Generous enough for a slow server
@@ -10,8 +10,40 @@ use super::{
 const LOGIN_RESPONSE_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(45);
 
+/// Soft open-file limit below which a session should expect "too many open
+/// files": every peer holds a socket, and one busy search talks to hundreds
+/// of them.
+const COMFORTABLE_OPEN_FILES: u64 = 1024;
+
+/// Say up front when the process cannot hold a busy session's sockets, so an
+/// operator reads a warning with a number in it instead of an EMFILE storm an
+/// hour later. The embedding process owns its rlimits; the library only looks.
+#[cfg(unix)]
+fn warn_if_open_file_limit_is_low() {
+    // SAFETY: getrlimit only fills the struct it is handed.
+    let limit = unsafe {
+        let mut limit = std::mem::zeroed::<libc::rlimit>();
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut limit) != 0 {
+            return;
+        }
+        limit.rlim_cur
+    };
+    if limit < COMFORTABLE_OPEN_FILES {
+        warn!(
+            "only {limit} open files allowed; a busy session wants \
+             {COMFORTABLE_OPEN_FILES} or more — expect \"too many open \
+             files\" under load"
+        );
+    }
+}
+
+#[cfg(not(unix))]
+fn warn_if_open_file_limit_is_low() {}
+
 impl Client {
     pub fn connect(&mut self) -> Result<()> {
+        warn_if_open_file_limit_is_low();
+
         let (sender, message_reader): (
             Sender<ClientOperation>,
             Receiver<ClientOperation>,

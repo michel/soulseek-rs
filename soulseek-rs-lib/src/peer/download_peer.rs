@@ -231,6 +231,19 @@ impl DownloadPeer {
         )
         .map_err(DownloadError::ConnectionFailed)?;
 
+        Self::apply_transfer_deadlines(&stream)?;
+
+        Ok(stream)
+    }
+
+    /// Bound every stall on a transfer socket. This must cover streams the
+    /// listener accepted as well as ones we dialled: an accepted F connection
+    /// used to arrive here with no read timeout at all, so a peer that sent a
+    /// token and went silent parked the transfer thread — holding the socket
+    /// and the open `.part` file — for the rest of the session.
+    fn apply_transfer_deadlines(
+        stream: &TcpStream,
+    ) -> Result<(), DownloadError> {
         stream
             .set_read_timeout(Some(Duration::from_secs(30)))
             .map_err(DownloadError::ConnectionFailed)?;
@@ -240,8 +253,7 @@ impl DownloadPeer {
         stream
             .set_nodelay(true)
             .map_err(DownloadError::ConnectionFailed)?;
-
-        Ok(stream)
+        Ok(())
     }
 
     fn perform_handshake(
@@ -481,7 +493,10 @@ impl DownloadPeer {
         }
 
         let mut stream = match stream {
-            Some(s) => s,
+            Some(s) => {
+                Self::apply_transfer_deadlines(&s)?;
+                s
+            }
             None => self.establish_connection()?,
         };
 
@@ -620,6 +635,23 @@ mod tests {
             (0..10).collect::<Vec<u8>>()
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // Streams the listener accepted arrive with no deadlines; without these a
+    // peer that sends a token and goes silent parks the transfer thread —
+    // socket and open .part file included — for the rest of the session.
+    #[test]
+    fn supplied_streams_get_transfer_deadlines() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let stream =
+            std::net::TcpStream::connect(listener.local_addr().unwrap())
+                .unwrap();
+
+        DownloadPeer::apply_transfer_deadlines(&stream).unwrap();
+
+        let secs = std::time::Duration::from_secs;
+        assert_eq!(stream.read_timeout().unwrap(), Some(secs(30)));
+        assert_eq!(stream.write_timeout().unwrap(), Some(secs(5)));
     }
 
     #[test]

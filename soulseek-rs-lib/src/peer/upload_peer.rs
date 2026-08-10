@@ -42,6 +42,17 @@ pub fn serve_file(
         })?;
     let mut stream =
         TcpStream::connect_timeout(&socket, Duration::from_secs(20))?;
+    // A downloader that connects and then goes silent must cost seconds, not
+    // the rest of the session: without deadlines a wedged `read_exact` (or a
+    // zero-window `write_all`) holds this thread, the socket, the open file,
+    // and — because the upload stays InProgress — an upload slot, forever.
+    // Thirty seconds of total silence is a dead transfer, not a slow one: even
+    // a slow reader drains some buffer within that. The write deadline is
+    // deliberately looser than the download side's 5s: bulk data flows this
+    // way, and a congested but living peer may hold the send buffer full far
+    // longer than a peer draining our tiny control frames ever would.
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(30)))?;
     stream.set_nodelay(true).ok();
 
     // PeerInit(F) + the 4-byte token in a single write so they coalesce.

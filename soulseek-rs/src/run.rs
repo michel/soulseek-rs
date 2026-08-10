@@ -16,6 +16,23 @@ use std::time::Duration;
 use std::{env, io};
 
 pub fn run(mut cli: Cli, out: &Out) -> CliResult {
+    // Before anything opens a socket: every entry point that logs in — the
+    // TUI, `serve`, one-shot commands, the daemon — holds a socket per peer,
+    // and the soft limit a shell hands its children (256 on macOS) is gone
+    // after one busy search. The raise lived in the daemon first; the other
+    // entry points run the same peer machinery and crashed the same way.
+    match raise_open_file_limit() {
+        Ok(limit) if limit < WANTED_OPEN_FILES => out.warn(&format!(
+            "only {limit} open files allowed; a busy search wants \
+             {WANTED_OPEN_FILES}. Raise it with `ulimit -n \
+             {WANTED_OPEN_FILES}` first."
+        )),
+        Ok(_) => {}
+        Err(e) => {
+            out.warn(&format!("could not check the open-file limit: {e}"));
+        }
+    }
+
     let config_path = config_path(&cli);
     let file_config = match &config_path {
         Some(path) => crate::persist::config::FileConfig::load(path)
@@ -556,4 +573,65 @@ fn persist_credentials(
     {
         eprintln!("⚠️  Could not store password in keychain: {e}");
     }
+}
+
+/// Open files a session asks the OS for at startup.
+///
+/// The client holds a socket per peer and will talk to a thousand of them
+/// during a busy search, plus transfers, the share index, and control
+/// connections. A shell hands its children a soft limit of 256 on macOS,
+/// which a single search blows through.
+const WANTED_OPEN_FILES: u64 = 8192;
+
+/// Ask the OS for enough open files to run a busy session, and report what we
+/// actually got.
+///
+/// Raising our own soft limit is what a service does: the limit a shell
+/// inherits is sized for a shell. The hard limit is the ceiling, and asking
+/// past it fails outright rather than clamping, so this asks for the smaller
+/// of what we want and what we are allowed.
+#[cfg(unix)]
+fn raise_open_file_limit() -> std::io::Result<u64> {
+    // SAFETY: every call takes a pointer to a `rlimit` this function owns, and
+    // none of them retains it.
+    unsafe {
+        let mut limit = std::mem::zeroed::<libc::rlimit>();
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut limit) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if limit.rlim_cur >= WANTED_OPEN_FILES {
+            return Ok(limit.rlim_cur);
+        }
+
+        let previous = limit.rlim_cur;
+        let ceiling = if limit.rlim_max == libc::RLIM_INFINITY {
+            WANTED_OPEN_FILES
+        } else {
+            limit.rlim_max.min(WANTED_OPEN_FILES)
+        };
+
+        // macOS rejects an unlimited *hard* limit for open files, so raising
+        // the soft one while leaving `rlim_max` as it came back fails with
+        // EINVAL. Naming both is what it will accept.
+        for candidate in [
+            libc::rlimit {
+                rlim_cur: ceiling,
+                rlim_max: limit.rlim_max,
+            },
+            libc::rlimit {
+                rlim_cur: ceiling,
+                rlim_max: ceiling,
+            },
+        ] {
+            if libc::setrlimit(libc::RLIMIT_NOFILE, &raw const candidate) == 0 {
+                return Ok(ceiling);
+            }
+        }
+        Ok(previous)
+    }
+}
+
+#[cfg(not(unix))]
+const fn raise_open_file_limit() -> std::io::Result<u64> {
+    Ok(WANTED_OPEN_FILES)
 }

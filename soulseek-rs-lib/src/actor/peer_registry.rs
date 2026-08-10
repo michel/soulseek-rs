@@ -60,15 +60,23 @@ impl PeerRegistry {
             id,
         );
 
-        let handle =
-            self.actor_system.spawn_with_handle(actor, |actor, handle| {
-                actor.set_self_handle(handle);
-            });
-
+        // Take the map lock before the actor exists: a peer that dies
+        // instantly (refused dial, immediate hangup) reports its terminal
+        // outcome to the client loop, whose eviction takes this same lock.
+        // With the insert racing the spawn, eviction could run first, find
+        // nothing, and the entry inserted afterwards became a permanent
+        // zombie claiming the username.
         let mut peers = self
             .peers
             .lock_safe()
             .map_err(|e| format!("peer registry lock poisoned: {e}"))?;
+
+        let handle = self
+            .actor_system
+            .try_spawn_with_handle(actor, |actor, handle| {
+                actor.set_self_handle(handle);
+            })
+            .map_err(|e| format!("failed to spawn peer actor thread: {e}"))?;
         // Stop any actor already registered under this username so it does not
         // become an orphan pinning a pool worker forever. Eviction on the
         // replaced actor's later shutdown is identity-aware (keyed on its id),
@@ -232,5 +240,52 @@ mod tests {
         assert!(handle.is_some());
         let _ = handle.unwrap().stop();
         assert!(!registry.contains("bob"));
+    }
+
+    // A dial that is refused reports its terminal outcome almost instantly —
+    // possibly while register_peer is still between spawn and insert. The
+    // registry holds its lock across both, so the eviction that follows must
+    // always find the entry; a miss left a permanent zombie claiming the
+    // username.
+    #[test]
+    fn refused_dial_does_not_leave_a_zombie_entry() {
+        use crate::client::ClientOperation;
+
+        let system = Arc::new(ActorSystem::new());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let registry = PeerRegistry::new(system, tx, "me".to_string());
+
+        // A port with nothing listening behind it: bind, learn it, drop it.
+        let port = {
+            let probe = TcpListener::bind("127.0.0.1:0").unwrap();
+            probe.local_addr().unwrap().port()
+        };
+
+        let peer = Peer::new(
+            "ghost".to_string(),
+            ConnectionType::P,
+            "127.0.0.1".to_string(),
+            u32::from(port),
+            None,
+            0,
+            0,
+            0,
+        );
+        registry.register_peer(peer, None, None).unwrap();
+
+        // Play the client ops loop: take the terminal outcome, evict by id.
+        match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+            Ok(ClientOperation::PeerConnectFailed(id, username)) => {
+                assert_eq!(username, "ghost");
+                if let Some(handle) = registry.remove_peer_if(&username, id) {
+                    let _ = handle.stop();
+                }
+            }
+            other => panic!("expected PeerConnectFailed, got {other:?}"),
+        }
+        assert!(
+            !registry.contains("ghost"),
+            "a refused dial must not leave a registry entry"
+        );
     }
 }
