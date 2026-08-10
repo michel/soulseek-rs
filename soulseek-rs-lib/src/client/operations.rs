@@ -44,7 +44,7 @@ impl Client {
                         // Find the search with matching token
                         for search in context.searches.values_mut() {
                             if search.token == result_token {
-                                search.results.push(search_result);
+                                search.accept(search_result);
                                 break;
                             }
                         }

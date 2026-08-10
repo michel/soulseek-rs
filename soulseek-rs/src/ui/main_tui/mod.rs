@@ -274,6 +274,14 @@ mod tests {
         history: Vec<ChatMessageDto>,
         downloads: Vec<soulseek_rs::types::Download>,
         searches: std::sync::Mutex<Vec<crate::api::SessionSearch>>,
+        /// What `try_get_search_results` hands back to the window.
+        results: std::sync::Mutex<Vec<soulseek_rs::SearchResult>>,
+        /// How many times a window asked for the search list.
+        all_searches_calls: std::sync::atomic::AtomicUsize,
+        /// How many times a window pulled a full result set across. Against a
+        /// daemon each pull is the whole set over the socket, so the tests
+        /// count them.
+        result_fetches: std::sync::atomic::AtomicUsize,
         /// Whether this session is a daemon's. Local sessions do not sync.
         shared: bool,
         /// What `set_download_directory` was last asked for, if anything.
@@ -328,6 +336,8 @@ mod tests {
             Vec::new()
         }
         fn all_searches(&self) -> Vec<crate::api::SessionSearch> {
+            self.all_searches_calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.searches.lock().expect("not poisoned").clone()
         }
         fn forget_search(&self, query: &str) -> bool {
@@ -343,7 +353,9 @@ mod tests {
             &self,
             _key: &str,
         ) -> Option<Vec<soulseek_rs::SearchResult>> {
-            None
+            self.result_fetches
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Some(self.results.lock().expect("not poisoned").clone())
         }
         fn start_wishlist_search(
             &self,
@@ -512,8 +524,12 @@ mod tests {
     }
 
     fn with_session(session: TalkativeSession) -> MainTui {
+        attach(Arc::new(session))
+    }
+
+    fn attach(session: Arc<TalkativeSession>) -> MainTui {
         MainTui::new(
-            Arc::new(session),
+            session,
             "/tmp".to_string(),
             Duration::from_secs(1),
             None,
@@ -687,6 +703,130 @@ mod tests {
         tui.update_search_results();
 
         assert!(tui.state.searches.is_empty());
+    }
+
+    fn files_from_bob(names: &[&str]) -> soulseek_rs::SearchResult {
+        soulseek_rs::SearchResult {
+            token: 0,
+            files: names
+                .iter()
+                .map(|name| soulseek_rs::types::File {
+                    username: "bob".to_string(),
+                    name: (*name).to_string(),
+                    size: 42,
+                    attribs: std::collections::HashMap::new(),
+                })
+                .collect(),
+            slots: 1,
+            speed: 0,
+            username: "bob".to_string(),
+        }
+    }
+
+    #[test]
+    fn a_tick_asks_the_session_for_its_searches_once() {
+        // Against a daemon every call is a round trip, and the daemon answers
+        // it by walking its whole search cache — twice per frame was half the
+        // cost of attaching at all.
+        let session = Arc::new(shared(vec![search_of("q", 0, 9_999)]));
+        let mut tui = attach(session.clone());
+
+        tui.update_search_results();
+
+        assert_eq!(
+            session
+                .all_searches_calls
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "one sync means one listing, not one per use of it"
+        );
+    }
+
+    /// An attached window that selected a two-file search and has already
+    /// ticked past its one necessary fetch.
+    fn window_that_pulled_two_files() -> (Arc<TalkativeSession>, MainTui) {
+        let session = Arc::new(TalkativeSession {
+            results: std::sync::Mutex::new(vec![files_from_bob(&[
+                "@@x\\a.mp3",
+                "@@x\\b.mp3",
+            ])]),
+            ..shared(vec![search_of("aphex twin", 2, 9_999)])
+        });
+        let mut tui = attach(session.clone());
+        tui.state.selected_search_index = Some(0);
+        tui.update_search_results();
+        tui.update_search_results();
+        (session, tui)
+    }
+
+    #[test]
+    fn a_selected_search_with_nothing_new_is_not_pulled_across_again() {
+        // The result set only accumulates, so an unchanged count means a
+        // fetch would hand back what this window already holds — against a
+        // daemon that is the entire result set over the socket, every frame,
+        // forever.
+        let (session, tui) = window_that_pulled_two_files();
+
+        assert_eq!(tui.state.searches[0].results.len(), 2);
+        assert_eq!(
+            session
+                .result_fetches
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "the set crosses once; after that the unchanged count spares it"
+        );
+    }
+
+    #[test]
+    fn fresh_results_still_reach_a_window_that_skipped_a_fetch() {
+        let (session, mut tui) = window_that_pulled_two_files();
+
+        // A late responder lands in the session.
+        *session.searches.lock().expect("not poisoned") =
+            vec![search_of("aphex twin", 3, 9_999)];
+        *session.results.lock().expect("not poisoned") =
+            vec![files_from_bob(&["@@x\\a.mp3", "@@x\\b.mp3", "@@x\\c.mp3"])];
+        tui.update_search_results();
+
+        assert_eq!(
+            tui.state.searches[0].results.len(),
+            3,
+            "a changed count must bring the new results across"
+        );
+    }
+
+    #[test]
+    fn a_local_window_fetches_results_without_counting_on_the_session() {
+        // Locally nothing maintains known_files, so the count gate must stay
+        // out of the way: a search whose count still reads zero has to get
+        // its results anyway.
+        let session = Arc::new(TalkativeSession {
+            results: std::sync::Mutex::new(vec![files_from_bob(&[
+                "@@x\\a.mp3",
+                "@@x\\b.mp3",
+            ])]),
+            shared: false,
+            ..TalkativeSession::default()
+        });
+        let mut tui = attach(session);
+        tui.state.searches.push(crate::models::SearchEntry {
+            query: "mine".to_string(),
+            status: SearchStatus::Active,
+            results: Vec::new(),
+            known_files: 0,
+            owned: true,
+            start_time: std::time::Instant::now(),
+            cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        });
+
+        tui.update_search_results();
+
+        assert_eq!(
+            tui.state.searches[0].results.len(),
+            2,
+            "a zero count matching zero held rows must not read as \
+             nothing-to-fetch on a local session"
+        );
     }
 
     #[test]

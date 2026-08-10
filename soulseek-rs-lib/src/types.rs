@@ -59,6 +59,36 @@ pub struct Search {
     pub results: Vec<SearchResult>,
 }
 
+/// Peer responses a search keeps before it stops collecting.
+///
+/// Peers answer a popular query for minutes after the window closes; left
+/// unbounded, one live-network search grew to nearly a million files and
+/// gigabytes of memory, and every consumer of the results paid for the
+/// whole set. A result set is a shortlist to pick from, not an archive of
+/// everyone who answered.
+pub const MAX_SEARCH_RESPONSES: usize = 500;
+
+/// Files a search keeps across all responses, so a few peers with huge
+/// matching collections cannot blow past the response cap.
+pub const MAX_SEARCH_FILES: usize = 10_000;
+
+impl Search {
+    /// Store one peer's response, unless this search already holds enough.
+    ///
+    /// The last accepted response may carry the total past
+    /// [`MAX_SEARCH_FILES`]; responses are kept whole rather than truncated.
+    pub fn accept(&mut self, result: SearchResult) {
+        // ponytail: counts files linearly per call — bounded by the response
+        // cap; a running total would mean a new pub field on Search.
+        let files: usize =
+            self.results.iter().map(|result| result.files.len()).sum();
+        if self.results.len() < MAX_SEARCH_RESPONSES && files < MAX_SEARCH_FILES
+        {
+            self.results.push(result);
+        }
+    }
+}
+
 impl SearchResult {
     pub fn new_from_message(message: &mut Message) -> Result<Self> {
         let pointer = message.get_pointer();

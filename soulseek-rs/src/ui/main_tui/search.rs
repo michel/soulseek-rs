@@ -231,23 +231,23 @@ impl MainTui {
     }
 
     /// Show the searches the session knows about, not just this window's.
+    /// Returns whether it synced, which is only the case against a daemon.
     ///
     /// Against a daemon the search cache is shared, so a window that opens
     /// later sees what the others have looked for, and a query run in one
     /// appears in the other. A search is still collecting if it went out less
     /// than one search window ago — the window belongs to whichever client
     /// started it, so the age is the only thing another window can judge by.
-    fn sync_searches_with_session(&mut self) {
+    fn sync_searches_with_session(&mut self) -> bool {
         // Only worth doing when the session is shared: a window with its own
-        // session ran every search in the list and already knows their state,
-        // so asking would cost a full copy of every result set per frame and
-        // tell us nothing.
+        // session ran every search in the list and already knows their state.
         if self.client.daemon_endpoint().is_none() {
-            return;
+            return false;
         }
 
         let timeout = self.search_timeout.as_secs();
-        for known in self.client.all_searches() {
+        let known_searches = self.client.all_searches();
+        for known in &known_searches {
             let running = known
                 .started_secs_ago
                 .is_some_and(|elapsed| elapsed < timeout);
@@ -267,13 +267,15 @@ impl MainTui {
                     } else {
                         SearchStatus::Completed
                     };
-                    existing.known_files = known.files;
                 }
+                // The count is every entry's change detector: as long as it
+                // matches what this window holds, there is nothing to fetch.
+                existing.known_files = known.files;
                 continue;
             }
 
             self.state.searches.push(SearchEntry {
-                query: known.query,
+                query: known.query.clone(),
                 status: if running {
                     SearchStatus::Active
                 } else {
@@ -291,36 +293,41 @@ impl MainTui {
 
         // Dismissed elsewhere means dismissed here. Ours stay: this window is
         // the authority on a search it started.
-        let live: Vec<String> = self
-            .client
-            .all_searches()
-            .into_iter()
-            .map(|search| search.query)
-            .collect();
-        self.state
-            .searches
-            .retain(|search| search.owned || live.contains(&search.query));
+        self.state.searches.retain(|search| {
+            search.owned
+                || known_searches
+                    .iter()
+                    .any(|known| known.query == search.query)
+        });
+        true
     }
 
     pub(super) fn update_search_results(&mut self) {
-        self.sync_searches_with_session();
+        // Only a synced session reports counts, so only there can an
+        // unchanged count spare the fetch. Locally `known_files` is never
+        // maintained and skipping on it would starve every search.
+        let counted = self.sync_searches_with_session();
         let timeout = self.search_timeout;
         let selected_search_index = self.state.selected_search_index;
 
         // Fetch all results in one go (single lock acquisition per query)
         // Use try_get_search_results to avoid blocking the UI thread
-        // Only what the user can see or what is still arriving. A shared
-        // cache can hold every search every window has ever run, and fetching
-        // all of them each frame is a round trip apiece against a daemon.
-        // The rest show the count the session reported.
+        // Only what the user can see or what is still arriving, and against
+        // a daemon only when the session's count says something actually
+        // changed: results accumulate, so an unchanged count means a fetch
+        // would carry the entire set across the socket to learn nothing.
+        // A re-searched query resets the session's set; only a refill that
+        // lands back on exactly the held total within one tick could leave
+        // stale rows, and that window was already showing them.
         let all_results: Vec<(usize, Vec<_>)> = self
             .state
             .searches
             .iter()
             .enumerate()
             .filter(|(idx, search)| {
-                search.status == SearchStatus::Active
-                    || selected_search_index == Some(*idx)
+                (search.status == SearchStatus::Active
+                    || selected_search_index == Some(*idx))
+                    && (!counted || search.known_files != search.results.len())
             })
             .map(|(idx, s)| (idx, s.query.clone()))
             .filter_map(|(idx, query)| {
@@ -370,13 +377,16 @@ impl MainTui {
                         self.state.results_filtered_indices = indices;
                     }
                 }
+            }
+        }
 
-                // Mark as completed after timeout
-                if search.status == SearchStatus::Active
-                    && search.start_time.elapsed() > timeout
-                {
-                    search.status = SearchStatus::Completed;
-                }
+        // Outside the fetch loop: a tick that had nothing to fetch must
+        // still finish a run-out search.
+        for search in &mut self.state.searches {
+            if search.status == SearchStatus::Active
+                && search.start_time.elapsed() > timeout
+            {
+                search.status = SearchStatus::Completed;
             }
         }
     }
