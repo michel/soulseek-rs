@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [14.0.0](https://github.com/michel/soulseek-rs/compare/v13.0.0...v14.0.0) - 2026-08-10
+
+### Fixed
+
+- survive busy sessions without exhausting file descriptors
+- *(lib)* cap what a search collects
+
+### Other
+
+- Merge branch 'develop': fd-exhaustion fixes
+- *(daemon)* answer search polls with counts instead of copies
+
 ## [13.0.0](https://github.com/michel/soulseek-rs/compare/v12.0.0...v13.0.0) - 2026-07-29
 
 ### Added
