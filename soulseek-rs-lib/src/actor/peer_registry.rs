@@ -11,7 +11,6 @@ use std::net::TcpStream;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 /// Source of unique per-actor ids so terminal-outcome eviction can be made
 /// identity-aware (a replaced actor must not evict its replacement).
@@ -19,7 +18,7 @@ static NEXT_PEER_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Registered peers keyed by username, each stored with the unique id of the
 /// actor currently occupying the slot.
-type PeerMap = HashMap<String, (u64, ActorHandle<PeerMessage>, Instant)>;
+type PeerMap = HashMap<String, (u64, ActorHandle<PeerMessage>)>;
 
 pub struct PeerRegistry {
     peers: Arc<Mutex<PeerMap>>,
@@ -104,7 +103,7 @@ impl PeerRegistry {
             let victim = peers
                 .iter()
                 .filter(|(name, _)| !protected.contains(name.as_str()))
-                .min_by_key(|(_, (_, _, registered))| *registered)
+                .min_by_key(|(_, (id, _))| *id)
                 .map(|(name, _)| name.clone());
             let Some(victim) = victim else {
                 return Err(format!(
@@ -112,7 +111,7 @@ impl PeerRegistry {
                      is busy; refusing {username}"
                 ));
             };
-            if let Some((_, handle, _)) = peers.remove(&victim) {
+            if let Some((_, handle)) = peers.remove(&victim) {
                 let _ = handle.stop();
                 debug!(
                     "[peer_registry] evicted idle peer {} to admit {}",
@@ -131,8 +130,8 @@ impl PeerRegistry {
         // become an orphan pinning a pool worker forever. Eviction on the
         // replaced actor's later shutdown is identity-aware (keyed on its id),
         // so stopping it here cannot evict this new connection.
-        if let Some((_, old_handle, _)) =
-            peers.insert(username.clone(), (id, handle.clone(), Instant::now()))
+        if let Some((_, old_handle)) =
+            peers.insert(username.clone(), (id, handle.clone()))
         {
             let _ = old_handle.stop();
             debug!(
@@ -147,9 +146,7 @@ impl PeerRegistry {
     #[must_use]
     pub fn get_peer(&self, username: &str) -> Option<ActorHandle<PeerMessage>> {
         match self.peers.lock_safe() {
-            Ok(peers) => {
-                peers.get(username).map(|(_, handle, _)| handle.clone())
-            }
+            Ok(peers) => peers.get(username).map(|(_, handle)| handle.clone()),
             Err(e) => {
                 error!("[peer_registry] get_peer: {}", e);
                 None
@@ -175,7 +172,7 @@ impl PeerRegistry {
             debug!("[peer_registry] Removed peer actor for {}", username);
         }
 
-        removed.map(|(_, handle, _)| handle)
+        removed.map(|(_, handle)| handle)
     }
 
     /// Remove and return the actor for `username` only if it is still the actor
@@ -194,11 +191,8 @@ impl PeerRegistry {
                 return None;
             }
         };
-        if peers
-            .get(username)
-            .is_some_and(|(stored, _, _)| *stored == id)
-        {
-            let removed = peers.remove(username).map(|(_, handle, _)| handle);
+        if peers.get(username).is_some_and(|(stored, _)| *stored == id) {
+            let removed = peers.remove(username).map(|(_, handle)| handle);
             debug!(
                 "[peer_registry] Removed peer actor {} for {}",
                 id, username
@@ -261,7 +255,6 @@ mod tests {
     use std::net::{TcpListener, TcpStream};
     use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
-    use std::time::Duration;
 
     fn loopback_peer(name: &str) -> (Peer, TcpStream, TcpStream) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -306,7 +299,6 @@ mod tests {
         for name in ["a", "b", "c"] {
             let (peer, stream, _far_end) = loopback_peer(name);
             registry.register_peer(peer, Some(stream), None).unwrap();
-            std::thread::sleep(Duration::from_millis(5));
         }
 
         assert!(!registry.contains("a"), "the oldest peer must be evicted");
