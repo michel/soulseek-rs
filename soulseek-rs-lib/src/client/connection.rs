@@ -50,10 +50,11 @@ impl Client {
         ) = mpsc::channel();
 
         let mut ctx = self.context.write_safe()?;
-        let peer_registry = PeerRegistry::new(
+        let peer_registry = PeerRegistry::with_capacity(
             ctx.actor_system.clone(),
             sender.clone(),
             self.username.clone(),
+            ctx.max_peers.clone(),
         );
         ctx.peer_registry = Some(peer_registry);
 
@@ -175,6 +176,13 @@ impl Client {
         Ok(())
     }
 
+    pub fn set_max_peers(&self, max_peers: usize) {
+        if let Ok(ctx) = self.context.read_safe() {
+            ctx.max_peers
+                .store(max_peers.max(1), std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
     #[allow(dead_code)]
     pub fn remove_peer(&self, username: &str) {
         let context = match self.context.read_safe() {
@@ -214,7 +222,10 @@ impl Client {
                     }
                 };
                 if let Some(ref registry) = context.peer_registry {
-                    match registry.register_peer(peer_clone, stream, None) {
+                    let protected = context.protected_peers();
+                    match registry.register_peer_protected(
+                        peer_clone, stream, None, &protected,
+                    ) {
                         Ok(_) => (),
                         Err(e) => {
                             trace!(

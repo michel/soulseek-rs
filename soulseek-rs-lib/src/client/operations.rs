@@ -1,11 +1,13 @@
 use super::{
-    Arc, BROKER_CONNECT_TIMEOUT, Client, ClientContext, ClientOperation,
-    ConnectionType, Download, DownloadPeer, DownloadStatus, Peer, PeerMessage,
+    Arc, Client, ClientContext, ClientOperation, ConnectionType, Download,
+    DownloadPeer, DownloadStatus, Duration, Instant, Peer, PeerMessage,
     PeerRegistry, Receiver, RwLock, RwLockExt, ServerMessage,
-    build_search_response, debug, error, info, next_connect_token, sleep,
+    build_search_response, debug, error, info, mpsc, next_connect_token,
     thread, trace, warn,
 };
 use crate::message::server::MessageFactory;
+
+const CONNECT_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 
 impl Client {
     pub(crate) fn listen_to_client_operations(
@@ -14,20 +16,40 @@ impl Client {
         own_username: String,
     ) {
         thread::spawn(move || {
-            for operation in reader {
+            let mut last_sweep = Instant::now();
+            loop {
+                let next = reader.recv_timeout(CONNECT_SWEEP_INTERVAL);
+                if last_sweep.elapsed() >= CONNECT_SWEEP_INTERVAL {
+                    last_sweep = Instant::now();
+                    Self::sweep_expired_connects(&client_context);
+                }
+                let operation = match next {
+                    Ok(operation) => operation,
+                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                };
                 match operation {
                     ClientOperation::ConnectToPeer(peer) => {
-                        let client_context_clone = client_context.clone();
-                        let own_username_clone = own_username.clone();
+                        if matches!(peer.connection_type, ConnectionType::F) {
+                            let client_context_clone = client_context.clone();
+                            let own_username_clone = own_username.clone();
 
-                        thread::spawn(move || {
+                            thread::spawn(move || {
+                                Self::connect_to_peer(
+                                    peer,
+                                    client_context_clone,
+                                    own_username_clone,
+                                    None,
+                                );
+                            });
+                        } else {
                             Self::connect_to_peer(
                                 peer,
-                                client_context_clone,
-                                own_username_clone,
+                                client_context.clone(),
+                                own_username.clone(),
                                 None,
                             );
-                        });
+                        }
                     }
                     ClientOperation::SearchResult(search_result) => {
                         trace!("[client] SearchResult {:?}", search_result);
@@ -122,6 +144,28 @@ impl Client {
                             );
                             continue;
                         };
+                        if matches!(
+                            download.status,
+                            DownloadStatus::InProgress { .. }
+                                | DownloadStatus::Completed
+                        ) {
+                            debug!(
+                                "[client] transfer token {} already claimed; \
+                                 ignoring replayed TransferResponse",
+                                token
+                            );
+                            continue;
+                        }
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.update_download_with_status(
+                                token,
+                                DownloadStatus::InProgress {
+                                    bytes_downloaded: 0,
+                                    total_bytes: download.size,
+                                    speed_bytes_per_sec: 0.0,
+                                },
+                            );
+                        }
 
                         thread::spawn(move || {
                             let download_peer = DownloadPeer::new(
@@ -285,17 +329,12 @@ impl Client {
                                 u8::try_from(obfuscation_type).unwrap_or(0),
                                 obfuscated_port,
                             );
-                            let client_context_clone = client_context.clone();
-                            let own_username_clone = own_username.clone();
-
-                            thread::spawn(move || {
-                                Self::connect_to_peer(
-                                    peer,
-                                    client_context_clone,
-                                    own_username_clone,
-                                    None,
-                                );
-                            });
+                            Self::connect_to_peer(
+                                peer,
+                                client_context.clone(),
+                                own_username.clone(),
+                                None,
+                            );
                         }
                     }
                     ClientOperation::UpdateDownloadTokens(
@@ -751,30 +790,19 @@ impl Client {
                             ConnectionType::P,
                         );
                         let _ = sender.send(ServerMessage::SendMessage(msg));
-
-                        // Bound the brokered attempt: if no PierceFirewall
-                        // consumes the token, fail the peer's queued
-                        // downloads (so the caller's Receiver unblocks)
-                        // and reclaim the token. A successful pierce
-                        // takes the token first, making this a no-op.
-                        let timeout_ctx = client_context.clone();
-                        let timeout_user = username.clone();
-                        thread::spawn(move || {
-                            sleep(BROKER_CONNECT_TIMEOUT);
-                            let still_pending =
-                                timeout_ctx.write_safe().is_ok_and(|mut c| {
-                                    c.take_pending_connect(token).is_some()
-                                });
-                            if still_pending {
-                                Self::fail_queued_downloads(
-                                    &timeout_ctx,
-                                    &timeout_user,
-                                );
-                            }
-                        });
                     }
                 }
             }
         });
+    }
+
+    fn sweep_expired_connects(client_context: &Arc<RwLock<ClientContext>>) {
+        let expired = match client_context.write_safe() {
+            Ok(mut ctx) => ctx.take_expired_connects(Instant::now()),
+            Err(_) => return,
+        };
+        for username in expired {
+            Self::fail_queued_downloads(client_context, &username);
+        }
     }
 }

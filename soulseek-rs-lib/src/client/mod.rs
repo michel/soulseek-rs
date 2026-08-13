@@ -23,7 +23,7 @@ use std::{
     net::TcpStream,
     sync::{
         Arc, RwLock,
-        atomic::{AtomicBool, AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
         mpsc::{self, Receiver, Sender},
     },
     thread::{self, sleep},
@@ -57,6 +57,10 @@ pub const DEFAULT_UPLOAD_SLOTS: usize = 10;
 /// How long to wait for a server-brokered (firewalled) peer to connect back
 /// before giving up and failing the download. Matches the direct-dial timeout.
 const BROKER_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+
+const DEFAULT_MAX_PEERS: usize = 512;
+
+const BROWSE_PROTECT_WINDOW: Duration = Duration::from_mins(1);
 
 /// Source of non-zero correlation tokens for server-brokered connections.
 static NEXT_CONNECT_TOKEN: AtomicU32 = AtomicU32::new(1);
@@ -295,7 +299,8 @@ pub struct ClientContext {
     private_messages: Vec<UserMessage>,
     /// Correlation tokens for server-brokered (firewalled) connections, mapping
     /// a token we sent in a ConnectToPeer to the peer we expect back.
-    pending_connect_tokens: HashMap<u32, String>,
+    pending_connect_tokens: HashMap<u32, (String, Instant)>,
+    max_peers: Arc<AtomicUsize>,
     /// Files we share with peers (read-only after connect).
     pub shares: Arc<Shares>,
     /// The directories the current share index was built from.
@@ -311,6 +316,7 @@ pub struct ClientContext {
     pending_serves: HashMap<String, Vec<u32>>,
     /// Shared-file listings received from peers we browsed.
     browse_results: HashMap<String, Vec<SharedDirectory>>,
+    pending_browses: HashMap<String, Instant>,
     /// Latest snapshot of the public chat-room list (from `RoomList`, code 64).
     room_list: Vec<RoomInfo>,
     /// Chat-room events awaiting consumption by the client/UI.
@@ -395,6 +401,7 @@ impl ClientContext {
             searches: HashMap::new(),
             private_messages: Vec::new(),
             pending_connect_tokens: HashMap::new(),
+            max_peers: Arc::new(AtomicUsize::new(DEFAULT_MAX_PEERS)),
             shares: Arc::new(Shares::empty()),
             shared_directories: Vec::new(),
             peer_addresses: HashMap::new(),
@@ -403,6 +410,7 @@ impl ClientContext {
             active_uploads: HashMap::new(),
             pending_serves: HashMap::new(),
             browse_results: HashMap::new(),
+            pending_browses: HashMap::new(),
             room_list: Vec::new(),
             room_events: Vec::new(),
             room_members: HashMap::new(),
@@ -563,7 +571,15 @@ impl ClientContext {
         username: String,
         directories: Vec<SharedDirectory>,
     ) {
+        self.pending_browses.remove(&username);
         self.browse_results.insert(username, directories);
+    }
+
+    pub(crate) fn mark_browse_pending(&mut self, username: &str) {
+        let now = Instant::now();
+        self.pending_browses.retain(|_, deadline| *deadline > now);
+        self.pending_browses
+            .insert(username.to_string(), now + BROWSE_PROTECT_WINDOW);
     }
 
     /// Remove and return the shared-file listing browsed from `username`.
@@ -577,12 +593,57 @@ impl ClientContext {
     /// Remember that a server-brokered connection to `username` is pending under
     /// `token`; the peer will quote it back in a PierceFirewall.
     pub fn add_pending_connect(&mut self, token: u32, username: String) {
-        self.pending_connect_tokens.insert(token, username);
+        self.pending_connect_tokens
+            .insert(token, (username, Instant::now() + BROKER_CONNECT_TIMEOUT));
     }
 
     /// Resolve and consume the peer expected for a brokered connection `token`.
     pub fn take_pending_connect(&mut self, token: u32) -> Option<String> {
-        self.pending_connect_tokens.remove(&token)
+        self.pending_connect_tokens
+            .remove(&token)
+            .map(|(username, _)| username)
+    }
+
+    pub fn take_expired_connects(&mut self, now: Instant) -> Vec<String> {
+        let mut expired = Vec::new();
+        self.pending_connect_tokens
+            .retain(|_, (username, deadline)| {
+                if now >= *deadline {
+                    expired.push(std::mem::take(username));
+                    return false;
+                }
+                true
+            });
+        expired
+    }
+
+    pub(crate) fn protected_peers(&self) -> HashSet<String> {
+        let mut protected: HashSet<String> = self
+            .downloads
+            .list()
+            .iter()
+            .filter(|d| {
+                matches!(
+                    d.status,
+                    DownloadStatus::Queued
+                        | DownloadStatus::InProgress { .. }
+                        | DownloadStatus::Paused { .. }
+                )
+            })
+            .map(|d| d.username.clone())
+            .collect();
+        protected
+            .extend(self.active_uploads.values().map(|u| u.username.clone()));
+        protected.extend(self.pending_serves.keys().cloned());
+        protected.extend(self.pending_peer_messages.keys().cloned());
+        let now = Instant::now();
+        protected.extend(
+            self.pending_browses
+                .iter()
+                .filter(|(_, deadline)| **deadline > now)
+                .map(|(username, _)| username.clone()),
+        );
+        protected
     }
 
     /// Record a private message received from another user.

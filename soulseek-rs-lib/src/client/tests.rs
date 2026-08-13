@@ -395,3 +395,51 @@ fn a_clean_disconnect_keeps_queued_uploads_an_error_drops_them() {
         thread::sleep(Duration::from_millis(10));
     }
 }
+
+#[test]
+fn a_pending_connect_expires_after_the_broker_timeout() {
+    let mut context = ClientContext::new();
+    context.add_pending_connect(7, "ghost".to_string());
+
+    assert!(context.take_expired_connects(Instant::now()).is_empty());
+
+    let after_deadline =
+        Instant::now() + BROKER_CONNECT_TIMEOUT + Duration::from_secs(1);
+    assert_eq!(
+        context.take_expired_connects(after_deadline),
+        vec!["ghost".to_string()]
+    );
+    assert!(context.take_pending_connect(7).is_none());
+}
+
+#[test]
+fn protected_peers_covers_downloads_uploads_and_pending_serves() {
+    let mut context = ClientContext::new();
+    context.add_download(download(
+        "downloader",
+        "song.mp3",
+        1,
+        DownloadStatus::Queued,
+        mpsc::channel().0,
+    ));
+    context.add_download(download(
+        "done",
+        "old.mp3",
+        2,
+        DownloadStatus::Completed,
+        mpsc::channel().0,
+    ));
+    context
+        .pending_serves
+        .insert("waiting".to_string(), vec![9]);
+    context.mark_browse_pending("browsed");
+
+    let protected = context.protected_peers();
+    assert!(protected.contains("downloader"));
+    assert!(protected.contains("waiting"));
+    assert!(protected.contains("browsed"));
+    assert!(!protected.contains("done"));
+
+    context.store_browse_result("browsed".to_string(), Vec::new());
+    assert!(!context.protected_peers().contains("browsed"));
+}

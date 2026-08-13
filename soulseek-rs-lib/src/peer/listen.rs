@@ -11,6 +11,7 @@ use crate::message::{Message, MessageReader};
 use crate::peer::{ConnectionType, DownloadPeer, Peer};
 use crate::types::Download;
 use crate::utils::lock::RwLockExt;
+use crate::utils::semaphore::{Permit, Semaphore};
 use crate::{DownloadStatus, debug, error, info, trace};
 
 /// How long to wait before accepting again after a failure.
@@ -24,6 +25,8 @@ const PEER_INIT_MESSAGE_CODE: u8 = 1;
 
 /// How long an accepted peer gets to send its peer-init handshake.
 const PEER_INIT_TIMEOUT: Duration = Duration::from_secs(10);
+
+const MAX_HANDSHAKES: usize = 128;
 
 #[derive(Clone)]
 struct ConnectionContext {
@@ -140,7 +143,13 @@ fn handle_peer_connection(
         }
     };
     if let Some(ref registry) = client_context.peer_registry {
-        match registry.register_peer(peer.clone(), Some(stream), Some(reader)) {
+        let protected = client_context.protected_peers();
+        match registry.register_peer_protected(
+            peer.clone(),
+            Some(stream),
+            Some(reader),
+            &protected,
+        ) {
             Ok(_) => (),
             Err(e) => {
                 error!(
@@ -283,6 +292,7 @@ fn handle_pierce_firewall(
 fn handle_incoming_connection(
     mut stream: TcpStream,
     context: ConnectionContext,
+    permit: Permit,
 ) {
     let Ok(peer_addr) = stream.peer_addr() else {
         error!("[listener] failed to get peer address");
@@ -303,6 +313,7 @@ fn handle_incoming_connection(
             return;
         }
     };
+    drop(permit);
 
     // A firewalled peer brokered through the server connects back with a
     // PierceFirewall (code 0) instead of a PeerInit (code 1).
@@ -406,6 +417,7 @@ impl Listen {
             client_context,
             own_username,
         };
+        let handshakes = Arc::new(Semaphore::new(MAX_HANDSHAKES));
 
         for stream in listener.incoming() {
             let Ok(stream) = stream else {
@@ -421,11 +433,14 @@ impl Listen {
                 continue;
             };
 
+            let permit = handshakes.acquire();
             let context = context.clone();
             // One thread per connection: the peer-init handshake blocks, and a
             // peer that is slow to send one must not stop us accepting anybody
             // else — a wedged accept loop makes us unreachable to every peer.
-            thread::spawn(move || handle_incoming_connection(stream, context));
+            thread::spawn(move || {
+                handle_incoming_connection(stream, context, permit);
+            });
         }
     }
 }
