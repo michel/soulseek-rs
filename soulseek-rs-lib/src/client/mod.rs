@@ -60,7 +60,7 @@ const BROKER_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 
 const DEFAULT_MAX_PEERS: usize = 512;
 
-const BROWSE_PROTECT_WINDOW: Duration = Duration::from_mins(1);
+const BROWSE_PROTECT_WINDOW: Duration = Duration::from_mins(5);
 
 /// Source of non-zero correlation tokens for server-brokered connections.
 static NEXT_CONNECT_TOKEN: AtomicU32 = AtomicU32::new(1);
@@ -634,6 +634,9 @@ impl ClientContext {
             .collect();
         protected
             .extend(self.active_uploads.values().map(|u| u.username.clone()));
+        protected.extend(self.uploads.values().map(|j| j.downloader.clone()));
+        protected
+            .extend(self.upload_queue.iter().map(|q| q.downloader.clone()));
         protected.extend(self.pending_serves.keys().cloned());
         protected.extend(self.pending_peer_messages.keys().cloned());
         let now = Instant::now();

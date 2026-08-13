@@ -484,14 +484,6 @@ impl DownloadPeer {
             self.no_pierce
         );
 
-        if let Some(ref dl) = download {
-            let _ = dl.sender.send(DownloadStatus::Queued);
-            client_context
-                .write()
-                .map_err(|_| DownloadError::LockPoisoned)?
-                .update_download_with_status(dl.token, DownloadStatus::Queued);
-        }
-
         let mut stream = match stream {
             Some(s) => {
                 Self::apply_transfer_deadlines(&s)?;

@@ -443,3 +443,98 @@ fn protected_peers_covers_downloads_uploads_and_pending_serves() {
     context.store_browse_result("browsed".to_string(), Vec::new());
     assert!(!context.protected_peers().contains("browsed"));
 }
+
+#[test]
+fn an_expired_broker_connect_fails_the_queued_downloads() {
+    let client = Client::new("u", "p");
+    let (sender, receiver) = mpsc::channel();
+    {
+        let mut ctx = client.context.write().unwrap();
+        ctx.add_download(download(
+            "ghost",
+            "f.mp3",
+            7,
+            DownloadStatus::Queued,
+            sender,
+        ));
+        ctx.pending_connect_tokens
+            .insert(7, ("ghost".to_string(), Instant::now()));
+    }
+    let (_ops_tx, ops_rx) = mpsc::channel();
+    Client::listen_to_client_operations(
+        ops_rx,
+        client.context,
+        "u".to_string(),
+    );
+
+    let status = receiver.recv_timeout(Duration::from_secs(5));
+    assert!(
+        matches!(status, Ok(DownloadStatus::Failed(_))),
+        "the sweep must fail the queued download, got {status:?}"
+    );
+}
+
+#[test]
+fn a_replayed_transfer_response_does_not_start_a_second_transfer() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = u32::from(listener.local_addr().unwrap().port());
+
+    let client = Client::new("u", "p");
+    let (sender, _receiver) = mpsc::channel();
+    client.context.write().unwrap().add_download(download(
+        "peer",
+        "f.mp3",
+        9,
+        DownloadStatus::Queued,
+        sender,
+    ));
+
+    let (ops_tx, ops_rx) = mpsc::channel();
+    Client::listen_to_client_operations(
+        ops_rx,
+        client.context,
+        "u".to_string(),
+    );
+
+    let peer = Peer::new(
+        "peer".to_string(),
+        ConnectionType::F,
+        "127.0.0.1".to_string(),
+        port,
+        None,
+        0,
+        0,
+        0,
+    );
+    ops_tx
+        .send(ClientOperation::DownloadFromPeer(9, peer.clone(), true))
+        .unwrap();
+    ops_tx
+        .send(ClientOperation::DownloadFromPeer(9, peer, true))
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut connections = 0;
+    while Instant::now() < deadline {
+        match listener.accept() {
+            Ok(_) => {
+                connections += 1;
+                if connections == 1 {
+                    thread::sleep(Duration::from_millis(500));
+                }
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if connections >= 1 {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+            Err(_) => break,
+        }
+    }
+    assert_eq!(
+        connections, 1,
+        "a replayed TransferResponse must not dial the peer again"
+    );
+}

@@ -214,28 +214,36 @@ impl Client {
             ConnectionType::P => {
                 let username = peer.username;
 
-                let context = match client_context.read_safe() {
-                    Ok(c) => c,
-                    Err(e) => {
-                        error!("[client] connect_to_peer read: {}", e);
-                        return;
+                let refused = {
+                    let context = match client_context.read_safe() {
+                        Ok(c) => c,
+                        Err(e) => {
+                            error!("[client] connect_to_peer read: {}", e);
+                            return;
+                        }
+                    };
+                    if let Some(ref registry) = context.peer_registry {
+                        let protected = context.protected_peers();
+                        match registry.register_peer_protected(
+                            peer_clone, stream, None, &protected,
+                        ) {
+                            Ok(_) => false,
+                            Err(e) => {
+                                warn!(
+                                    "[client] refusing peer connection for \
+                                     {:?}: {:?}",
+                                    username, e
+                                );
+                                true
+                            }
+                        }
+                    } else {
+                        trace!("PeerRegistry not initialized");
+                        false
                     }
                 };
-                if let Some(ref registry) = context.peer_registry {
-                    let protected = context.protected_peers();
-                    match registry.register_peer_protected(
-                        peer_clone, stream, None, &protected,
-                    ) {
-                        Ok(_) => (),
-                        Err(e) => {
-                            trace!(
-                                "Failed to spawn peer actor for {:?}: {:?}",
-                                username, e
-                            );
-                        }
-                    }
-                } else {
-                    trace!("PeerRegistry not initialized");
+                if refused {
+                    Self::fail_queued_downloads(&client_context, &username);
                 }
             }
 
