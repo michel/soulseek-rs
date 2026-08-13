@@ -7,6 +7,7 @@ mod queue_upload;
 mod shared_file_list;
 mod transfer_request;
 mod transfer_response;
+mod upload_denied;
 mod upload_failed;
 
 // Re-export handlers
@@ -24,4 +25,5 @@ pub use shared_file_list::{
 };
 pub use transfer_request::TransferRequest;
 pub use transfer_response::TransferResponse;
+pub use upload_denied::UploadDeniedHandler;
 pub use upload_failed::UploadFailedHandler;

@@ -860,6 +860,18 @@ fn an_upload_failed_reply_fails_the_download_quickly() {
 }
 
 #[test]
+fn an_upload_denied_reply_fails_the_download_quickly() {
+    refusal_fails_the_download_quickly("e2e_denying_peer", |filename| {
+        let mut refusal = Message::new();
+        refusal
+            .write_int32(50)
+            .write_string(filename)
+            .write_string("File not shared.");
+        refusal
+    });
+}
+
+#[test]
 fn an_interrupted_download_resumes_from_its_partial_file() {
     let server = server_or_skip!();
 
