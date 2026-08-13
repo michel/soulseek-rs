@@ -5,7 +5,7 @@ use crate::message::peer::{
     FileSearchResponse, GetShareFileList, PeerInit, PlaceInQueueRequest,
     PlaceInQueueResponse, QueueUploadHandler, SharedDirectory,
     SharedFileListResponseHandler, TransferRequest, TransferResponse,
-    UploadFailedHandler,
+    UploadDeniedHandler, UploadFailedHandler,
 };
 use crate::message::server::MessageFactory;
 use crate::message::{Handlers, Message, MessageReader, MessageType};
@@ -178,6 +178,7 @@ impl PeerActor {
         handlers.register_handler(TransferRequest);
         handlers.register_handler(TransferResponse);
         handlers.register_handler(GetShareFileList);
+        handlers.register_handler(UploadDeniedHandler);
         handlers.register_handler(UploadFailedHandler);
         handlers.register_handler(PlaceInQueueRequest);
         handlers.register_handler(PlaceInQueueResponse);
