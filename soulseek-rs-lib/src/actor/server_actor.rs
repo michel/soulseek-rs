@@ -834,7 +834,6 @@ impl ServerActor {
              closed by the server"
         );
         self.session.record(SessionLoss::Displaced);
-        self.connection_state = ConnectionState::Disconnected;
         self.disconnect();
     }
 
@@ -845,8 +844,8 @@ impl ServerActor {
         // it, so anything still waiting on the network is waiting for good.
         if matches!(self.connection_state, ConnectionState::Connected) {
             self.session.record(SessionLoss::Disconnected);
-            self.connection_state = ConnectionState::Disconnected;
         }
+        self.connection_state = ConnectionState::Disconnected;
         self.stream.take();
     }
 
@@ -854,6 +853,7 @@ impl ServerActor {
         debug!("[server] disconnected");
 
         self.stream.take();
+        self.connection_state = ConnectionState::Disconnected;
     }
 
     fn check_connection_status(&mut self) {
@@ -939,11 +939,33 @@ impl Actor for ServerActor {
 
 #[cfg(test)]
 mod tests {
-    use super::post_login_messages;
-    use crate::message::Message;
+    use super::*;
 
     fn code_of(message: &Message) -> u32 {
         u32::from_le_bytes(message.get_data()[0..4].try_into().unwrap())
+    }
+
+    #[test]
+    fn a_timed_out_connect_parks_the_actor_in_disconnected() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut actor = ServerActor::new(
+            PeerAddress::new("127.0.0.1".to_string(), 1),
+            tx,
+            0,
+            false,
+            0,
+            0,
+        );
+        actor.connection_state = ConnectionState::Connecting {
+            since: Instant::now().checked_sub(Duration::from_secs(21)).unwrap(),
+        };
+
+        actor.tick();
+
+        assert!(
+            matches!(actor.connection_state, ConnectionState::Disconnected),
+            "a timed-out connect must leave Connecting"
+        );
     }
 
     #[test]
