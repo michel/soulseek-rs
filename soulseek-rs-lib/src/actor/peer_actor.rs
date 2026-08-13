@@ -282,8 +282,8 @@ impl PeerActor {
             PeerMessage::ProcessRead => {
                 self.process_read();
             }
-            PeerMessage::UploadFailed(username, filename) => {
-                self.handle_upload_failed(username, filename);
+            PeerMessage::UploadFailed(_, filename) => {
+                self.handle_upload_failed(filename);
             }
         }
     }
@@ -452,7 +452,8 @@ impl PeerActor {
         }
     }
 
-    fn handle_upload_failed(&self, username: String, filename: String) {
+    fn handle_upload_failed(&self, filename: String) {
+        let username = self.peer_username();
         if let Err(e) = self
             .client_channel
             .send(ClientOperation::UploadFailed(username, filename))
@@ -970,6 +971,24 @@ mod tests {
                 assert_eq!(username, "bob");
             }
             other => panic!("expected PeerConnectFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_upload_failed_message_reaches_the_client_as_this_peer() {
+        let (mut actor, rx, _far_end) = connected_actor();
+
+        actor.handle_message(PeerMessage::UploadFailed(
+            String::new(),
+            "song.mp3".to_string(),
+        ));
+
+        match rx.try_recv() {
+            Ok(ClientOperation::UploadFailed(username, filename)) => {
+                assert_eq!(username, "bob");
+                assert_eq!(filename, "song.mp3");
+            }
+            other => panic!("expected UploadFailed, got {other:?}"),
         }
     }
 
