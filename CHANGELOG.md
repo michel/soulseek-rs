@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [14.0.1](https://github.com/michel/soulseek-rs/compare/v14.0.0...v14.0.1) - 2026-08-13
+
+### Fixed
+
+- *(client)* survive the review findings on the thread-flood fix
+- *(client)* bound the threads a peer flood can create
+- *(peer)* handle UploadDenied so refused downloads fail fast
+- *(peer)* forward UploadFailed to the download store
+- *(actor)* leave Disconnected state behind after every disconnect
+
+### Other
+
+- Merge branch 'develop': peer failure forwarding and thread-flood fixes
+
 ## [14.0.0](https://github.com/michel/soulseek-rs/compare/v13.0.0...v14.0.0) - 2026-08-10
 
 ### Fixed
