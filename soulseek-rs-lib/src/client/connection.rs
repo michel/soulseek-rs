@@ -199,6 +199,46 @@ impl Client {
         }
     }
 
+    pub(crate) fn register_peer_or_fail(
+        client_context: &Arc<RwLock<ClientContext>>,
+        peer: Peer,
+        stream: Option<TcpStream>,
+        reader: Option<crate::message::MessageReader>,
+    ) -> bool {
+        let username = peer.username.clone();
+        let registered = {
+            let context = match client_context.read_safe() {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("[client] register peer read: {}", e);
+                    return false;
+                }
+            };
+            if let Some(ref registry) = context.peer_registry {
+                let protected = context.protected_peers();
+                match registry
+                    .register_peer_protected(peer, stream, reader, &protected)
+                {
+                    Ok(_) => true,
+                    Err(e) => {
+                        warn!(
+                            "[client] refusing peer connection for {:?}: {:?}",
+                            username, e
+                        );
+                        false
+                    }
+                }
+            } else {
+                trace!("PeerRegistry not initialized");
+                false
+            }
+        };
+        if !registered {
+            Self::fail_queued_downloads(client_context, &username);
+        }
+        registered
+    }
+
     pub(crate) fn connect_to_peer(
         peer: Peer,
         client_context: Arc<RwLock<ClientContext>>,
@@ -212,39 +252,12 @@ impl Client {
         );
         match peer.connection_type {
             ConnectionType::P => {
-                let username = peer.username;
-
-                let refused = {
-                    let context = match client_context.read_safe() {
-                        Ok(c) => c,
-                        Err(e) => {
-                            error!("[client] connect_to_peer read: {}", e);
-                            return;
-                        }
-                    };
-                    if let Some(ref registry) = context.peer_registry {
-                        let protected = context.protected_peers();
-                        match registry.register_peer_protected(
-                            peer_clone, stream, None, &protected,
-                        ) {
-                            Ok(_) => false,
-                            Err(e) => {
-                                warn!(
-                                    "[client] refusing peer connection for \
-                                     {:?}: {:?}",
-                                    username, e
-                                );
-                                true
-                            }
-                        }
-                    } else {
-                        trace!("PeerRegistry not initialized");
-                        false
-                    }
-                };
-                if refused {
-                    Self::fail_queued_downloads(&client_context, &username);
-                }
+                Self::register_peer_or_fail(
+                    &client_context,
+                    peer_clone,
+                    stream,
+                    None,
+                );
             }
 
             ConnectionType::F => {

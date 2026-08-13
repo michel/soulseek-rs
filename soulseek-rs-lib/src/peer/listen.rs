@@ -12,7 +12,7 @@ use crate::peer::{ConnectionType, DownloadPeer, Peer};
 use crate::types::Download;
 use crate::utils::lock::RwLockExt;
 use crate::utils::semaphore::{Permit, Semaphore};
-use crate::{DownloadStatus, debug, error, info, trace, warn};
+use crate::{DownloadStatus, debug, error, info, trace};
 
 /// How long to wait before accepting again after a failure.
 ///
@@ -151,40 +151,12 @@ fn handle_peer_connection(
     }
     stream.set_nodelay(true).ok();
 
-    let registered = {
-        let client_context = match context.client_context.read_safe() {
-            Ok(c) => c,
-            Err(e) => {
-                error!("[listener] handle_peer_connection lock: {}", e);
-                return false;
-            }
-        };
-        if let Some(ref registry) = client_context.peer_registry {
-            let protected = client_context.protected_peers();
-            match registry.register_peer_protected(
-                peer.clone(),
-                Some(stream),
-                Some(reader),
-                &protected,
-            ) {
-                Ok(_) => true,
-                Err(e) => {
-                    warn!(
-                        "[listener] refusing peer connection for {:?}: {:?}",
-                        peer.username, e
-                    );
-                    false
-                }
-            }
-        } else {
-            error!("PeerRegistry not initialized");
-            false
-        }
-    };
-    if !registered {
-        Client::fail_queued_downloads(&context.client_context, &peer.username);
-    }
-    registered
+    Client::register_peer_or_fail(
+        &context.client_context,
+        peer,
+        Some(stream),
+        Some(reader),
+    )
 }
 
 fn handle_file_connection(
