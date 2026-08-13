@@ -565,6 +565,29 @@ fn run_mock_uploader(cfg: &MockUpload) -> std::io::Result<u64> {
     )
 }
 
+fn run_refusing_uploader(
+    cfg: &MockUpload,
+    refusal: &Message,
+) -> std::io::Result<()> {
+    let mut p = connect_retry(&cfg.listen_addr, Duration::from_secs(5))?;
+    p.set_read_timeout(Some(Duration::from_secs(10)))?;
+    p.write_all(&peer_init_bytes(&cfg.peer_username, "P", 0))?;
+    p.flush()?;
+    let _ = cfg.ready.send(());
+
+    loop {
+        let msg = read_framed(&mut p)?;
+        if msg.get_message_code() == 43 {
+            break;
+        }
+    }
+
+    p.write_all(&refusal.get_buffer())?;
+    p.flush()?;
+    std::thread::sleep(Duration::from_millis(500));
+    Ok(())
+}
+
 /// Open an F (file transfer) connection to `downloader_addr` and stream
 /// `content`. PeerInit(F) and the 4-byte transfer token are written together so
 /// the token lands in the listener's read buffer, where the download is looked
@@ -758,6 +781,94 @@ fn a_file_downloads_from_a_peer_over_p_and_f_connections() {
     assert_eq!(written, content, "downloaded bytes should match the source");
 
     let _ = std::fs::remove_dir_all(&download_dir);
+}
+
+fn refusal_fails_the_download_quickly(
+    peer_username: &str,
+    build_refusal: impl FnOnce(&str) -> Message,
+) {
+    let server = server_or_skip!();
+
+    let listen_port = free_port().expect("free listen port");
+    let mut client = Client::with_settings(server.listening_settings(
+        &format!("{peer_username}_dl"),
+        "pw",
+        listen_port,
+    ));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login"));
+
+    let filename = "gone_song.mp3";
+    let refusal = build_refusal(filename);
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let cfg = MockUpload {
+        listen_addr: format!("127.0.0.1:{listen_port}"),
+        peer_username: peer_username.to_string(),
+        filename: filename.to_string(),
+        content: Vec::new(),
+        token: 0,
+        ready: ready_tx,
+    };
+    let uploader = std::thread::spawn(move || {
+        if let Err(e) = run_refusing_uploader(&cfg, &refusal) {
+            eprintln!("[mock refusing uploader] {e}");
+        }
+    });
+
+    ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("mock uploader P connection");
+    std::thread::sleep(Duration::from_millis(1500));
+
+    let download_dir = unique_download_dir();
+    let (_download, status_rx) = client
+        .download(
+            filename.to_string(),
+            peer_username.to_string(),
+            0,
+            download_dir.display().to_string(),
+        )
+        .expect("start download");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut failed = false;
+    while Instant::now() < deadline {
+        match status_rx.recv_timeout(Duration::from_millis(500)) {
+            Ok(DownloadStatus::Failed(_)) => {
+                failed = true;
+                break;
+            }
+            Ok(DownloadStatus::Completed) => {
+                panic!("the refused download must not complete")
+            }
+            _ => {}
+        }
+    }
+    let _ = uploader.join();
+    let _ = std::fs::remove_dir_all(&download_dir);
+
+    assert!(failed, "the peer's refusal should fail the download fast");
+}
+
+#[test]
+fn an_upload_failed_reply_fails_the_download_quickly() {
+    refusal_fails_the_download_quickly("e2e_failing_peer", |filename| {
+        let mut refusal = Message::new();
+        refusal.write_int32(46).write_string(filename);
+        refusal
+    });
+}
+
+#[test]
+fn an_upload_denied_reply_fails_the_download_quickly() {
+    refusal_fails_the_download_quickly("e2e_denying_peer", |filename| {
+        let mut refusal = Message::new();
+        refusal
+            .write_int32(50)
+            .write_string(filename)
+            .write_string("File not shared.");
+        refusal
+    });
 }
 
 #[test]

@@ -5,7 +5,7 @@ use crate::message::peer::{
     FileSearchResponse, GetShareFileList, PeerInit, PlaceInQueueRequest,
     PlaceInQueueResponse, QueueUploadHandler, SharedDirectory,
     SharedFileListResponseHandler, TransferRequest, TransferResponse,
-    UploadFailedHandler,
+    UploadDeniedHandler, UploadFailedHandler,
 };
 use crate::message::server::MessageFactory;
 use crate::message::{Handlers, Message, MessageReader, MessageType};
@@ -178,6 +178,7 @@ impl PeerActor {
         handlers.register_handler(TransferRequest);
         handlers.register_handler(TransferResponse);
         handlers.register_handler(GetShareFileList);
+        handlers.register_handler(UploadDeniedHandler);
         handlers.register_handler(UploadFailedHandler);
         handlers.register_handler(PlaceInQueueRequest);
         handlers.register_handler(PlaceInQueueResponse);
@@ -282,8 +283,8 @@ impl PeerActor {
             PeerMessage::ProcessRead => {
                 self.process_read();
             }
-            PeerMessage::UploadFailed(username, filename) => {
-                self.handle_upload_failed(username, filename);
+            PeerMessage::UploadFailed(_, filename) => {
+                self.handle_upload_failed(filename);
             }
         }
     }
@@ -452,7 +453,8 @@ impl PeerActor {
         }
     }
 
-    fn handle_upload_failed(&self, username: String, filename: String) {
+    fn handle_upload_failed(&self, filename: String) {
+        let username = self.peer_username();
         if let Err(e) = self
             .client_channel
             .send(ClientOperation::UploadFailed(username, filename))
@@ -658,6 +660,7 @@ impl PeerActor {
         debug!("[peer:{}] disconnect: {}", username, error);
 
         self.stream.take();
+        self.connection_state = ConnectionState::Disconnected;
 
         if self.disconnect_reported {
             return;
@@ -687,6 +690,7 @@ impl PeerActor {
         debug!("[peer:{}] disconnect", username);
 
         self.stream.take();
+        self.connection_state = ConnectionState::Disconnected;
 
         if self.disconnect_reported {
             return;
@@ -927,21 +931,66 @@ mod tests {
         stream.set_nonblocking(true).unwrap();
         let (far_end, _) = listener.accept().unwrap();
 
+        let (mut actor, rx) = make_actor(Some(stream));
+        actor.on_start();
+        (actor, rx, far_end)
+    }
+
+    fn make_actor(
+        stream: Option<TcpStream>,
+    ) -> (PeerActor, Receiver<ClientOperation>) {
         let (tx, rx) = std::sync::mpsc::channel();
         let peer = Peer::new(
             "bob".to_string(),
             ConnectionType::P,
             "127.0.0.1".to_string(),
-            u32::from(addr.port()),
+            0,
             None,
             0,
             0,
             0,
         );
-        let mut actor =
-            PeerActor::new(peer, Some(stream), None, tx, "me".to_string(), 7);
-        actor.on_start();
-        (actor, rx, far_end)
+        let actor = PeerActor::new(peer, stream, None, tx, "me".to_string(), 7);
+        (actor, rx)
+    }
+
+    #[test]
+    fn a_timed_out_connect_parks_the_actor_in_disconnected() {
+        let (mut actor, rx) = make_actor(None);
+        actor.connection_state = ConnectionState::Connecting {
+            since: Instant::now().checked_sub(Duration::from_secs(21)).unwrap(),
+        };
+
+        actor.tick();
+
+        assert!(
+            matches!(actor.connection_state, ConnectionState::Disconnected),
+            "a timed-out connect must leave Connecting"
+        );
+        match rx.try_recv() {
+            Ok(ClientOperation::PeerConnectFailed(7, username)) => {
+                assert_eq!(username, "bob");
+            }
+            other => panic!("expected PeerConnectFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_upload_failed_message_reaches_the_client_as_this_peer() {
+        let (mut actor, rx, _far_end) = connected_actor();
+
+        actor.handle_message(PeerMessage::UploadFailed(
+            String::new(),
+            "song.mp3".to_string(),
+        ));
+
+        match rx.try_recv() {
+            Ok(ClientOperation::UploadFailed(username, filename)) => {
+                assert_eq!(username, "bob");
+                assert_eq!(filename, "song.mp3");
+            }
+            other => panic!("expected UploadFailed, got {other:?}"),
+        }
     }
 
     #[test]

@@ -3,15 +3,16 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, RwLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use crate::client::{ClientContext, ClientOperation};
+use crate::client::{Client, ClientContext, ClientOperation};
 
 use crate::message::{Message, MessageReader};
 use crate::peer::{ConnectionType, DownloadPeer, Peer};
 use crate::types::Download;
 use crate::utils::lock::RwLockExt;
-use crate::{DownloadStatus, debug, error, info, trace};
+use crate::utils::semaphore::{Permit, Semaphore};
+use crate::{DownloadStatus, debug, error, info, trace, warn};
 
 /// How long to wait before accepting again after a failure.
 ///
@@ -24,6 +25,10 @@ const PEER_INIT_MESSAGE_CODE: u8 = 1;
 
 /// How long an accepted peer gets to send its peer-init handshake.
 const PEER_INIT_TIMEOUT: Duration = Duration::from_secs(10);
+
+const MAX_HANDSHAKES: usize = 128;
+
+const MAX_PEER_INIT_BYTES: usize = 4096;
 
 #[derive(Clone)]
 struct ConnectionContext {
@@ -41,15 +46,29 @@ struct PeerInitData {
 fn read_peer_init_message(
     stream: &mut TcpStream,
     reader: &mut MessageReader,
+    deadline: Instant,
 ) -> io::Result<Message> {
     // An untrusted peer gets a bounded handshake. Without this a peer that
     // connects and stays silent parks this read forever, pinning a thread that
     // owes us a peer init.
-    stream.set_read_timeout(Some(PEER_INIT_TIMEOUT))?;
     let message = loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "peer init deadline passed",
+            ));
+        }
+        stream.set_read_timeout(Some(remaining))?;
         reader.read_from_socket(stream)?;
         if let Ok(Some(msg)) = reader.extract_message() {
             break msg;
+        }
+        if reader.buffer_len() > MAX_PEER_INIT_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "peer init larger than any handshake",
+            ));
         }
     };
 
@@ -119,7 +138,7 @@ fn handle_peer_connection(
     stream: TcpStream,
     reader: MessageReader,
     context: &ConnectionContext,
-) {
+) -> bool {
     // The peer actor multiplexes socket reads with its mailbox on a single
     // thread: `tick()` reads the socket, but outgoing messages (e.g. a queued
     // QueueUpload for a download) are delivered through the mailbox between
@@ -128,30 +147,44 @@ fn handle_peer_connection(
     // outbound path and drive this connection non-blocking.
     if let Err(e) = stream.set_nonblocking(true) {
         error!("[listener] failed to set peer stream non-blocking: {}", e);
-        return;
+        return false;
     }
     stream.set_nodelay(true).ok();
 
-    let client_context = match context.client_context.read_safe() {
-        Ok(c) => c,
-        Err(e) => {
-            error!("[listener] handle_peer_connection lock: {}", e);
-            return;
+    let registered = {
+        let client_context = match context.client_context.read_safe() {
+            Ok(c) => c,
+            Err(e) => {
+                error!("[listener] handle_peer_connection lock: {}", e);
+                return false;
+            }
+        };
+        if let Some(ref registry) = client_context.peer_registry {
+            let protected = client_context.protected_peers();
+            match registry.register_peer_protected(
+                peer.clone(),
+                Some(stream),
+                Some(reader),
+                &protected,
+            ) {
+                Ok(_) => true,
+                Err(e) => {
+                    warn!(
+                        "[listener] refusing peer connection for {:?}: {:?}",
+                        peer.username, e
+                    );
+                    false
+                }
+            }
+        } else {
+            error!("PeerRegistry not initialized");
+            false
         }
     };
-    if let Some(ref registry) = client_context.peer_registry {
-        match registry.register_peer(peer.clone(), Some(stream), Some(reader)) {
-            Ok(_) => (),
-            Err(e) => {
-                error!(
-                    "Failed to spawn peer actor for {:?}: {:?}",
-                    peer.username, e
-                );
-            }
-        }
-    } else {
-        error!("PeerRegistry not initialized");
+    if !registered {
+        Client::fail_queued_downloads(&context.client_context, &peer.username);
     }
+    registered
 }
 
 fn handle_file_connection(
@@ -271,18 +304,19 @@ fn handle_pierce_firewall(
         0,
         0,
     );
-    handle_peer_connection(peer, stream, reader, context);
-
-    // Inbound peers don't self-announce, so nudge the client to flush any
-    // downloads queued for this now-connected peer.
-    let _ = context
-        .client_sender
-        .send(ClientOperation::PeerConnected(username));
+    if handle_peer_connection(peer, stream, reader, context) {
+        // Inbound peers don't self-announce, so nudge the client to flush any
+        // downloads queued for this now-connected peer.
+        let _ = context
+            .client_sender
+            .send(ClientOperation::PeerConnected(username));
+    }
 }
 
 fn handle_incoming_connection(
     mut stream: TcpStream,
     context: ConnectionContext,
+    permit: Permit,
 ) {
     let Ok(peer_addr) = stream.peer_addr() else {
         error!("[listener] failed to get peer address");
@@ -294,15 +328,18 @@ fn handle_incoming_connection(
     let mut reader = MessageReader::new();
 
     // A peer that dials and then goes away is routine, not an error.
-    let message = match read_peer_init_message(&mut stream, &mut reader) {
-        Ok(message) => message,
-        Err(e) => {
-            debug!(
-                "[listener:{peer_ip}:{peer_port}] no peer init message: {e}"
-            );
-            return;
-        }
-    };
+    let deadline = Instant::now() + PEER_INIT_TIMEOUT;
+    let message =
+        match read_peer_init_message(&mut stream, &mut reader, deadline) {
+            Ok(message) => message,
+            Err(e) => {
+                debug!(
+                    "[listener:{peer_ip}:{peer_port}] no peer init message: {e}"
+                );
+                return;
+            }
+        };
+    drop(permit);
 
     // A firewalled peer brokered through the server connects back with a
     // PierceFirewall (code 0) instead of a PeerInit (code 1).
@@ -343,13 +380,14 @@ fn handle_incoming_connection(
 
     match init_data.connection_type {
         ConnectionType::P => {
-            handle_peer_connection(peer, stream, reader, &context);
-            // Inbound peers don't self-announce, so nudge the client to flush
-            // anything queued for this now-connected peer — same as the
-            // PierceFirewall path.
-            let _ = context
-                .client_sender
-                .send(ClientOperation::PeerConnected(init_data.username));
+            if handle_peer_connection(peer, stream, reader, &context) {
+                // Inbound peers don't self-announce, so nudge the client to
+                // flush anything queued for this now-connected peer — same as
+                // the PierceFirewall path.
+                let _ = context
+                    .client_sender
+                    .send(ClientOperation::PeerConnected(init_data.username));
+            }
         }
 
         ConnectionType::F => handle_file_connection(
@@ -406,6 +444,7 @@ impl Listen {
             client_context,
             own_username,
         };
+        let handshakes = Arc::new(Semaphore::new(MAX_HANDSHAKES));
 
         for stream in listener.incoming() {
             let Ok(stream) = stream else {
@@ -421,11 +460,79 @@ impl Listen {
                 continue;
             };
 
+            let permit = handshakes.acquire();
             let context = context.clone();
             // One thread per connection: the peer-init handshake blocks, and a
             // peer that is slow to send one must not stop us accepting anybody
             // else — a wedged accept loop makes us unreachable to every peer.
-            thread::spawn(move || handle_incoming_connection(stream, context));
+            thread::spawn(move || {
+                handle_incoming_connection(stream, context, permit);
+            });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::net::TcpListener;
+
+    #[test]
+    fn a_dribbling_handshake_hits_the_total_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let writer = std::thread::spawn(move || {
+            let mut socket = TcpStream::connect(addr).unwrap();
+            let _ = socket.write_all(&1000u32.to_le_bytes());
+            for _ in 0..20 {
+                if socket.write_all(&[0u8]).is_err() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = MessageReader::new();
+
+        let started = Instant::now();
+        let result = read_peer_init_message(
+            &mut stream,
+            &mut reader,
+            started + Duration::from_millis(300),
+        );
+
+        assert!(result.is_err(), "a dribbled handshake must not succeed");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the deadline must bound the whole handshake, not each read"
+        );
+        let _ = writer.join();
+    }
+
+    #[test]
+    fn an_oversized_handshake_is_rejected() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let writer = std::thread::spawn(move || {
+            let mut socket = TcpStream::connect(addr).unwrap();
+            let junk = vec![0xFFu8; MAX_PEER_INIT_BYTES * 2];
+            let _ = socket.write_all(&junk);
+            std::thread::sleep(Duration::from_millis(500));
+        });
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = MessageReader::new();
+
+        let result = read_peer_init_message(
+            &mut stream,
+            &mut reader,
+            Instant::now() + Duration::from_secs(5),
+        );
+
+        assert!(
+            result.is_err(),
+            "an oversized handshake must be rejected, got {result:?}"
+        );
+        let _ = writer.join();
     }
 }
