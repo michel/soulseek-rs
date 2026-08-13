@@ -6,11 +6,12 @@ use crate::peer::Peer;
 use crate::utils::lock::MutexExt;
 use crate::{debug, error};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::TcpStream;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 /// Source of unique per-actor ids so terminal-outcome eviction can be made
 /// identity-aware (a replaced actor must not evict its replacement).
@@ -18,13 +19,14 @@ static NEXT_PEER_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Registered peers keyed by username, each stored with the unique id of the
 /// actor currently occupying the slot.
-type PeerMap = HashMap<String, (u64, ActorHandle<PeerMessage>)>;
+type PeerMap = HashMap<String, (u64, ActorHandle<PeerMessage>, Instant)>;
 
 pub struct PeerRegistry {
     peers: Arc<Mutex<PeerMap>>,
     actor_system: Arc<ActorSystem>,
     client_channel: Sender<ClientOperation>,
     own_username: String,
+    capacity: Arc<AtomicUsize>,
 }
 
 impl PeerRegistry {
@@ -34,11 +36,27 @@ impl PeerRegistry {
         client_channel: Sender<ClientOperation>,
         own_username: String,
     ) -> Self {
+        Self::with_capacity(
+            actor_system,
+            client_channel,
+            own_username,
+            Arc::new(AtomicUsize::new(usize::MAX)),
+        )
+    }
+
+    #[must_use]
+    pub(crate) fn with_capacity(
+        actor_system: Arc<ActorSystem>,
+        client_channel: Sender<ClientOperation>,
+        own_username: String,
+        capacity: Arc<AtomicUsize>,
+    ) -> Self {
         Self {
             peers: Arc::new(Mutex::new(HashMap::new())),
             actor_system,
             client_channel,
             own_username,
+            capacity,
         }
     }
 
@@ -47,6 +65,16 @@ impl PeerRegistry {
         peer: Peer,
         stream: Option<TcpStream>,
         reader: Option<MessageReader>,
+    ) -> Result<ActorHandle<PeerMessage>, String> {
+        self.register_peer_protected(peer, stream, reader, &HashSet::new())
+    }
+
+    pub(crate) fn register_peer_protected(
+        &self,
+        peer: Peer,
+        stream: Option<TcpStream>,
+        reader: Option<MessageReader>,
+        protected: &HashSet<String>,
     ) -> Result<ActorHandle<PeerMessage>, String> {
         let username = peer.username.clone();
         let id = NEXT_PEER_ID.fetch_add(1, Ordering::Relaxed);
@@ -71,6 +99,28 @@ impl PeerRegistry {
             .lock_safe()
             .map_err(|e| format!("peer registry lock poisoned: {e}"))?;
 
+        let capacity = self.capacity.load(Ordering::Relaxed).max(1);
+        if peers.len() >= capacity && !peers.contains_key(&username) {
+            let victim = peers
+                .iter()
+                .filter(|(name, _)| !protected.contains(name.as_str()))
+                .min_by_key(|(_, (_, _, registered))| *registered)
+                .map(|(name, _)| name.clone());
+            let Some(victim) = victim else {
+                return Err(format!(
+                    "peer registry at capacity ({capacity}) and every peer \
+                     is busy; refusing {username}"
+                ));
+            };
+            if let Some((_, handle, _)) = peers.remove(&victim) {
+                let _ = handle.stop();
+                debug!(
+                    "[peer_registry] evicted idle peer {} to admit {}",
+                    victim, username
+                );
+            }
+        }
+
         let handle = self
             .actor_system
             .try_spawn_with_handle(actor, |actor, handle| {
@@ -81,8 +131,8 @@ impl PeerRegistry {
         // become an orphan pinning a pool worker forever. Eviction on the
         // replaced actor's later shutdown is identity-aware (keyed on its id),
         // so stopping it here cannot evict this new connection.
-        if let Some((_, old_handle)) =
-            peers.insert(username.clone(), (id, handle.clone()))
+        if let Some((_, old_handle, _)) =
+            peers.insert(username.clone(), (id, handle.clone(), Instant::now()))
         {
             let _ = old_handle.stop();
             debug!(
@@ -97,7 +147,9 @@ impl PeerRegistry {
     #[must_use]
     pub fn get_peer(&self, username: &str) -> Option<ActorHandle<PeerMessage>> {
         match self.peers.lock_safe() {
-            Ok(peers) => peers.get(username).map(|(_, handle)| handle.clone()),
+            Ok(peers) => {
+                peers.get(username).map(|(_, handle, _)| handle.clone())
+            }
             Err(e) => {
                 error!("[peer_registry] get_peer: {}", e);
                 None
@@ -123,7 +175,7 @@ impl PeerRegistry {
             debug!("[peer_registry] Removed peer actor for {}", username);
         }
 
-        removed.map(|(_, handle)| handle)
+        removed.map(|(_, handle, _)| handle)
     }
 
     /// Remove and return the actor for `username` only if it is still the actor
@@ -142,8 +194,11 @@ impl PeerRegistry {
                 return None;
             }
         };
-        if peers.get(username).is_some_and(|(stored, _)| *stored == id) {
-            let removed = peers.remove(username).map(|(_, handle)| handle);
+        if peers
+            .get(username)
+            .is_some_and(|(stored, _, _)| *stored == id)
+        {
+            let removed = peers.remove(username).map(|(_, handle, _)| handle);
             debug!(
                 "[peer_registry] Removed peer actor {} for {}",
                 id, username
@@ -192,6 +247,7 @@ impl Clone for PeerRegistry {
             actor_system: self.actor_system.clone(),
             client_channel: self.client_channel.clone(),
             own_username: self.own_username.clone(),
+            capacity: self.capacity.clone(),
         }
     }
 }
@@ -201,8 +257,112 @@ mod tests {
     use super::PeerRegistry;
     use crate::actor::ActorSystem;
     use crate::peer::{ConnectionType, Peer};
+    use std::collections::HashSet;
     use std::net::{TcpListener, TcpStream};
     use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+    use std::time::Duration;
+
+    fn loopback_peer(name: &str) -> (Peer, TcpStream, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stream = TcpStream::connect(addr).unwrap();
+        stream.set_nonblocking(true).unwrap();
+        let far_end = listener.accept().unwrap().0;
+        let peer = Peer::new(
+            name.to_string(),
+            ConnectionType::P,
+            "127.0.0.1".to_string(),
+            u32::from(addr.port()),
+            None,
+            0,
+            0,
+            0,
+        );
+        (peer, stream, far_end)
+    }
+
+    fn capped_registry(
+        capacity: usize,
+    ) -> (
+        PeerRegistry,
+        std::sync::mpsc::Receiver<crate::client::ClientOperation>,
+    ) {
+        let system = Arc::new(ActorSystem::new());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let registry = PeerRegistry::with_capacity(
+            system,
+            tx,
+            "me".to_string(),
+            Arc::new(AtomicUsize::new(capacity)),
+        );
+        (registry, rx)
+    }
+
+    #[test]
+    fn capacity_evicts_the_oldest_idle_peer() {
+        let (registry, _rx) = capped_registry(2);
+
+        for name in ["a", "b", "c"] {
+            let (peer, stream, _far_end) = loopback_peer(name);
+            registry.register_peer(peer, Some(stream), None).unwrap();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        assert!(!registry.contains("a"), "the oldest peer must be evicted");
+        assert!(registry.contains("b"));
+        assert!(registry.contains("c"));
+    }
+
+    #[test]
+    fn capacity_refuses_when_every_peer_is_protected() {
+        let (registry, _rx) = capped_registry(1);
+
+        let (busy, busy_stream, _busy_far) = loopback_peer("busy");
+        registry
+            .register_peer(busy, Some(busy_stream), None)
+            .unwrap();
+
+        let protected: HashSet<String> =
+            std::iter::once("busy".to_string()).collect();
+        let (newcomer, stream, _far) = loopback_peer("newcomer");
+        let result = registry.register_peer_protected(
+            newcomer,
+            Some(stream),
+            None,
+            &protected,
+        );
+
+        assert!(result.is_err(), "a full registry of busy peers must refuse");
+        assert!(registry.contains("busy"));
+        assert!(!registry.contains("newcomer"));
+    }
+
+    #[test]
+    fn a_returning_username_is_replaced_not_refused_at_capacity() {
+        let (registry, _rx) = capped_registry(1);
+
+        let (first, first_stream, _first_far) = loopback_peer("bob");
+        registry
+            .register_peer(first, Some(first_stream), None)
+            .unwrap();
+
+        let protected: HashSet<String> =
+            std::iter::once("bob".to_string()).collect();
+        let (again, stream, _far) = loopback_peer("bob");
+        let result = registry.register_peer_protected(
+            again,
+            Some(stream),
+            None,
+            &protected,
+        );
+
+        assert!(
+            result.is_ok(),
+            "a reconnecting username must replace itself"
+        );
+        assert!(registry.contains("bob"));
+    }
 
     #[test]
     fn remove_peer_if_respects_actor_identity() {

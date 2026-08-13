@@ -3,6 +3,7 @@ pub mod logger;
 pub mod lock;
 pub mod md5;
 pub mod path;
+pub(crate) mod semaphore;
 pub mod zlib;
 
 // Re-export commonly used items
