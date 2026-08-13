@@ -658,6 +658,7 @@ impl PeerActor {
         debug!("[peer:{}] disconnect: {}", username, error);
 
         self.stream.take();
+        self.connection_state = ConnectionState::Disconnected;
 
         if self.disconnect_reported {
             return;
@@ -687,6 +688,7 @@ impl PeerActor {
         debug!("[peer:{}] disconnect", username);
 
         self.stream.take();
+        self.connection_state = ConnectionState::Disconnected;
 
         if self.disconnect_reported {
             return;
@@ -927,21 +929,48 @@ mod tests {
         stream.set_nonblocking(true).unwrap();
         let (far_end, _) = listener.accept().unwrap();
 
+        let (mut actor, rx) = make_actor(Some(stream));
+        actor.on_start();
+        (actor, rx, far_end)
+    }
+
+    fn make_actor(
+        stream: Option<TcpStream>,
+    ) -> (PeerActor, Receiver<ClientOperation>) {
         let (tx, rx) = std::sync::mpsc::channel();
         let peer = Peer::new(
             "bob".to_string(),
             ConnectionType::P,
             "127.0.0.1".to_string(),
-            u32::from(addr.port()),
+            0,
             None,
             0,
             0,
             0,
         );
-        let mut actor =
-            PeerActor::new(peer, Some(stream), None, tx, "me".to_string(), 7);
-        actor.on_start();
-        (actor, rx, far_end)
+        let actor = PeerActor::new(peer, stream, None, tx, "me".to_string(), 7);
+        (actor, rx)
+    }
+
+    #[test]
+    fn a_timed_out_connect_parks_the_actor_in_disconnected() {
+        let (mut actor, rx) = make_actor(None);
+        actor.connection_state = ConnectionState::Connecting {
+            since: Instant::now().checked_sub(Duration::from_secs(21)).unwrap(),
+        };
+
+        actor.tick();
+
+        assert!(
+            matches!(actor.connection_state, ConnectionState::Disconnected),
+            "a timed-out connect must leave Connecting"
+        );
+        match rx.try_recv() {
+            Ok(ClientOperation::PeerConnectFailed(7, username)) => {
+                assert_eq!(username, "bob");
+            }
+            other => panic!("expected PeerConnectFailed, got {other:?}"),
+        }
     }
 
     #[test]
