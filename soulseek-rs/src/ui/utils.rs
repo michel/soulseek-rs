@@ -79,8 +79,7 @@ mod tests {
     #[test]
     fn wrap_chat_line_wraps_and_indents() {
         let prefix = vec![Span::raw("12:00 "), Span::raw("<bob> ")];
-        let lines =
-            wrap_chat_line(prefix, "abcdefghij", Style::default(), 16);
+        let lines = wrap_chat_line(prefix, "abcdefghij", Style::default(), 16);
         // prefix width 12, so 4 text chars per row.
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0].to_string(), "12:00 <bob> abcd");
