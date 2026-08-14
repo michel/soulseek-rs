@@ -1,7 +1,7 @@
 use crate::models::{AppState, MessageDirection};
 use crate::ui::{
     accent_style, border_style, dimmed_style, highlight_style, info_style,
-    primary_style,
+    primary_style, wrap_chat_line,
 };
 use ratatui::{
     Frame,
@@ -98,25 +98,32 @@ fn render_messages(
     peer: &str,
     own_username: &str,
 ) {
+    let width = area.width as usize;
     let lines: Vec<Line> = state
         .messages
         .iter()
         .filter(|m| m.peer == peer)
-        .map(|m| {
+        .flat_map(|m| {
             let (sender, sender_style) = match m.direction {
                 MessageDirection::Incoming => (peer, info_style()),
                 MessageDirection::Outgoing => (own_username, accent_style()),
             };
-            Line::from(vec![
-                Span::styled(m.at.format("%H:%M ").to_string(), dimmed_style()),
-                Span::styled(format!("<{sender}> "), sender_style),
-                Span::styled(m.text.clone(), primary_style()),
-            ])
+            wrap_chat_line(
+                vec![
+                    Span::styled(
+                        m.at.format("%H:%M ").to_string(),
+                        dimmed_style(),
+                    ),
+                    Span::styled(format!("<{sender}> "), sender_style),
+                ],
+                &m.text,
+                primary_style(),
+                width,
+            )
         })
         .collect();
 
-    // Auto-scroll: one row per message (no wrapping), so tailing by the pane
-    // height keeps the newest message visible.
+    // Auto-scroll: tail by rendered rows so the newest message stays visible.
     let start = lines.len().saturating_sub((area.height as usize).max(1));
     frame.render_widget(Paragraph::new(lines[start..].to_vec()), area);
 }

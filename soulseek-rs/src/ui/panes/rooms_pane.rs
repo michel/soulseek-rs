@@ -2,7 +2,7 @@ use crate::models::{RoomsState, RoomsView};
 use crate::ui::{
     HIGHLIGHT_SYMBOL, PANE_PADDING, accent_style, dimmed_style,
     highlight_style, info_style, pane_block, plain_title, primary_style,
-    row_highlight_style,
+    row_highlight_style, wrap_chat_line,
 };
 use ratatui::{
     Frame,
@@ -174,31 +174,32 @@ fn render_messages(
     area: Rect,
     lines: &[crate::models::RoomLine],
 ) {
-    // Auto-scroll: show the most recent lines. Each RoomLine renders as exactly
-    // one row (no wrapping) so the tail count is exact and the newest message
-    // is always visible; over-long lines are clipped at the right edge rather
-    // than wrapping and pushing newer lines off the bottom.
-    let height = area.height as usize;
-    let start = lines.len().saturating_sub(height.max(1));
-    let rendered: Vec<Line> = lines[start..]
+    // Wrap each message to the pane width, then auto-scroll: tail by rendered
+    // rows so the newest message is always fully visible.
+    let width = area.width as usize;
+    let rendered: Vec<Line> = lines
         .iter()
-        .map(|l| {
+        .flat_map(|l| {
             let time =
                 Span::styled(l.at.format("%H:%M ").to_string(), dimmed_style());
             match &l.username {
-                Some(user) => Line::from(vec![
-                    time,
-                    Span::styled(format!("<{user}> "), info_style()),
-                    Span::styled(l.text.clone(), primary_style()),
-                ]),
-                None => Line::from(vec![
-                    time,
-                    Span::styled(l.text.clone(), dimmed_style()),
-                ]),
+                Some(user) => wrap_chat_line(
+                    vec![
+                        time,
+                        Span::styled(format!("<{user}> "), info_style()),
+                    ],
+                    &l.text,
+                    primary_style(),
+                    width,
+                ),
+                None => {
+                    wrap_chat_line(vec![time], &l.text, dimmed_style(), width)
+                }
             }
         })
         .collect();
-    frame.render_widget(Paragraph::new(rendered), area);
+    let start = rendered.len().saturating_sub((area.height as usize).max(1));
+    frame.render_widget(Paragraph::new(rendered[start..].to_vec()), area);
 }
 
 fn render_users(
