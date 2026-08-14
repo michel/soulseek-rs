@@ -285,6 +285,26 @@ impl MainTui {
                 self.state.results_filter_query.pop();
                 self.apply_filter();
             }
+            // Confirm the filter: leave typing mode but keep the query, so
+            // the normal Results keys (j/k, space, enter) act on the
+            // filtered list.
+            KeyCode::Enter => {
+                self.state.results_is_filtering = false;
+            }
+            KeyCode::Up => {
+                cycle(
+                    &mut self.state.results_table_state,
+                    self.state.results_filtered_items.len(),
+                    false,
+                );
+            }
+            KeyCode::Down => {
+                cycle(
+                    &mut self.state.results_table_state,
+                    self.state.results_filtered_items.len(),
+                    true,
+                );
+            }
             _ => {}
         }
     }

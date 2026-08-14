@@ -372,6 +372,8 @@ impl MainTui {
                 FocusedPane::Results if self.state.results_is_filtering => {
                     vec![
                         ("Type", "filter"),
+                        ("↑/↓", "navigate"),
+                        ("Enter", "confirm"),
                         ("Esc", "clear filter"),
                         ("1-3", "focus pane"),
                         ("q", "quit"),
