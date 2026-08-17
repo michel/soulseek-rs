@@ -478,6 +478,7 @@ struct MockUpload {
     content: Vec<u8>,
     token: u32,
     ready: Sender<()>,
+    token_delay: Duration,
 }
 
 /// Build a `PeerInit` (peer code 1) frame: `[len][1][username][conn_type][token]`.
@@ -519,36 +520,43 @@ fn connect_retry(addr: &str, timeout: Duration) -> std::io::Result<TcpStream> {
     }
 }
 
-fn run_mock_uploader(cfg: &MockUpload) -> std::io::Result<u64> {
-    // 1. P (control) connection: register ourselves with the downloader.
+fn open_control_and_await_queue(
+    cfg: &MockUpload,
+) -> std::io::Result<TcpStream> {
     let mut p = connect_retry(&cfg.listen_addr, Duration::from_secs(5))?;
     p.set_read_timeout(Some(Duration::from_secs(10)))?;
     p.write_all(&peer_init_bytes(&cfg.peer_username, "P", 0))?;
     p.flush()?;
     let _ = cfg.ready.send(());
 
-    // 2. Wait for the downloader's QueueUpload (peer code 43).
     loop {
-        let mut msg = read_framed(&mut p)?;
+        let msg = read_framed(&mut p)?;
         if msg.get_message_code() == 43 {
-            msg.set_pointer(8);
-            let _requested = msg.read_string();
             break;
         }
     }
+    Ok(p)
+}
 
-    // 3. Offer the transfer with a TransferRequest (peer code 40). The size here
-    //    becomes the download's expected size, so it must match the content.
+/// Build a TransferRequest (peer code 40). The size becomes the download's
+/// expected size, so it must match the content.
+fn transfer_request(cfg: &MockUpload) -> Message {
     let mut tr = Message::new();
     tr.write_int32(40)
         .write_int32(1) // direction: upload
         .write_int32(cfg.token)
         .write_string(&cfg.filename)
         .write_int64(cfg.content.len() as u64);
-    p.write_all(&tr.get_buffer())?;
+    tr
+}
+
+fn run_mock_uploader(cfg: &MockUpload) -> std::io::Result<u64> {
+    let mut p = open_control_and_await_queue(cfg)?;
+
+    p.write_all(&transfer_request(cfg).get_buffer())?;
     p.flush()?;
 
-    // 4. Wait for the downloader to allow it (TransferResponse, peer code 41).
+    // Wait for the downloader to allow it (TransferResponse, peer code 41).
     loop {
         let msg = read_framed(&mut p)?;
         if msg.get_message_code() == 41 {
@@ -556,31 +564,47 @@ fn run_mock_uploader(cfg: &MockUpload) -> std::io::Result<u64> {
         }
     }
 
-    // 5. Open the F (file) connection to the downloader's listener and stream.
     serve_file_over_f(
         &cfg.listen_addr,
         &cfg.peer_username,
         cfg.token,
         &cfg.content,
+        cfg.token_delay,
     )
+}
+
+fn run_mock_uploader_f_first(cfg: &MockUpload) -> std::io::Result<u64> {
+    let mut p = open_control_and_await_queue(cfg)?;
+
+    let listen_addr = cfg.listen_addr.clone();
+    let peer_username = cfg.peer_username.clone();
+    let token = cfg.token;
+    let content = cfg.content.clone();
+    let token_delay = cfg.token_delay;
+    let f = std::thread::spawn(move || {
+        serve_file_over_f(
+            &listen_addr,
+            &peer_username,
+            token,
+            &content,
+            token_delay,
+        )
+    });
+
+    std::thread::sleep(Duration::from_millis(300));
+
+    p.write_all(&transfer_request(cfg).get_buffer())?;
+    p.flush()?;
+
+    f.join()
+        .map_err(|_| std::io::Error::other("F connection thread panicked"))?
 }
 
 fn run_refusing_uploader(
     cfg: &MockUpload,
     refusal: &Message,
 ) -> std::io::Result<()> {
-    let mut p = connect_retry(&cfg.listen_addr, Duration::from_secs(5))?;
-    p.set_read_timeout(Some(Duration::from_secs(10)))?;
-    p.write_all(&peer_init_bytes(&cfg.peer_username, "P", 0))?;
-    p.flush()?;
-    let _ = cfg.ready.send(());
-
-    loop {
-        let msg = read_framed(&mut p)?;
-        if msg.get_message_code() == 43 {
-            break;
-        }
-    }
+    let mut p = open_control_and_await_queue(cfg)?;
 
     p.write_all(&refusal.get_buffer())?;
     p.flush()?;
@@ -589,10 +613,8 @@ fn run_refusing_uploader(
 }
 
 /// Open an F (file transfer) connection to `downloader_addr` and stream
-/// `content`. PeerInit(F) and the 4-byte transfer token are written together so
-/// the token lands in the listener's read buffer, where the download is looked
-/// up by token; the downloader then sends an 8-byte START_DOWNLOAD offset before
-/// we send the bytes.
+/// `content`; the downloader sends an 8-byte START_DOWNLOAD offset before we
+/// send the bytes.
 ///
 /// Like a real peer, only the bytes past that offset are sent. Returns the
 /// offset the downloader asked for.
@@ -601,12 +623,19 @@ fn serve_file_over_f(
     username: &str,
     token: u32,
     content: &[u8],
+    token_delay: Duration,
 ) -> std::io::Result<u64> {
     let mut f = connect_retry(downloader_addr, Duration::from_secs(5))?;
     f.set_read_timeout(Some(Duration::from_secs(10)))?;
-    let mut init = peer_init_bytes(username, "F", token);
-    init.extend_from_slice(&token.to_le_bytes());
-    f.write_all(&init)?;
+    if token_delay.is_zero() {
+        let mut init = peer_init_bytes(username, "F", token);
+        init.extend_from_slice(&token.to_le_bytes());
+        f.write_all(&init)?;
+    } else {
+        f.write_all(&peer_init_bytes(username, "F", token))?;
+        std::thread::sleep(token_delay);
+        f.write_all(&token.to_le_bytes())?;
+    }
     f.flush()?;
 
     let mut start = [0u8; 8];
@@ -717,14 +746,17 @@ fn unique_download_dir() -> PathBuf {
     dir
 }
 
-#[test]
-fn a_file_downloads_from_a_peer_over_p_and_f_connections() {
+fn file_downloads_over_p_and_f(
+    peer_username: &str,
+    token_delay: Duration,
+    run_uploader: fn(&MockUpload) -> std::io::Result<u64>,
+) {
     let server = server_or_skip!();
 
     // Downloader: connected to the server with its peer listener enabled.
     let listen_port = free_port().expect("free listen port");
     let mut client = Client::with_settings(server.listening_settings(
-        "e2e_downloader",
+        &format!("{peer_username}_dl"),
         "pw",
         listen_port,
     ));
@@ -741,14 +773,15 @@ fn a_file_downloads_from_a_peer_over_p_and_f_connections() {
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();
     let cfg = MockUpload {
         listen_addr: format!("127.0.0.1:{listen_port}"),
-        peer_username: "e2e_mockpeer".to_string(),
+        peer_username: peer_username.to_string(),
         filename: filename.to_string(),
         content: content.clone(),
         token,
         ready: ready_tx,
+        token_delay,
     };
     let uploader = std::thread::spawn(move || {
-        if let Err(e) = run_mock_uploader(&cfg) {
+        if let Err(e) = run_uploader(&cfg) {
             eprintln!("[mock uploader] {e}");
         }
     });
@@ -764,7 +797,7 @@ fn a_file_downloads_from_a_peer_over_p_and_f_connections() {
     let (_download, status_rx) = client
         .download(
             filename.to_string(),
-            "e2e_mockpeer".to_string(),
+            peer_username.to_string(),
             size,
             download_dir.display().to_string(),
         )
@@ -781,6 +814,33 @@ fn a_file_downloads_from_a_peer_over_p_and_f_connections() {
     assert_eq!(written, content, "downloaded bytes should match the source");
 
     let _ = std::fs::remove_dir_all(&download_dir);
+}
+
+#[test]
+fn a_file_downloads_from_a_peer_over_p_and_f_connections() {
+    file_downloads_over_p_and_f(
+        "e2e_mockpeer",
+        Duration::ZERO,
+        run_mock_uploader,
+    );
+}
+
+#[test]
+fn a_file_downloads_when_the_transfer_token_arrives_late() {
+    file_downloads_over_p_and_f(
+        "e2e_latepeer",
+        Duration::from_millis(300),
+        run_mock_uploader,
+    );
+}
+
+#[test]
+fn a_download_completes_when_the_f_connection_beats_token_registration() {
+    file_downloads_over_p_and_f(
+        "e2e_earlypeer",
+        Duration::ZERO,
+        run_mock_uploader_f_first,
+    );
 }
 
 fn refusal_fails_the_download_quickly(
@@ -808,6 +868,7 @@ fn refusal_fails_the_download_quickly(
         content: Vec::new(),
         token: 0,
         ready: ready_tx,
+        token_delay: Duration::ZERO,
     };
     let uploader = std::thread::spawn(move || {
         if let Err(e) = run_refusing_uploader(&cfg, &refusal) {
@@ -905,6 +966,7 @@ fn an_interrupted_download_resumes_from_its_partial_file() {
         content: content.clone(),
         token: 424_243_u32,
         ready: ready_tx,
+        token_delay: Duration::ZERO,
     };
     let (offset_tx, offset_rx) = std::sync::mpsc::channel();
     let uploader = std::thread::spawn(move || match run_mock_uploader(&cfg) {
@@ -1122,6 +1184,7 @@ fn run_mock_direct_peer(cfg: &MockDirectUpload) -> std::io::Result<()> {
         &cfg.username,
         cfg.token,
         &cfg.content,
+        Duration::ZERO,
     )
     .map(|_| ())
 }
@@ -1269,6 +1332,7 @@ fn run_mock_firewalled_peer(cfg: &MockFirewalledUpload) -> std::io::Result<()> {
         &cfg.username,
         cfg.token,
         &cfg.content,
+        Duration::ZERO,
     )
     .map(|_| ())
 }

@@ -1,7 +1,7 @@
 use crate::message::{Message, handlers::Handlers};
 use std::sync::mpsc::Sender;
 
-use crate::warn;
+use crate::debug;
 
 pub struct MessageDispatcher<Op> {
     owner_name: String,
@@ -30,7 +30,7 @@ impl<Op> MessageDispatcher<Op> {
             message.set_pointer(8);
             handler.handle(message, self.sender.clone());
         } else {
-            warn!(
+            debug!(
                 "[{}:dispatcher] No handler found for message code: {code}",
                 self.owner_name
             );

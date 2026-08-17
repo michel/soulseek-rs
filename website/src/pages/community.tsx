@@ -261,6 +261,31 @@ export const Community = () => {
 
       <Section>
         <SectionHead
+          eyebrow="built on the library"
+          title="Projects using soulseek-rs-lib."
+        >
+          The protocol crate is there for anyone building their own client, bot, or
+          automation on Soulseek. These projects do.
+        </SectionHead>
+        <Cols start>
+          <Prose>
+            <p>
+              <ExtLink href={LINKS.seakarr}>seakarr</ExtLink> — automated Soulseek music
+              downloader with library quality upgrading: it scans your collection, finds
+              albums below your bitrate bar, and fetches better copies.
+            </p>
+            <p>
+              Built something on <Code>soulseek-rs-lib</Code>? Open a pull request to get
+              listed, and{' '}
+              <ExtLink href={LINKS.minorVersions}>reserve a client minor version</ExtLink>{' '}
+              so your project is identifiable on the network.
+            </p>
+          </Prose>
+        </Cols>
+      </Section>
+
+      <Section>
+        <SectionHead
           eyebrow="what this is not"
           title="Four good clients to point you elsewhere."
         >
