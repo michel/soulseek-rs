@@ -142,8 +142,8 @@ impl DownloadStore {
     }
 }
 
-/// Returns the tokens of downloads matching `username` (and optionally a
-/// `filename`) after notifying their senders of `Failed`.
+/// Returns the tokens of queued downloads matching `username` (and optionally
+/// a `filename`) after notifying their senders of `Failed`.
 ///
 /// Caller is responsible for then calling `update_status` and `remove` for
 /// each token, typically under a write lock.
@@ -159,6 +159,7 @@ pub fn collect_failed_tokens(
         .filter(|d| {
             d.username == username && filename.is_none_or(|f| d.filename == *f)
         })
+        .filter(|d| matches!(d.status, DownloadStatus::Queued))
         .map(|d| {
             let _ = d.sender.send(DownloadStatus::Failed(Some(
                 "The upload failed on the other side".to_string(),
@@ -303,6 +304,61 @@ mod tests {
         assert!(store.get_by_token(2).is_none());
         assert!(store.get_by_token(3).is_some(), "other file untouched");
         assert!(!store.remove_by_file("peer", "song.mp3"), "idempotent");
+    }
+
+    #[test]
+    fn collect_failed_tokens_collects_only_queued_downloads() {
+        let mut store = DownloadStore::new();
+        let (tx_active, rx_active) = mpsc::channel();
+        let (tx_paused, rx_paused) = mpsc::channel();
+        let (tx_completed, rx_completed) = mpsc::channel();
+        let (tx_queued, _rx_queued) = mpsc::channel();
+
+        let mut active = make_download(
+            1,
+            DownloadStatus::InProgress {
+                bytes_downloaded: 25,
+                total_bytes: 100,
+                speed_bytes_per_sec: 10.0,
+            },
+        );
+        active.sender = tx_active;
+
+        let mut paused = make_download(
+            2,
+            DownloadStatus::Paused {
+                bytes_downloaded: 25,
+                total_bytes: 100,
+            },
+        );
+        paused.sender = tx_paused;
+
+        let mut completed = make_download(3, DownloadStatus::Completed);
+        completed.sender = tx_completed;
+
+        let mut queued = make_download(4, DownloadStatus::Queued);
+        queued.sender = tx_queued;
+
+        store.add(active);
+        store.add(paused);
+        store.add(completed);
+        store.add(queued);
+
+        let tokens = collect_failed_tokens(&store, "peer", None);
+
+        assert_eq!(tokens, vec![4], "only the queued download may fail");
+        assert!(
+            rx_active.try_recv().is_err(),
+            "an in-progress transfer must not be notified of failure"
+        );
+        assert!(
+            rx_paused.try_recv().is_err(),
+            "a paused transfer must not be notified of failure"
+        );
+        assert!(
+            rx_completed.try_recv().is_err(),
+            "a completed download must not be notified of failure"
+        );
     }
 
     #[test]
