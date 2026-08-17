@@ -13,6 +13,8 @@ export const LINKS = {
   slskd: 'https://github.com/slskd/slskd',
   slsknet: 'https://www.slsknet.org',
   seeleseek: 'https://seeleseek.net',
+  seakarr: 'https://github.com/binhex/seakarr',
+  minorVersions: 'https://github.com/michel/soulseek-rs/issues/12',
 } as const
 
 export const VERSION = __APP_VERSION__

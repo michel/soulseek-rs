@@ -57,6 +57,15 @@ implementation for anyone building their own client, and **soulseek-rs**, the
 client built on it. The library stays lean on dependencies and has none today;
 the client takes them freely.
 
+### Projects using soulseek-rs-lib
+
+- [seakarr](https://github.com/binhex/seakarr) — automated Soulseek music
+  downloader with library quality upgrading.
+
+Built something on the library? Open a PR to add it here, and reserve a client
+minor version in [#12](https://github.com/michel/soulseek-rs/issues/12) so your
+project is identifiable on the network.
+
 ## Installation
 
 Homebrew ships a prebuilt binary, so no Rust toolchain:
