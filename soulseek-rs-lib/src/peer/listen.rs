@@ -96,12 +96,32 @@ fn parse_peer_init_message(mut message: Message) -> Option<PeerInitData> {
     })
 }
 
+fn wait_for_transfer_token(
+    stream: &mut TcpStream,
+    reader: &mut MessageReader,
+    deadline: Instant,
+) -> io::Result<()> {
+    while reader.buffer_len() < 4 {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "transfer token deadline passed",
+            ));
+        }
+        stream.set_read_timeout(Some(remaining))?;
+        reader.read_from_socket(stream)?;
+    }
+    stream.set_read_timeout(None)?;
+    Ok(())
+}
+
 fn extract_download_from_buffer(
     reader: &mut MessageReader,
     client_context: &Arc<RwLock<ClientContext>>,
     username: &str,
     peer_ip: &str,
-    peer_port: u16,
+    peer_port: u32,
 ) -> Option<Download> {
     if reader.buffer_len() == 0 {
         return None;
@@ -161,24 +181,32 @@ fn handle_peer_connection(
 
 fn handle_file_connection(
     peer: Peer,
-    stream: TcpStream,
+    mut stream: TcpStream,
     mut reader: MessageReader,
     token: u32,
     context: &ConnectionContext,
-    peer_ip: &str,
-    peer_port: u16,
+    deadline: Instant,
 ) {
     trace!(
         "[client] DownloadFromPeer token: {} peer: {:?}",
         token, peer
     );
 
+    if let Err(e) = wait_for_transfer_token(&mut stream, &mut reader, deadline)
+    {
+        debug!(
+            "[listener:{}:{}] no transfer token arrived: {e}",
+            peer.host, peer.port
+        );
+        return;
+    }
+
     let download = extract_download_from_buffer(
         &mut reader,
         &context.client_context,
         &peer.username,
-        peer_ip,
-        peer_port,
+        &peer.host,
+        peer.port,
     );
     let failure_token = download.as_ref().map(|d| d.token);
 
@@ -368,8 +396,7 @@ fn handle_incoming_connection(
             reader,
             init_data.token,
             &context,
-            &peer_ip,
-            peer_port,
+            deadline,
         ),
         ConnectionType::D => {
             debug!(
@@ -478,6 +505,60 @@ mod tests {
         assert!(
             started.elapsed() < Duration::from_secs(5),
             "the deadline must bound the whole handshake, not each read"
+        );
+        let _ = writer.join();
+    }
+
+    #[test]
+    fn the_transfer_token_is_waited_for_across_segments() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let writer = std::thread::spawn(move || {
+            let mut socket = TcpStream::connect(addr).unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+            socket.write_all(&42u32.to_le_bytes()).unwrap();
+            std::thread::sleep(Duration::from_millis(200));
+        });
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = MessageReader::new();
+
+        let result = wait_for_transfer_token(
+            &mut stream,
+            &mut reader,
+            Instant::now() + Duration::from_secs(5),
+        );
+
+        assert!(
+            result.is_ok(),
+            "token in a later segment must be waited for"
+        );
+        assert!(reader.buffer_len() >= 4, "token bytes must be buffered");
+        let _ = writer.join();
+    }
+
+    #[test]
+    fn waiting_for_a_transfer_token_stops_at_the_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let writer = std::thread::spawn(move || {
+            let socket = TcpStream::connect(addr).unwrap();
+            std::thread::sleep(Duration::from_millis(500));
+            drop(socket);
+        });
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = MessageReader::new();
+
+        let started = Instant::now();
+        let result = wait_for_transfer_token(
+            &mut stream,
+            &mut reader,
+            started + Duration::from_millis(200),
+        );
+
+        assert!(result.is_err(), "a silent peer must not park the thread");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the deadline must bound the wait"
         );
         let _ = writer.join();
     }
