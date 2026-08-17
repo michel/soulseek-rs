@@ -15,6 +15,18 @@ pub struct File {
 /// Major versions identify client projects on the Soulseek network and are
 /// reserved per project for the project's lifetime:
 /// <https://nicotine-plus.org/doc/SLSKPROTOCOL.html#major-versions>.
+///
+/// Within the soulseek-rs major, minor versions identify the individual
+/// clients built on this library. Reserved minors:
+///
+/// | Minor | Client                                        |
+/// |-------|-----------------------------------------------|
+/// | 1     | unidentified (library default)                |
+/// | 2     | soulseek-rs reference client (CLI/TUI)        |
+///
+/// Building on this library? Keep [`ClientVersion::MAJOR`] and pick an
+/// unused minor for your client by opening an issue:
+/// <https://github.com/michel/soulseek-rs/issues/12>.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClientVersion {
     pub major: u32,
@@ -23,14 +35,14 @@ pub struct ClientVersion {
 
 impl ClientVersion {
     /// The major version reserved for the soulseek-rs project. Clients and
-    /// bots built on this library keep this major and pick their own non-zero
-    /// minor version.
+    /// bots built on this library keep this major and pick their own
+    /// reserved minor version (see the table on [`ClientVersion`]).
     pub const MAJOR: u32 = 176;
 
     /// The version the soulseek-rs reference client (CLI/TUI) logs in with.
     pub const REFERENCE_CLIENT: Self = Self {
         major: Self::MAJOR,
-        minor: 100,
+        minor: 2,
     };
 }
 
