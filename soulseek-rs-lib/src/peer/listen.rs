@@ -26,6 +26,8 @@ const PEER_INIT_MESSAGE_CODE: u8 = 1;
 /// How long an accepted peer gets to send its peer-init handshake.
 const PEER_INIT_TIMEOUT: Duration = Duration::from_secs(10);
 
+const TOKEN_REGISTRATION_TIMEOUT: Duration = Duration::from_secs(10);
+
 const MAX_HANDSHAKES: usize = 128;
 
 const MAX_PEER_INIT_BYTES: usize = 4096;
@@ -116,41 +118,52 @@ fn wait_for_transfer_token(
     Ok(())
 }
 
-fn extract_download_from_buffer(
-    reader: &mut MessageReader,
-    client_context: &Arc<RwLock<ClientContext>>,
-    username: &str,
-    peer_ip: &str,
-    peer_port: u32,
-) -> Option<Download> {
-    if reader.buffer_len() == 0 {
-        return None;
-    }
+fn take_transfer_token(reader: &mut MessageReader) -> Option<u32> {
     let buffer = reader.get_buffer();
-    let token = u32::from_le_bytes(buffer.get(0..4)?.try_into().ok()?);
-    trace!(
-        "[listener:{}] got transfer_token: {} from data chunk",
-        username, token
-    );
+    Some(u32::from_le_bytes(buffer.get(0..4)?.try_into().ok()?))
+}
 
-    let context = match client_context.read_safe() {
-        Ok(c) => c,
-        Err(e) => {
-            error!("[listener] client context lock: {}", e);
+fn wait_for_download_registration(
+    client_context: &Arc<RwLock<ClientContext>>,
+    token: u32,
+    username: &str,
+    deadline: Instant,
+) -> Option<Download> {
+    loop {
+        let download = match client_context.read_safe() {
+            Ok(context) => context
+                .get_download_by_token(token)
+                .filter(|d| {
+                    d.username == username
+                        && !matches!(
+                            d.status,
+                            DownloadStatus::InProgress { .. }
+                                | DownloadStatus::Paused { .. }
+                                | DownloadStatus::Completed
+                        )
+                })
+                .cloned(),
+            Err(e) => {
+                error!("[listener] client context lock: {}", e);
+                return None;
+            }
+        };
+        if download.is_some() {
+            return download;
+        }
+        if Instant::now() >= deadline {
+            if let Ok(context) = client_context.read_safe() {
+                trace!(
+                    "[listener:{}] no claimable download for token {}, known tokens: {:?}",
+                    username,
+                    token,
+                    context.get_download_tokens()
+                );
+            }
             return None;
         }
-    };
-    let download = context.get_download_by_token(token).cloned();
-
-    if download.is_none() {
-        let download_tokens = context.get_download_tokens();
-        trace!(
-            "[listener:{peer_ip}:{peer_port}] download token not found: {:?}, download tokens: {:?}",
-            token, download_tokens
-        );
+        thread::sleep(Duration::from_millis(50));
     }
-
-    download
 }
 
 fn handle_peer_connection(
@@ -201,13 +214,15 @@ fn handle_file_connection(
         return;
     }
 
-    let download = extract_download_from_buffer(
-        &mut reader,
-        &context.client_context,
-        &peer.username,
-        &peer.host,
-        peer.port,
-    );
+    let download =
+        take_transfer_token(&mut reader).and_then(|transfer_token| {
+            wait_for_download_registration(
+                &context.client_context,
+                transfer_token,
+                &peer.username,
+                Instant::now() + TOKEN_REGISTRATION_TIMEOUT,
+            )
+        });
     let failure_token = download.as_ref().map(|d| d.token);
 
     let download_peer = DownloadPeer::new(
@@ -474,8 +489,116 @@ impl Listen {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::DownloadMetadata;
     use std::io::Write;
     use std::net::TcpListener;
+    use std::sync::mpsc;
+
+    fn registered_download(token: u32) -> Download {
+        Download {
+            username: "peer".to_string(),
+            filename: "song.mp3".to_string(),
+            token,
+            size: 100,
+            download_directory: std::env::temp_dir().display().to_string(),
+            status: DownloadStatus::Queued,
+            sender: mpsc::channel().0,
+            queue_position: None,
+            metadata: DownloadMetadata::default(),
+        }
+    }
+
+    #[test]
+    fn a_download_registered_during_the_wait_is_found() {
+        let client_context = Arc::new(RwLock::new(ClientContext::new()));
+        let registering = {
+            let client_context = client_context.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(100));
+                client_context
+                    .write()
+                    .unwrap()
+                    .add_download(registered_download(7));
+            })
+        };
+
+        let download = wait_for_download_registration(
+            &client_context,
+            7,
+            "peer",
+            Instant::now() + Duration::from_secs(5),
+        );
+
+        assert!(
+            download.is_some(),
+            "a token registered during the wait must be found"
+        );
+        let _ = registering.join();
+    }
+
+    #[test]
+    fn an_unregistered_token_gives_up_at_the_deadline() {
+        let client_context = Arc::new(RwLock::new(ClientContext::new()));
+
+        let started = Instant::now();
+        let download = wait_for_download_registration(
+            &client_context,
+            7,
+            "peer",
+            started + Duration::from_millis(200),
+        );
+
+        assert!(download.is_none(), "an unknown token must not be invented");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the deadline must bound the wait"
+        );
+    }
+
+    #[test]
+    fn a_download_for_another_peer_is_not_claimed() {
+        let client_context = Arc::new(RwLock::new(ClientContext::new()));
+        client_context
+            .write()
+            .unwrap()
+            .add_download(registered_download(7));
+
+        let download = wait_for_download_registration(
+            &client_context,
+            7,
+            "impostor",
+            Instant::now() + Duration::from_millis(200),
+        );
+
+        assert!(
+            download.is_none(),
+            "a token must only match the peer it was registered for"
+        );
+    }
+
+    #[test]
+    fn an_already_claimed_download_is_not_reclaimed() {
+        let client_context = Arc::new(RwLock::new(ClientContext::new()));
+        let mut claimed = registered_download(7);
+        claimed.status = DownloadStatus::InProgress {
+            bytes_downloaded: 25,
+            total_bytes: 100,
+            speed_bytes_per_sec: 10.0,
+        };
+        client_context.write().unwrap().add_download(claimed);
+
+        let download = wait_for_download_registration(
+            &client_context,
+            7,
+            "peer",
+            Instant::now() + Duration::from_millis(200),
+        );
+
+        assert!(
+            download.is_none(),
+            "a transfer already in progress must not be claimed again"
+        );
+    }
 
     #[test]
     fn a_dribbling_handshake_hits_the_total_deadline() {
@@ -557,7 +680,7 @@ mod tests {
 
         assert!(result.is_err(), "a silent peer must not park the thread");
         assert!(
-            started.elapsed() < Duration::from_secs(5),
+            started.elapsed() < Duration::from_secs(2),
             "the deadline must bound the wait"
         );
         let _ = writer.join();
