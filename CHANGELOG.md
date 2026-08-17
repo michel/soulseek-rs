@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [14.1.1](https://github.com/michel/soulseek-rs/compare/v14.1.0...v14.1.1) - 2026-08-17
+
+### Fixed
+
+- *(peer)* survive download token races on the listener path
+- *(peer)* wait for the transfer token before the download lookup
+
+### Other
+
+- Merge pull request #44 from michel/issue-42-download-token-races
+
 ## [14.1.0](https://github.com/michel/soulseek-rs/compare/v14.0.1...v14.1.0) - 2026-08-14
 
 ### Added
