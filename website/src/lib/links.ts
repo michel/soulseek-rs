@@ -14,6 +14,8 @@ export const LINKS = {
   slsknet: 'https://www.slsknet.org',
   seeleseek: 'https://seeleseek.net',
   seakarr: 'https://github.com/binhex/seakarr',
+  player: 'https://github.com/verncat/player',
+  staccato: 'https://github.com/bladew0rks/staccato',
   minorVersions: 'https://github.com/michel/soulseek-rs/issues/12',
 } as const
 
