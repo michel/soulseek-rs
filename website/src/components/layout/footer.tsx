@@ -1,62 +1,67 @@
-import { Link } from 'react-router'
+import { Link } from "react-router";
 
-import { Wordmark } from '@/components/brand/wordmark'
-import { Wrap } from '@/components/ui/layout'
-import { LINKS, VERSION } from '@/lib/links'
+import { Wordmark } from "@/components/brand/wordmark";
+import { Wrap } from "@/components/ui/layout";
+import { LINKS, VERSION } from "@/lib/links";
 
 interface FooterLink {
-  label: string
-  href: string
+  label: string;
+  href: string;
 }
 
 interface FooterColumn {
-  heading: string
-  links: readonly FooterLink[]
+  heading: string;
+  links: readonly FooterLink[];
 }
 
 const COLUMNS: readonly FooterColumn[] = [
   {
-    heading: 'Project',
+    heading: "Project",
     links: [
-      { label: 'GitHub', href: LINKS.gh },
-      { label: 'Issues', href: LINKS.issues },
-      { label: 'Releases', href: LINKS.releases },
-      { label: 'Changelog', href: LINKS.changelog },
-      { label: 'soulfind server', href: LINKS.soulfind },
+      { label: "GitHub", href: LINKS.gh },
+      { label: "Issues", href: LINKS.issues },
+      { label: "Releases", href: LINKS.releases },
+      { label: "Changelog", href: LINKS.changelog },
     ],
   },
   {
-    heading: 'Packages',
+    heading: "Packages",
     links: [
-      { label: 'crates.io · client', href: LINKS.cratesClient },
-      { label: 'crates.io · lib', href: LINKS.cratesLib },
-      { label: 'docs.rs', href: LINKS.docsrs },
-      { label: 'rustup', href: LINKS.rustup },
+      { label: "crates.io · client", href: LINKS.cratesClient },
+      { label: "crates.io · lib", href: LINKS.cratesLib },
+      { label: "docs.rs", href: LINKS.docsrs },
+      { label: "rustup", href: LINKS.rustup },
     ],
   },
   {
-    heading: 'Read',
+    heading: "Read",
     links: [
-      { label: 'Docs', href: '/docs' },
-      { label: 'Install', href: '/install' },
-      { label: 'Community', href: '/community' },
-      { label: 'License · MIT', href: LINKS.license },
+      { label: "Docs", href: "/docs" },
+      { label: "Install", href: "/install" },
+      { label: "Community", href: "/community" },
+      { label: "License · MIT", href: LINKS.license },
     ],
   },
-]
+];
 
-const LINK_CLASS = 'text-[12.5px] text-secondary hover:text-primary sm:text-[13px]'
+const LINK_CLASS =
+  "text-[12.5px] text-secondary hover:text-primary sm:text-[13px]";
 
 const FooterAnchor = ({ label, href }: FooterLink) =>
-  href.startsWith('/') ? (
+  href.startsWith("/") ? (
     <Link to={href} className={LINK_CLASS}>
       {label}
     </Link>
   ) : (
-    <a href={href} target="_blank" rel="noopener noreferrer" className={LINK_CLASS}>
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={LINK_CLASS}
+    >
       {label}
     </a>
-  )
+  );
 
 export const Footer = () => (
   <footer className="border-t border-hairline bg-base pt-7 pb-6 sm:pt-11 sm:pb-10">
@@ -95,4 +100,4 @@ export const Footer = () => (
       </div>
     </Wrap>
   </footer>
-)
+);
