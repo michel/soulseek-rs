@@ -275,12 +275,12 @@ export const Community = () => {
               albums below your bitrate bar, and fetches better copies.
             </p>
             <p>
-              <ExtLink href="https://github.com/verncat/player">Player</ExtLink> — local-first music player
+              <ExtLink href={LINKS.player}>Player</ExtLink> — local-first music player
               built with Tauri and Vue for desktop and Android, with Soulseek search
               alongside metadata editing, smart playlists and LAN sync.
             </p>
             <p>
-              <ExtLink href="https://github.com/bladew0rks/staccato">Staccato</ExtLink> — lightweight terminal
+              <ExtLink href={LINKS.staccato}>Staccato</ExtLink> — lightweight terminal
               music player with a foobar2000-inspired layout, streaming straight from
               the network with album covers in the terminal.
             </p>
