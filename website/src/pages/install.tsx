@@ -339,7 +339,7 @@ const Steps = () => (
 
       <Step n={3} title="Build on the library">
         <p className="text-secondary">
-          Write your own client or bot on <Code>soulseek-rs-lib</Code>: the protocol
+          Write your own client on <Code>soulseek-rs-lib</Code>: the protocol
           implementation, separate from the TUI.
         </p>
         <Terminal

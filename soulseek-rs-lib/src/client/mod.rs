@@ -172,7 +172,7 @@ pub struct ClientSettings {
     pub shared_directories: Vec<String>,
     /// The version reported to the server on login. Defaults to the
     /// soulseek-rs major version with minor version 1 ("unidentified");
-    /// clients and bots built on this library should reserve their own minor
+    /// clients built on this library should reserve their own minor
     /// version (see [`ClientVersion`]).
     pub version: ClientVersion,
 }

@@ -34,8 +34,8 @@ pub struct ClientVersion {
 }
 
 impl ClientVersion {
-    /// The major version reserved for the soulseek-rs project. Clients and
-    /// bots built on this library keep this major and pick their own
+    /// The major version reserved for the soulseek-rs project. Clients
+    /// built on this library keep this major and pick their own
     /// reserved minor version (see the table on [`ClientVersion`]).
     pub const MAJOR: u32 = 176;
 

@@ -7,7 +7,7 @@ Website: <https://re-invention.nl/soulseek-rs/>
 ## About
 
 This library provides the core functionality for interacting with the Soulseek
-network. It can be used to build custom Soulseek clients or bots.
+network. It can be used to build custom Soulseek clients.
 
 ## Usage
 
