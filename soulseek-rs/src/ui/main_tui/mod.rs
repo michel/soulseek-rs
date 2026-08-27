@@ -265,7 +265,8 @@ pub fn launch_main_tui(
 mod tests {
     use super::*;
     use crate::daemon::proto::ChatMessageDto;
-    use crate::models::{MessageDirection, SearchStatus};
+    use crate::models::{FocusedPane, MessageDirection, SearchStatus};
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     /// A stand-in for a daemon: it already holds a conversation, a transfer
     /// queue, and a search cache, none of which this window created.
@@ -291,6 +292,21 @@ mod tests {
     }
 
     fn queued(username: &str, filename: &str) -> soulseek_rs::types::Download {
+        at_status(username, filename, soulseek_rs::DownloadStatus::Queued)
+    }
+
+    fn completed(
+        username: &str,
+        filename: &str,
+    ) -> soulseek_rs::types::Download {
+        at_status(username, filename, soulseek_rs::DownloadStatus::Completed)
+    }
+
+    fn at_status(
+        username: &str,
+        filename: &str,
+        status: soulseek_rs::DownloadStatus,
+    ) -> soulseek_rs::types::Download {
         let (sender, _) = std::sync::mpsc::channel();
         soulseek_rs::types::Download {
             username: username.to_string(),
@@ -298,11 +314,15 @@ mod tests {
             token: 1,
             size: 4096,
             download_directory: "/tmp".to_string(),
-            status: soulseek_rs::DownloadStatus::Queued,
+            status,
             sender,
             queue_position: None,
             metadata: soulseek_rs::types::DownloadMetadata::default(),
         }
+    }
+
+    fn key(ch: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)
     }
 
     impl SessionApi for TalkativeSession {
@@ -617,6 +637,43 @@ mod tests {
             tui.state.downloads.is_empty(),
             "a queue is shared in both directions"
         );
+    }
+
+    #[test]
+    fn d_clears_a_finished_row_but_not_a_running_one() {
+        // Finished transfers are what a list fills up with after a restart, so
+        // `d` has to be able to dismiss one — restored or not. A running
+        // transfer is not ours to discard, and stays put.
+        let mut tui = with_session(TalkativeSession::default());
+        tui.state.downloads.push(crate::models::DownloadEntry {
+            download: completed("bob", "done.mp3"),
+            receiver: None,
+        });
+        tui.state.downloads_table_state.select(Some(0));
+        tui.state.focused_pane = FocusedPane::Downloads;
+
+        tui.handle_key_event(key('d'));
+
+        assert!(tui.state.downloads.is_empty(), "the row goes too");
+        assert_eq!(tui.state.downloads_table_state.selected(), None);
+
+        tui.state.downloads.push(crate::models::DownloadEntry {
+            download: at_status(
+                "bob",
+                "still.mp3",
+                soulseek_rs::DownloadStatus::InProgress {
+                    bytes_downloaded: 1,
+                    total_bytes: 2,
+                    speed_bytes_per_sec: 1.0,
+                },
+            ),
+            receiver: None,
+        });
+        tui.state.downloads_table_state.select(Some(0));
+
+        tui.handle_key_event(key('d'));
+
+        assert_eq!(tui.state.downloads.len(), 1, "it is not disposable");
     }
 
     #[test]
