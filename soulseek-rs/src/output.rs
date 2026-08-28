@@ -389,14 +389,11 @@ pub struct RoomMemberRecord {
 }
 
 impl Record for RoomMemberRecord {
+    /// The username alone, unchanged by the statistics added alongside it:
+    /// the text line is a roster a caller pipes into other commands, and the
+    /// statistics are there for `--json` to carry.
     fn text(&self) -> String {
-        let unknown = || "-".to_string();
-        format!(
-            "{}\t{}\t{}",
-            sanitize(&self.user),
-            self.status.clone().unwrap_or_else(unknown),
-            self.shared_files.map_or_else(unknown, |v| v.to_string())
-        )
+        sanitize(&self.user)
     }
 }
 
