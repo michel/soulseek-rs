@@ -31,7 +31,12 @@ impl MessageHandler<ServerMessage> for WatchUserHandler {
         let watched = if exists {
             let status = message.read_int32();
             let average_speed = message.read_int32();
-            let _upload_number = message.read_int64(); // obsolete
+            // Two obsolete 32-bit fields, exactly as GetUserStats (36)
+            // carries them -- not one 64-bit value. The byte count is the
+            // same either way, but reading them as the server writes them
+            // keeps this handler and its sibling honest.
+            let _upload_number = message.read_int32(); // obsolete, always 0
+            let _unknown = message.read_int32(); // obsolete, always 0
             let shared_files = message.read_int32();
             let shared_folders = message.read_int32();
             ServerMessage::WatchedUserReceived {
@@ -71,7 +76,8 @@ mod tests {
                 .write_int8(1) // exists
                 .write_int32(2) // status: online
                 .write_int32(1024) // average speed
-                .write_int64(0) // obsolete upload number
+                .write_int32(0) // obsolete upload number
+                .write_int32(0) // obsolete unknown
                 .write_int32(4321) // shared files
                 .write_int32(77); // shared folders
         });
