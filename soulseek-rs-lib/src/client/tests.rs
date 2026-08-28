@@ -622,3 +622,83 @@ fn a_replayed_transfer_response_does_not_start_a_second_transfer() {
         "a replayed TransferResponse must not dial the peer again"
     );
 }
+
+#[test]
+fn a_watch_reply_fills_both_halves_of_the_snapshot() {
+    let mut context = ClientContext::new();
+    context.add_watched_user("alice");
+    context.apply_watched_user(
+        "alice".to_string(),
+        true,
+        Some(2),
+        Some(1024),
+        Some(20),
+        Some(3),
+    );
+
+    let info = context.user_info("alice").expect("a snapshot");
+    assert!(info.is_complete(), "a watch reply carries status and stats");
+    assert_eq!(info.stats.map(|s| s.average_speed), Some(1024));
+    assert_eq!(context.watched_users(), vec!["alice".to_string()]);
+}
+
+#[test]
+fn a_watch_reply_keeps_a_privileged_flag_it_cannot_carry() {
+    // WatchUser has no privileged field, so it must not overwrite what
+    // GetUserStatus already told us with a fabricated `false`.
+    let mut context = ClientContext::new();
+    context.apply_user_status("bob".to_string(), 1, true);
+    context.apply_watched_user(
+        "bob".to_string(),
+        true,
+        Some(2),
+        Some(1),
+        Some(2),
+        Some(3),
+    );
+
+    let info = context.user_info("bob").expect("a snapshot");
+    assert_eq!(info.presence.map(|p| p.privileged), Some(true));
+}
+
+#[test]
+fn watching_an_unknown_user_drops_them_from_the_list() {
+    // The server will never push status for a name it does not know, so
+    // keeping it in the watch list would show a permanently blank row.
+    let mut context = ClientContext::new();
+    context.add_watched_user("ghost");
+    context.apply_watched_user(
+        "ghost".to_string(),
+        false,
+        None,
+        None,
+        None,
+        None,
+    );
+
+    assert!(context.watched_users().is_empty());
+    assert!(context.user_info("ghost").is_none());
+}
+
+#[test]
+fn unwatching_forgets_the_users_snapshot() {
+    let mut context = ClientContext::new();
+    context.add_watched_user("alice");
+    context.apply_user_status("alice".to_string(), 2, false);
+
+    context.remove_watched_user("alice");
+    assert!(context.watched_users().is_empty());
+    assert!(
+        context.user_info("alice").is_none(),
+        "a later re-watch must report a fresh answer"
+    );
+}
+
+#[test]
+fn watched_users_are_listed_in_a_stable_order() {
+    let mut context = ClientContext::new();
+    context.add_watched_user("carol");
+    context.add_watched_user("alice");
+    context.add_watched_user("bob");
+    assert_eq!(context.watched_users(), vec!["alice", "bob", "carol"]);
+}
