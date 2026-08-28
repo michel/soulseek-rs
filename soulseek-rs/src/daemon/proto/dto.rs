@@ -468,7 +468,8 @@ pub struct RoomUserStatsDto {
     pub average_speed: u32,
     pub shared_files: u32,
     pub shared_folders: u32,
-    pub slots_free: u32,
+    /// True when the member's upload slots are all occupied.
+    pub slots_full: bool,
     pub country: Option<String>,
 }
 
@@ -480,7 +481,7 @@ impl From<&RoomUserStats> for RoomUserStatsDto {
             average_speed: stats.average_speed,
             shared_files: stats.shared_files,
             shared_folders: stats.shared_folders,
-            slots_free: stats.slots_free,
+            slots_full: stats.slots_full,
             country: stats.country.clone(),
         }
     }
@@ -494,7 +495,7 @@ impl From<RoomUserStatsDto> for RoomUserStats {
             average_speed: dto.average_speed,
             shared_files: dto.shared_files,
             shared_folders: dto.shared_folders,
-            slots_free: dto.slots_free,
+            slots_full: dto.slots_full,
             country: dto.country,
         }
     }

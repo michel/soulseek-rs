@@ -614,7 +614,7 @@ mod tests {
             .expect("member stats");
         assert_eq!(stats["members"][0]["username"], "alice");
         assert_eq!(stats["members"][0]["status"], "online");
-        assert_eq!(stats["members"][0]["slots_free"], 1);
+        assert_eq!(stats["members"][0]["slots_full"], true);
         assert_eq!(stats["members"][0]["country"], "NL");
     }
 
@@ -819,7 +819,7 @@ mod tests {
                 average_speed: 1024,
                 shared_files: 20,
                 shared_folders: 3,
-                slots_free: 1,
+                slots_full: true,
                 country: Some("NL".to_string()),
             }]
         }

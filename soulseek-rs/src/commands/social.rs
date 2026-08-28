@@ -164,7 +164,7 @@ pub fn room_users(ctx: &Ctx, room: &str, timeout: Duration) -> CliResult {
             average_speed: stat.map(|s| s.average_speed),
             shared_files: stat.map(|s| s.shared_files),
             shared_folders: stat.map(|s| s.shared_folders),
-            slots_free: stat.map(|s| s.slots_free),
+            slots_full: stat.map(|s| s.slots_full),
             country: stat.and_then(|s| s.country.clone()),
         });
     }

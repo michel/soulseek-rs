@@ -384,7 +384,7 @@ pub struct RoomMemberRecord {
     pub average_speed: Option<u32>,
     pub shared_files: Option<u32>,
     pub shared_folders: Option<u32>,
-    pub slots_free: Option<u32>,
+    pub slots_full: Option<bool>,
     pub country: Option<String>,
 }
 
