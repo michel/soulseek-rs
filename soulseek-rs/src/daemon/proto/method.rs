@@ -1,5 +1,6 @@
 //! What each method takes and returns, and what each pushed event carries.
 
+use super::dto::RoomUserStatsDto;
 use super::dto::{
     DownloadDto, DownloadMetadataDto, DownloadStatusDto, SearchResultDto,
     SessionLossDto, SharedDirectoryDto, UploadInfoDto, UserInfoDto,
@@ -137,6 +138,13 @@ pub struct Uploads {
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct Members {
     pub users: Vec<String>,
+}
+
+/// What the server said about each member of a room when it was joined.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct MemberStats {
+    pub members: Vec<RoomUserStatsDto>,
 }
 
 /// One line of chat history. Unlike a live [`UserMessageDto`] this carries a

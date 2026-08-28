@@ -9,11 +9,12 @@ use super::hub::{Hub, PendingBrowses, PendingDownload};
 use super::proto::{
     Ack, AuthResult, CODE_APPLICATION, CODE_INVALID_PARAMS, ChatMessageDto,
     DaemonStatus, DirectoriesParams, DirectoryParams, DownloadDto,
-    DownloadStartParams, DownloadStarted, Downloads, IntervalSeconds, Members,
-    MessageParams, Messages, Method, OPENRPC, PROTOCOL_VERSION, QueryParams,
-    RoomRef, RpcError, SayParams, SearchResultDto, SearchResults,
-    SearchSummary, Searches, Seconds, SharesStatus, SlotsParams, TransferRef,
-    UploadInfoDto, Uploads, UserInfoDto, UserRef, UserResult,
+    DownloadStartParams, DownloadStarted, Downloads, IntervalSeconds,
+    MemberStats, Members, MessageParams, Messages, Method, OPENRPC,
+    PROTOCOL_VERSION, QueryParams, RoomRef, RoomUserStatsDto, RpcError,
+    SayParams, SearchResultDto, SearchResults, SearchSummary, Searches,
+    Seconds, SharesStatus, SlotsParams, TransferRef, UploadInfoDto, Uploads,
+    UserInfoDto, UserRef, UserResult,
 };
 use crate::api::SessionApi;
 use crate::output::Exit;
@@ -249,6 +250,18 @@ impl Daemon {
                 let room: RoomRef = parse(params)?;
                 ok(Members {
                     users: self.session.room_members(&room.room),
+                })
+            }
+
+            Method::RoomMemberStats => {
+                let room: RoomRef = parse(params)?;
+                ok(MemberStats {
+                    members: self
+                        .session
+                        .room_member_stats(&room.room)
+                        .iter()
+                        .map(RoomUserStatsDto::from)
+                        .collect(),
                 })
             }
 
@@ -594,6 +607,29 @@ mod tests {
     }
 
     #[test]
+    fn member_stats_are_published_for_a_joined_room() {
+        let daemon = daemon_with_token("t");
+        let stats = daemon
+            .call(Method::RoomMemberStats, json!({ "room": STUB_ROOM }))
+            .expect("member stats");
+        assert_eq!(stats["members"][0]["username"], "alice");
+        assert_eq!(stats["members"][0]["status"], "online");
+        assert_eq!(stats["members"][0]["slots_free"], 1);
+        assert_eq!(stats["members"][0]["country"], "NL");
+    }
+
+    #[test]
+    fn a_room_that_was_never_joined_has_no_member_stats() {
+        // Empty, not an error: asking about a room this session is not in is
+        // an ordinary thing for a client to do.
+        let daemon = daemon_with_token("t");
+        let stats = daemon
+            .call(Method::RoomMemberStats, json!({ "room": "elsewhere" }))
+            .expect("member stats");
+        assert_eq!(stats["members"], json!([]));
+    }
+
+    #[test]
     fn stop_is_recorded_so_the_daemon_can_wind_down() {
         let daemon = daemon_with_token("t");
         assert!(!daemon.stop.load(Ordering::Relaxed));
@@ -605,7 +641,13 @@ mod tests {
 
     // A session that answers nothing: enough to exercise dispatch, parameter
     // validation, and the auth gate without a Soulseek server.
+    /// A session that answers nothing, except for one room whose members it
+    /// describes: the stats method is only meaningful if it can return
+    /// something for a joined room and nothing for any other.
     struct SilentSession;
+
+    /// The one room `SilentSession` claims to have joined.
+    const STUB_ROOM: &str = "jazz";
 
     fn daemon_with_token(token: &str) -> Daemon {
         Daemon {
@@ -763,6 +805,23 @@ mod tests {
         }
         fn room_members(&self, _room: &str) -> Vec<String> {
             Vec::new()
+        }
+        fn room_member_stats(
+            &self,
+            room: &str,
+        ) -> Vec<soulseek_rs::types::RoomUserStats> {
+            if room != STUB_ROOM {
+                return Vec::new();
+            }
+            vec![soulseek_rs::types::RoomUserStats {
+                username: "alice".to_string(),
+                status: soulseek_rs::types::UserStatus::Online,
+                average_speed: 1024,
+                shared_files: 20,
+                shared_folders: 3,
+                slots_free: 1,
+                country: Some("NL".to_string()),
+            }]
         }
         fn take_room_events(&self) -> Vec<soulseek_rs::RoomEvent> {
             Vec::new()
