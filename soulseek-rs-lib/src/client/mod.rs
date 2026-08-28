@@ -245,6 +245,15 @@ pub enum ClientOperation {
         shared_files: u32,
         shared_folders: u32,
     },
+    /// The server answered `WatchUser` for a user we started watching.
+    WatchedUserReceived {
+        username: String,
+        exists: bool,
+        status: Option<u32>,
+        average_speed: Option<u32>,
+        shared_files: Option<u32>,
+        shared_folders: Option<u32>,
+    },
     PeerConnected(String),
     /// A search distributed to us by the server; reply if our shares match.
     IncomingSearch {
@@ -328,6 +337,10 @@ pub struct ClientContext {
     /// What the server has told us about other users, merged across the
     /// separate status and statistics replies.
     user_info: HashMap<String, UserInfo>,
+    /// Users we asked the server to watch (code 5), so it keeps pushing their
+    /// status changes. Kept so a UI can render the watch list and so an
+    /// unwatch can be rejected for someone we never watched.
+    watched_users: HashSet<String>,
     /// Seconds the server wants between wishlist searches (code 104), once it
     /// has told us.
     wishlist_interval: Option<u32>,
@@ -416,6 +429,7 @@ impl ClientContext {
             room_events: Vec::new(),
             room_members: HashMap::new(),
             user_info: HashMap::new(),
+            watched_users: HashSet::new(),
             wishlist_interval: None,
             privileged_users: HashSet::new(),
             own_privileges: None,
@@ -501,6 +515,69 @@ impl ClientContext {
             shared_files,
             shared_folders,
         });
+    }
+
+    /// Record that we are now watching `username`.
+    pub fn add_watched_user(&mut self, username: &str) {
+        self.watched_users.insert(username.to_string());
+    }
+
+    /// Forget a watch, dropping any snapshot we held for that user so a later
+    /// re-watch reports a fresh answer rather than a stale one.
+    pub fn remove_watched_user(&mut self, username: &str) {
+        self.watched_users.remove(username);
+        self.user_info.remove(username);
+    }
+
+    /// Everyone we are currently watching, sorted by name.
+    #[must_use]
+    pub fn watched_users(&self) -> Vec<String> {
+        let mut users: Vec<String> =
+            self.watched_users.iter().cloned().collect();
+        users.sort();
+        users
+    }
+
+    /// Record the initial snapshot from a `WatchUser` reply. A username the
+    /// server does not know carries no stats and is dropped from the watch
+    /// list, since the server will never push anything for it.
+    pub fn apply_watched_user(
+        &mut self,
+        username: String,
+        exists: bool,
+        status: Option<u32>,
+        average_speed: Option<u32>,
+        shared_files: Option<u32>,
+        shared_folders: Option<u32>,
+    ) {
+        if !exists {
+            self.watched_users.remove(&username);
+            return;
+        }
+        if let Some(status) = status {
+            let entry = self
+                .user_info
+                .entry(username.clone())
+                .or_insert_with(|| UserInfo::pending(username.clone()));
+            // The watch reply carries no privileged flag, so keep whatever a
+            // previous GetUserStatus told us rather than asserting `false`.
+            let privileged =
+                entry.presence.as_ref().is_some_and(|p| p.privileged);
+            entry.presence = Some(UserPresence {
+                status: UserStatus::from_code(status),
+                privileged,
+            });
+        }
+        if let (Some(average_speed), Some(shared_files), Some(shared_folders)) =
+            (average_speed, shared_files, shared_folders)
+        {
+            self.apply_user_stats(
+                username,
+                average_speed,
+                shared_files,
+                shared_folders,
+            );
+        }
     }
 
     /// What the server has said about `username` so far.
