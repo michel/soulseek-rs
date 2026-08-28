@@ -207,6 +207,10 @@ pub enum Commands {
     /// What the server knows about another user
     User(UserArgs),
 
+    /// Keep a daemon updated about users you care about
+    #[command(subcommand)]
+    Watch(WatchCommand),
+
     /// Confirm the credentials and connection work
     Whoami,
 
@@ -569,6 +573,26 @@ pub struct WishRunArgs {
     /// Result order
     #[arg(long, value_enum, default_value_t = SortKey::Best)]
     pub sort: SortKey,
+}
+
+/// Watching only lasts as long as the session doing it, so these are aimed at
+/// a running daemon: it stays connected and keeps receiving the status pushes.
+#[derive(Subcommand, Debug)]
+pub enum WatchCommand {
+    /// Start watching a user
+    Add {
+        /// The user to watch
+        user: String,
+    },
+
+    /// Stop watching a user
+    Remove {
+        /// The user to stop watching
+        user: String,
+    },
+
+    /// List the users being watched
+    List,
 }
 
 #[derive(Subcommand, Debug)]

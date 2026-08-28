@@ -1216,6 +1216,21 @@
           "shared_folders"
         ],
         "type": "object"
+      },
+      "Watched": {
+        "description": "Everyone this session is watching, sorted by name.",
+        "properties": {
+          "users": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "users"
+        ],
+        "type": "object"
       }
     }
   },
@@ -1874,6 +1889,58 @@
         }
       },
       "summary": "What the server has said about a user so far."
+    },
+    {
+      "name": "user.watch",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "username",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Watch a user, so the server keeps pushing their status."
+    },
+    {
+      "name": "user.unwatch",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "username",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Stop watching a user."
+    },
+    {
+      "name": "user.watched",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Watched"
+        }
+      },
+      "summary": "Everyone this session is watching."
     },
     {
       "name": "shares.status",
