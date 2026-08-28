@@ -7,7 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 use soulseek_rs::types::{
-    Download, DownloadMetadata, UserPresence, UserStats, UserStatus,
+    Download, DownloadMetadata, RoomUserStats, UserPresence, UserStats,
+    UserStatus,
 };
 use soulseek_rs::{
     DownloadStatus, File, RoomEvent, RoomInfo, SearchResult, SessionLoss,
@@ -447,6 +448,58 @@ pub struct UserStatsDto {
     pub shared_folders: u32,
 }
 
+/// The inverse of [`UserStatus`]'s `Display`. An unrecognised word reads as
+/// offline, matching how the wire code is decoded.
+fn status_from_str(status: &str) -> UserStatus {
+    match status {
+        "online" => UserStatus::Online,
+        "away" => UserStatus::Away,
+        _ => UserStatus::Offline,
+    }
+}
+
+/// One member of a room, as the JoinRoom reply described them.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct RoomUserStatsDto {
+    pub username: String,
+    /// `online`, `away`, or `offline`.
+    pub status: String,
+    pub average_speed: u32,
+    pub shared_files: u32,
+    pub shared_folders: u32,
+    pub slots_free: u32,
+    pub country: Option<String>,
+}
+
+impl From<&RoomUserStats> for RoomUserStatsDto {
+    fn from(stats: &RoomUserStats) -> Self {
+        Self {
+            username: stats.username.clone(),
+            status: stats.status.to_string(),
+            average_speed: stats.average_speed,
+            shared_files: stats.shared_files,
+            shared_folders: stats.shared_folders,
+            slots_free: stats.slots_free,
+            country: stats.country.clone(),
+        }
+    }
+}
+
+impl From<RoomUserStatsDto> for RoomUserStats {
+    fn from(dto: RoomUserStatsDto) -> Self {
+        Self {
+            username: dto.username,
+            status: status_from_str(&dto.status),
+            average_speed: dto.average_speed,
+            shared_files: dto.shared_files,
+            shared_folders: dto.shared_folders,
+            slots_free: dto.slots_free,
+            country: dto.country,
+        }
+    }
+}
+
 /// Each half is `None` until its reply lands, so a consumer can tell "the
 /// server said offline" from "the server has not answered yet".
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -480,11 +533,7 @@ impl From<UserInfoDto> for UserInfo {
     fn from(dto: UserInfoDto) -> Self {
         let mut info = Self::pending(dto.username);
         info.presence = dto.presence.map(|presence| UserPresence {
-            status: match presence.status.as_str() {
-                "online" => UserStatus::Online,
-                "away" => UserStatus::Away,
-                _ => UserStatus::Offline,
-            },
+            status: status_from_str(&presence.status),
             privileged: presence.privileged,
         });
         info.stats = dto.stats.map(|stats| UserStats {

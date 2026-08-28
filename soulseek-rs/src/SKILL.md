@@ -140,7 +140,11 @@ cheapest way to prove the credentials and connection work.
 server did not answer — those are different facts, so do not treat null as 0.
 
 **`room list`** — `room`, `users`.
-**`room users <room>`** — `room`, `user`.
+**`room users <room>`** — `room`, `user`, `status`, `average_speed`,
+`shared_files`, `shared_folders`, `slots_free`, `country`. Everything but
+`room` and `user` is `null` when the server sent no statistics for that
+member — `null` means unknown, not zero. `slots_free` of 0 means the peer has
+no free upload slot right now, so a download from them will queue.
 **`room listen <room>`** — streams `type`, `room`, `user`, `message`.
 **`room say <room> <message>`** — prints nothing; exit 0 is the confirmation.
 

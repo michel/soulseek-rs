@@ -370,16 +370,33 @@ impl Record for UserRecord {
     }
 }
 
-/// One member of a chat room.
+/// One member of a chat room, with the server's description of them.
+///
+/// The statistics come from the reply that named the members, and are `None`
+/// for a server that sent none — so a consumer never reads "shares nothing"
+/// from a missing answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RoomMemberRecord {
     pub room: String,
     pub user: String,
+    /// `online`, `away`, or `offline`.
+    pub status: Option<String>,
+    pub average_speed: Option<u32>,
+    pub shared_files: Option<u32>,
+    pub shared_folders: Option<u32>,
+    pub slots_free: Option<u32>,
+    pub country: Option<String>,
 }
 
 impl Record for RoomMemberRecord {
     fn text(&self) -> String {
-        sanitize(&self.user)
+        let unknown = || "-".to_string();
+        format!(
+            "{}\t{}\t{}",
+            sanitize(&self.user),
+            self.status.clone().unwrap_or_else(unknown),
+            self.shared_files.map_or_else(unknown, |v| v.to_string())
+        )
     }
 }
 
