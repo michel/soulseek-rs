@@ -1,9 +1,10 @@
 //! Being a peer on the network: `serve`, `whoami`, and `user`.
 
 use super::{Ctx, Session};
-use crate::cli::{ServeArgs, UserArgs};
+use crate::cli::{ServeArgs, UserArgs, WatchCommand};
 use crate::output::{
-    CliError, CliResult, UploadRecord, UserRecord, WhoamiRecord,
+    CliError, CliResult, UploadRecord, UserRecord, WatchedUserRecord,
+    WhoamiRecord,
 };
 use soulseek_rs::types::{UploadInfo, UploadStatus, UserInfo};
 use std::collections::HashMap;
@@ -91,6 +92,40 @@ pub fn user(ctx: &Ctx, args: &UserArgs) -> CliResult {
         shared_files: info.stats.map(|s| s.shared_files),
         shared_folders: info.stats.map(|s| s.shared_folders),
     });
+    Ok(())
+}
+
+/// Start or stop watching a user, or list who is being watched.
+///
+/// A watch lives in the session that made it, so `add` against a one-shot CLI
+/// run ends with that run. Pointed at a daemon it persists for that daemon's
+/// lifetime, which is the point of the command.
+pub fn watch(ctx: &Ctx, command: &WatchCommand) -> CliResult {
+    let session = Session::open(ctx)?;
+    match command {
+        WatchCommand::Add { user } => {
+            session.client.watch_user(user).map_err(|e| {
+                CliError::connection(format!("cannot watch {user}: {e}"))
+            })?;
+            ctx.out.status(&format!("watching {user}"));
+        }
+        WatchCommand::Remove { user } => {
+            session.client.unwatch_user(user).map_err(|e| {
+                CliError::connection(format!("cannot unwatch {user}: {e}"))
+            })?;
+            ctx.out.status(&format!("no longer watching {user}"));
+        }
+        WatchCommand::List => {
+            for user in session.client.watched_users() {
+                let status = session
+                    .client
+                    .user_info(&user)
+                    .and_then(|info| info.presence)
+                    .map(|p| p.status.to_string());
+                ctx.out.emit(&WatchedUserRecord { user, status });
+            }
+        }
+    }
     Ok(())
 }
 

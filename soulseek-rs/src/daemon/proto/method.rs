@@ -147,6 +147,13 @@ pub struct MemberStats {
     pub members: Vec<RoomUserStatsDto>,
 }
 
+/// Everyone this session is watching, sorted by name.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct Watched {
+    pub users: Vec<String>,
+}
+
 /// One line of chat history. Unlike a live [`UserMessageDto`] this carries a
 /// direction, because a conversation the daemon collected includes what this
 /// account sent as well as what it received.

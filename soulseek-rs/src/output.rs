@@ -397,6 +397,25 @@ impl Record for RoomMemberRecord {
     }
 }
 
+/// One user this session is watching, with whatever the server has already
+/// said about them. The status is `None` until the watch reply lands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WatchedUserRecord {
+    pub user: String,
+    /// `online`, `away`, or `offline`.
+    pub status: Option<String>,
+}
+
+impl Record for WatchedUserRecord {
+    fn text(&self) -> String {
+        format!(
+            "{}\t{}",
+            sanitize(&self.user),
+            self.status.clone().unwrap_or_else(|| "-".to_string())
+        )
+    }
+}
+
 /// One configured share folder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ShareRecord {

@@ -16,6 +16,7 @@ mod say_chatroom;
 mod user_info;
 mod user_joined_room;
 mod user_left_room;
+mod watch_user;
 mod wish_list_interval;
 
 pub use connect_to_peer::ConnectToPeerHandler;
@@ -36,4 +37,5 @@ pub use say_chatroom::SayChatroomHandler;
 pub use user_info::{GetUserStatsHandler, GetUserStatusHandler};
 pub use user_joined_room::UserJoinedRoomHandler;
 pub use user_left_room::UserLeftRoomHandler;
+pub use watch_user::WatchUserHandler;
 pub use wish_list_interval::WishListIntervalHandler;
