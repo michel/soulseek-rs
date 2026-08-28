@@ -309,6 +309,7 @@ fn dispatch(ctx: &Ctx, command: Commands) -> CliResult {
             social::message_read(ctx, listen_span(duration, follow))
         }
         Commands::User(args) => peer::user(ctx, &args),
+        Commands::Watch(command) => peer::watch(ctx, &command),
         Commands::Whoami => peer::whoami(ctx),
         // main.rs runs these itself: some need no account, the rest need the
         // config store in scope. The arms only keep the match exhaustive.

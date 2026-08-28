@@ -140,6 +140,12 @@ pub trait SessionApi: Send + Sync {
     fn request_user_info(&self, username: &str) -> Result<()>;
     fn user_info(&self, username: &str) -> Option<UserInfo>;
 
+    /// Ask the server to keep pushing `username`'s status until unwatched.
+    fn watch_user(&self, username: &str) -> Result<()>;
+    fn unwatch_user(&self, username: &str) -> Result<()>;
+    /// Everyone this session is watching, sorted by name.
+    fn watched_users(&self) -> Vec<String>;
+
     /// The conversation this session already knows about.
     ///
     /// Empty locally, where the TUI's own snapshot on disk is the record. A
@@ -362,6 +368,18 @@ impl SessionApi for Client {
 
     fn user_info(&self, username: &str) -> Option<UserInfo> {
         Self::user_info(self, username)
+    }
+
+    fn watch_user(&self, username: &str) -> Result<()> {
+        Self::watch_user(self, username)
+    }
+
+    fn unwatch_user(&self, username: &str) -> Result<()> {
+        Self::unwatch_user(self, username)
+    }
+
+    fn watched_users(&self) -> Vec<String> {
+        Self::watched_users(self)
     }
 
     fn shared_counts(&self) -> (u32, u32) {

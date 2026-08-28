@@ -489,6 +489,15 @@ mod tests {
         ) -> soulseek_rs::Result<()> {
             Ok(())
         }
+        fn watch_user(&self, _username: &str) -> soulseek_rs::Result<()> {
+            Ok(())
+        }
+        fn unwatch_user(&self, _username: &str) -> soulseek_rs::Result<()> {
+            Ok(())
+        }
+        fn watched_users(&self) -> Vec<String> {
+            Vec::new()
+        }
         fn user_info(&self, _username: &str) -> Option<soulseek_rs::UserInfo> {
             None
         }
