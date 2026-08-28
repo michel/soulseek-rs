@@ -624,6 +624,56 @@ fn a_replayed_transfer_response_does_not_start_a_second_transfer() {
 }
 
 #[test]
+fn room_member_stats_are_returned_sorted_and_scoped_to_their_room() {
+    use crate::types::{RoomUserStats, UserStatus};
+    let stat = |username: &str| RoomUserStats {
+        username: username.to_string(),
+        status: UserStatus::Online,
+        average_speed: 1,
+        shared_files: 2,
+        shared_folders: 3,
+        slots_full: true,
+        country: None,
+    };
+
+    let mut context = ClientContext::new();
+    context.apply_room_member_stats(
+        "jazz".to_string(),
+        vec![stat("carol"), stat("alice")],
+    );
+
+    let names: Vec<String> = context
+        .room_member_stats("jazz")
+        .into_iter()
+        .map(|s| s.username)
+        .collect();
+    assert_eq!(names, vec!["alice", "carol"]);
+    assert!(context.room_member_stats("unjoined").is_empty());
+}
+
+#[test]
+fn rejoining_replaces_the_previous_member_stats() {
+    use crate::types::{RoomUserStats, UserStatus};
+    let stat = |username: &str| RoomUserStats {
+        username: username.to_string(),
+        status: UserStatus::Online,
+        average_speed: 1,
+        shared_files: 2,
+        shared_folders: 3,
+        slots_full: false,
+        country: None,
+    };
+
+    let mut context = ClientContext::new();
+    context.apply_room_member_stats("jazz".to_string(), vec![stat("alice")]);
+    context.apply_room_member_stats("jazz".to_string(), vec![stat("bob")]);
+
+    let stats = context.room_member_stats("jazz");
+    assert_eq!(stats.len(), 1, "a rejoin supersedes the old snapshot");
+    assert_eq!(stats[0].username, "bob");
+}
+
+#[test]
 fn a_watch_reply_fills_both_halves_of_the_snapshot() {
     let mut context = ClientContext::new();
     context.add_watched_user("alice");

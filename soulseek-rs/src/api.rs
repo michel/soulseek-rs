@@ -13,7 +13,7 @@
 //! remote session has no borrowed client to hand a `&str` out of.
 
 use crate::daemon::proto::ChatMessageDto;
-use soulseek_rs::types::{Download, DownloadMetadata};
+use soulseek_rs::types::{Download, DownloadMetadata, RoomUserStats};
 use soulseek_rs::{
     Client, DownloadStatus, Result, RoomEvent, SearchResult, SessionLoss,
     SharedDirectory, UploadInfo, UserInfo, UserMessage,
@@ -126,6 +126,9 @@ pub trait SessionApi: Send + Sync {
     fn leave_room(&self, room: &str) -> Result<()>;
     fn say_in_room(&self, room: &str, message: &str) -> Result<()>;
     fn room_members(&self, room: &str) -> Vec<String>;
+    /// What the server said about each member when the room was joined:
+    /// status, share statistics, free upload slots and country.
+    fn room_member_stats(&self, room: &str) -> Vec<RoomUserStats>;
     fn take_room_events(&self) -> Vec<RoomEvent>;
 
     fn send_private_message(&self, username: &str, message: &str)
@@ -333,6 +336,10 @@ impl SessionApi for Client {
 
     fn room_members(&self, room: &str) -> Vec<String> {
         Self::room_members(self, room)
+    }
+
+    fn room_member_stats(&self, room: &str) -> Vec<RoomUserStats> {
+        Self::room_member_stats(self, room)
     }
 
     fn take_room_events(&self) -> Vec<RoomEvent> {

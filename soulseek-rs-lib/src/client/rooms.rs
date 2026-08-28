@@ -2,7 +2,7 @@ use super::{
     Client, PeerMessage, Result, RoomEvent, RoomInfo, RwLockExt, ServerMessage,
     SharedDirectory, SoulseekRs, UserMessage, error,
 };
-use crate::types::UserInfo;
+use crate::types::{RoomUserStats, UserInfo};
 
 impl Client {
     /// Send a private message to another user via the server.
@@ -191,6 +191,24 @@ impl Client {
             Ok(ctx) => ctx.room_members(room),
             Err(e) => {
                 error!("[client] room_members: {}", e);
+                Vec::new()
+            }
+        }
+    }
+
+    /// What the server reported about the members of `room` when we joined:
+    /// their status, share statistics, free upload slots and country.
+    ///
+    /// Populated from the same reply that fills [`Client::room_members`], so
+    /// it lands shortly after joining. Unlike the roster it is not updated by
+    /// later join and leave events -- it is the snapshot taken at join time.
+    /// Returns an empty list for a room this client has not joined.
+    #[must_use]
+    pub fn room_member_stats(&self, room: &str) -> Vec<RoomUserStats> {
+        match self.context.read_safe() {
+            Ok(ctx) => ctx.room_member_stats(room),
+            Err(e) => {
+                error!("[client] room_member_stats: {}", e);
                 Vec::new()
             }
         }

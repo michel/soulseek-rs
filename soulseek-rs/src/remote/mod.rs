@@ -12,14 +12,14 @@ use crate::daemon::proto::{
     Ack, AuthParams, AuthResult, CODE_APPLICATION, ChatMessageDto,
     DaemonStatus, DirectoriesParams, DirectoryParams, DownloadDto,
     DownloadStartParams, DownloadStarted, Downloads, Event, IntervalSeconds,
-    Members, MessageParams, Messages, Method, PROTOCOL_VERSION, QueryParams,
-    Request, Response, RoomRef, RpcError, SayParams, SearchResults, Searches,
-    Seconds, SharesStatus, SlotsParams, TransferRef, Uploads, UserRef,
-    UserResult, Watched,
+    MemberStats, Members, MessageParams, Messages, Method, PROTOCOL_VERSION,
+    QueryParams, Request, Response, RoomRef, RpcError, SayParams,
+    SearchResults, Searches, Seconds, SharesStatus, SlotsParams, TransferRef,
+    Uploads, UserRef, UserResult, Watched,
 };
 use mirror::Mirror;
 use serde::de::DeserializeOwned;
-use soulseek_rs::types::{Download, DownloadMetadata};
+use soulseek_rs::types::{Download, DownloadMetadata, RoomUserStats};
 use soulseek_rs::{
     DownloadStatus, Result, RoomEvent, SearchResult, SessionLoss,
     SharedDirectory, SoulseekRs, UploadInfo, UserInfo, UserMessage,
@@ -707,6 +707,17 @@ impl SessionApi for RemoteSession {
             },
         )
         .map(|members| members.users)
+        .unwrap_or_default()
+    }
+
+    fn room_member_stats(&self, room: &str) -> Vec<RoomUserStats> {
+        self.request::<_, MemberStats>(
+            Method::RoomMemberStats,
+            RoomRef {
+                room: room.to_string(),
+            },
+        )
+        .map(|stats| stats.members.into_iter().map(Into::into).collect())
         .unwrap_or_default()
     }
 

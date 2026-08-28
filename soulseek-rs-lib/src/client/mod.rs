@@ -5,7 +5,8 @@ use crate::actor::server_actor::{
 use crate::download_store::{DownloadStore, collect_failed_tokens};
 use crate::types::{
     ClientVersion, DownloadMetadata, DownloadStatus, RoomEvent, RoomInfo,
-    SessionLoss, SessionWatch, UserInfo, UserPresence, UserStats, UserStatus,
+    RoomUserStats, SessionLoss, SessionWatch, UserInfo, UserPresence,
+    UserStats, UserStatus,
 };
 use crate::utils::logger;
 use crate::{
@@ -287,6 +288,11 @@ pub enum ClientOperation {
     /// Something happened in the chat-room subsystem (list refreshed, a room
     /// joined/left, a message said, a member joined/left).
     RoomEvent(RoomEvent),
+    /// Per-member statistics from a `JoinRoom` reply.
+    RoomMemberStats {
+        room: String,
+        stats: Vec<RoomUserStats>,
+    },
     /// The server announced how many seconds must pass between wishlist
     /// searches.
     WishlistInterval(u32),
@@ -334,6 +340,9 @@ pub struct ClientContext {
     /// Who is in each room we have joined, kept current from the membership
     /// the server sends on join plus the later join/leave events.
     room_members: HashMap<String, Vec<String>>,
+    /// Per-member statistics for each joined room, from the stat vectors the
+    /// server sends alongside the membership list.
+    room_member_stats: HashMap<String, Vec<RoomUserStats>>,
     /// What the server has told us about other users, merged across the
     /// separate status and statistics replies.
     user_info: HashMap<String, UserInfo>,
@@ -428,6 +437,7 @@ impl ClientContext {
             room_list: Vec::new(),
             room_events: Vec::new(),
             room_members: HashMap::new(),
+            room_member_stats: HashMap::new(),
             user_info: HashMap::new(),
             watched_users: HashSet::new(),
             wishlist_interval: None,
@@ -590,6 +600,29 @@ impl ClientContext {
     #[must_use]
     pub fn room_members(&self, room: &str) -> Vec<String> {
         self.room_members.get(room).cloned().unwrap_or_default()
+    }
+
+    /// Record the per-member statistics of a room we just joined, replacing
+    /// any previous snapshot for it.
+    pub fn apply_room_member_stats(
+        &mut self,
+        room: String,
+        stats: Vec<RoomUserStats>,
+    ) {
+        self.room_member_stats.insert(room, stats);
+    }
+
+    /// What the server reported about the members of `room`, sorted by name,
+    /// or empty for a room we have not joined.
+    #[must_use]
+    pub fn room_member_stats(&self, room: &str) -> Vec<RoomUserStats> {
+        let mut stats = self
+            .room_member_stats
+            .get(room)
+            .cloned()
+            .unwrap_or_default();
+        stats.sort_by(|a, b| a.username.cmp(&b.username));
+        stats
     }
 
     /// The latest snapshot of the public chat-room list.

@@ -2624,6 +2624,87 @@ fn a_peer_that_hangs_up_its_control_connection_still_delivers_the_file() {
 }
 
 #[test]
+fn a_joined_room_reports_its_members_statistics() {
+    let server = server_or_skip!();
+
+    let room = "e2e_room_stats";
+
+    // A member with a known share, so the statistics are checkable rather
+    // than merely present.
+    let share_dir = unique_download_dir().join("stats_share");
+    std::fs::create_dir_all(share_dir.join("album")).unwrap();
+    for name in ["one.flac", "two.flac", "three.flac"] {
+        std::fs::write(share_dir.join("album").join(name), b"xxxx").unwrap();
+    }
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.settings("e2e_stats_sharer", "pw")
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+    sharer.join_room(room).expect("sharer joins room");
+
+    // Let the server register the sharer's membership and share counts, so
+    // the observer's own join reply describes a room that already has them.
+    std::thread::sleep(Duration::from_millis(750));
+
+    let mut observer =
+        Client::with_settings(server.settings("e2e_stats_observer", "pw"));
+    observer.connect().expect("observer connect");
+    assert!(observer.login().expect("observer login"));
+    observer.join_room(room).expect("observer joins room");
+
+    // The stats ride along with the membership list, so poll for the member
+    // rather than for a fixed delay.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut sharer_stats = None;
+    while Instant::now() < deadline {
+        if let Some(found) = observer
+            .room_member_stats(room)
+            .into_iter()
+            .find(|s| s.username == "e2e_stats_sharer")
+        {
+            sharer_stats = Some(found);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let stats =
+        sharer_stats.expect("the join reply should describe the members");
+
+    assert!(
+        stats.status.is_reachable(),
+        "a member who is in the room cannot read as offline, got {}",
+        stats.status
+    );
+    assert_eq!(
+        stats.shared_files, 3,
+        "the member's file count must survive the parallel stat vectors"
+    );
+    assert_eq!(stats.shared_folders, 1);
+    assert!(
+        !stats.slots_full,
+        "a client that never filled its slots must not read as full"
+    );
+
+    // Every member is described, not just the one we looked up: a short or
+    // misread vector would drop or shift the rest.
+    let members = observer.room_member_stats(room);
+    let names: Vec<&str> =
+        members.iter().map(|s| s.username.as_str()).collect();
+    assert!(
+        names.contains(&"e2e_stats_sharer")
+            && names.contains(&"e2e_stats_observer"),
+        "both members should be described, got {names:?}"
+    );
+    assert_eq!(
+        members.len(),
+        observer.room_members(room).len(),
+        "the stats must line up one-to-one with the roster"
+    );
+}
+
+#[test]
 fn watching_a_user_returns_their_status_and_share_counts() {
     let server = server_or_skip!();
 
