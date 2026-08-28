@@ -473,6 +473,26 @@ impl Client {
                             error!("[client] UserStatsReceived write: {}", e);
                         }
                     },
+                    ClientOperation::WatchedUserReceived {
+                        username,
+                        exists,
+                        status,
+                        average_speed,
+                        shared_files,
+                        shared_folders,
+                    } => match client_context.write_safe() {
+                        Ok(mut ctx) => ctx.apply_watched_user(
+                            username,
+                            exists,
+                            status,
+                            average_speed,
+                            shared_files,
+                            shared_folders,
+                        ),
+                        Err(e) => {
+                            error!("[client] WatchedUserReceived write: {}", e);
+                        }
+                    },
                     ClientOperation::RoomEvent(event) => {
                         match client_context.write_safe() {
                             Ok(mut ctx) => ctx.apply_room_event(event),

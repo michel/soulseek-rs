@@ -138,6 +138,46 @@ impl Client {
         }
     }
 
+    /// Ask the server to watch `username` (code 5).
+    ///
+    /// The server replies with that user's current status and share
+    /// statistics — readable with [`Client::user_info`] — and then keeps
+    /// pushing their status changes until [`Client::unwatch_user`]. Watching
+    /// a user the server does not know is answered with a "does not exist"
+    /// flag, and that user is dropped from [`Client::watched_users`].
+    ///
+    /// # Errors
+    /// Returns [`SoulseekRs::NotConnected`] if the client is not connected.
+    pub fn watch_user(&self, username: &str) -> Result<()> {
+        use crate::message::server::MessageFactory;
+        self.send_server_message(MessageFactory::build_watch_user(username))?;
+        self.context.write_safe()?.add_watched_user(username);
+        Ok(())
+    }
+
+    /// Stop watching `username` (code 6) and drop what we knew about them.
+    ///
+    /// # Errors
+    /// Returns [`SoulseekRs::NotConnected`] if the client is not connected.
+    pub fn unwatch_user(&self, username: &str) -> Result<()> {
+        use crate::message::server::MessageFactory;
+        self.send_server_message(MessageFactory::build_unwatch_user(username))?;
+        self.context.write_safe()?.remove_watched_user(username);
+        Ok(())
+    }
+
+    /// Everyone this client is currently watching, sorted by name.
+    #[must_use]
+    pub fn watched_users(&self) -> Vec<String> {
+        match self.context.read_safe() {
+            Ok(ctx) => ctx.watched_users(),
+            Err(e) => {
+                error!("[client] watched_users: {}", e);
+                Vec::new()
+            }
+        }
+    }
+
     /// Who is currently in `room`, sorted by name.
     ///
     /// The roster is built from the membership the server sends when

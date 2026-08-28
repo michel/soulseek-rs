@@ -133,6 +133,13 @@ wishlist later rather than repeating the same search.
 be `null` when the server has not answered that half — `null` means unknown,
 not offline.
 
+**`watch add <user>`** / **`watch remove <user>`** — prints nothing; exit 0 is
+the confirmation. **`watch list`** — one object per watched user: `user`,
+`status`. A watch lasts only as long as the session holding it, so these are
+worth using against a running daemon (`--daemon`), where the connection stays
+up and keeps receiving the server's status pushes. A one-shot run's watch ends
+with the run.
+
 **`whoami`** — one object: `user`, `server`, `listening`, `listen_port`,
 `shared_folders`, `shared_files`, `download_dir`, `privilege_seconds`. The
 cheapest way to prove the credentials and connection work.
