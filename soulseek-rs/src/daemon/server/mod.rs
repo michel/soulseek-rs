@@ -13,7 +13,7 @@ use super::proto::{
     MessageParams, Messages, Method, OPENRPC, PROTOCOL_VERSION, QueryParams,
     RoomRef, RpcError, SayParams, SearchResultDto, SearchResults,
     SearchSummary, Searches, Seconds, SharesStatus, SlotsParams, TransferRef,
-    UploadInfoDto, Uploads, UserInfoDto, UserRef, UserResult,
+    UploadInfoDto, Uploads, UserInfoDto, UserRef, UserResult, Watched,
 };
 use crate::api::SessionApi;
 use crate::output::Exit;
@@ -306,6 +306,24 @@ impl Daemon {
                 })
             }
 
+            Method::UserWatch => {
+                let user: UserRef = parse(params)?;
+                self.session.watch_user(&user.username).map_err(|e| {
+                    RpcError::application(Exit::Connection, e.to_string())
+                })?;
+                ok(Ack::OK)
+            }
+            Method::UserUnwatch => {
+                let user: UserRef = parse(params)?;
+                self.session.unwatch_user(&user.username).map_err(|e| {
+                    RpcError::application(Exit::Connection, e.to_string())
+                })?;
+                ok(Ack::OK)
+            }
+            Method::UserWatched => ok(Watched {
+                users: self.session.watched_users(),
+            }),
+
             Method::SharesStatusOf => ok(self.shares()),
             Method::SharesSet => {
                 let directories: DirectoriesParams = parse(params)?;
@@ -594,6 +612,49 @@ mod tests {
     }
 
     #[test]
+    fn a_watch_is_readable_back_and_survives_until_unwatched() {
+        // The three methods are only useful together: what `user.watch`
+        // records, `user.watched` must report, and `user.unwatch` must undo.
+        let daemon = daemon_with_token("t");
+        let user = |name: &str| json!({ "username": name });
+
+        daemon
+            .call(Method::UserWatch, user("alice"))
+            .expect("watch");
+        daemon.call(Method::UserWatch, user("bob")).expect("watch");
+        let watched = daemon
+            .call(Method::UserWatched, Value::Null)
+            .expect("watched");
+        assert_eq!(watched["users"], json!(["alice", "bob"]));
+
+        daemon
+            .call(Method::UserUnwatch, user("alice"))
+            .expect("unwatch");
+        let watched = daemon
+            .call(Method::UserWatched, Value::Null)
+            .expect("watched");
+        assert_eq!(
+            watched["users"],
+            json!(["bob"]),
+            "unwatching one must not clear the rest"
+        );
+    }
+
+    #[test]
+    fn watching_the_same_user_twice_lists_them_once() {
+        let daemon = daemon_with_token("t");
+        let alice = json!({ "username": "alice" });
+        daemon
+            .call(Method::UserWatch, alice.clone())
+            .expect("watch");
+        daemon.call(Method::UserWatch, alice).expect("watch");
+        let watched = daemon
+            .call(Method::UserWatched, Value::Null)
+            .expect("watched");
+        assert_eq!(watched["users"], json!(["alice"]));
+    }
+
+    #[test]
     fn stop_is_recorded_so_the_daemon_can_wind_down() {
         let daemon = daemon_with_token("t");
         assert!(!daemon.stop.load(Ordering::Relaxed));
@@ -605,11 +666,17 @@ mod tests {
 
     // A session that answers nothing: enough to exercise dispatch, parameter
     // validation, and the auth gate without a Soulseek server.
-    struct SilentSession;
+    /// A session that answers nothing, except that it remembers watches:
+    /// the watch methods are only meaningful if what one call records the
+    /// next call can read back.
+    #[derive(Default)]
+    struct SilentSession {
+        watched: Mutex<Vec<String>>,
+    }
 
     fn daemon_with_token(token: &str) -> Daemon {
         Daemon {
-            session: Arc::new(SilentSession),
+            session: Arc::new(SilentSession::default()),
             hub: Arc::new(Hub::new()),
             browses: Arc::new(PendingBrowses::default()),
             downloads: Arc::new(Mutex::new(Vec::new())),
@@ -791,6 +858,24 @@ mod tests {
             _username: &str,
         ) -> soulseek_rs::Result<()> {
             Ok(())
+        }
+        fn watch_user(&self, username: &str) -> soulseek_rs::Result<()> {
+            let mut watched = self.watched.lock().expect("watch list");
+            if !watched.iter().any(|u| u == username) {
+                watched.push(username.to_string());
+                watched.sort();
+            }
+            Ok(())
+        }
+        fn unwatch_user(&self, username: &str) -> soulseek_rs::Result<()> {
+            self.watched
+                .lock()
+                .expect("watch list")
+                .retain(|u| u != username);
+            Ok(())
+        }
+        fn watched_users(&self) -> Vec<String> {
+            self.watched.lock().expect("watch list").clone()
         }
         fn user_info(&self, _username: &str) -> Option<soulseek_rs::UserInfo> {
             None
