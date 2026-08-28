@@ -59,7 +59,8 @@ fn read_int32s(message: &mut Message) -> Vec<u32> {
 
 /// Parse the per-member statistics that follow the membership list of a
 /// `JoinRoom` (code 14) reply: statuses, then a record of share statistics per
-/// member, then free upload slots, then country codes.
+/// member, then whether each member's upload slots are full, then country
+/// codes.
 ///
 /// Each vector is independently length-prefixed and a server may send fewer
 /// entries than there are members (or, on an older server, omit the country
@@ -87,7 +88,7 @@ fn parse_member_stats(
         shares.push((average_speed, shared_files, shared_folders));
     }
 
-    let slots_free = read_int32s(message);
+    let slots_full = read_int32s(message);
     let countries = read_strings(message);
 
     users
@@ -104,7 +105,7 @@ fn parse_member_stats(
                 average_speed,
                 shared_files,
                 shared_folders,
-                slots_free: slots_free.get(i).copied().unwrap_or(0),
+                slots_full: slots_full.get(i).copied().unwrap_or(0) != 0,
                 country: countries.get(i).cloned().filter(|c| !c.is_empty()),
             }
         })
@@ -156,7 +157,7 @@ mod tests {
                 .write_int64(0)
                 .write_int32(10)
                 .write_int32(2)
-                // free slots
+                // slots full
                 .write_int32(2)
                 .write_int32(1)
                 .write_int32(0)
@@ -188,7 +189,7 @@ mod tests {
                             average_speed: 1024,
                             shared_files: 4321,
                             shared_folders: 77,
-                            slots_free: 1,
+                            slots_full: true,
                             country: Some("NL".to_string()),
                         },
                         RoomUserStats {
@@ -197,7 +198,7 @@ mod tests {
                             average_speed: 50,
                             shared_files: 10,
                             shared_folders: 2,
-                            slots_free: 0,
+                            slots_full: false,
                             country: None,
                         },
                     ]

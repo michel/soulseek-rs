@@ -341,8 +341,10 @@ pub struct RoomUserStats {
     pub average_speed: u32,
     pub shared_files: u32,
     pub shared_folders: u32,
-    /// Upload slots the member has free; zero means they are busy.
-    pub slots_free: u32,
+    /// True when the member's upload slots are all occupied, so a download
+    /// from them will queue. The wire field is `slotsfull`, a boolean — not a
+    /// count, and not a count of *free* slots.
+    pub slots_full: bool,
     /// Two-letter country code, when the server reports one.
     pub country: Option<String>,
 }

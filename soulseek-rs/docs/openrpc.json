@@ -772,10 +772,9 @@
             "minimum": 0,
             "type": "integer"
           },
-          "slots_free": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": "integer"
+          "slots_full": {
+            "description": "True when the member's upload slots are all occupied.",
+            "type": "boolean"
           },
           "status": {
             "description": "`online`, `away`, or `offline`.",
@@ -791,7 +790,7 @@
           "average_speed",
           "shared_files",
           "shared_folders",
-          "slots_free"
+          "slots_full"
         ],
         "type": "object"
       },

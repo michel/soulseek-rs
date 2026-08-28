@@ -632,7 +632,7 @@ fn room_member_stats_are_returned_sorted_and_scoped_to_their_room() {
         average_speed: 1,
         shared_files: 2,
         shared_folders: 3,
-        slots_free: 1,
+        slots_full: true,
         country: None,
     };
 
@@ -660,7 +660,7 @@ fn rejoining_replaces_the_previous_member_stats() {
         average_speed: 1,
         shared_files: 2,
         shared_folders: 3,
-        slots_free: 0,
+        slots_full: false,
         country: None,
     };
 
