@@ -18,6 +18,7 @@ use crate::message::server::ReloggedHandler;
 use crate::message::server::SayChatroomHandler;
 use crate::message::server::UserJoinedRoomHandler;
 use crate::message::server::UserLeftRoomHandler;
+use crate::message::server::WatchUserHandler;
 use crate::message::server::WishListIntervalHandler;
 use crate::message::server::{
     GetUserStatsHandler, GetUserStatusHandler, RoomListHandler,
@@ -202,6 +203,17 @@ pub enum ServerMessage {
         status: u32,
         privileged: bool,
     },
+    /// A `WatchUser` (code 5) reply: the initial snapshot for a user we just
+    /// started watching. The stats are absent when the server does not know
+    /// the username.
+    WatchedUserReceived {
+        username: String,
+        exists: bool,
+        status: Option<u32>,
+        average_speed: Option<u32>,
+        shared_files: Option<u32>,
+        shared_folders: Option<u32>,
+    },
     /// A `GetUserStats` (code 36) reply.
     UserStatsReceived {
         username: String,
@@ -359,6 +371,7 @@ impl ServerActor {
         handlers.register_handler(ReloggedHandler);
         handlers.register_handler(RoomListHandler);
         handlers.register_handler(GetUserStatusHandler);
+        handlers.register_handler(WatchUserHandler);
         handlers.register_handler(GetUserStatsHandler);
         handlers.register_handler(JoinRoomHandler);
         handlers.register_handler(LeaveRoomHandler);
@@ -462,6 +475,23 @@ impl ServerActor {
                     username,
                     status,
                     privileged,
+                });
+            }
+            ServerMessage::WatchedUserReceived {
+                username,
+                exists,
+                status,
+                average_speed,
+                shared_files,
+                shared_folders,
+            } => {
+                self.forward_to_client(ClientOperation::WatchedUserReceived {
+                    username,
+                    exists,
+                    status,
+                    average_speed,
+                    shared_files,
+                    shared_folders,
                 });
             }
             ServerMessage::UserStatsReceived {

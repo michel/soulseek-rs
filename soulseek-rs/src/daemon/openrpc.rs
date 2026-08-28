@@ -15,6 +15,7 @@ use super::proto::{
     Method, QueryParams, RoomEventDto, RoomRef, SayParams, SearchResults,
     Searches, Seconds, SessionLossEvent, SharesStatus, SlotsParams,
     TransferRef, UploadInfoDto, Uploads, UserMessageDto, UserRef, UserResult,
+    Watched,
 };
 use schemars::{JsonSchema, SchemaGenerator, generate::SchemaSettings};
 use serde_json::{Value, json};
@@ -51,9 +52,11 @@ fn params_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         }
         Method::RoomSay => schema_of::<SayParams>(generator),
         Method::MessageSend => schema_of::<MessageParams>(generator),
-        Method::BrowseUser | Method::UserRequest | Method::UserInfoOf => {
-            schema_of::<UserRef>(generator)
-        }
+        Method::BrowseUser
+        | Method::UserRequest
+        | Method::UserInfoOf
+        | Method::UserWatch
+        | Method::UserUnwatch => schema_of::<UserRef>(generator),
         Method::SharesSet => schema_of::<DirectoriesParams>(generator),
         // Methods that take no parameters.
         Method::DaemonStatus
@@ -68,7 +71,8 @@ fn params_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         | Method::MessageHistory
         | Method::SearchList
         | Method::SharesStatusOf
-        | Method::SharesReindex => json!({ "type": "null" }),
+        | Method::SharesReindex
+        | Method::UserWatched => json!({ "type": "null" }),
     }
 }
 
@@ -88,6 +92,7 @@ fn result_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         Method::UploadList => schema_of::<Uploads>(generator),
         Method::PrivilegesOwn => schema_of::<Seconds>(generator),
         Method::RoomMembers => schema_of::<Members>(generator),
+        Method::UserWatched => schema_of::<Watched>(generator),
         Method::MessageHistory => schema_of::<Messages>(generator),
         Method::UserInfoOf => schema_of::<UserResult>(generator),
         Method::SharesStatusOf | Method::SharesSet | Method::SharesReindex => {
@@ -112,7 +117,9 @@ fn result_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         | Method::MessageSend
         | Method::BrowseUser
         | Method::SearchForget
-        | Method::UserRequest => schema_of::<Ack>(generator),
+        | Method::UserRequest
+        | Method::UserWatch
+        | Method::UserUnwatch => schema_of::<Ack>(generator),
     }
 }
 
@@ -172,6 +179,11 @@ fn summary(method: Method) -> &'static str {
         Method::RoomLeave => "Leave a chat room.",
         Method::RoomSay => "Post a message to a room.",
         Method::RoomMembers => "Who is currently in a room.",
+        Method::UserWatch => {
+            "Watch a user, so the server keeps pushing their status."
+        }
+        Method::UserUnwatch => "Stop watching a user.",
+        Method::UserWatched => "Everyone this session is watching.",
         Method::MessageSend => "Send a private message.",
         Method::MessageHistory => {
             "Private messages the daemon collected, including while nobody was attached."
