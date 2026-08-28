@@ -328,6 +328,25 @@ impl UserInfo {
     }
 }
 
+/// What the server reports about one member of a room we joined, from the
+/// per-member stat vectors of a `JoinRoom` (code 14) reply.
+///
+/// A server may send shorter stat vectors than the membership list (older
+/// servers omit country codes entirely), so absent fields read as zero and an
+/// unreported country is `None` rather than an empty string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoomUserStats {
+    pub username: String,
+    pub status: UserStatus,
+    pub average_speed: u32,
+    pub shared_files: u32,
+    pub shared_folders: u32,
+    /// Upload slots the member has free; zero means they are busy.
+    pub slots_free: u32,
+    /// Two-letter country code, when the server reports one.
+    pub country: Option<String>,
+}
+
 /// A public chat room advertised by the server (`RoomList`, code 64).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoomInfo {
