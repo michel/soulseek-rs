@@ -11,11 +11,11 @@
 use super::proto::{
     Ack, AuthParams, AuthResult, BrowseEvent, DaemonStatus, DirectoriesParams,
     DirectoryParams, DownloadStartParams, DownloadStarted, DownloadStatusEvent,
-    Downloads, Event, IntervalSeconds, Members, MessageParams, Messages,
-    Method, QueryParams, RoomEventDto, RoomRef, SayParams, SearchResults,
-    Searches, Seconds, SessionLossEvent, SharesStatus, SlotsParams,
-    TransferRef, UploadInfoDto, Uploads, UserMessageDto, UserRef, UserResult,
-    Watched,
+    Downloads, Event, IntervalSeconds, MemberStats, Members, MessageParams,
+    Messages, Method, QueryParams, RoomEventDto, RoomRef, SayParams,
+    SearchResults, Searches, Seconds, SessionLossEvent, SharesStatus,
+    SlotsParams, TransferRef, UploadInfoDto, Uploads, UserMessageDto, UserRef,
+    UserResult, Watched,
 };
 use schemars::{JsonSchema, SchemaGenerator, generate::SchemaSettings};
 use serde_json::{Value, json};
@@ -47,9 +47,10 @@ fn params_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         | Method::UploadCancel => schema_of::<TransferRef>(generator),
         Method::DownloadSetDir => schema_of::<DirectoryParams>(generator),
         Method::UploadSlots => schema_of::<SlotsParams>(generator),
-        Method::RoomJoin | Method::RoomLeave | Method::RoomMembers => {
-            schema_of::<RoomRef>(generator)
-        }
+        Method::RoomJoin
+        | Method::RoomLeave
+        | Method::RoomMembers
+        | Method::RoomMemberStats => schema_of::<RoomRef>(generator),
         Method::RoomSay => schema_of::<SayParams>(generator),
         Method::MessageSend => schema_of::<MessageParams>(generator),
         Method::BrowseUser
@@ -92,6 +93,7 @@ fn result_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         Method::UploadList => schema_of::<Uploads>(generator),
         Method::PrivilegesOwn => schema_of::<Seconds>(generator),
         Method::RoomMembers => schema_of::<Members>(generator),
+        Method::RoomMemberStats => schema_of::<MemberStats>(generator),
         Method::UserWatched => schema_of::<Watched>(generator),
         Method::MessageHistory => schema_of::<Messages>(generator),
         Method::UserInfoOf => schema_of::<UserResult>(generator),
@@ -179,6 +181,9 @@ fn summary(method: Method) -> &'static str {
         Method::RoomLeave => "Leave a chat room.",
         Method::RoomSay => "Post a message to a room.",
         Method::RoomMembers => "Who is currently in a room.",
+        Method::RoomMemberStats => {
+            "What the server said about each member of a joined room."
+        }
         Method::UserWatch => {
             "Watch a user, so the server keeps pushing their status."
         }

@@ -28,7 +28,8 @@ use crate::message::{Message, MessageReader};
 use crate::peer::ConnectionType;
 use crate::peer::Peer;
 use crate::types::{
-    ClientVersion, RoomEvent, RoomInfo, SessionLoss, SessionWatch,
+    ClientVersion, RoomEvent, RoomInfo, RoomUserStats, SessionLoss,
+    SessionWatch,
 };
 use crate::utils::lock::RwLockExt;
 
@@ -224,6 +225,11 @@ pub enum ServerMessage {
     RoomJoined {
         room: String,
         users: Vec<String>,
+    },
+    /// Per-member statistics carried by the same `JoinRoom` (code 14) reply.
+    RoomMemberStats {
+        room: String,
+        stats: Vec<RoomUserStats>,
     },
     RoomLeft {
         room: String,
@@ -509,6 +515,12 @@ impl ServerActor {
             }
             ServerMessage::RoomJoined { room, users } => {
                 self.forward_room_event(RoomEvent::Joined { room, users });
+            }
+            ServerMessage::RoomMemberStats { room, stats } => {
+                self.forward_to_client(ClientOperation::RoomMemberStats {
+                    room,
+                    stats,
+                });
             }
             ServerMessage::RoomLeft { room } => {
                 self.forward_room_event(RoomEvent::Left { room });

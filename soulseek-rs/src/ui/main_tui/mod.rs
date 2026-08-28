@@ -461,6 +461,12 @@ mod tests {
         fn room_members(&self, _room: &str) -> Vec<String> {
             Vec::new()
         }
+        fn room_member_stats(
+            &self,
+            _room: &str,
+        ) -> Vec<soulseek_rs::types::RoomUserStats> {
+            Vec::new()
+        }
         fn take_room_events(&self) -> Vec<soulseek_rs::RoomEvent> {
             Vec::new()
         }

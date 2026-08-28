@@ -151,10 +151,21 @@ pub fn room_users(ctx: &Ctx, room: &str, timeout: Duration) -> CliResult {
             timeout.as_secs()
         )));
     };
+    // The stats ride along with the membership the server sent, so they are
+    // already here; a server that sent none leaves every field null rather
+    // than reporting a zero that reads like an answer.
+    let stats = session.client.room_member_stats(room);
     for user in members {
+        let stat = stats.iter().find(|s| s.username == user);
         ctx.out.emit(&RoomMemberRecord {
             room: room.to_string(),
             user,
+            status: stat.map(|s| s.status.to_string()),
+            average_speed: stat.map(|s| s.average_speed),
+            shared_files: stat.map(|s| s.shared_files),
+            shared_folders: stat.map(|s| s.shared_folders),
+            slots_full: stat.map(|s| s.slots_full),
+            country: stat.and_then(|s| s.country.clone()),
         });
     }
     Ok(())

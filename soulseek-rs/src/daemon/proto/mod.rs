@@ -101,6 +101,7 @@ wire_vocabulary! {
         RoomLeave => "room.leave",
         RoomSay => "room.say",
         RoomMembers => "room.members",
+        RoomMemberStats => "room.member_stats",
         MessageSend => "message.send",
         MessageHistory => "message.history",
         BrowseUser => "browse.user",

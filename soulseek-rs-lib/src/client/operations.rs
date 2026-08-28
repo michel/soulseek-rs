@@ -499,6 +499,16 @@ impl Client {
                             Err(e) => error!("[client] RoomEvent write: {}", e),
                         }
                     }
+                    ClientOperation::RoomMemberStats { room, stats } => {
+                        match client_context.write_safe() {
+                            Ok(mut ctx) => {
+                                ctx.apply_room_member_stats(room, stats);
+                            }
+                            Err(e) => {
+                                error!("[client] RoomMemberStats write: {}", e);
+                            }
+                        }
+                    }
                     ClientOperation::WishlistInterval(seconds) => {
                         if let Ok(mut ctx) = client_context.write_safe() {
                             ctx.wishlist_interval = Some(seconds);
