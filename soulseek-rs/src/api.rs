@@ -13,7 +13,7 @@
 //! remote session has no borrowed client to hand a `&str` out of.
 
 use crate::daemon::proto::ChatMessageDto;
-use soulseek_rs::types::{Download, DownloadMetadata};
+use soulseek_rs::types::{Download, DownloadMetadata, RoomUserStats};
 use soulseek_rs::{
     Client, DownloadStatus, Result, RoomEvent, SearchResult, SessionLoss,
     SharedDirectory, UploadInfo, UserInfo, UserMessage,
@@ -126,6 +126,9 @@ pub trait SessionApi: Send + Sync {
     fn leave_room(&self, room: &str) -> Result<()>;
     fn say_in_room(&self, room: &str, message: &str) -> Result<()>;
     fn room_members(&self, room: &str) -> Vec<String>;
+    /// What the server said about each member when the room was joined:
+    /// status, share statistics, free upload slots and country.
+    fn room_member_stats(&self, room: &str) -> Vec<RoomUserStats>;
     fn take_room_events(&self) -> Vec<RoomEvent>;
 
     fn send_private_message(&self, username: &str, message: &str)
@@ -139,6 +142,12 @@ pub trait SessionApi: Send + Sync {
     ) -> Option<Vec<SharedDirectory>>;
     fn request_user_info(&self, username: &str) -> Result<()>;
     fn user_info(&self, username: &str) -> Option<UserInfo>;
+
+    /// Ask the server to keep pushing `username`'s status until unwatched.
+    fn watch_user(&self, username: &str) -> Result<()>;
+    fn unwatch_user(&self, username: &str) -> Result<()>;
+    /// Everyone this session is watching, sorted by name.
+    fn watched_users(&self) -> Vec<String>;
 
     /// The conversation this session already knows about.
     ///
@@ -329,6 +338,10 @@ impl SessionApi for Client {
         Self::room_members(self, room)
     }
 
+    fn room_member_stats(&self, room: &str) -> Vec<RoomUserStats> {
+        Self::room_member_stats(self, room)
+    }
+
     fn take_room_events(&self) -> Vec<RoomEvent> {
         Self::take_room_events(self)
     }
@@ -362,6 +375,18 @@ impl SessionApi for Client {
 
     fn user_info(&self, username: &str) -> Option<UserInfo> {
         Self::user_info(self, username)
+    }
+
+    fn watch_user(&self, username: &str) -> Result<()> {
+        Self::watch_user(self, username)
+    }
+
+    fn unwatch_user(&self, username: &str) -> Result<()> {
+        Self::unwatch_user(self, username)
+    }
+
+    fn watched_users(&self) -> Vec<String> {
+        Self::watched_users(self)
     }
 
     fn shared_counts(&self) -> (u32, u32) {

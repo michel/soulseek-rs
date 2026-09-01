@@ -428,7 +428,7 @@ impl MainTui {
                 self.toggle_selected_download_pause();
             }
             KeyCode::Char('d') => {
-                self.remove_selected_queued_download();
+                self.remove_selected_download();
             }
             KeyCode::Char('r') => {
                 self.retry_selected_download();

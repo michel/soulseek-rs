@@ -3,6 +3,16 @@ use crate::models::{DownloadEntry, FileDisplayData};
 use soulseek_rs::{DownloadStatus, types::Download};
 use std::{sync::mpsc, thread};
 
+/// Done, given up, or ran out of time: the row is all that is left.
+const fn is_finished(download: &Download) -> bool {
+    matches!(
+        download.status,
+        DownloadStatus::Completed
+            | DownloadStatus::Failed(_)
+            | DownloadStatus::TimedOut
+    )
+}
+
 impl MainTui {
     /// Channel for queued downloads, created on first use.
     pub(super) fn downloads_sender(
@@ -63,26 +73,16 @@ impl MainTui {
         // session holds, so dropping them only here would last until the next
         // poll put them straight back.
         for entry in &self.state.downloads {
-            if matches!(
-                entry.download.status,
-                DownloadStatus::Completed
-                    | DownloadStatus::Failed(_)
-                    | DownloadStatus::TimedOut
-            ) {
+            if is_finished(&entry.download) {
                 self.client.remove_download(
                     &entry.download.username,
                     &entry.download.filename,
                 );
             }
         }
-        self.state.downloads.retain(|entry| {
-            !matches!(
-                entry.download.status,
-                DownloadStatus::Completed
-                    | DownloadStatus::Failed(_)
-                    | DownloadStatus::TimedOut
-            )
-        });
+        self.state
+            .downloads
+            .retain(|entry| !is_finished(&entry.download));
         let len = self.state.downloads.len();
         if len == 0 {
             self.state.downloads_table_state.select(None);
@@ -121,7 +121,9 @@ impl MainTui {
         }
     }
 
-    pub(super) fn remove_selected_queued_download(&mut self) {
+    /// Drop the selected transfer: a queued one leaves the queue, a finished
+    /// one leaves the list.
+    pub(super) fn remove_selected_download(&mut self) {
         let Some(index) = self.state.downloads_table_state.selected() else {
             return;
         };
@@ -130,14 +132,21 @@ impl MainTui {
         };
 
         let download = &download_entry.download;
-        if !matches!(download.status, DownloadStatus::Queued) {
-            return;
-        }
-
-        if !self
-            .client
-            .remove_queued_download(&download.username, &download.filename)
-        {
+        let dismissed = match download.status {
+            DownloadStatus::Queued => self
+                .client
+                .remove_queued_download(&download.username, &download.filename),
+            // A finished transfer may exist only in this window (restored from
+            // an earlier run), so the session's "nothing to forget" is not a
+            // reason to keep the row.
+            DownloadStatus::Completed => {
+                self.client
+                    .remove_download(&download.username, &download.filename);
+                true
+            }
+            _ => false,
+        };
+        if !dismissed {
             return;
         }
 
