@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [14.2.0](https://github.com/michel/soulseek-rs/compare/v14.1.2...v14.2.0) - 2026-09-01
+
+### Added
+
+- *(daemon)* publish room member statistics over RPC and the CLI
+- *(tui)* dismiss a finished download with d
+- *(lib)* watch and unwatch users (WatchUser 5 / UnwatchUser 6)
+
+### Fixed
+
+- *(cli)* keep `room users` text output a bare roster
+- slotsfull is occupancy, not free slots, and cover it end to end
+
+### Other
+
+- release v14.1.2
+- Merge remote-tracking branch 'origin/develop' into feat/room-member-stats
+- *(e2e)* cover watching against soulfind, and read the reply as written
+
 ## [14.1.2](https://github.com/michel/soulseek-rs/compare/v14.1.1...v14.1.2) - 2026-08-18
 
 ### Other
