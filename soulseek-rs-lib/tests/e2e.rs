@@ -2622,3 +2622,182 @@ fn a_peer_that_hangs_up_its_control_connection_still_delivers_the_file() {
 
     let _ = std::fs::remove_dir_all(&download_dir);
 }
+
+#[test]
+fn a_joined_room_reports_its_members_statistics() {
+    let server = server_or_skip!();
+
+    let room = "e2e_room_stats";
+
+    // A member with a known share, so the statistics are checkable rather
+    // than merely present.
+    let share_dir = unique_download_dir().join("stats_share");
+    std::fs::create_dir_all(share_dir.join("album")).unwrap();
+    for name in ["one.flac", "two.flac", "three.flac"] {
+        std::fs::write(share_dir.join("album").join(name), b"xxxx").unwrap();
+    }
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.settings("e2e_stats_sharer", "pw")
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+    sharer.join_room(room).expect("sharer joins room");
+
+    // Let the server register the sharer's membership and share counts, so
+    // the observer's own join reply describes a room that already has them.
+    std::thread::sleep(Duration::from_millis(750));
+
+    let mut observer =
+        Client::with_settings(server.settings("e2e_stats_observer", "pw"));
+    observer.connect().expect("observer connect");
+    assert!(observer.login().expect("observer login"));
+    observer.join_room(room).expect("observer joins room");
+
+    // The stats ride along with the membership list, so poll for the member
+    // rather than for a fixed delay.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut sharer_stats = None;
+    while Instant::now() < deadline {
+        if let Some(found) = observer
+            .room_member_stats(room)
+            .into_iter()
+            .find(|s| s.username == "e2e_stats_sharer")
+        {
+            sharer_stats = Some(found);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let stats =
+        sharer_stats.expect("the join reply should describe the members");
+
+    assert!(
+        stats.status.is_reachable(),
+        "a member who is in the room cannot read as offline, got {}",
+        stats.status
+    );
+    assert_eq!(
+        stats.shared_files, 3,
+        "the member's file count must survive the parallel stat vectors"
+    );
+    assert_eq!(stats.shared_folders, 1);
+    assert!(
+        !stats.slots_full,
+        "a client that never filled its slots must not read as full"
+    );
+
+    // Every member is described, not just the one we looked up: a short or
+    // misread vector would drop or shift the rest.
+    let members = observer.room_member_stats(room);
+    let names: Vec<&str> =
+        members.iter().map(|s| s.username.as_str()).collect();
+    assert!(
+        names.contains(&"e2e_stats_sharer")
+            && names.contains(&"e2e_stats_observer"),
+        "both members should be described, got {names:?}"
+    );
+    assert_eq!(
+        members.len(),
+        observer.room_members(room).len(),
+        "the stats must line up one-to-one with the roster"
+    );
+}
+
+#[test]
+fn watching_a_user_returns_their_status_and_share_counts() {
+    let server = server_or_skip!();
+
+    // A subject with a known share, so the watch reply's statistics are
+    // checkable rather than merely present.
+    let share_dir = unique_download_dir().join("watch_share");
+    std::fs::create_dir_all(share_dir.join("album")).unwrap();
+    for name in ["one.flac", "two.flac"] {
+        std::fs::write(share_dir.join("album").join(name), b"xxxx").unwrap();
+    }
+    let mut subject = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.settings("e2e_watch_subject", "pw")
+    });
+    subject.connect().expect("subject connect");
+    assert!(subject.login().expect("subject login"));
+
+    let mut watcher =
+        Client::with_settings(server.settings("e2e_watch_watcher", "pw"));
+    watcher.connect().expect("watcher connect");
+    assert!(watcher.login().expect("watcher login"));
+
+    // Let the subject's share counts reach the server before watching, so
+    // the reply describes a user it already knows the statistics for.
+    std::thread::sleep(Duration::from_millis(750));
+
+    watcher
+        .watch_user("e2e_watch_subject")
+        .expect("watch the subject");
+    assert_eq!(
+        watcher.watched_users(),
+        vec!["e2e_watch_subject".to_string()]
+    );
+
+    // One reply carries both halves, unlike the two GetUserStatus and
+    // GetUserStats answers request_user_info waits on.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut info = None;
+    while Instant::now() < deadline {
+        match watcher.user_info("e2e_watch_subject") {
+            Some(found) if found.is_complete() => {
+                info = Some(found);
+                break;
+            }
+            _ => std::thread::sleep(Duration::from_millis(100)),
+        }
+    }
+    let info = info.expect("the watch reply should carry status and stats");
+
+    let presence = info.presence.expect("presence should have arrived");
+    assert!(
+        presence.status.is_reachable(),
+        "a logged-in user should not read as offline, got {}",
+        presence.status
+    );
+    let stats = info.stats.expect("stats should have arrived");
+    assert_eq!(
+        stats.shared_files, 2,
+        "the file count must survive the obsolete fields ahead of it"
+    );
+    assert_eq!(stats.shared_folders, 1);
+
+    // Unwatching drops the user and what we knew about them, so a later
+    // re-watch reports a fresh answer rather than this stale one.
+    watcher
+        .unwatch_user("e2e_watch_subject")
+        .expect("unwatch the subject");
+    assert!(watcher.watched_users().is_empty());
+    assert!(watcher.user_info("e2e_watch_subject").is_none());
+}
+
+#[test]
+fn watching_a_user_the_server_does_not_know_reports_their_absence() {
+    let server = server_or_skip!();
+
+    let mut watcher =
+        Client::with_settings(server.settings("e2e_watch_ghost_asker", "pw"));
+    watcher.connect().expect("watcher connect");
+    assert!(watcher.login().expect("watcher login"));
+
+    watcher
+        .watch_user("e2e_watch_nobody_here")
+        .expect("watch an unknown user");
+
+    // The server answers that it has no such user; the watch is dropped
+    // rather than left showing a permanently blank row.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline && !watcher.watched_users().is_empty() {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        watcher.watched_users().is_empty(),
+        "a username the server does not know must not stay watched"
+    );
+    assert!(watcher.user_info("e2e_watch_nobody_here").is_none());
+}

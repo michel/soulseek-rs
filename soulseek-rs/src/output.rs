@@ -370,16 +370,49 @@ impl Record for UserRecord {
     }
 }
 
-/// One member of a chat room.
+/// One member of a chat room, with the server's description of them.
+///
+/// The statistics come from the reply that named the members, and are `None`
+/// for a server that sent none — so a consumer never reads "shares nothing"
+/// from a missing answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RoomMemberRecord {
     pub room: String,
     pub user: String,
+    /// `online`, `away`, or `offline`.
+    pub status: Option<String>,
+    pub average_speed: Option<u32>,
+    pub shared_files: Option<u32>,
+    pub shared_folders: Option<u32>,
+    pub slots_full: Option<bool>,
+    pub country: Option<String>,
 }
 
 impl Record for RoomMemberRecord {
+    /// The username alone, unchanged by the statistics added alongside it:
+    /// the text line is a roster a caller pipes into other commands, and the
+    /// statistics are there for `--json` to carry.
     fn text(&self) -> String {
         sanitize(&self.user)
+    }
+}
+
+/// One user this session is watching, with whatever the server has already
+/// said about them. The status is `None` until the watch reply lands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WatchedUserRecord {
+    pub user: String,
+    /// `online`, `away`, or `offline`.
+    pub status: Option<String>,
+}
+
+impl Record for WatchedUserRecord {
+    fn text(&self) -> String {
+        format!(
+            "{}\t{}",
+            sanitize(&self.user),
+            self.status.clone().unwrap_or_else(|| "-".to_string())
+        )
     }
 }
 

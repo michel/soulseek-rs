@@ -525,6 +525,21 @@
         ],
         "type": "object"
       },
+      "MemberStats": {
+        "description": "What the server said about each member of a room when it was joined.",
+        "properties": {
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/RoomUserStatsDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "members"
+        ],
+        "type": "object"
+      },
       "Members": {
         "properties": {
           "users": {
@@ -730,6 +745,52 @@
         },
         "required": [
           "room"
+        ],
+        "type": "object"
+      },
+      "RoomUserStatsDto": {
+        "description": "One member of a room, as the JoinRoom reply described them.",
+        "properties": {
+          "average_speed": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "shared_files": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "shared_folders": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "slots_full": {
+            "description": "True when the member's upload slots are all occupied.",
+            "type": "boolean"
+          },
+          "status": {
+            "description": "`online`, `away`, or `offline`.",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "status",
+          "average_speed",
+          "shared_files",
+          "shared_folders",
+          "slots_full"
         ],
         "type": "object"
       },
@@ -1214,6 +1275,21 @@
           "average_speed",
           "shared_files",
           "shared_folders"
+        ],
+        "type": "object"
+      },
+      "Watched": {
+        "description": "Everyone this session is watching, sorted by name.",
+        "properties": {
+          "users": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "users"
         ],
         "type": "object"
       }
@@ -1777,6 +1853,26 @@
       "summary": "Who is currently in a room."
     },
     {
+      "name": "room.member_stats",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "room",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MemberStats"
+        }
+      },
+      "summary": "What the server said about each member of a joined room."
+    },
+    {
       "name": "message.send",
       "paramStructure": "by-name",
       "params": [
@@ -1874,6 +1970,58 @@
         }
       },
       "summary": "What the server has said about a user so far."
+    },
+    {
+      "name": "user.watch",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "username",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Watch a user, so the server keeps pushing their status."
+    },
+    {
+      "name": "user.unwatch",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "username",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Stop watching a user."
+    },
+    {
+      "name": "user.watched",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Watched"
+        }
+      },
+      "summary": "Everyone this session is watching."
     },
     {
       "name": "shares.status",

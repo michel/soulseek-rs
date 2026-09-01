@@ -393,7 +393,7 @@ impl MainTui {
                     vec![
                         ("p", "pause/resume"),
                         ("r", "retry failed"),
-                        ("d", "delete queued"),
+                        ("d", "delete queued/done"),
                         ("c", "clear finished"),
                         ("b", "browse user"),
                         ("1-3", "focus pane"),

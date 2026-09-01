@@ -152,6 +152,20 @@ impl MessageFactory {
             .clone()
     }
 
+    /// Watch `username` (server code 5): the server replies with their
+    /// current status and share statistics, then pushes every later status
+    /// change as a `GetUserStatus` (code 7) until we unwatch them.
+    #[must_use]
+    pub fn build_watch_user(username: &str) -> Message {
+        Message::new().write_int32(5).write_string(username).clone()
+    }
+
+    /// Stop watching `username` (server code 6). The server sends no reply.
+    #[must_use]
+    pub fn build_unwatch_user(username: &str) -> Message {
+        Message::new().write_int32(6).write_string(username).clone()
+    }
+
     /// Ask the server (code 64) for the list of public chat rooms.
     #[must_use]
     pub fn build_room_list_request() -> Message {
@@ -422,5 +436,19 @@ fn test_build_file_search_message() {
         119, 97, 120,
     ]
     .to_vec();
+    assert_eq!(expect, message.get_data());
+}
+
+#[test]
+fn test_build_watch_user() {
+    let message = MessageFactory::build_watch_user("bob");
+    let expect: Vec<u8> = [5, 0, 0, 0, 3, 0, 0, 0, b'b', b'o', b'b'].to_vec();
+    assert_eq!(expect, message.get_data());
+}
+
+#[test]
+fn test_build_unwatch_user() {
+    let message = MessageFactory::build_unwatch_user("bob");
+    let expect: Vec<u8> = [6, 0, 0, 0, 3, 0, 0, 0, b'b', b'o', b'b'].to_vec();
     assert_eq!(expect, message.get_data());
 }
