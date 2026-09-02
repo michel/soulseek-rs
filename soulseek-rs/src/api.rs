@@ -60,6 +60,9 @@ pub trait SessionApi: Send + Sync {
     }
     fn listen_port(&self) -> Option<u16>;
     fn session_loss(&self) -> Option<SessionLoss>;
+    fn relogin(&self) -> Result<bool> {
+        Err(soulseek_rs::SoulseekRs::NotConnected)
+    }
 
     /// Search and wait out the window. Every implementation is
     /// `search_with_cancel` with nothing to cancel on.
@@ -189,6 +192,10 @@ impl SessionApi for Client {
 
     fn session_loss(&self) -> Option<SessionLoss> {
         Self::session_loss(self)
+    }
+
+    fn relogin(&self) -> Result<bool> {
+        Self::login(self)
     }
 
     fn search_with_cancel(

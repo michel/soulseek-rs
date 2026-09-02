@@ -29,7 +29,7 @@ struct Daemon {
     child: Child,
     state: TempDir,
     port: u16,
-    _server: Soulfind,
+    server: Soulfind,
 }
 
 /// The binary with a scrubbed environment: no test may see the developer's
@@ -78,7 +78,7 @@ impl Daemon {
             child,
             state,
             port,
-            _server: server,
+            server,
         };
         daemon.wait_until_ready()?;
         Some(daemon)
@@ -129,6 +129,17 @@ impl Daemon {
             std::os::unix::net::UnixStream::connect(self.socket_path()).ok()?;
         let read = stream.try_clone().expect("a second handle");
         Some(Connection::from_parts(Box::new(read), Box::new(stream)))
+    }
+
+    fn status(&self) -> Option<serde_json::Value> {
+        let mut connection = self.connect_tcp()?;
+        connection.authenticate(Some(&self.token()))?;
+        let reply = connection
+            .call(r#"{"jsonrpc":"2.0","id":1,"method":"daemon.status"}"#)?;
+        serde_json::from_str::<serde_json::Value>(&reply)
+            .ok()?
+            .get_mut("result")
+            .map(serde_json::Value::take)
     }
 }
 
@@ -428,10 +439,15 @@ struct Soulfind {
 
 impl Soulfind {
     fn start() -> Option<Self> {
-        let bin = soulfind_binary()?;
         let port = free_port()?;
         let db = std::env::temp_dir().join(format!("soulfind-proto-{port}.db"));
         let _ = std::fs::remove_file(&db);
+        let child = Self::spawn(port, &db)?;
+        Some(Self { child, db, port })
+    }
+
+    fn spawn(port: u16, db: &Path) -> Option<Child> {
+        let bin = soulfind_binary()?;
 
         let mut child = Command::new(bin)
             .args(["-d", db.to_str()?, "-p", &port.to_string()])
@@ -443,7 +459,7 @@ impl Soulfind {
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline {
             if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                return Some(Self { child, db, port });
+                return Some(child);
             }
             std::thread::sleep(Duration::from_millis(100));
         }
@@ -455,14 +471,63 @@ impl Soulfind {
     fn address(&self) -> String {
         format!("127.0.0.1:{}", self.port)
     }
+
+    fn stop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+
+    fn restart(&mut self) -> Option<()> {
+        self.stop();
+        self.child = Self::spawn(self.port, &self.db)?;
+        Some(())
+    }
 }
 
 impl Drop for Soulfind {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.stop();
         let _ = std::fs::remove_file(&self.db);
     }
+}
+
+fn wait_until(timeout: Duration, mut f: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if f() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    false
+}
+
+#[test]
+fn the_daemon_logs_back_in_after_the_server_drops_it() {
+    let mut daemon = daemon_or_skip!();
+    assert!(
+        daemon.status().expect("a status")["session_loss"].is_null(),
+        "the daemon starts with a live session"
+    );
+
+    daemon.server.stop();
+    assert!(
+        wait_until(Duration::from_secs(15), || daemon
+            .status()
+            .is_some_and(|status| status["session_loss"] == "disconnected")),
+        "the daemon never noticed the server going away"
+    );
+
+    daemon
+        .server
+        .restart()
+        .expect("soulfind comes back on the same port");
+    assert!(
+        wait_until(Duration::from_secs(45), || daemon
+            .status()
+            .is_some_and(|status| status["session_loss"].is_null())),
+        "the daemon never logged back in once the server was reachable again"
+    );
 }
 
 /// A client configured for a remote daemon reports the *daemon's* world.

@@ -510,4 +510,9 @@ impl SessionWatch {
             _ => None,
         }
     }
+
+    pub fn clear(&self) {
+        self.0
+            .store(Self::LIVE, std::sync::atomic::Ordering::Relaxed);
+    }
 }

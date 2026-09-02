@@ -2193,7 +2193,7 @@
           "type": "null"
         }
       },
-      "summary": "The server session ended; nothing seen after this means anything.",
+      "summary": "The server session was lost. A disconnected session is reconnected on its own and events resume; a displaced one is terminal. Read daemon.status for the live state.",
       "x-notification": true
     }
   ],

@@ -24,11 +24,12 @@ pub mod server;
 
 use crate::api::SessionApi;
 use crate::commands::{Ctx, Session};
-use crate::output::{CliError, CliResult};
+use crate::output::{CliError, CliResult, Out};
 use crate::persist::state::{PersistedDownload, PersistedMessage, StateStore};
 use hub::{Hub, PendingBrowses, PendingDownload};
 use proto::ChatMessageDto;
 use server::Daemon;
+use soulseek_rs::SessionLoss;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -43,6 +44,8 @@ pub const TOKEN_NAME: &str = "daemon.token";
 /// How often daemon-owned state is written back. Frequent enough that a kill
 /// loses little, rare enough not to churn the disk on a busy queue.
 const SAVE_INTERVAL: Duration = Duration::from_secs(5);
+
+const RECONNECT_BACKOFF_CAP: Duration = Duration::from_mins(1);
 
 #[must_use]
 pub fn socket_path() -> Option<PathBuf> {
@@ -216,6 +219,17 @@ pub fn run(
         })
     };
 
+    {
+        let session = Arc::clone(&session.client);
+        let daemon = Arc::clone(&daemon);
+        let stop = Arc::clone(&stop);
+        let out = ctx.out.clone();
+        let address = ctx.settings.server_address.to_string();
+        std::thread::spawn(move || {
+            reconnect_loop(&session, &daemon, &out, &address, &stop);
+        });
+    }
+
     for listener in listeners {
         let daemon = Arc::clone(&daemon);
         std::thread::spawn(move || listener.serve(daemon));
@@ -302,6 +316,89 @@ fn cleanup() {
     }
 }
 
+const fn should_reconnect(loss: Option<SessionLoss>, owned: bool) -> bool {
+    owned && matches!(loss, Some(SessionLoss::Disconnected))
+}
+
+fn reconnect_loop(
+    session: &Arc<dyn SessionApi>,
+    daemon: &Daemon,
+    out: &Out,
+    address: &str,
+    stop: &AtomicBool,
+) {
+    let owned = session.daemon_endpoint().is_none();
+    let mut failures = 0u32;
+    let mut announced = false;
+    while !stop.load(Ordering::Relaxed) {
+        std::thread::sleep(hub::POLL);
+        if !should_reconnect(session.session_loss(), owned) {
+            failures = 0;
+            announced = false;
+            continue;
+        }
+        if !announced {
+            out.status(&format!(
+                "the connection to {address} dropped; logging back in…"
+            ));
+            announced = true;
+        }
+        match session.relogin() {
+            Ok(true) => {
+                out.status("logged back in");
+                rejoin(out, session.as_ref(), daemon);
+                failures = 0;
+                announced = false;
+            }
+            outcome => {
+                let wait = backoff(failures);
+                failures = failures.saturating_add(1);
+                out.warn(&format!(
+                    "cannot log back in: {}; trying again in {}s",
+                    relogin_error(outcome),
+                    wait.as_secs()
+                ));
+                wait_or_stop(wait, stop);
+            }
+        }
+    }
+}
+
+fn relogin_error(outcome: soulseek_rs::Result<bool>) -> String {
+    match outcome {
+        Ok(_) => "login rejected by the server".to_string(),
+        Err(e) => format!("login failed: {e}"),
+    }
+}
+
+fn backoff(failures: u32) -> Duration {
+    Duration::from_secs(1 << failures.min(6)).min(RECONNECT_BACKOFF_CAP)
+}
+
+fn wait_or_stop(total: Duration, stop: &AtomicBool) {
+    let deadline = Instant::now() + total;
+    while Instant::now() < deadline && !stop.load(Ordering::Relaxed) {
+        std::thread::sleep(hub::POLL);
+    }
+}
+
+fn rejoin(out: &Out, session: &dyn SessionApi, daemon: &Daemon) {
+    join_rooms(out, session, &daemon.rooms());
+    for user in session.watched_users() {
+        if let Err(e) = session.watch_user(&user) {
+            out.warn(&format!("cannot watch {user} again: {e}"));
+        }
+    }
+}
+
+fn join_rooms(out: &Out, session: &dyn SessionApi, rooms: &[String]) {
+    for room in rooms {
+        if let Err(e) = session.join_room(room) {
+            out.warn(&format!("cannot rejoin {room}: {e}"));
+        }
+    }
+}
+
 /// Bring back what the last run left: re-queue unfinished transfers, rejoin
 /// rooms, and reload the conversation.
 fn restore(
@@ -325,11 +422,7 @@ fn restore(
     );
 
     let rooms = store.load_rooms();
-    for room in &rooms {
-        if let Err(e) = session.join_room(room) {
-            ctx.out.warn(&format!("cannot rejoin {room}: {e}"));
-        }
-    }
+    join_rooms(&ctx.out, session, &rooms);
 
     let unfinished: Vec<PersistedDownload> = store
         .load_downloads()
@@ -423,6 +516,35 @@ mod tests {
         );
         assert_eq!(first.len(), 64, "256 bits, hex encoded");
         assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn only_an_owned_dropped_session_reconnects() {
+        assert!(should_reconnect(Some(SessionLoss::Disconnected), true));
+        assert!(
+            !should_reconnect(Some(SessionLoss::Displaced), true),
+            "reconnecting a displaced name starts a login war with whoever \
+             took it"
+        );
+        assert!(
+            !should_reconnect(None, true),
+            "a live session is not retried"
+        );
+        assert!(
+            !should_reconnect(Some(SessionLoss::Disconnected), false),
+            "a borrowed session is the daemon it came from to mend"
+        );
+    }
+
+    #[test]
+    fn the_backoff_doubles_and_then_holds_at_the_cap() {
+        let seconds: Vec<u64> = (0..8).map(|n| backoff(n).as_secs()).collect();
+        assert_eq!(seconds, [1, 2, 4, 8, 16, 32, 60, 60]);
+        assert_eq!(
+            backoff(u32::MAX),
+            RECONNECT_BACKOFF_CAP,
+            "a very long outage must not overflow into a tiny wait"
+        );
     }
 
     #[test]
