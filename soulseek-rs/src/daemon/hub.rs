@@ -15,7 +15,7 @@ use super::proto::{
     SessionLossEvent, UploadInfoDto, UploadStatusDto, UserMessageDto,
 };
 use crate::api::SessionApi;
-use soulseek_rs::DownloadStatus;
+use soulseek_rs::{DownloadStatus, SessionLoss};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
@@ -175,9 +175,7 @@ struct DrainState {
     /// Last upload state reported per (user, file), so an upload that has not
     /// moved is not re-announced every tick.
     uploads: HashMap<(String, String), UploadInfoDto>,
-    /// Whether the session-loss event has already gone out. It is terminal, so
-    /// it is worth saying exactly once.
-    reported_loss: bool,
+    last_loss: Option<SessionLoss>,
 }
 
 /// How long to keep asking whether a peer has answered a browse request.
@@ -273,10 +271,12 @@ fn tick(
     publish_browses(session, hub, browses);
     publish_downloads(hub, downloads);
 
-    if !state.reported_loss
-        && let Some(loss) = session.session_loss()
-    {
-        state.reported_loss = true;
+    let loss = session.session_loss();
+    if loss == state.last_loss {
+        return;
+    }
+    state.last_loss = loss;
+    if let Some(loss) = loss {
         hub.publish(
             Event::SessionLoss,
             serde_json::to_value(SessionLossEvent { loss: loss.into() })
