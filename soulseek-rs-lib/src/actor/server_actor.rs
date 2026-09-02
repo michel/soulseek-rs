@@ -34,7 +34,7 @@ use crate::types::{
 use crate::utils::lock::RwLockExt;
 
 use std::io::{self, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -45,6 +45,8 @@ use crate::{SoulseekRs, debug, error, trace, warn};
 /// take seconds to answer, so this stays inside the caller's own 45s bound
 /// rather than undercutting it.
 const LOGIN_VERDICT_TIMEOUT: Duration = Duration::from_secs(30);
+
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
 pub struct PeerAddress {
@@ -327,23 +329,25 @@ impl ServerActor {
         self.session = session;
     }
 
-    fn initiate_connection(&mut self) {
-        let stream = match TcpStream::connect((
-            self.address.host.as_str(),
-            self.address.port,
-        )) {
-            Ok(s) => s,
-            Err(e) => {
-                error!("[server] Failed to connect to {}: {}", self.address, e);
-                self.disconnect_with_error();
-                return;
-            }
+    fn initiate_connection(&mut self) -> bool {
+        let stream = (self.address.host.as_str(), self.address.port)
+            .to_socket_addrs()
+            .ok()
+            .and_then(|mut addrs| {
+                addrs.find_map(|addr| {
+                    TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT).ok()
+                })
+            });
+        let Some(stream) = stream else {
+            error!("[server] Failed to connect to {}", self.address);
+            self.disconnect_with_error();
+            return false;
         };
 
         if let Err(e) = stream.set_nonblocking(true) {
             error!("[server] Failed to set non-blocking: {}", e);
             self.disconnect_with_error();
-            return;
+            return false;
         }
         stream.set_nodelay(true).ok();
 
@@ -351,6 +355,7 @@ impl ServerActor {
         self.connection_state = ConnectionState::Connecting {
             since: Instant::now(),
         };
+        true
     }
 
     pub fn set_self_handle(&mut self, handle: ActorHandle<ServerMessage>) {
@@ -420,14 +425,14 @@ impl ServerActor {
     }
 
     fn handle_message(&mut self, msg: ServerMessage) {
-        if !matches!(self.connection_state, ConnectionState::Connected) {
-            if matches!(&msg, ServerMessage::ProcessRead) {
-                // Always process read operations
-            } else {
-                // Queue all other messages when not connected
-                self.queued_messages.push(msg);
-                return;
-            }
+        if !matches!(self.connection_state, ConnectionState::Connected)
+            && !matches!(
+                &msg,
+                ServerMessage::ProcessRead | ServerMessage::Login { .. }
+            )
+        {
+            self.queued_messages.push(msg);
+            return;
         }
 
         match msg {
@@ -615,12 +620,6 @@ impl ServerActor {
     }
 
     fn handle_login_status(&mut self, message: bool) {
-        match self.context.write_safe() {
-            Ok(mut ctx) => ctx.logged_in = Some(message),
-            Err(e) => {
-                error!("[server] LoginStatus write: {}", e);
-            }
-        }
         // Send the post-login handshake exactly once, only on success,
         // on the live path (the old ServerActor::login did this but was
         // never called). Advertises real shared counts and, when
@@ -633,6 +632,13 @@ impl ServerActor {
                 self.shared_file_count,
             ) {
                 self.send_message(msg);
+            }
+            self.session.clear();
+        }
+        match self.context.write_safe() {
+            Ok(mut ctx) => ctx.logged_in = Some(message),
+            Err(e) => {
+                error!("[server] LoginStatus write: {}", e);
             }
         }
     }
@@ -695,6 +701,13 @@ impl ServerActor {
         version: ClientVersion,
         response: std::sync::mpsc::Sender<Result<bool, SoulseekRs>>,
     ) {
+        if self.stream.is_none() && !self.initiate_connection() {
+            let _ = response.send(Err(SoulseekRs::NotConnected));
+            return;
+        }
+        if let Ok(mut ctx) = self.context.write_safe() {
+            ctx.logged_in = None;
+        }
         self.queue_message(MessageFactory::build_login_message(
             &username, &password, version,
         ));
@@ -882,13 +895,10 @@ impl ServerActor {
     fn disconnect_with_error(&mut self) {
         debug!("[server] disconnect");
 
-        // Losing an established connection ends the session: nothing reconnects
-        // it, so anything still waiting on the network is waiting for good.
         if matches!(self.connection_state, ConnectionState::Connected) {
             self.session.record(SessionLoss::Disconnected);
         }
-        self.connection_state = ConnectionState::Disconnected;
-        self.stream.take();
+        self.disconnect();
     }
 
     fn disconnect(&mut self) {
@@ -896,6 +906,14 @@ impl ServerActor {
 
         self.stream.take();
         self.connection_state = ConnectionState::Disconnected;
+        self.dispatcher = None;
+        self.dispatcher_sender = None;
+        self.dispatcher_receiver = None;
+        self.queued_messages.clear();
+        self.reader = MessageReader::new();
+        if let Ok(mut ctx) = self.context.write_safe() {
+            ctx.logged_in = None;
+        }
     }
 
     fn check_connection_status(&mut self) {
@@ -952,7 +970,7 @@ impl Actor for ServerActor {
 
     fn on_start(&mut self) {
         if self.stream.is_none() {
-            self.initiate_connection();
+            let _ = self.initiate_connection();
         } else {
             self.connection_state = ConnectionState::Connected;
             self.on_connection_established();
@@ -989,15 +1007,7 @@ mod tests {
 
     #[test]
     fn a_timed_out_connect_parks_the_actor_in_disconnected() {
-        let (tx, _rx) = std::sync::mpsc::channel();
-        let mut actor = ServerActor::new(
-            PeerAddress::new("127.0.0.1".to_string(), 1),
-            tx,
-            0,
-            false,
-            0,
-            0,
-        );
+        let mut actor = parked_actor(1);
         actor.connection_state = ConnectionState::Connecting {
             since: Instant::now().checked_sub(Duration::from_secs(21)).unwrap(),
         };
@@ -1008,6 +1018,168 @@ mod tests {
             matches!(actor.connection_state, ConnectionState::Disconnected),
             "a timed-out connect must leave Connecting"
         );
+    }
+
+    fn parked_actor(port: u16) -> ServerActor {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        ServerActor::new(
+            PeerAddress::new("127.0.0.1".to_string(), port),
+            tx,
+            0,
+            false,
+            0,
+            0,
+        )
+    }
+
+    #[test]
+    fn dropping_the_connection_forgets_the_dispatcher_and_the_verdict() {
+        let mut actor = parked_actor(1);
+        actor.initialize_dispatcher();
+        actor.connection_state = ConnectionState::Connected;
+        actor.handle_login_status(true);
+
+        actor.disconnect_with_error();
+
+        assert_eq!(actor.session.loss(), Some(SessionLoss::Disconnected));
+        assert!(
+            actor.dispatcher_sender.is_none(),
+            "a login queued now must wait in the buffer, not in a channel \
+             the next connection replaces"
+        );
+        assert_eq!(
+            actor.context.read().unwrap().logged_in,
+            None,
+            "the old verdict must not answer the next login"
+        );
+    }
+
+    #[test]
+    fn disconnect_clears_a_partial_frame_so_the_next_session_reframes_clean() {
+        use std::io::Write;
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = TcpStream::connect(addr).unwrap();
+        let (mut server_side, _) = listener.accept().unwrap();
+        let partial_frame = [10u8, 0, 0, 0, 1, 2, 3];
+        server_side.write_all(&partial_frame).unwrap();
+        server_side.flush().unwrap();
+        client.set_nonblocking(true).unwrap();
+
+        let mut actor = parked_actor(addr.port());
+        actor.stream = Some(client);
+        actor.connection_state = ConnectionState::Connected;
+        for _ in 0..50 {
+            actor.process_read();
+            if actor.reader.buffer_len() > 0 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            actor.reader.buffer_len() > 0,
+            "an incomplete frame should be waiting for its rest"
+        );
+
+        actor.disconnect();
+
+        assert_eq!(
+            actor.reader.buffer_len(),
+            0,
+            "a stale partial frame carried across a reconnect reads the next \
+             session's bytes as a length prefix and wedges recovery"
+        );
+    }
+
+    #[test]
+    fn a_login_on_a_parked_actor_dials_again_and_queues_the_login() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut actor = parked_actor(listener.local_addr().unwrap().port());
+        actor.session.record(SessionLoss::Disconnected);
+        let (response, _verdict) = std::sync::mpsc::channel();
+
+        actor.handle_login(
+            "u".into(),
+            "p".into(),
+            ClientVersion::default(),
+            response,
+        );
+
+        assert!(
+            matches!(
+                actor.connection_state,
+                ConnectionState::Connecting { .. }
+            ),
+            "a parked actor must dial again on login"
+        );
+        assert_eq!(
+            actor.queued_messages.len(),
+            1,
+            "the login waits for the connection to come up"
+        );
+    }
+
+    #[test]
+    fn a_parked_actor_handles_login_rather_than_queueing_it() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut actor = parked_actor(listener.local_addr().unwrap().port());
+        actor.session.record(SessionLoss::Disconnected);
+        let (response, _verdict) = std::sync::mpsc::channel();
+
+        actor.handle_message(ServerMessage::Login {
+            username: "u".into(),
+            password: "p".into(),
+            version: ClientVersion::default(),
+            response,
+        });
+
+        assert!(
+            matches!(
+                actor.connection_state,
+                ConnectionState::Connecting { .. }
+            ),
+            "a parked actor must act on a login, not park it in the queue"
+        );
+        assert!(
+            actor
+                .queued_messages
+                .iter()
+                .all(|m| !matches!(m, ServerMessage::Login { .. })),
+            "the login must not be sitting unhandled in the queue"
+        );
+    }
+
+    #[test]
+    fn a_login_with_nobody_listening_is_refused_at_once() {
+        let mut actor = parked_actor(1);
+        let (response, verdict) = std::sync::mpsc::channel();
+
+        actor.handle_login(
+            "u".into(),
+            "p".into(),
+            ClientVersion::default(),
+            response,
+        );
+
+        assert!(
+            matches!(
+                verdict.recv_timeout(Duration::from_secs(5)),
+                Ok(Err(SoulseekRs::NotConnected))
+            ),
+            "a refused dial must not make the caller wait out the verdict \
+             timeout"
+        );
+    }
+
+    #[test]
+    fn a_successful_login_marks_the_session_live_again() {
+        let mut actor = parked_actor(1);
+        actor.session.record(SessionLoss::Disconnected);
+
+        actor.handle_login_status(true);
+
+        assert_eq!(actor.session.loss(), None);
     }
 
     #[test]
