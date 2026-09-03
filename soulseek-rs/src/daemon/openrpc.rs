@@ -226,7 +226,9 @@ fn event_summary(event: Event) -> &'static str {
         Event::DownloadStatus => "A transfer moved.",
         Event::Browse => "A peer answered a browse request.",
         Event::SessionLoss => {
-            "The server session ended; nothing seen after this means anything."
+            "The server session was lost. A disconnected session is reconnected \
+             on its own and events resume; a displaced one is terminal. Read \
+             daemon.status for the live state."
         }
     }
 }
