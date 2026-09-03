@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [14.2.1](https://github.com/michel/soulseek-rs/compare/v14.2.0...v14.2.1) - 2026-09-03
+
+### Fixed
+
+- *(daemon)* reconnect after the server session drops
+
+### Other
+
+- Merge branch 'develop'
+
 ## [14.2.0](https://github.com/michel/soulseek-rs/compare/v14.1.2...v14.2.0) - 2026-09-01
 
 ### Added
