@@ -192,13 +192,7 @@ impl MainTui {
 
     /// The username of the highlighted search result (filter-aware).
     pub(super) fn highlighted_result_owner(&self) -> Option<String> {
-        let selected = self.state.results_table_state.selected()?;
-        let items = if self.state.results_filter_query.is_empty() {
-            &self.state.results_items
-        } else {
-            &self.state.results_filtered_items
-        };
-        items.get(selected).map(|f| f.username.clone())
+        self.highlighted_result().map(|f| f.username.clone())
     }
 
     /// Drain browse responses into any loading tabs, or time them out.

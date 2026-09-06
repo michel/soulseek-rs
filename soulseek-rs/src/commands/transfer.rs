@@ -553,6 +553,9 @@ fn download_one(
                     reason.unwrap_or_else(|| "the transfer failed".to_string()),
                 ));
             }
+            Ok(DownloadStatus::Cancelled) => {
+                return Err(CliError::transfer("the transfer was cancelled"));
+            }
             Ok(DownloadStatus::Queued) => {
                 out.status(&format!(
                     "queued behind {}'s uploads",
@@ -583,6 +586,19 @@ fn download_one(
             }
         }
     }
+}
+
+pub fn cancel(ctx: &Ctx, user: &str, path: &str) -> CliResult {
+    let session = Session::open(ctx)?;
+    if session.client.cancel_download(user, path)
+        | session.client.cancel_upload(user, path)
+    {
+        ctx.out.status(&format!("cancelled {path} ({user})"));
+        return Ok(());
+    }
+    Err(CliError::no_results(format!(
+        "no download or upload of {path} with {user}"
+    )))
 }
 
 /// Parse `search`/`browse` output back into download requests.

@@ -2564,6 +2564,7 @@ dependencies = [
  "soulseek-rs-lib",
  "tempfile",
  "toml",
+ "unicode-width",
 ]
 
 [[package]]

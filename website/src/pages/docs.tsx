@@ -48,16 +48,16 @@ const PANES: readonly { num?: number; title: string; body: string }[] = [
   {
     num: 2,
     title: 'Results',
-    body: 'Files from the network: size, user, bitrate, speed, free slots. Space selects, Enter queues a download.',
+    body: 'Files from the network: size, user, bitrate, speed, free slots. Space selects, Enter queues a download. h/l or ←/→ scroll a long name, 0 and $ jump to either end; Home/End, g/G, PgUp/PgDn and Ctrl-f/b/d/u move through the list.',
   },
   {
     num: 3,
     title: 'Downloads / Uploads',
-    body: 'Live transfers in both directions with progress and speed: queued, active, complete, failed.',
+    body: 'Live transfers in both directions with progress and speed: queued, active, complete, cancelled, failed. x cancels the selected transfer.',
   },
   {
     title: 'Info',
-    body: 'Everything about the selected file: user, size, path, bitrate, length, queue position, free slots.',
+    body: 'Everything about the highlighted result or transfer: user, size, full path, bitrate, length, queue position, free slots.',
   },
 ]
 
@@ -255,6 +255,8 @@ const Daemon = () => (
           { t: 'cm', text: "# opt out; open this run's own session" },
           { t: 'cmd', text: 'soulseek-rs' },
           { t: 'cm', text: '# the TUI attaches to the same session' },
+          { t: 'cmd', text: 'soulseek-rs transfer cancel <username> "<path>"' },
+          { t: 'cm', text: '# stop a download the daemon is running' },
           { t: 'cmd', text: 'soulseek-rs daemon status' },
           { t: 'cmd', text: 'soulseek-rs daemon stop' },
         ]}
