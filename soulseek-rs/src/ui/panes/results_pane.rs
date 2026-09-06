@@ -11,7 +11,7 @@ use ratatui::{
     widgets::{Cell, HighlightSpacing, Paragraph, Row, Table, TableState},
 };
 use std::collections::HashSet;
-use unicode_truncate::UnicodeTruncateStr;
+use unicode_width::UnicodeWidthChar;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -61,13 +61,37 @@ fn scroll_name(name: &str, offset: usize, width: usize) -> Line<'_> {
     if offset == 0 {
         return Line::from(name);
     }
-    let cells = Span::raw(name).width();
-    let skip = offset.min(overflow(cells, width));
-    if skip == 0 {
+    let mut tail_cells = 0;
+    let mut furthest = name.len();
+    for (index, ch) in name.char_indices().rev() {
+        let cells = ch.width().unwrap_or(0);
+        if tail_cells + cells >= width {
+            if index == 0 && tail_cells + cells == width {
+                return Line::from(name);
+            }
+            break;
+        }
+        tail_cells += cells;
+        furthest = index;
+    }
+    if furthest == 0 {
         return Line::from(name);
     }
-    let (tail, _) = name.unicode_truncate_start(cells - skip);
-    Line::from(vec![Span::raw("…"), Span::raw(tail)])
+    let mut skipped = 0;
+    let mut start = furthest;
+    for (index, ch) in name.char_indices() {
+        if index >= furthest || skipped >= offset {
+            start = index;
+            break;
+        }
+        skipped += ch.width().unwrap_or(0);
+    }
+    while let Some(ch) = name[start..].chars().next()
+        && ch.width() == Some(0)
+    {
+        start += ch.len_utf8();
+    }
+    Line::from(vec![Span::raw("…"), Span::raw(&name[start..])])
 }
 
 /// Whether the rendered row `display_idx` is selected. `selected_indices` holds
@@ -279,6 +303,15 @@ mod tests {
         let screen = render_rows(&items, usize::MAX);
         assert!(screen.contains("…東西南北中"), "{screen}");
         assert!(!screen.contains("亿東"), "{screen}");
+    }
+
+    #[test]
+    fn a_scrolled_name_never_starts_with_a_combining_mark() {
+        let name = format!("{}e\u{301}{}", "x".repeat(5), "y".repeat(20));
+        let items = [file(&name)];
+        let screen = render_rows(&items, 6);
+        assert!(screen.contains("…yyyyyyyyyy"), "{screen}");
+        assert!(!screen.contains("…\u{301}"), "{screen}");
     }
 
     #[test]
