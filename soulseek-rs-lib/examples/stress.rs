@@ -1197,6 +1197,7 @@ fn main() {
             soulseek_rs::DownloadStatus::Queued => "Queued",
             soulseek_rs::DownloadStatus::InProgress { .. } => "InProgress",
             soulseek_rs::DownloadStatus::Completed => "Completed",
+            soulseek_rs::DownloadStatus::Cancelled => "Cancelled",
             soulseek_rs::DownloadStatus::Failed(_) => "Failed",
             soulseek_rs::DownloadStatus::TimedOut => "TimedOut",
             soulseek_rs::DownloadStatus::Paused { .. } => "Paused",

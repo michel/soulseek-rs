@@ -1,17 +1,9 @@
 use super::MainTui;
 use crate::models::{DownloadEntry, FileDisplayData};
+use crate::ui::panes::{SelectedTransfer, selected_transfer};
+use soulseek_rs::types::UploadStatus;
 use soulseek_rs::{DownloadStatus, types::Download};
 use std::{sync::mpsc, thread};
-
-/// Done, given up, or ran out of time: the row is all that is left.
-const fn is_finished(download: &Download) -> bool {
-    matches!(
-        download.status,
-        DownloadStatus::Completed
-            | DownloadStatus::Failed(_)
-            | DownloadStatus::TimedOut
-    )
-}
 
 impl MainTui {
     /// Channel for queued downloads, created on first use.
@@ -73,7 +65,7 @@ impl MainTui {
         // session holds, so dropping them only here would last until the next
         // poll put them straight back.
         for entry in &self.state.downloads {
-            if is_finished(&entry.download) {
+            if entry.download.is_finished() {
                 self.client.remove_download(
                     &entry.download.username,
                     &entry.download.filename,
@@ -82,7 +74,7 @@ impl MainTui {
         }
         self.state
             .downloads
-            .retain(|entry| !is_finished(&entry.download));
+            .retain(|entry| !entry.download.is_finished());
         let len = self.state.downloads.len();
         if len == 0 {
             self.state.downloads_table_state.select(None);
@@ -139,7 +131,7 @@ impl MainTui {
             // A finished transfer may exist only in this window (restored from
             // an earlier run), so the session's "nothing to forget" is not a
             // reason to keep the row.
-            DownloadStatus::Completed => {
+            DownloadStatus::Completed | DownloadStatus::Cancelled => {
                 self.client
                     .remove_download(&download.username, &download.filename);
                 true
@@ -214,29 +206,43 @@ impl MainTui {
         self.state.results_selected_indices.clear();
     }
 
-    /// Cancel the selected transfer when it is an upload row (uploads are
-    /// listed after the downloads in the shared pane).
-    pub(super) fn cancel_selected_upload(&self) {
-        let Some(index) = self.state.downloads_table_state.selected() else {
-            return;
-        };
-        let Some(upload) = self
-            .state
-            .uploads
-            .get(index.wrapping_sub(self.state.downloads.len()))
-        else {
-            return;
-        };
-        if upload.status == soulseek_rs::types::UploadStatus::InProgress
-            && !self
-                .client
-                .cancel_upload(&upload.username, &upload.filename)
-        {
-            soulseek_rs::warn!(
-                "No in-progress upload of {} to {} to cancel",
-                upload.filename,
-                upload.username
-            );
+    pub(super) fn cancel_selected_transfer(&self) {
+        let selected = selected_transfer(
+            self.state.downloads_table_state.selected(),
+            &self.state.downloads,
+            &self.state.uploads,
+        );
+        match selected {
+            Some(SelectedTransfer::Download(entry))
+                if !entry.download.is_finished() =>
+            {
+                let download = &entry.download;
+                if !self
+                    .client
+                    .cancel_download(&download.username, &download.filename)
+                {
+                    soulseek_rs::warn!(
+                        "No download of {} from {} to cancel",
+                        download.filename,
+                        download.username
+                    );
+                }
+            }
+            Some(SelectedTransfer::Upload(upload))
+                if upload.status == UploadStatus::InProgress =>
+            {
+                let cancelled = self
+                    .client
+                    .cancel_upload(&upload.username, &upload.filename);
+                if !cancelled {
+                    soulseek_rs::warn!(
+                        "No in-progress upload of {} to {} to cancel",
+                        upload.filename,
+                        upload.username
+                    );
+                }
+            }
+            _ => {}
         }
     }
 

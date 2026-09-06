@@ -905,6 +905,48 @@ fn a_wishlist_search_is_reported_as_just_started() {
     );
 }
 
+#[test]
+fn a_queued_download_is_cancelled_and_listed_as_such() {
+    let daemon = daemon_or_skip!();
+    let mut connection = daemon.connect_tcp().expect("tcp");
+    connection
+        .authenticate(Some(&daemon.token()))
+        .expect("an answer");
+    let started = connection
+        .call(
+            r#"{"jsonrpc":"2.0","id":2,"method":"download.start","params":{"username":"e2e_ghost_peer","filename":"@@ghost\\never.mp3","size":10}}"#,
+        )
+        .expect("an answer");
+    assert!(!started.contains("error"), "got {started}");
+    let reply = connection
+        .call(
+            r#"{"jsonrpc":"2.0","id":3,"method":"download.cancel","params":{"username":"e2e_ghost_peer","filename":"@@ghost\\never.mp3"}}"#,
+        )
+        .expect("an answer");
+    assert!(reply.contains(r#""ok":true"#), "got {reply}");
+    let listed = connection
+        .call(
+            r#"{"jsonrpc":"2.0","id":4,"method":"download.list","params":{}}"#,
+        )
+        .expect("an answer");
+    assert!(listed.contains(r#""state":"cancelled""#), "got {listed}");
+}
+
+#[test]
+fn cancelling_an_unknown_download_is_answered_with_a_plain_no() {
+    let daemon = daemon_or_skip!();
+    let mut connection = daemon.connect_tcp().expect("tcp");
+    connection
+        .authenticate(Some(&daemon.token()))
+        .expect("an answer");
+    let reply = connection
+        .call(
+            r#"{"jsonrpc":"2.0","id":2,"method":"download.cancel","params":{"username":"nobody","filename":"nothing.mp3"}}"#,
+        )
+        .expect("an answer");
+    assert!(reply.contains(r#""ok":false"#), "got {reply}");
+}
+
 /// The upload-slot limit is retunable on a live session.
 #[test]
 fn the_upload_slot_limit_can_be_retuned_live() {
