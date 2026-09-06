@@ -81,6 +81,7 @@ pub fn render_downloads_pane(
                     )
                 }
                 DownloadStatus::Completed => "Completed".to_string(),
+                DownloadStatus::Cancelled => "Cancelled".to_string(),
                 DownloadStatus::Failed(_) => "Failed".to_string(),
                 DownloadStatus::TimedOut => "Timed out".to_string(),
             };
@@ -97,7 +98,9 @@ pub fn render_downloads_pane(
                 DownloadStatus::Failed(_) | DownloadStatus::TimedOut => {
                     error_style()
                 }
-                DownloadStatus::Queued => inactive_style(),
+                DownloadStatus::Queued | DownloadStatus::Cancelled => {
+                    inactive_style()
+                }
                 _ => primary_style(),
             };
 

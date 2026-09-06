@@ -180,6 +180,10 @@ pub enum Commands {
     /// Download files by user and remote path
     Download(DownloadArgs),
 
+    /// Transfers in flight
+    #[command(subcommand)]
+    Transfer(TransferCommand),
+
     /// Search, pick automatically, and download in one step
     Get(GetArgs),
 
@@ -573,6 +577,18 @@ pub struct WishRunArgs {
     /// Result order
     #[arg(long, value_enum, default_value_t = SortKey::Best)]
     pub sort: SortKey,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TransferCommand {
+    /// Stop a download or upload; a cancelled download's partial file is
+    /// deleted
+    Cancel {
+        /// The other side of the transfer
+        user: String,
+        /// Remote path exactly as printed by `search`, `browse`, or `serve`
+        path: String,
+    },
 }
 
 /// Watching only lasts as long as the session doing it, so these are aimed at

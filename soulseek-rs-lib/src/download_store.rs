@@ -12,6 +12,11 @@ impl DownloadStore {
     }
 
     pub fn add(&mut self, download: Download) {
+        self.downloads.retain(|d| {
+            !(d.is_finished()
+                && d.username == download.username
+                && d.filename == download.filename)
+        });
         self.downloads.push(download);
     }
 
@@ -48,10 +53,33 @@ impl DownloadStore {
         &self.downloads
     }
 
-    pub fn update_status(&mut self, token: u32, status: DownloadStatus) {
-        if let Some(download) = self.get_by_token_mut(token) {
-            download.status = status;
+    pub fn update_status(
+        &mut self,
+        token: u32,
+        status: DownloadStatus,
+    ) -> bool {
+        let Some(download) = self.get_by_token_mut(token) else {
+            return false;
+        };
+        if matches!(download.status, DownloadStatus::Cancelled) {
+            return false;
         }
+        download.status = status;
+        true
+    }
+
+    pub fn cancel_by_file(
+        &mut self,
+        username: &str,
+        filename: &str,
+    ) -> Option<Download> {
+        let download = self.get_by_file_mut(username, filename)?;
+        if download.is_finished() {
+            return None;
+        }
+        download.status = DownloadStatus::Cancelled;
+        let _ = download.sender.send(DownloadStatus::Cancelled);
+        Some(download.clone())
     }
 
     pub fn update_queue_position(
@@ -216,6 +244,91 @@ mod tests {
 
         assert!(!store.update_queue_position("peer", "missing.mp3", 1));
         assert!(!store.update_queue_position("other", "song.mp3", 1));
+    }
+
+    #[test]
+    fn cancel_by_file_flips_an_unfinished_download_and_tells_its_channel() {
+        let mut store = DownloadStore::new();
+        let (tx, rx) = mpsc::channel();
+        let mut queued = make_download(1, DownloadStatus::Queued);
+        queued.sender = tx;
+        store.add(queued);
+        store.add(make_download(
+            2,
+            DownloadStatus::InProgress {
+                bytes_downloaded: 5,
+                total_bytes: 100,
+                speed_bytes_per_sec: 1.0,
+            },
+        ));
+        store.add(make_download(
+            3,
+            DownloadStatus::Paused {
+                bytes_downloaded: 5,
+                total_bytes: 100,
+            },
+        ));
+        store.add(make_download(4, DownloadStatus::Completed));
+        store.add(make_download(5, DownloadStatus::Failed(None)));
+
+        assert!(store.cancel_by_file("peer", "file-1.mp3").is_some());
+        assert!(matches!(rx.try_recv(), Ok(DownloadStatus::Cancelled)));
+        assert!(store.cancel_by_file("peer", "file-2.mp3").is_some());
+        assert!(store.cancel_by_file("peer", "file-3.mp3").is_some());
+        assert!(store.cancel_by_file("peer", "file-4.mp3").is_none());
+        assert!(store.cancel_by_file("peer", "file-5.mp3").is_none());
+        assert!(store.cancel_by_file("peer", "file-9.mp3").is_none());
+        for token in 1..=3 {
+            let download = store.get_by_token(token).unwrap();
+            assert!(matches!(download.status, DownloadStatus::Cancelled));
+            assert!(download.is_finished());
+        }
+    }
+
+    #[test]
+    fn a_cancelled_download_stays_cancelled() {
+        let mut store = DownloadStore::new();
+        store.add(make_download(1, DownloadStatus::Queued));
+        assert!(store.cancel_by_file("peer", "file-1.mp3").is_some());
+        assert!(!store.update_status(
+            1,
+            DownloadStatus::InProgress {
+                bytes_downloaded: 0,
+                total_bytes: 100,
+                speed_bytes_per_sec: 0.0,
+            },
+        ));
+        assert!(
+            !store
+                .update_status(1, DownloadStatus::Failed(Some("late".into())))
+        );
+        assert!(matches!(
+            store.get_by_token(1).unwrap().status,
+            DownloadStatus::Cancelled
+        ));
+        assert!(store.cancel_by_file("peer", "file-1.mp3").is_none());
+        assert!(!store.resume_by_file("peer", "file-1.mp3"));
+        assert!(!store.pause_by_file("peer", "file-1.mp3"));
+    }
+
+    #[test]
+    fn add_evicts_a_finished_entry_for_the_same_file() {
+        let mut store = DownloadStore::new();
+        store.add(make_download(1, DownloadStatus::Cancelled));
+        store.add(make_download(2, DownloadStatus::Queued));
+        let mut fresh = make_download(3, DownloadStatus::Queued);
+        fresh.filename = "file-1.mp3".to_string();
+        store.add(fresh);
+        let mut again = make_download(4, DownloadStatus::Queued);
+        again.filename = "file-2.mp3".to_string();
+        store.add(again);
+
+        assert_eq!(store.tokens(), vec![2, 3, 4], "only the dead row goes");
+        assert!(store.cancel_by_file("peer", "file-1.mp3").is_some());
+        assert!(matches!(
+            store.get_by_token(3).unwrap().status,
+            DownloadStatus::Cancelled
+        ));
     }
 
     #[test]

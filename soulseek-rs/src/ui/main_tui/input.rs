@@ -1,10 +1,14 @@
 use super::MainTui;
 use crate::models::{CommandBarMode, FocusedPane};
+use crate::ui::pane_block;
+use crate::ui::panes::name_end_offset;
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::Position;
 use ratatui::widgets::TableState;
+
+const NAME_SCROLL_STEP: isize = 8;
 
 impl MainTui {
     pub(super) fn handle_key_event(&mut self, key: KeyEvent) {
@@ -27,6 +31,13 @@ impl MainTui {
         }
         if self.state.settings.is_some() {
             return self.handle_settings_input(key);
+        }
+
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            if self.state.focused_pane == FocusedPane::Results {
+                self.handle_results_input(key);
+            }
+            return;
         }
 
         // Filter mode in Results pane
@@ -291,21 +302,7 @@ impl MainTui {
             KeyCode::Enter => {
                 self.state.results_is_filtering = false;
             }
-            KeyCode::Up => {
-                cycle(
-                    &mut self.state.results_table_state,
-                    self.state.results_filtered_items.len(),
-                    false,
-                );
-            }
-            KeyCode::Down => {
-                cycle(
-                    &mut self.state.results_table_state,
-                    self.state.results_filtered_items.len(),
-                    true,
-                );
-            }
-            _ => {}
+            _ => self.handle_results_input(key),
         }
     }
 
@@ -330,6 +327,7 @@ impl MainTui {
                         self.state.results_filtered_indices =
                             (0..search.results.len()).collect();
                         self.state.results_selected_indices.clear();
+                        self.state.results_name_offset = 0;
                         self.state.results_table_state.select(Some(0));
                         self.state.focused_pane = FocusedPane::Results;
                     }
@@ -350,11 +348,13 @@ impl MainTui {
     }
 
     fn handle_results_input(&mut self, key: KeyEvent) {
-        let items_count = if self.state.results_filter_query.is_empty() {
-            self.state.results_items.len()
-        } else {
-            self.state.results_filtered_items.len()
-        };
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if ctrl && !matches!(key.code, KeyCode::Char('f' | 'b' | 'd' | 'u')) {
+            return;
+        }
+        let items_count = self.visible_results().len();
+        let page = self.results_page_size();
+        let half = (page / 2).max(1);
 
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -363,29 +363,36 @@ impl MainTui {
             KeyCode::Down | KeyCode::Char('j') => {
                 cycle(&mut self.state.results_table_state, items_count, true);
             }
+            KeyCode::Home | KeyCode::Char('g') => self.select_row(0),
+            KeyCode::End | KeyCode::Char('G') => {
+                self.select_row(items_count.saturating_sub(1));
+            }
+            KeyCode::PageDown => self.scroll_rows(page),
+            KeyCode::PageUp => self.scroll_rows(-page),
+            KeyCode::Char('f') if ctrl => self.scroll_rows(page),
+            KeyCode::Char('b') if ctrl => self.scroll_rows(-page),
+            KeyCode::Char('d') if ctrl => self.scroll_rows(half),
+            KeyCode::Char('u') if ctrl => self.scroll_rows(-half),
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.scroll_names(NAME_SCROLL_STEP);
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.scroll_names(-NAME_SCROLL_STEP);
+            }
+            KeyCode::Char('0') => self.state.results_name_offset = 0,
+            KeyCode::Char('$') => {
+                self.state.results_name_offset = self.highlighted_name_end();
+            }
             KeyCode::Char(' ') => {
-                if let Some(current) = self.state.results_table_state.selected()
+                let index = self
+                    .state
+                    .results_table_state
+                    .selected()
+                    .and_then(|row| self.original_index(row));
+                if let Some(index) = index
+                    && !self.state.results_selected_indices.remove(&index)
                 {
-                    let actual_index =
-                        if self.state.results_filter_query.is_empty() {
-                            current
-                        } else {
-                            self.state.results_filtered_indices[current]
-                        };
-
-                    if self
-                        .state
-                        .results_selected_indices
-                        .contains(&actual_index)
-                    {
-                        self.state
-                            .results_selected_indices
-                            .remove(&actual_index);
-                    } else {
-                        self.state
-                            .results_selected_indices
-                            .insert(actual_index);
-                    }
+                    self.state.results_selected_indices.insert(index);
                 }
             }
             KeyCode::Char('/') => {
@@ -411,6 +418,42 @@ impl MainTui {
         }
     }
 
+    fn select_row(&mut self, target: usize) {
+        let len = self.visible_results().len();
+        if len > 0 {
+            self.state
+                .results_table_state
+                .select(Some(target.min(len - 1)));
+        }
+    }
+
+    fn scroll_rows(&mut self, delta: isize) {
+        let current = self.state.results_table_state.selected().unwrap_or(0);
+        self.select_row(current.saturating_add_signed(delta));
+    }
+
+    fn scroll_names(&mut self, delta: isize) {
+        let end = self.highlighted_name_end();
+        let current = self.state.results_name_offset.min(end);
+        self.state.results_name_offset =
+            current.saturating_add_signed(delta).min(end);
+    }
+
+    fn highlighted_name_end(&self) -> usize {
+        let Some(area) = self.state.results_pane_area else {
+            return 0;
+        };
+        self.highlighted_result()
+            .map_or(0, |file| name_end_offset(&file.filename, area))
+    }
+
+    fn results_page_size(&self) -> isize {
+        let rows = self.state.results_pane_area.map_or(1, |area| {
+            pane_block(false).inner(area).height.saturating_sub(1)
+        });
+        rows.max(1) as isize
+    }
+
     fn handle_downloads_input(&mut self, key: KeyEvent) {
         // The pane lists downloads first, then uploads; navigation spans both.
         let rows = self.state.downloads.len() + self.state.uploads.len();
@@ -422,7 +465,7 @@ impl MainTui {
                 cycle(&mut self.state.downloads_table_state, rows, true);
             }
             KeyCode::Char('x') => {
-                self.cancel_selected_upload();
+                self.cancel_selected_transfer();
             }
             KeyCode::Char('p') => {
                 self.toggle_selected_download_pause();
