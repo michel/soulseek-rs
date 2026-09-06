@@ -392,6 +392,7 @@ impl MainTui {
                 FocusedPane::Downloads => {
                     vec![
                         ("p", "pause/resume"),
+                        ("x", "cancel"),
                         ("r", "retry failed"),
                         ("d", "delete queued/done"),
                         ("c", "clear finished"),

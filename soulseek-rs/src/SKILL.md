@@ -108,6 +108,11 @@ per finished transfer: `user`, `path`, `size`, `file` (the local path written).
 `<file>.part` behind; re-running the same command resumes from it rather than
 starting over, so retrying a failed download is cheap.
 
+**`transfer cancel <user> <path>`** — stop a download (queued or in progress;
+its `<file>.part` is deleted) or an upload being served. Prints nothing; exit 0
+is the confirmation, exit 4 means nothing by that name was in flight. Only
+useful against a daemon, since a one-shot `download` ends with its own run.
+
 **`get <query>`** — search, pick, and download in one step. `--pick
 best|first|all`, `-n/--limit`, plus every filter `search` accepts. Use it when
 any copy will do. It ranks on free slot, bitrate and peer speed, so it cannot

@@ -14,6 +14,8 @@ use crate::types::{Download, DownloadStatus};
 use crate::utils::path::{PART_SUFFIX, expand_tilde};
 
 const READ_BUFFER_SIZE: usize = 8192;
+const CANCEL_POLL: Duration = Duration::from_secs(1);
+const STALL_DEADLINE: Duration = Duration::from_secs(30);
 const PROGRESS_UPDATE_CHUNKS: usize = 15; // ~120KB (15 * 8192 bytes)
 
 #[derive(Debug)]
@@ -29,6 +31,7 @@ pub enum DownloadError {
     PathResolutionError(String),
     InvalidTokenBytes,
     LockPoisoned,
+    Cancelled,
     IncompleteDownload { received: usize, expected: usize },
 }
 
@@ -56,6 +59,7 @@ impl std::fmt::Display for DownloadError {
                 write!(f, "Invalid token bytes received")
             }
             Self::LockPoisoned => write!(f, "Lock poisoned"),
+            Self::Cancelled => write!(f, "Download cancelled"),
             Self::IncompleteDownload { received, expected } => write!(
                 f,
                 "Incomplete download: received {received} of {expected} bytes"
@@ -71,6 +75,16 @@ fn extract_filename_from_path(full_path: &str) -> &str {
         .split(['/', '\\'])
         .next_back()
         .unwrap_or(full_path)
+}
+
+fn part_path(final_path: &str) -> String {
+    format!("{final_path}{PART_SUFFIX}")
+}
+
+pub fn part_path_of(download: &Download) -> Option<String> {
+    resolve_download_path(download)
+        .ok()
+        .map(|path| part_path(&path))
 }
 
 /// Where a download's bytes end up: its configured directory (falling back
@@ -121,7 +135,7 @@ struct PartFile {
 impl PartFile {
     fn open(download: &Download) -> Result<Self, DownloadError> {
         let final_path = resolve_download_path(download)?;
-        let path = PathBuf::from(format!("{final_path}{PART_SUFFIX}"));
+        let path = PathBuf::from(part_path(&final_path));
 
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
@@ -164,6 +178,11 @@ impl PartFile {
         self.written >= self.expected
     }
 
+    fn discard(self) {
+        drop(self.file);
+        let _ = fs::remove_file(part_path(&self.final_path));
+    }
+
     /// A short transfer is a failure, and the `.part` stays put so the next
     /// attempt can resume it.
     fn finish(self) -> Result<String, DownloadError> {
@@ -174,11 +193,8 @@ impl PartFile {
             });
         }
         drop(self.file);
-        fs::rename(
-            format!("{}{PART_SUFFIX}", self.final_path),
-            &self.final_path,
-        )
-        .map_err(DownloadError::FileWriteError)?;
+        fs::rename(part_path(&self.final_path), &self.final_path)
+            .map_err(DownloadError::FileWriteError)?;
         Ok(self.final_path)
     }
 }
@@ -245,7 +261,7 @@ impl DownloadPeer {
         stream: &TcpStream,
     ) -> Result<(), DownloadError> {
         stream
-            .set_read_timeout(Some(Duration::from_secs(30)))
+            .set_read_timeout(Some(STALL_DEADLINE))
             .map_err(DownloadError::ConnectionFailed)?;
         stream
             .set_write_timeout(Some(Duration::from_secs(5)))
@@ -289,6 +305,7 @@ impl DownloadPeer {
         stream: &mut TcpStream,
         client_context: &Arc<RwLock<ClientContext>>,
     ) -> Result<(Download, PartFile), DownloadError> {
+        Self::wait_while_paused(client_context, &download)?;
         let part = PartFile::open(&download)?;
         stream
             .write_all(&part.written.to_le_bytes())
@@ -337,6 +354,10 @@ impl DownloadPeer {
         let mut read_buffer = [0u8; READ_BUFFER_SIZE];
         let mut chunk_counter = 0usize;
         let mut last_update_time = Instant::now();
+        let mut last_data = Instant::now();
+        stream
+            .set_read_timeout(Some(CANCEL_POLL))
+            .map_err(DownloadError::ConnectionFailed)?;
 
         trace!(
             "[download_peer:{}] Starting to read data from peer",
@@ -349,8 +370,19 @@ impl DownloadPeer {
         };
 
         loop {
-            if let Some((ref dl, _)) = transfer {
-                Self::wait_while_paused(client_context, dl)?;
+            if let Some((dl, _)) = &transfer {
+                match Self::wait_while_paused(client_context, dl) {
+                    Ok(true) => last_data = Instant::now(),
+                    Ok(false) => {}
+                    Err(e) => {
+                        if matches!(e, DownloadError::Cancelled)
+                            && let Some((_, part)) = transfer.take()
+                        {
+                            part.discard();
+                        }
+                        return Err(e);
+                    }
+                }
             }
 
             match stream.read(&mut read_buffer) {
@@ -362,6 +394,7 @@ impl DownloadPeer {
                     break;
                 }
                 Ok(bytes_read) => {
+                    last_data = Instant::now();
                     let data = &read_buffer[..bytes_read];
 
                     if transfer.is_none() && !self.no_pierce {
@@ -404,6 +437,11 @@ impl DownloadPeer {
                         break;
                     }
                 }
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) && last_data.elapsed() < STALL_DEADLINE => {}
                 Err(e) => {
                     return Err(DownloadError::StreamReadError(e));
                 }
@@ -444,16 +482,21 @@ impl DownloadPeer {
         download: &Download,
         status: DownloadStatus,
     ) {
-        let _ = download.sender.send(status.clone());
-        if let Ok(mut context) = client_context.write() {
-            context.update_download_with_status(download.token, status);
+        let applied = client_context.write().is_ok_and(|mut context| {
+            context
+                .downloads
+                .update_status(download.token, status.clone())
+        });
+        if applied {
+            let _ = download.sender.send(status);
         }
     }
 
     fn wait_while_paused(
         client_context: &Arc<RwLock<ClientContext>>,
         download: &Download,
-    ) -> Result<(), DownloadError> {
+    ) -> Result<bool, DownloadError> {
+        let mut waited = false;
         loop {
             let status = client_context
                 .read()
@@ -462,10 +505,14 @@ impl DownloadPeer {
                 .map(|download| download.status.clone())
                 .ok_or(DownloadError::TokenNotFound(download.token))?;
 
+            if matches!(status, DownloadStatus::Cancelled) {
+                return Err(DownloadError::Cancelled);
+            }
             if !matches!(status, DownloadStatus::Paused { .. }) {
-                return Ok(());
+                return Ok(waited);
             }
 
+            waited = true;
             thread::sleep(Duration::from_millis(200));
         }
     }
@@ -514,8 +561,9 @@ mod tests {
     use super::{
         DownloadError, DownloadPeer, PartFile, extract_filename_from_path,
     };
+    use crate::client::ClientContext;
     use crate::types::{Download, DownloadMetadata, DownloadStatus};
-    use std::sync::mpsc;
+    use std::sync::{Arc, RwLock, mpsc};
 
     fn scratch_dir(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir()
@@ -537,6 +585,117 @@ mod tests {
             queue_position: None,
             metadata: DownloadMetadata::default(),
         }
+    }
+
+    #[test]
+    fn a_discarded_part_file_is_removed_from_disk() {
+        let dir = scratch_dir("discard");
+        let mut part = PartFile::open(&download_into(&dir, 8)).unwrap();
+        part.write(b"data").unwrap();
+        let path = dir.join("song.mp3.part");
+        assert!(path.exists());
+
+        part.discard();
+
+        assert!(!path.exists());
+        assert!(!dir.join("song.mp3").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_pause_is_reported_so_the_stall_budget_restarts() {
+        let dir = scratch_dir("paused");
+        let mut download = download_into(&dir, 8);
+        download.status = DownloadStatus::Paused {
+            bytes_downloaded: 0,
+            total_bytes: 8,
+        };
+        let context = Arc::new(RwLock::new(ClientContext::new()));
+        context.write().unwrap().add_download(download.clone());
+        let resumer = {
+            let context = context.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                assert!(
+                    context
+                        .write()
+                        .unwrap()
+                        .downloads
+                        .resume_by_file("peer", "song.mp3")
+                );
+            })
+        };
+
+        assert!(matches!(
+            DownloadPeer::wait_while_paused(&context, &download),
+            Ok(true)
+        ));
+        assert!(matches!(
+            DownloadPeer::wait_while_paused(&context, &download),
+            Ok(false)
+        ));
+        let _ = resumer.join();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_cancelled_download_stops_the_transfer_loop() {
+        let dir = scratch_dir("cancelled");
+        let mut download = download_into(&dir, 8);
+        download.status = DownloadStatus::Cancelled;
+        let context = Arc::new(RwLock::new(ClientContext::new()));
+        context.write().unwrap().add_download(download.clone());
+
+        assert!(matches!(
+            DownloadPeer::wait_while_paused(&context, &download),
+            Err(DownloadError::Cancelled)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_status_after_cancel_is_not_relayed_on_the_channel() {
+        let dir = scratch_dir("relay");
+        let (tx, rx) = mpsc::channel();
+        let mut download = download_into(&dir, 8);
+        download.sender = tx;
+        download.status = DownloadStatus::Cancelled;
+        let context = Arc::new(RwLock::new(ClientContext::new()));
+        context.write().unwrap().add_download(download.clone());
+
+        DownloadPeer::send_download_status(
+            &context,
+            &download,
+            DownloadStatus::InProgress {
+                bytes_downloaded: 4,
+                total_bytes: 8,
+                speed_bytes_per_sec: 1.0,
+            },
+        );
+
+        assert!(rx.try_recv().is_err(), "a cancelled row hears nothing more");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn start_transfer_refuses_a_cancelled_download() {
+        let dir = scratch_dir("refuse");
+        let mut download = download_into(&dir, 8);
+        download.status = DownloadStatus::Cancelled;
+        let context = Arc::new(RwLock::new(ClientContext::new()));
+        context.write().unwrap().add_download(download.clone());
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut stream =
+            std::net::TcpStream::connect(listener.local_addr().unwrap())
+                .unwrap();
+        let _peer = listener.accept().unwrap();
+
+        let outcome =
+            DownloadPeer::start_transfer(download, &mut stream, &context);
+
+        assert!(matches!(outcome, Err(DownloadError::Cancelled)));
+        assert!(!dir.join("song.mp3.part").exists(), "no .part is opened");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

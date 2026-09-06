@@ -600,6 +600,76 @@ fn run_mock_uploader_f_first(cfg: &MockUpload) -> std::io::Result<u64> {
         .map_err(|_| std::io::Error::other("F connection thread panicked"))?
 }
 
+fn run_mock_slow_uploader(
+    cfg: &MockUpload,
+    stall_after: Option<usize>,
+) -> std::io::Result<usize> {
+    let mut p = open_control_and_await_queue(cfg)?;
+    p.write_all(&transfer_request(cfg).get_buffer())?;
+    p.flush()?;
+    expect_code(&mut p, 41, Duration::from_secs(10))?;
+
+    let mut f = connect_retry(&cfg.listen_addr, Duration::from_secs(5))?;
+    f.set_read_timeout(Some(Duration::from_secs(10)))?;
+    f.set_write_timeout(Some(Duration::from_secs(5)))?;
+    let mut init = peer_init_bytes(&cfg.peer_username, "F", cfg.token);
+    init.extend_from_slice(&cfg.token.to_le_bytes());
+    f.write_all(&init)?;
+    let mut start = [0u8; 8];
+    f.read_exact(&mut start)?;
+
+    let mut sent = 0;
+    for (n, chunk) in cfg.content.chunks(4096).enumerate() {
+        if stall_after == Some(n) {
+            f.set_read_timeout(Some(Duration::from_secs(15)))?;
+            match f.read(&mut [0u8; 1]) {
+                Ok(0) => {
+                    return Err(std::io::Error::other(
+                        "the downloader hung up",
+                    ));
+                }
+                Ok(_) => {}
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock
+                            | std::io::ErrorKind::TimedOut
+                    ) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        f.write_all(chunk)?;
+        f.flush()?;
+        sent += chunk.len();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    Ok(sent)
+}
+
+fn run_mock_uploader_offering_after(
+    cfg: &MockUpload,
+    queued: &Sender<()>,
+    go: &Receiver<()>,
+) -> std::io::Result<(bool, String)> {
+    let mut p = open_control_and_await_queue(cfg)?;
+    let _ = queued.send(());
+    go.recv()
+        .map_err(|_| std::io::Error::other("the test never said go"))?;
+
+    p.write_all(&transfer_request(cfg).get_buffer())?;
+    p.flush()?;
+    let mut msg = expect_code(&mut p, 41, Duration::from_secs(10))?;
+    msg.set_pointer(8);
+    let _token = msg.read_int32();
+    let allowed = msg.read_bool();
+    let reason = if allowed {
+        String::new()
+    } else {
+        msg.read_string()
+    };
+    Ok((allowed, reason))
+}
+
 fn run_refusing_uploader(
     cfg: &MockUpload,
     refusal: &Message,
@@ -841,6 +911,174 @@ fn a_download_completes_when_the_f_connection_beats_token_registration() {
         Duration::ZERO,
         run_mock_uploader_f_first,
     );
+}
+
+fn cancel_mid_transfer(peer_username: &str, stall_after: Option<usize>) {
+    let server = server_or_skip!();
+
+    let listen_port = free_port().expect("free listen port");
+    let mut client = Client::with_settings(server.listening_settings(
+        &format!("{peer_username}_dl"),
+        "pw",
+        listen_port,
+    ));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login"));
+
+    let filename = "cancel_me.mp3";
+    let content: Vec<u8> = (0..400_000u32).map(|i| (i % 251) as u8).collect();
+    let download_dir = unique_download_dir();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let cfg = MockUpload {
+        listen_addr: format!("127.0.0.1:{listen_port}"),
+        peer_username: peer_username.to_string(),
+        filename: filename.to_string(),
+        content: content.clone(),
+        token: 424_250_u32,
+        ready: ready_tx,
+        token_delay: Duration::ZERO,
+    };
+    let uploader =
+        std::thread::spawn(move || run_mock_slow_uploader(&cfg, stall_after));
+    ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("mock uploader P connection");
+    std::thread::sleep(Duration::from_millis(1500));
+
+    let (_download, status_rx) = client
+        .download(
+            filename.to_string(),
+            peer_username.to_string(),
+            content.len() as u64,
+            download_dir.display().to_string(),
+        )
+        .expect("start download");
+
+    let part = download_dir.join(format!("{filename}.part"));
+    assert!(
+        wait_for(|| part.exists()),
+        "the transfer should be streaming"
+    );
+    if stall_after.is_some() {
+        std::thread::sleep(Duration::from_secs(2));
+    }
+    let cancelled_at = Instant::now();
+    assert!(client.cancel_download(peer_username, filename));
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut cancelled = false;
+    while Instant::now() < deadline {
+        match status_rx.recv_timeout(Duration::from_millis(500)) {
+            Ok(DownloadStatus::Cancelled) => {
+                cancelled = true;
+                break;
+            }
+            Ok(DownloadStatus::Completed | DownloadStatus::Failed(_)) => break,
+            _ => {}
+        }
+    }
+    assert!(cancelled, "the status channel should report the cancel");
+    assert!(wait_for(|| !part.exists()), "the partial file should go");
+    assert!(!download_dir.join(filename).exists());
+    assert!(client.get_all_downloads().iter().any(|d| {
+        d.filename == filename && matches!(d.status, DownloadStatus::Cancelled)
+    }));
+
+    let outcome = uploader.join().expect("mock uploader thread");
+    assert!(
+        outcome.is_err(),
+        "the uploader should see its connection drop, got {outcome:?}"
+    );
+    assert!(
+        cancelled_at.elapsed() < Duration::from_secs(8),
+        "the socket should be released within seconds, not at the read \
+         deadline"
+    );
+    assert!(
+        status_rx.try_recv().is_err(),
+        "nothing follows Cancelled on the channel"
+    );
+    let _ = std::fs::remove_dir_all(&download_dir);
+}
+
+#[test]
+fn a_cancelled_download_stops_and_drops_its_partial_file() {
+    cancel_mid_transfer("e2e_cancel_peer", None);
+}
+
+#[test]
+fn a_cancelled_stalled_download_is_released_promptly() {
+    cancel_mid_transfer("e2e_stalled_peer", Some(2));
+}
+
+#[test]
+fn a_cancelled_queued_download_declines_the_peers_offer() {
+    let server = server_or_skip!();
+
+    let listen_port = free_port().expect("free listen port");
+    let mut client = Client::with_settings(server.listening_settings(
+        "e2e_cancel_queued_dl",
+        "pw",
+        listen_port,
+    ));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login"));
+
+    let filename = "never_starts.mp3";
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let (queued_tx, queued_rx) = std::sync::mpsc::channel();
+    let (go_tx, go_rx) = std::sync::mpsc::channel();
+    let cfg = MockUpload {
+        listen_addr: format!("127.0.0.1:{listen_port}"),
+        peer_username: "e2e_cancel_queued_peer".to_string(),
+        filename: filename.to_string(),
+        content: vec![0; 10],
+        token: 424_251_u32,
+        ready: ready_tx,
+        token_delay: Duration::ZERO,
+    };
+    let uploader = std::thread::spawn(move || {
+        run_mock_uploader_offering_after(&cfg, &queued_tx, &go_rx)
+    });
+    ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("mock uploader P connection");
+    std::thread::sleep(Duration::from_millis(1500));
+
+    let download_dir = unique_download_dir();
+    let (_download, status_rx) = client
+        .download(
+            filename.to_string(),
+            "e2e_cancel_queued_peer".to_string(),
+            10,
+            download_dir.display().to_string(),
+        )
+        .expect("start download");
+    queued_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the peer should receive our queue request");
+
+    assert!(client.cancel_download("e2e_cancel_queued_peer", filename));
+    assert!(matches!(
+        status_rx.recv_timeout(Duration::from_secs(2)),
+        Ok(DownloadStatus::Cancelled)
+    ));
+
+    go_tx.send(()).expect("mock uploader waiting");
+    let (allowed, reason) = uploader
+        .join()
+        .expect("mock uploader thread")
+        .expect("the peer should get an answer to its offer");
+    assert!(
+        !allowed,
+        "a cancelled download must not accept the transfer"
+    );
+    assert_eq!(reason, "Cancelled");
+    assert!(client.get_all_downloads().iter().any(|d| {
+        d.filename == filename && matches!(d.status, DownloadStatus::Cancelled)
+    }));
+    assert!(!download_dir.join(format!("{filename}.part")).exists());
+    let _ = std::fs::remove_dir_all(&download_dir);
 }
 
 fn refusal_fails_the_download_quickly(

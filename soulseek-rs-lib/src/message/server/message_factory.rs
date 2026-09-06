@@ -250,6 +250,16 @@ impl MessageFactory {
             .clone()
     }
     #[must_use]
+    pub fn build_transfer_denial_message(token: u32, reason: &str) -> Message {
+        Message::new()
+            .write_int32(41)
+            .write_int32(token)
+            .write_bool(false)
+            .write_string(reason)
+            .clone()
+    }
+
+    #[must_use]
     pub fn build_pierce_firewall_message(token: u32) -> Message {
         Message::new()
             .write_int8(0) // PierceFirewall message code
@@ -319,6 +329,18 @@ fn test_build_upload_transfer_request() {
     assert_eq!(transfer.token, 555);
     assert_eq!(transfer.filename, "song.mp3");
     assert_eq!(transfer.size, 4096);
+}
+
+#[test]
+fn a_transfer_denial_carries_the_token_and_the_reason() {
+    let message =
+        MessageFactory::build_transfer_denial_message(555, "Cancelled");
+    let mut decoded = Message::new_with_data(message.get_buffer());
+    assert_eq!(decoded.get_message_code_u32(), 41);
+    decoded.set_pointer(8);
+    assert_eq!(decoded.read_int32(), 555);
+    assert!(!decoded.read_bool());
+    assert_eq!(decoded.read_string(), "Cancelled");
 }
 
 #[test]
