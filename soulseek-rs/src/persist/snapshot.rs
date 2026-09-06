@@ -6,7 +6,6 @@ use super::state::{PersistedDownload, PersistedMessage};
 use crate::models::{
     AppState, ChatMessage, MessageDirection, SearchEntry, SearchStatus,
 };
-use soulseek_rs::DownloadStatus;
 
 /// How much private-message history survives a restart.
 /// a flat cap on the whole log rather than per conversation; make
@@ -34,16 +33,7 @@ impl Snapshot {
         let downloads = state
             .downloads
             .iter()
-            .map(|entry| PersistedDownload {
-                username: entry.download.username.clone(),
-                filename: entry.download.filename.clone(),
-                size: entry.download.size,
-                download_directory: entry.download.download_directory.clone(),
-                completed: matches!(
-                    entry.download.status,
-                    DownloadStatus::Completed
-                ),
-            })
+            .filter_map(|entry| PersistedDownload::capture(&entry.download))
             .collect();
 
         let mut queries: Vec<String> = Vec::new();
@@ -121,6 +111,7 @@ pub fn restore_searches(state: &mut AppState, queries: &[String]) {
 mod tests {
     use super::*;
     use crate::models::DownloadEntry;
+    use soulseek_rs::DownloadStatus;
     use soulseek_rs::types::{Download, DownloadMetadata};
     use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, mpsc};
@@ -186,6 +177,28 @@ mod tests {
         assert_eq!(snapshot.downloads[0].username, "peer");
         assert_eq!(snapshot.downloads[0].size, 42);
         assert_eq!(snapshot.downloads[0].download_directory, "/music");
+    }
+
+    #[test]
+    fn a_cancelled_download_is_not_captured() {
+        let mut state = AppState::new();
+        state
+            .downloads
+            .push(download("gone.mp3", DownloadStatus::Cancelled));
+        state
+            .downloads
+            .push(download("queued.mp3", DownloadStatus::Queued));
+
+        let snapshot = Snapshot::capture(&state);
+        assert_eq!(
+            snapshot
+                .downloads
+                .iter()
+                .map(|d| d.filename.as_str())
+                .collect::<Vec<_>>(),
+            vec!["queued.mp3"],
+            "a cancel must not come back as a retry after a restart"
+        );
     }
 
     #[test]

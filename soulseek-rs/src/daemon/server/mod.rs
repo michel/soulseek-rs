@@ -184,6 +184,15 @@ impl Daemon {
                     ),
                 })
             }
+            Method::DownloadCancel => {
+                let transfer: TransferRef = parse(params)?;
+                ok(Ack {
+                    ok: self.session.cancel_download(
+                        &transfer.username,
+                        &transfer.filename,
+                    ),
+                })
+            }
 
             Method::UploadList => ok(Uploads {
                 uploads: self
@@ -844,6 +853,9 @@ mod tests {
             Vec::new()
         }
         fn cancel_upload(&self, _username: &str, _filename: &str) -> bool {
+            false
+        }
+        fn cancel_download(&self, _username: &str, _filename: &str) -> bool {
             false
         }
         fn set_upload_slots(&self, _slots: usize) {}

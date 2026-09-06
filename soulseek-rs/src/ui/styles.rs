@@ -152,6 +152,7 @@ pub fn download_status_glyph(status: &DownloadStatus) -> (&'static str, Style) {
         DownloadStatus::InProgress { .. } => (GLYPH_ACTIVE, accent_style()),
         DownloadStatus::Paused { .. } => (GLYPH_PAUSED, info_style()),
         DownloadStatus::Completed => (GLYPH_DONE, success_style()),
+        DownloadStatus::Cancelled => (GLYPH_FAILED, inactive_style()),
         DownloadStatus::Failed(_) => (GLYPH_FAILED, error_style()),
         DownloadStatus::TimedOut => (GLYPH_TIMED_OUT, error_style()),
     }
@@ -237,6 +238,7 @@ mod tests {
             (DownloadStatus::Completed, GLYPH_DONE, PHOSPHOR),
             (DownloadStatus::Failed(None), GLYPH_FAILED, ALARM),
             (DownloadStatus::TimedOut, GLYPH_TIMED_OUT, ALARM),
+            (DownloadStatus::Cancelled, GLYPH_FAILED, COLOR_INACTIVE),
         ] {
             let (got_glyph, style) = download_status_glyph(&status);
             assert_eq!(got_glyph, glyph);

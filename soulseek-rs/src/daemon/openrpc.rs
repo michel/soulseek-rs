@@ -44,6 +44,7 @@ fn params_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         | Method::DownloadResume
         | Method::DownloadRemove
         | Method::DownloadRemoveQueued
+        | Method::DownloadCancel
         | Method::UploadCancel => schema_of::<TransferRef>(generator),
         Method::DownloadSetDir => schema_of::<DirectoryParams>(generator),
         Method::UploadSlots => schema_of::<SlotsParams>(generator),
@@ -108,6 +109,7 @@ fn result_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         | Method::DownloadResume
         | Method::DownloadRemove
         | Method::DownloadRemoveQueued
+        | Method::DownloadCancel
         | Method::DownloadSetDir
         | Method::UploadCancel
         | Method::UploadSlots
@@ -162,6 +164,9 @@ fn summary(method: Method) -> &'static str {
         Method::DownloadResume => "Resume a paused transfer.",
         Method::DownloadRemove => "Forget a transfer entirely.",
         Method::DownloadRemoveQueued => "Drop a transfer that has not started.",
+        Method::DownloadCancel => {
+            "Stop a download, queued or in progress; its partial file is deleted."
+        }
         Method::DownloadSetDir => {
             "Land future transfers in a different folder on the daemon's host."
         }

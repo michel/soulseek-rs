@@ -3,6 +3,7 @@ use super::{
     Receiver, Result, RwLock, RwLockExt, Sender, error, info, mpsc,
     next_download_token,
 };
+use crate::peer::part_path_of;
 
 impl Client {
     #[must_use]
@@ -33,6 +34,24 @@ impl Client {
                 false
             }
         }
+    }
+
+    #[must_use]
+    pub fn cancel_download(&self, username: &str, filename: &str) -> bool {
+        let cancelled = match self.context.write_safe() {
+            Ok(mut ctx) => ctx.downloads.cancel_by_file(username, filename),
+            Err(e) => {
+                error!("[client] cancel_download: {}", e);
+                None
+            }
+        };
+        let Some(download) = cancelled else {
+            return false;
+        };
+        if let Some(part) = part_path_of(&download) {
+            let _ = std::fs::remove_file(part);
+        }
+        true
     }
 
     #[must_use]

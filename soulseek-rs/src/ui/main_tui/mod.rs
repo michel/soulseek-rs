@@ -289,6 +289,8 @@ mod tests {
         download_dir_set: std::sync::Mutex<Option<String>>,
         /// What `set_shared_directories` was last asked for, if anything.
         shares_set: std::sync::Mutex<Option<Vec<String>>>,
+        download_cancelled: std::sync::Mutex<Option<(String, String)>>,
+        upload_cancelled: std::sync::Mutex<Option<(String, String)>>,
     }
 
     fn queued(username: &str, filename: &str) -> soulseek_rs::types::Download {
@@ -432,8 +434,15 @@ mod tests {
         fn take_upload_events(&self) -> Vec<soulseek_rs::UploadInfo> {
             Vec::new()
         }
-        fn cancel_upload(&self, _u: &str, _f: &str) -> bool {
-            false
+        fn cancel_upload(&self, u: &str, f: &str) -> bool {
+            *self.upload_cancelled.lock().expect("not poisoned") =
+                Some((u.to_string(), f.to_string()));
+            true
+        }
+        fn cancel_download(&self, u: &str, f: &str) -> bool {
+            *self.download_cancelled.lock().expect("not poisoned") =
+                Some((u.to_string(), f.to_string()));
+            true
         }
         fn set_upload_slots(&self, _slots: usize) {}
         fn check_privileges(&self) -> soulseek_rs::Result<()> {
@@ -556,6 +565,106 @@ mod tests {
             files,
             started_secs_ago: Some(age),
         }
+    }
+
+    #[test]
+    fn x_cancels_the_highlighted_download() {
+        let session = Arc::new(TalkativeSession::default());
+        let mut tui = attach(session.clone());
+        tui.state.downloads.push(crate::models::DownloadEntry {
+            download: at_status(
+                "bob",
+                "song.mp3",
+                soulseek_rs::DownloadStatus::InProgress {
+                    bytes_downloaded: 1,
+                    total_bytes: 4096,
+                    speed_bytes_per_sec: 1.0,
+                },
+            ),
+            receiver: None,
+        });
+        tui.state.downloads_table_state.select(Some(0));
+        tui.state.focused_pane = FocusedPane::Downloads;
+
+        tui.handle_key_event(key('x'));
+
+        assert_eq!(
+            *session.download_cancelled.lock().expect("not poisoned"),
+            Some(("bob".to_string(), "song.mp3".to_string()))
+        );
+        assert_eq!(
+            *session.upload_cancelled.lock().expect("not poisoned"),
+            None
+        );
+    }
+
+    #[test]
+    fn d_clears_a_cancelled_row() {
+        let mut tui = with_session(TalkativeSession::default());
+        tui.state.downloads.push(crate::models::DownloadEntry {
+            download: at_status(
+                "bob",
+                "gone.mp3",
+                soulseek_rs::DownloadStatus::Cancelled,
+            ),
+            receiver: None,
+        });
+        tui.state.downloads_table_state.select(Some(0));
+        tui.state.focused_pane = FocusedPane::Downloads;
+
+        tui.handle_key_event(key('d'));
+
+        assert!(tui.state.downloads.is_empty(), "the row goes");
+    }
+
+    #[test]
+    fn x_on_a_finished_download_asks_nothing() {
+        let session = Arc::new(TalkativeSession::default());
+        let mut tui = attach(session.clone());
+        tui.state.downloads.push(crate::models::DownloadEntry {
+            download: completed("bob", "done.mp3"),
+            receiver: None,
+        });
+        tui.state.downloads_table_state.select(Some(0));
+        tui.state.focused_pane = FocusedPane::Downloads;
+
+        tui.handle_key_event(key('x'));
+
+        assert_eq!(
+            *session.download_cancelled.lock().expect("not poisoned"),
+            None
+        );
+    }
+
+    #[test]
+    fn x_on_an_upload_row_still_cancels_the_upload() {
+        let session = Arc::new(TalkativeSession::default());
+        let mut tui = attach(session.clone());
+        tui.state.downloads.push(crate::models::DownloadEntry {
+            download: queued("bob", "song.mp3"),
+            receiver: None,
+        });
+        tui.state.uploads.push(soulseek_rs::types::UploadInfo {
+            username: "alice".to_string(),
+            filename: "served.mp3".to_string(),
+            size: 10,
+            bytes_sent: 1,
+            speed_bytes_per_sec: 1.0,
+            status: soulseek_rs::types::UploadStatus::InProgress,
+        });
+        tui.state.downloads_table_state.select(Some(1));
+        tui.state.focused_pane = FocusedPane::Downloads;
+
+        tui.handle_key_event(key('x'));
+
+        assert_eq!(
+            *session.upload_cancelled.lock().expect("not poisoned"),
+            Some(("alice".to_string(), "served.mp3".to_string()))
+        );
+        assert_eq!(
+            *session.download_cancelled.lock().expect("not poisoned"),
+            None
+        );
     }
 
     fn with_session(session: TalkativeSession) -> MainTui {
