@@ -15,7 +15,7 @@ pub mod transfer;
 pub mod wish;
 
 use crate::api::SessionApi;
-use crate::cli::{Commands, MessageCommand, RoomCommand};
+use crate::cli::{Commands, MessageCommand, RoomCommand, TransferCommand};
 use crate::output::{CliError, CliResult, Exit, Out, PortmapRecord};
 use crate::port_mapping::{self, PortMapper};
 use crate::remote::{Endpoint, RemoteSession};
@@ -286,6 +286,9 @@ fn dispatch(ctx: &Ctx, command: Commands) -> CliResult {
     match command {
         Commands::Search(args) => transfer::search(ctx, &args),
         Commands::Download(args) => transfer::download(ctx, &args),
+        Commands::Transfer(TransferCommand::Cancel { user, path }) => {
+            transfer::cancel(ctx, &user, &path)
+        }
         Commands::Get(args) => transfer::get(ctx, &args),
         Commands::Browse(args) => social::browse(ctx, &args),
         Commands::Room(RoomCommand::List { timeout }) => {
