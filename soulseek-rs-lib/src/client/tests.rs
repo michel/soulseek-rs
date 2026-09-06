@@ -624,6 +624,71 @@ fn a_replayed_transfer_response_does_not_start_a_second_transfer() {
 }
 
 #[test]
+fn a_cancelled_download_is_not_started_when_the_peer_allows_it() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = u32::from(listener.local_addr().unwrap().port());
+
+    let client = Client::new("u", "p");
+    let (sender, _receiver) = mpsc::channel();
+    client.context.write().unwrap().add_download(download(
+        "peer",
+        "f.mp3",
+        9,
+        DownloadStatus::Cancelled,
+        sender,
+    ));
+
+    let (ops_tx, ops_rx) = mpsc::channel();
+    Client::listen_to_client_operations(
+        ops_rx,
+        client.context,
+        "u".to_string(),
+    );
+    let peer = Peer::new(
+        "peer".to_string(),
+        ConnectionType::F,
+        "127.0.0.1".to_string(),
+        port,
+        None,
+        0,
+        0,
+        0,
+    );
+    ops_tx
+        .send(ClientOperation::DownloadFromPeer(9, peer, true))
+        .unwrap();
+
+    thread::sleep(Duration::from_millis(500));
+    assert!(
+        matches!(listener.accept(), Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock),
+        "a cancelled download must not dial the peer"
+    );
+}
+
+#[test]
+fn cancel_download_marks_the_store_and_answers_whether_it_matched() {
+    let client = Client::new("u", "p");
+    let (sender, receiver) = mpsc::channel();
+    client.context.write().unwrap().add_download(download(
+        "peer",
+        "f.mp3",
+        9,
+        DownloadStatus::Queued,
+        sender,
+    ));
+
+    assert!(client.cancel_download("peer", "f.mp3"));
+    assert!(!client.cancel_download("peer", "f.mp3"));
+    assert!(!client.cancel_download("peer", "other.mp3"));
+    assert!(matches!(receiver.try_recv(), Ok(DownloadStatus::Cancelled)));
+    assert!(matches!(
+        client.get_all_downloads()[0].status,
+        DownloadStatus::Cancelled
+    ));
+}
+
+#[test]
 fn room_member_stats_are_returned_sorted_and_scoped_to_their_room() {
     use crate::types::{RoomUserStats, UserStatus};
     let stat = |username: &str| RoomUserStats {

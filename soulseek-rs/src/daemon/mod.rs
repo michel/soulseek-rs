@@ -469,16 +469,7 @@ fn save(
     let downloads: Vec<PersistedDownload> = session
         .get_all_downloads()
         .iter()
-        .map(|download| PersistedDownload {
-            username: download.username.clone(),
-            filename: download.filename.clone(),
-            size: download.size,
-            download_directory: download.download_directory.clone(),
-            completed: matches!(
-                download.status,
-                soulseek_rs::DownloadStatus::Completed
-            ),
-        })
+        .filter_map(PersistedDownload::capture)
         .collect();
     let _ = store.save_downloads(&downloads);
 

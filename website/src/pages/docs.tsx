@@ -53,7 +53,7 @@ const PANES: readonly { num?: number; title: string; body: string }[] = [
   {
     num: 3,
     title: 'Downloads / Uploads',
-    body: 'Live transfers in both directions with progress and speed: queued, active, complete, failed.',
+    body: 'Live transfers in both directions with progress and speed: queued, active, complete, cancelled, failed. x cancels the selected transfer.',
   },
   {
     title: 'Info',
@@ -255,6 +255,8 @@ const Daemon = () => (
           { t: 'cm', text: "# opt out; open this run's own session" },
           { t: 'cmd', text: 'soulseek-rs' },
           { t: 'cm', text: '# the TUI attaches to the same session' },
+          { t: 'cmd', text: 'soulseek-rs transfer cancel <username> "<path>"' },
+          { t: 'cm', text: '# stop a download the daemon is running' },
           { t: 'cmd', text: 'soulseek-rs daemon status' },
           { t: 'cmd', text: 'soulseek-rs daemon stop' },
         ]}

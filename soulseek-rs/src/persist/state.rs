@@ -9,6 +9,7 @@
 use color_eyre::Result;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
+use soulseek_rs::{DownloadStatus, types::Download};
 use std::path::{Path, PathBuf};
 
 /// The shape every file is written in today. Bump it — and convert the older
@@ -22,6 +23,22 @@ pub struct PersistedDownload {
     pub size: u64,
     pub download_directory: String,
     pub completed: bool,
+}
+
+impl PersistedDownload {
+    #[must_use]
+    pub fn capture(download: &Download) -> Option<Self> {
+        if matches!(download.status, DownloadStatus::Cancelled) {
+            return None;
+        }
+        Some(Self {
+            username: download.username.clone(),
+            filename: download.filename.clone(),
+            size: download.size,
+            download_directory: download.download_directory.clone(),
+            completed: matches!(download.status, DownloadStatus::Completed),
+        })
+    }
 }
 
 /// One line of private-message history.

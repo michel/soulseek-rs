@@ -177,6 +177,9 @@ fn build_info_lines(
         }
         DownloadStatus::Paused { .. } => ("Paused".to_string(), info_style()),
         DownloadStatus::Completed => ("Completed".to_string(), success_style()),
+        DownloadStatus::Cancelled => {
+            ("Cancelled".to_string(), inactive_style())
+        }
         DownloadStatus::Failed(_) => ("Failed".to_string(), error_style()),
         DownloadStatus::TimedOut => ("Timed out".to_string(), error_style()),
     };
@@ -271,7 +274,9 @@ fn build_info_lines(
                 )));
             }
         }
-        DownloadStatus::Completed | DownloadStatus::TimedOut => {}
+        DownloadStatus::Completed
+        | DownloadStatus::Cancelled
+        | DownloadStatus::TimedOut => {}
     }
 
     lines

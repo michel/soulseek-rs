@@ -639,6 +639,10 @@ impl SessionApi for RemoteSession {
         self.ask(Method::DownloadRemove, Self::transfer(username, filename))
     }
 
+    fn cancel_download(&self, username: &str, filename: &str) -> bool {
+        self.ask(Method::DownloadCancel, Self::transfer(username, filename))
+    }
+
     fn uploads(&self) -> Vec<UploadInfo> {
         self.request::<_, Uploads>(Method::UploadList, ())
             .map(|listed| listed.uploads.into_iter().map(Into::into).collect())

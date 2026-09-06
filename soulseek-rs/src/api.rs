@@ -116,6 +116,7 @@ pub trait SessionApi: Send + Sync {
     fn resume_download(&self, username: &str, filename: &str) -> bool;
     fn remove_queued_download(&self, username: &str, filename: &str) -> bool;
     fn remove_download(&self, username: &str, filename: &str) -> bool;
+    fn cancel_download(&self, username: &str, filename: &str) -> bool;
 
     fn uploads(&self) -> Vec<UploadInfo>;
     fn take_upload_events(&self) -> Vec<UploadInfo>;
@@ -299,6 +300,10 @@ impl SessionApi for Client {
 
     fn remove_download(&self, username: &str, filename: &str) -> bool {
         Self::remove_download(self, username, filename)
+    }
+
+    fn cancel_download(&self, username: &str, filename: &str) -> bool {
+        Self::cancel_download(self, username, filename)
     }
 
     fn uploads(&self) -> Vec<UploadInfo> {
