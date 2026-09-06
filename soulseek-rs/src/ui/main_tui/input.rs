@@ -465,7 +465,7 @@ impl MainTui {
                 cycle(&mut self.state.downloads_table_state, rows, true);
             }
             KeyCode::Char('x') => {
-                self.cancel_selected_upload();
+                self.cancel_selected_transfer();
             }
             KeyCode::Char('p') => {
                 self.toggle_selected_download_pause();

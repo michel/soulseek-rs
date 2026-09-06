@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use crate::client::{Client, ClientContext, ClientOperation};
 
 use crate::message::{Message, MessageReader};
-use crate::peer::{ConnectionType, DownloadPeer, Peer};
+use crate::peer::{ConnectionType, DownloadError, DownloadPeer, Peer};
 use crate::types::Download;
 use crate::utils::lock::RwLockExt;
 use crate::utils::semaphore::{Permit, Semaphore};
@@ -140,6 +140,7 @@ fn wait_for_download_registration(
                             DownloadStatus::InProgress { .. }
                                 | DownloadStatus::Paused { .. }
                                 | DownloadStatus::Completed
+                                | DownloadStatus::Cancelled
                         )
                 })
                 .cloned(),
@@ -255,6 +256,7 @@ fn handle_file_connection(
                 download.size, filename
             );
         }
+        Err(DownloadError::Cancelled) => {}
         Err(e) => {
             error!(
                 "Failed to download file from {}:{} (token: {}) - Error: {}",
@@ -506,6 +508,23 @@ mod tests {
             queue_position: None,
             metadata: DownloadMetadata::default(),
         }
+    }
+
+    #[test]
+    fn a_cancelled_download_is_not_claimable() {
+        let client_context = Arc::new(RwLock::new(ClientContext::new()));
+        let mut download = registered_download(7);
+        download.status = DownloadStatus::Cancelled;
+        client_context.write().unwrap().add_download(download);
+
+        let claimed = wait_for_download_registration(
+            &client_context,
+            7,
+            "peer",
+            Instant::now() + Duration::from_millis(200),
+        );
+
+        assert!(claimed.is_none(), "a cancelled transfer must not restart");
     }
 
     #[test]

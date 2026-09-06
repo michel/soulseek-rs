@@ -27,6 +27,7 @@ const EXIT_OK: i32 = 0;
 const EXIT_USAGE: i32 = 2;
 const EXIT_CONNECTION: i32 = 3;
 const EXIT_NO_RESULTS: i32 = 4;
+const EXIT_TRANSFER: i32 = 6;
 const EXIT_SESSION_LOST: i32 = 7;
 
 /// Build a command for the binary, isolated from the developer's environment
@@ -1552,6 +1553,79 @@ fn browse_lists_shares_as_paths_download_understands() {
     assert_eq!(fields.len(), 3, "record was {record:?}");
     assert_eq!(fields[0], "cli_e2e_sharer_c");
     assert_eq!(fields[1], probe_bytes().len().to_string());
+}
+
+#[test]
+fn transfer_cancel_without_a_matching_transfer_is_the_no_results_verdict() {
+    let server = server_or_skip!();
+    let output = cli(
+        &server,
+        "cli_e2e_canceller",
+        &["transfer", "cancel", "nobody", "nothing.mp3"],
+    );
+    assert_eq!(
+        code(&output),
+        EXIT_NO_RESULTS,
+        "stderr: {}",
+        stderr(&output)
+    );
+    assert!(
+        stderr(&output).contains("nothing.mp3"),
+        "the verdict names the transfer: {}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn transfer_cancel_stops_a_download_another_client_is_waiting_on() {
+    if mode() != Mode::Daemon {
+        println!("skipped: a one-shot download owns its own session");
+        return;
+    }
+    let server = server_or_skip!();
+    let mut all = server.args("cli_e2e_cancel_waiter");
+    all.extend(
+        [
+            "download",
+            "e2e_ghost_peer",
+            "@@ghost\\never.mp3",
+            "--size",
+            "10",
+            "--timeout",
+            "60",
+        ]
+        .iter()
+        .map(|a| (*a).to_string()),
+    );
+    let refs: Vec<&str> = all.iter().map(String::as_str).collect();
+    let waiting = command(&refs)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the binary should start");
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut cancelled = None;
+    while Instant::now() < deadline {
+        let output = cli(
+            &server,
+            "cli_e2e_cancel_waiter",
+            &["transfer", "cancel", "e2e_ghost_peer", "@@ghost\\never.mp3"],
+        );
+        if code(&output) == EXIT_OK {
+            cancelled = Some(output);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    assert!(
+        cancelled.is_some(),
+        "the queued transfer should be cancellable"
+    );
+
+    let waited = waiting.wait_with_output().expect("wait");
+    assert_eq!(code(&waited), EXIT_TRANSFER, "stderr: {}", stderr(&waited));
+    assert!(stderr(&waited).contains("cancelled"), "{}", stderr(&waited));
 }
 
 #[test]

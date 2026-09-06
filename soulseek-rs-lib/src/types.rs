@@ -186,12 +186,7 @@ pub struct Download {
 impl Download {
     #[must_use]
     pub const fn is_finished(&self) -> bool {
-        matches!(
-            self.status,
-            DownloadStatus::Completed
-                | DownloadStatus::Failed(_)
-                | DownloadStatus::TimedOut
-        )
+        self.status.is_terminal()
     }
 
     #[must_use]
@@ -234,9 +229,23 @@ pub enum DownloadStatus {
         total_bytes: u64,
     },
     Completed,
+    Cancelled,
     /// Failed, optionally with a human-readable reason.
     Failed(Option<String>),
     TimedOut,
+}
+
+impl DownloadStatus {
+    #[must_use]
+    pub const fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::Completed
+                | Self::Cancelled
+                | Self::Failed(_)
+                | Self::TimedOut
+        )
+    }
 }
 
 /// Whether a user is reachable, as the server reports it.
