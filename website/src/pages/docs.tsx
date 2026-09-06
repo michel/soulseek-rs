@@ -48,7 +48,7 @@ const PANES: readonly { num?: number; title: string; body: string }[] = [
   {
     num: 2,
     title: 'Results',
-    body: 'Files from the network: size, user, bitrate, speed, free slots. Space selects, Enter queues a download.',
+    body: 'Files from the network: size, user, bitrate, speed, free slots. Space selects, Enter queues a download. h/l or ←/→ scroll a long name, 0 and $ jump to either end; Home/End, g/G, PgUp/PgDn and Ctrl-f/b/d/u move through the list.',
   },
   {
     num: 3,
@@ -57,7 +57,7 @@ const PANES: readonly { num?: number; title: string; body: string }[] = [
   },
   {
     title: 'Info',
-    body: 'Everything about the selected file: user, size, path, bitrate, length, queue position, free slots.',
+    body: 'Everything about the highlighted result or transfer: user, size, full path, bitrate, length, queue position, free slots.',
   },
 ]
 
