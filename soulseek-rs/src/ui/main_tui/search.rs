@@ -100,6 +100,28 @@ impl MainTui {
         self.state.results_table_state.select(None);
         self.state.results_filter_query.clear();
         self.state.results_is_filtering = false;
+        self.state.results_name_offset = 0;
+    }
+
+    pub(super) fn visible_results(&self) -> &[FileDisplayData] {
+        if self.state.results_filter_query.is_empty() {
+            &self.state.results_items
+        } else {
+            &self.state.results_filtered_items
+        }
+    }
+
+    pub(super) fn highlighted_result(&self) -> Option<&FileDisplayData> {
+        self.visible_results()
+            .get(self.state.results_table_state.selected()?)
+    }
+
+    pub(super) fn original_index(&self, row: usize) -> Option<usize> {
+        if self.state.results_filter_query.is_empty() {
+            Some(row)
+        } else {
+            self.state.results_filtered_indices.get(row).copied()
+        }
     }
 
     pub(super) fn apply_filter(&mut self) {
@@ -207,6 +229,7 @@ impl MainTui {
         self.state.results_filtered_indices.clear();
         self.state.results_selected_indices.clear();
         self.state.results_table_state.select(Some(0));
+        self.state.results_name_offset = 0;
 
         // Switch focus to Results pane
         self.state.focused_pane = FocusedPane::Results;
