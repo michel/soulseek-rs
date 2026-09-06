@@ -106,12 +106,7 @@ impl Mirror {
     fn route(buffers: &mut Buffers, update: DownloadStatusEvent) {
         let key = (update.username, update.filename);
         let status = DownloadStatus::from(update.status);
-        let terminal = matches!(
-            status,
-            DownloadStatus::Completed
-                | DownloadStatus::Failed(_)
-                | DownloadStatus::TimedOut
-        );
+        let terminal = status.is_terminal();
         let Some(sender) = buffers.downloads.get(&key) else {
             return;
         };

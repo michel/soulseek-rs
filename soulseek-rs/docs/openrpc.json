@@ -418,6 +418,18 @@
           },
           {
             "properties": {
+              "state": {
+                "const": "cancelled",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
               "reason": {
                 "type": [
                   "string",
@@ -1647,6 +1659,33 @@
         }
       },
       "summary": "Drop a transfer that has not started."
+    },
+    {
+      "name": "download.cancel",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "filename",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "username",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Stop a download, queued or in progress; its partial file is deleted."
     },
     {
       "name": "download.set_dir",

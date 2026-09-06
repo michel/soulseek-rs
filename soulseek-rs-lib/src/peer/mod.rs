@@ -6,7 +6,8 @@ pub mod upload_peer;
 pub use crate::actor::peer_actor::{PeerActor, PeerMessage};
 pub use crate::actor::peer_registry::PeerRegistry;
 
-pub use download_peer::DownloadPeer;
+pub(crate) use download_peer::part_path_of;
+pub use download_peer::{DownloadError, DownloadPeer};
 
 use crate::message::Message;
 use core::fmt;

@@ -111,6 +111,7 @@ pub enum DownloadStatusDto {
         total_bytes: u64,
     },
     Completed,
+    Cancelled,
     Failed {
         reason: Option<String>,
     },
@@ -138,6 +139,7 @@ impl From<&DownloadStatus> for DownloadStatusDto {
                 total_bytes: *total_bytes,
             },
             DownloadStatus::Completed => Self::Completed,
+            DownloadStatus::Cancelled => Self::Cancelled,
             DownloadStatus::Failed(reason) => Self::Failed {
                 reason: reason.clone(),
             },
@@ -167,6 +169,7 @@ impl From<DownloadStatusDto> for DownloadStatus {
                 total_bytes,
             },
             DownloadStatusDto::Completed => Self::Completed,
+            DownloadStatusDto::Cancelled => Self::Cancelled,
             DownloadStatusDto::Failed { reason } => Self::Failed(reason),
             DownloadStatusDto::TimedOut => Self::TimedOut,
         }

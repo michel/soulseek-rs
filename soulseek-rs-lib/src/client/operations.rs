@@ -6,6 +6,7 @@ use super::{
     thread, trace, warn,
 };
 use crate::message::server::MessageFactory;
+use crate::peer::DownloadError;
 
 const CONNECT_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -148,6 +149,7 @@ impl Client {
                             download.status,
                             DownloadStatus::InProgress { .. }
                                 | DownloadStatus::Completed
+                                | DownloadStatus::Cancelled
                         ) {
                             debug!(
                                 "[client] transfer token {} already claimed; \
@@ -210,6 +212,7 @@ impl Client {
                                         download.size, filename
                                     );
                                 }
+                                Err(DownloadError::Cancelled) => {}
                                 Err(e) => {
                                     let reason = Some(e.to_string());
                                     let _ = download.sender.send(
@@ -363,7 +366,14 @@ impl Client {
                                 }
                             });
 
-                        if let Some((old_token, download)) = download_to_update
+                        let cancelled = download_to_update
+                            .as_ref()
+                            .is_some_and(|(_, d)| {
+                                matches!(d.status, DownloadStatus::Cancelled)
+                            });
+                        if !cancelled
+                            && let Some((old_token, download)) =
+                                download_to_update
                         {
                             trace!(
                                 "[client] UpdateDownloadTokens found {old_token}, transfer: {:?}",
@@ -386,10 +396,16 @@ impl Client {
                         let registry = context.peer_registry.clone();
                         drop(context);
                         if let Some(registry) = registry {
-                            let response =
+                            let response = if cancelled {
+                                MessageFactory::build_transfer_denial_message(
+                                    transfer.token,
+                                    "Cancelled",
+                                )
+                            } else {
                                 MessageFactory::build_transfer_response_message(
                                     transfer,
-                                );
+                                )
+                            };
                             let _ = registry.send_to_peer(
                                 &username,
                                 PeerMessage::SendMessage(response),
