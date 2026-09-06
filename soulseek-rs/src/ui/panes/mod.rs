@@ -9,9 +9,11 @@ mod searches_pane;
 pub use browse_pane::render_browse_pane;
 pub use chat_pane::render_chat_pane;
 pub use download_info_pane::{
-    SelectedTransfer, render_download_info_pane, selected_transfer,
+    InfoSubject, render_download_info_pane, selected_transfer,
 };
 pub use downloads_pane::render_downloads_pane;
-pub use results_pane::{ResultsPaneParams, render_results_pane};
+pub use results_pane::{
+    ResultsPaneParams, name_end_offset, render_results_pane,
+};
 pub use rooms_pane::render_rooms_pane;
 pub use searches_pane::render_searches_pane;

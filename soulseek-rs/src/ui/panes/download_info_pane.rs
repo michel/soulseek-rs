@@ -1,4 +1,4 @@
-use crate::models::DownloadEntry;
+use crate::models::{DownloadEntry, FileDisplayData};
 use crate::ui::{
     accent_style, dimmed_style, error_style, format_bytes, format_progress_bar,
     format_speed, inactive_style, info_style, pane_block, pane_title,
@@ -17,11 +17,10 @@ use soulseek_rs::utils::path::expand_tilde;
 
 const LABEL_WIDTH: usize = 20;
 
-/// Whichever transfer the table has highlighted. Rows are downloads first and
-/// uploads after, so a raw index has to be resolved against both lists.
-pub enum SelectedTransfer<'a> {
+pub enum InfoSubject<'a> {
     Download(&'a DownloadEntry),
     Upload(&'a UploadInfo),
+    Result(&'a FileDisplayData),
 }
 
 /// Resolve the transfers table's selected row index into the download or
@@ -31,28 +30,28 @@ pub fn selected_transfer<'a>(
     index: Option<usize>,
     downloads: &'a [DownloadEntry],
     uploads: &'a [UploadInfo],
-) -> Option<SelectedTransfer<'a>> {
+) -> Option<InfoSubject<'a>> {
     let index = index?;
     if let Some(download) = downloads.get(index) {
-        return Some(SelectedTransfer::Download(download));
+        return Some(InfoSubject::Download(download));
     }
     // Past the downloads, so this row is an upload.
     uploads
         .get(index - downloads.len())
-        .map(SelectedTransfer::Upload)
+        .map(InfoSubject::Upload)
 }
 
 pub fn render_download_info_pane(
     frame: &mut Frame,
     area: Rect,
-    selected: Option<SelectedTransfer>,
+    selected: Option<InfoSubject>,
     focused: bool,
 ) {
     let block = pane_block(focused).title(pane_title("Info", "", focused));
 
     let Some(selected) = selected else {
         let paragraph = Paragraph::new(Line::from(Span::styled(
-            "Select a transfer for details.",
+            "Select a result or transfer for details.",
             dimmed_style(),
         )))
         .block(block);
@@ -61,8 +60,9 @@ pub fn render_download_info_pane(
     };
 
     let lines = match selected {
-        SelectedTransfer::Download(entry) => build_info_lines(&entry.download),
-        SelectedTransfer::Upload(upload) => build_upload_info_lines(upload),
+        InfoSubject::Download(entry) => build_info_lines(&entry.download),
+        InfoSubject::Upload(upload) => build_upload_info_lines(upload),
+        InfoSubject::Result(file) => build_result_info_lines(file),
     };
 
     let paragraph = Paragraph::new(lines)
@@ -75,16 +75,7 @@ pub fn render_download_info_pane(
 /// view so the pane reads the same whichever direction is selected.
 fn build_upload_info_lines(upload: &UploadInfo) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
-
-    let (basename, parent_dir) = split_filename(&upload.filename);
-    lines.push(Line::from(Span::styled(
-        basename,
-        primary_style().add_modifier(ratatui::style::Modifier::BOLD),
-    )));
-    if !parent_dir.is_empty() {
-        lines.push(Line::from(Span::styled(parent_dir, dimmed_style())));
-    }
-    lines.push(Line::from(""));
+    push_file_header(&mut lines, &upload.filename, primary_style());
 
     // The pane is shared with downloads, so name the direction explicitly.
     lines.push(label_value("Direction", "↑ Upload"));
@@ -143,21 +134,75 @@ fn build_upload_info_lines(upload: &UploadInfo) -> Vec<Line<'static>> {
     lines
 }
 
-fn build_info_lines(
-    download: &soulseek_rs::types::Download,
-) -> Vec<Line<'static>> {
+fn build_result_info_lines(file: &FileDisplayData) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
+    push_file_header(&mut lines, &file.filename, accent_style());
 
-    let (basename, parent_dir) = split_filename(&download.filename);
+    lines.push(label_value_styled(
+        "User",
+        file.username.clone(),
+        info_style(),
+    ));
+    lines.push(label_value_styled(
+        "Size",
+        format_bytes(file.size),
+        warning_style(),
+    ));
+    push_media_attributes(&mut lines, file.bitrate, file.length_seconds);
+    lines.push(Line::from(""));
 
+    lines.push(free_slots_line(file.slots));
+    lines.push(label_value(
+        "Upload speed",
+        &format_speed(f64::from(file.speed)),
+    ));
+
+    lines
+}
+
+fn push_file_header(
+    lines: &mut Vec<Line<'static>>,
+    filename: &str,
+    style: Style,
+) {
+    let (basename, parent_dir) = split_filename(filename);
     lines.push(Line::from(Span::styled(
         basename,
-        accent_style().add_modifier(ratatui::style::Modifier::BOLD),
+        style.add_modifier(ratatui::style::Modifier::BOLD),
     )));
     if !parent_dir.is_empty() {
         lines.push(Line::from(Span::styled(parent_dir, dimmed_style())));
     }
     lines.push(Line::from(""));
+}
+
+fn push_media_attributes(
+    lines: &mut Vec<Line<'static>>,
+    bitrate: Option<u32>,
+    length_seconds: Option<u32>,
+) {
+    if let Some(bitrate) = bitrate {
+        lines.push(label_value("Bitrate", &format!("{bitrate} kbps")));
+    }
+    if let Some(length) = length_seconds {
+        lines.push(label_value("Length", &format_duration(length)));
+    }
+}
+
+fn free_slots_line(slots: u8) -> Line<'static> {
+    let (slot_text, slot_style) = if slots > 0 {
+        (format!("{slots} available"), success_style())
+    } else {
+        ("all busy".to_string(), inactive_style())
+    };
+    label_value_styled("Free slots", slot_text, slot_style)
+}
+
+fn build_info_lines(
+    download: &soulseek_rs::types::Download,
+) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    push_file_header(&mut lines, &download.filename, accent_style());
 
     lines.push(label_value_styled(
         "User",
@@ -189,13 +234,11 @@ fn build_info_lines(
         .to_string_lossy()
         .to_string();
     lines.push(label_value_styled("Save to", save_path, info_style()));
-
-    if let Some(bitrate) = download.metadata.bitrate {
-        lines.push(label_value("Bitrate", &format!("{bitrate} kbps")));
-    }
-    if let Some(length) = download.metadata.length_seconds {
-        lines.push(label_value("Length", &format_duration(length)));
-    }
+    push_media_attributes(
+        &mut lines,
+        download.metadata.bitrate,
+        download.metadata.length_seconds,
+    );
 
     match &download.status {
         DownloadStatus::Queued => {
@@ -207,16 +250,7 @@ fn build_info_lines(
             lines.push(label_value("Queue position", &position_text));
 
             if let Some(slots) = download.metadata.peer_free_slots {
-                let (slot_text, slot_style) = if slots > 0 {
-                    (format!("{slots} available"), success_style())
-                } else {
-                    ("all busy".to_string(), inactive_style())
-                };
-                lines.push(label_value_styled(
-                    "Free slots",
-                    slot_text,
-                    slot_style,
-                ));
+                lines.push(free_slots_line(slots));
             }
 
             if let Some(speed) = download.metadata.peer_upload_speed {
@@ -420,6 +454,24 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn a_search_result_lists_its_path_owner_and_attributes() {
+        let file = crate::models::FileDisplayData {
+            filename: "@@x\\Music\\Album\\track.mp3".to_string(),
+            size: 2048,
+            username: "bob".to_string(),
+            speed: 1_000_000,
+            slots: 2,
+            bitrate: Some(320),
+            length_seconds: Some(125),
+        };
+        let text = lines_to_text(&build_result_info_lines(&file));
+        assert!(text.starts_with("track.mp3\n@@x/Music/Album\n"), "{text}");
+        for needle in ["bob", "320 kbps", "2m 05s", "2 available"] {
+            assert!(text.contains(needle), "missing {needle}: {text}");
+        }
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use super::MainTui;
 use crate::models::{CommandBarMode, FocusedPane, RoomsView};
 use crate::ui::panes::{
-    ResultsPaneParams, render_browse_pane, render_chat_pane,
+    InfoSubject, ResultsPaneParams, render_browse_pane, render_chat_pane,
     render_download_info_pane, render_downloads_pane, render_results_pane,
     render_rooms_pane, render_searches_pane, selected_transfer,
 };
@@ -120,6 +120,7 @@ impl MainTui {
                 is_filtering: self.state.results_is_filtering,
                 focused: self.state.focused_pane == FocusedPane::Results,
                 active_search_query,
+                name_offset: self.state.results_name_offset,
             },
         );
 
@@ -132,16 +133,23 @@ impl MainTui {
             self.state.focused_pane == FocusedPane::Downloads,
         );
 
-        let selected_transfer = selected_transfer(
-            self.state.downloads_table_state.selected(),
-            &self.state.downloads,
-            &self.state.uploads,
-        );
+        let selected = if self.state.focused_pane == FocusedPane::Results {
+            self.highlighted_result().map(InfoSubject::Result)
+        } else {
+            selected_transfer(
+                self.state.downloads_table_state.selected(),
+                &self.state.downloads,
+                &self.state.uploads,
+            )
+        };
         render_download_info_pane(
             frame,
             downloads_chunks[1],
-            selected_transfer,
-            self.state.focused_pane == FocusedPane::Downloads,
+            selected,
+            matches!(
+                self.state.focused_pane,
+                FocusedPane::Results | FocusedPane::Downloads
+            ),
         );
     }
 
@@ -386,6 +394,8 @@ impl MainTui {
                     ("c", "chat"),
                     ("/", "filter"),
                     ("a/A", "select all/none"),
+                    ("h/l", "scroll"),
+                    ("g/G", "top/end"),
                     ("1-3", "focus pane"),
                     ("q", "quit"),
                 ],

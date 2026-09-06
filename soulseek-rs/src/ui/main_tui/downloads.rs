@@ -1,6 +1,6 @@
 use super::MainTui;
 use crate::models::{DownloadEntry, FileDisplayData};
-use crate::ui::panes::{SelectedTransfer, selected_transfer};
+use crate::ui::panes::{InfoSubject, selected_transfer};
 use soulseek_rs::types::UploadStatus;
 use soulseek_rs::{DownloadStatus, types::Download};
 use std::{sync::mpsc, thread};
@@ -213,7 +213,7 @@ impl MainTui {
             &self.state.uploads,
         );
         match selected {
-            Some(SelectedTransfer::Download(entry))
+            Some(InfoSubject::Download(entry))
                 if !entry.download.is_finished() =>
             {
                 let download = &entry.download;
@@ -228,7 +228,7 @@ impl MainTui {
                     );
                 }
             }
-            Some(SelectedTransfer::Upload(upload))
+            Some(InfoSubject::Upload(upload))
                 if upload.status == UploadStatus::InProgress =>
             {
                 let cancelled = self
