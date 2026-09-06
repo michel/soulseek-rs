@@ -79,6 +79,7 @@ pub struct AppState {
     pub results_selected_indices: std::collections::HashSet<usize>,
     pub results_filter_query: String,
     pub results_is_filtering: bool,
+    pub results_name_offset: usize,
 
     // Downloads
     pub downloads: Vec<DownloadEntry>,
@@ -154,6 +155,7 @@ impl AppState {
             results_selected_indices: std::collections::HashSet::new(),
             results_filter_query: String::new(),
             results_is_filtering: false,
+            results_name_offset: 0,
 
             downloads: Vec::new(),
             downloads_table_state,
