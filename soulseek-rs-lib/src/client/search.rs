@@ -1,7 +1,7 @@
 use super::{
     Arc, AtomicBool, Client, DEFAULT_WISHLIST_INTERVAL, Duration, HashMap,
     Instant, Ordering, Result, RwLockExt, Search, SearchResult, ServerMessage,
-    SoulseekRs, info, md5, sleep,
+    SoulseekRs, info, next_search_token, sleep,
 };
 
 impl Client {
@@ -62,8 +62,7 @@ impl Client {
         let Some(handle) = &self.server_handle else {
             return Err(SoulseekRs::NotConnected);
         };
-        let hash = md5::md5(query);
-        let token = u32::from_str_radix(&hash[0..5], 16)?;
+        let token = next_search_token();
 
         self.context.write_safe()?.searches.insert(
             query.to_string(),
