@@ -30,20 +30,7 @@ impl MessageHandler<PeerMessage> for SharedFileListResponseHandler {
 #[must_use]
 pub fn build_shared_file_list(dirs: &[SharedDirectory]) -> Message {
     let mut payload = Message::new();
-    payload.write_int32(dirs.len() as u32);
-    for dir in dirs {
-        payload
-            .write_string(&dir.name)
-            .write_int32(dir.files.len() as u32);
-        for (name, size) in &dir.files {
-            payload
-                .write_int8(1)
-                .write_string(name)
-                .write_int64(*size)
-                .write_string("") // extension
-                .write_int32(0); // attribute count
-        }
-    }
+    write_directories(&mut payload, dirs);
     payload.write_int32(0); // unknown
     payload.write_int32(0); // number of private directories
 
@@ -60,19 +47,35 @@ pub fn build_shared_file_list(dirs: &[SharedDirectory]) -> Message {
 /// Returns an empty listing if the payload is malformed.
 #[must_use]
 pub fn parse_shared_file_list(message: &mut Message) -> Vec<SharedDirectory> {
-    let pointer = message.get_pointer();
-    let size = message.get_size();
-    let compressed = message.get_slice(pointer, size);
-    let Ok(data) = deflate(&compressed) else {
-        return Vec::new();
-    };
+    decompress_body(message)
+        .map_or_else(Vec::new, |mut body| read_directories(&mut body))
+}
 
-    let mut body = Message::new_with_data(data);
+/// Write a directory listing in the form both code 5 and code 37 carry.
+pub fn write_directories(payload: &mut Message, dirs: &[SharedDirectory]) {
+    payload.write_int32(dirs.len() as u32);
+    for dir in dirs {
+        payload
+            .write_string(&dir.name)
+            .write_int32(dir.files.len() as u32);
+        for (name, size) in &dir.files {
+            payload
+                .write_int8(1)
+                .write_string(name)
+                .write_int64(*size)
+                .write_string("") // extension
+                .write_int32(0); // attribute count
+        }
+    }
+}
+
+/// Read back what [`write_directories`] wrote, stopping early when a hostile
+/// count outruns the payload so a bogus length cannot spin into a huge
+/// allocation loop.
+pub fn read_directories(body: &mut Message) -> Vec<SharedDirectory> {
     let dir_count = body.read_int32();
     let mut dirs = Vec::new();
     for _ in 0..dir_count {
-        // Stop if a hostile count outruns the (decompressed) payload, so a
-        // bogus length can't spin us into a huge allocation loop.
         if body.get_pointer() >= body.get_size() {
             break;
         }
@@ -102,6 +105,15 @@ pub fn parse_shared_file_list(message: &mut Message) -> Vec<SharedDirectory> {
         dirs.push(SharedDirectory { name, files });
     }
     dirs
+}
+
+/// Inflate a compressed peer payload positioned at the blob.
+pub fn decompress_body(message: &mut Message) -> Option<Message> {
+    let pointer = message.get_pointer();
+    let size = message.get_size();
+    deflate(&message.get_slice(pointer, size))
+        .ok()
+        .map(Message::new_with_data)
 }
 
 #[test]
