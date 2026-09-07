@@ -84,6 +84,13 @@ pub const MAX_SEARCH_RESPONSES: usize = 500;
 /// matching collections cannot blow past the response cap.
 pub const MAX_SEARCH_FILES: usize = 10_000;
 
+/// Files one reply to a peer's search carries at most.
+///
+/// A broad query against a big share would otherwise hand the whole index
+/// to whoever typed it, on every such search that arrives. Nicotine+ sends
+/// 150 by default; a searcher with more sources than that has plenty.
+pub const MAX_SEARCH_REPLY_FILES: usize = 150;
+
 impl Search {
     /// Store one peer's response, unless this search already holds enough.
     ///

@@ -146,6 +146,7 @@ fn build_search_response(
     }
     let entries: Vec<FileEntry> = matches
         .iter()
+        .take(crate::types::MAX_SEARCH_REPLY_FILES)
         .map(|f| FileEntry {
             name: &f.virtual_path,
             size: f.size,
