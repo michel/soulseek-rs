@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::mpsc::Sender};
 
-use crate::{error::Result, message::Message, utils::zlib::deflate};
+use crate::{error::Result, message::Message, utils::zlib::inflate};
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -114,7 +114,7 @@ impl SearchResult {
         let pointer = message.get_pointer();
         let size = message.get_size();
         let data: Vec<u8> = message.get_slice(pointer, size);
-        let deflated = deflate(&data)?;
+        let deflated = inflate(&data)?;
         let mut message = Message::new_with_data(deflated);
 
         let username = message.read_string();
@@ -423,7 +423,7 @@ mod tests {
         body.extend_from_slice(&0u32.to_le_bytes()); // username "" (len 0)
         body.extend_from_slice(&7u32.to_le_bytes()); // token
         body.extend_from_slice(&u32::MAX.to_le_bytes()); // n_files (hostile)
-        let compressed = crate::utils::zlib::compress_stored(&body);
+        let compressed = crate::utils::zlib::deflate(&body);
         let mut message = Message::new_with_data(compressed);
         let result = SearchResult::new_from_message(&mut message)
             .expect("hostile count should parse, not error");

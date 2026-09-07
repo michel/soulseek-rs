@@ -4,7 +4,7 @@
 
 use crate::message::{Message, MessageHandler};
 use crate::peer::PeerMessage;
-use crate::utils::zlib::{compress_stored, deflate};
+use crate::utils::zlib::{deflate, inflate};
 use std::sync::mpsc::Sender;
 
 /// One shared directory and the files directly in it (basename + size).
@@ -34,7 +34,7 @@ pub fn build_shared_file_list(dirs: &[SharedDirectory]) -> Message {
     payload.write_int32(0); // unknown
     payload.write_int32(0); // number of private directories
 
-    let compressed = compress_stored(&payload.get_data());
+    let compressed = deflate(&payload.get_data());
     Message::new()
         .write_int32(5)
         .write_raw_bytes(compressed)
@@ -111,7 +111,7 @@ pub fn read_directories(body: &mut Message) -> Vec<SharedDirectory> {
 pub fn decompress_body(message: &mut Message) -> Option<Message> {
     let pointer = message.get_pointer();
     let size = message.get_size();
-    deflate(&message.get_slice(pointer, size))
+    inflate(&message.get_slice(pointer, size))
         .ok()
         .map(Message::new_with_data)
 }
@@ -120,8 +120,7 @@ pub fn decompress_body(message: &mut Message) -> Option<Message> {
 fn hostile_dir_count_does_not_hang() {
     // A compressed body claiming ~4 billion directories with no data must
     // parse to empty promptly rather than looping into an OOM.
-    let compressed =
-        crate::utils::zlib::compress_stored(&u32::MAX.to_le_bytes());
+    let compressed = crate::utils::zlib::deflate(&u32::MAX.to_le_bytes());
     let mut message = crate::message::framed(|m| {
         m.write_raw_bytes(compressed);
     });
