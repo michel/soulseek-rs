@@ -5,8 +5,7 @@
   </picture>
 </div>
 
-**A soulseek client for the terminal. Built for agents and people who live
-there.**
+**A Soulseek client and lib built in Rust 🦀 for the terminal: TUI, CLI and daemon. Built for agents and people who live there.**
 
 Search the network, share your files, browse someone's collection, join a room.
 It runs over ssh on the machine where your music already lives.
