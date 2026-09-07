@@ -25,8 +25,18 @@ const GLOBAL_KEYS: readonly (readonly [string, string])[] = [
   ['i', 'inbox (unread counter)'],
   ['/', 'filter the current list'],
   ['a / A', 'select all / none'],
-  ['1–3', 'focus a pane'],
+  ['?', 'every key, grouped by pane'],
   ['q', 'quit'],
+]
+
+const PANE_KEYS: readonly (readonly [string, string])[] = [
+  ['Tab · ⇧Tab', 'next / previous pane'],
+  ['1–3', 'focus a pane, and bring it back if hidden'],
+  ['z', 'zoom the focused pane to the whole window'],
+  ['w', 'hide the focused pane; the others widen'],
+  ['↑ ↓ · j k', 'move a row in any list'],
+  ['Home End · g G', 'first / last row'],
+  ['PgUp PgDn · ^u ^d', 'a page, or half a page'],
 ]
 
 const ROOM_KEYS: readonly (readonly [string, string])[] = [
@@ -41,14 +51,14 @@ const ROOM_KEYS: readonly (readonly [string, string])[] = [
 
 const PANES: readonly { num?: number; title: string; body: string }[] = [
   {
+    num: 2,
+    title: 'Results',
+    body: 'Files from the network across the whole width: size, user, bitrate, speed, free slots. Space selects, Enter queues a download. h/l or ←/→ scroll a long name, 0 and $ jump to either end.',
+  },
+  {
     num: 1,
     title: 'Searches',
     body: 'Your queries and how many results each returned. Press s to search the network; each search keeps its own result set.',
-  },
-  {
-    num: 2,
-    title: 'Results',
-    body: 'Files from the network: size, user, bitrate, speed, free slots. Space selects, Enter queues a download. h/l or ←/→ scroll a long name, 0 and $ jump to either end; Home/End, g/G, PgUp/PgDn and Ctrl-f/b/d/u move through the list.',
   },
   {
     num: 3,
@@ -106,8 +116,10 @@ const FirstRun = () => (
 const Layout = () => (
   <Section>
     <SectionHead eyebrow="2 · the layout" title="Four panes.">
-      The whole client is these four boxes. Press <Code>1</Code>–<Code>3</Code> to focus
-      one; the focused pane&rsquo;s legend turns green.
+      The whole client is these four boxes: results across the top, the rest in a row
+      underneath. <Code>Tab</Code> or <Code>1</Code>–<Code>3</Code> focuses one and its legend
+      turns green; <Code>z</Code> gives it the whole window, <Code>w</Code> hides it so the
+      others widen.
     </SectionHead>
     <Cols start>
       <div className="overflow-hidden">
@@ -127,7 +139,8 @@ const Layout = () => (
 const Keys = () => (
   <Section>
     <SectionHead eyebrow="3 · keys" title="It's all keyboard.">
-      The bottom bar always shows the keys for where you are. The essentials:
+      The bottom bar always shows the keys for where you are, and <Code>?</Code> lists every
+      one. The essentials:
     </SectionHead>
     <Cols>
       <div>
@@ -138,6 +151,16 @@ const Keys = () => (
           ))}
         </div>
       </div>
+      <div>
+        <Eyebrow className="mb-4 block">panes and lists</Eyebrow>
+        <div className="flex flex-col">
+          {PANE_KEYS.map(([combo, description]) => (
+            <KeyRow key={combo} combo={combo} description={description} />
+          ))}
+        </div>
+      </div>
+    </Cols>
+    <Cols className="mt-8">
       <div>
         <Eyebrow className="mb-4 block">
           in the chat-rooms popup <span className="text-muted">(press c)</span>

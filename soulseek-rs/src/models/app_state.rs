@@ -39,6 +39,75 @@ pub enum FocusedPane {
     Downloads,
 }
 
+impl FocusedPane {
+    /// Every focusable pane, in the order `Tab` walks them: the number each
+    /// carries in its legend.
+    pub const ALL: [Self; 3] = [Self::Searches, Self::Results, Self::Downloads];
+
+    const fn index(self) -> usize {
+        match self {
+            Self::Searches => 0,
+            Self::Results => 1,
+            Self::Downloads => 2,
+        }
+    }
+}
+
+/// Which panes are on screen. A hidden pane gives its space to the others; a
+/// zoomed one takes the whole content area for itself, so `Tab` through the
+/// panes while zoomed reads as switching windows.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PaneLayout {
+    hidden: [bool; 3],
+    pub zoomed: bool,
+}
+
+impl PaneLayout {
+    #[must_use]
+    pub const fn is_visible(&self, pane: FocusedPane) -> bool {
+        !self.hidden[pane.index()]
+    }
+
+    /// The panes still on screen, in `Tab` order.
+    pub fn visible(&self) -> impl Iterator<Item = FocusedPane> + '_ {
+        FocusedPane::ALL
+            .into_iter()
+            .filter(move |pane| self.is_visible(*pane))
+    }
+
+    /// Take `pane` off the screen. Refuses when it is the last one showing —
+    /// an empty window has nothing to press a key in — and says so.
+    pub fn hide(&mut self, pane: FocusedPane) -> bool {
+        if self.visible().count() <= 1 {
+            return false;
+        }
+        self.hidden[pane.index()] = true;
+        true
+    }
+
+    pub const fn show(&mut self, pane: FocusedPane) {
+        self.hidden[pane.index()] = false;
+    }
+
+    /// The visible pane after (or before) `from`, wrapping around. `from`
+    /// itself may already be hidden, which is how focus leaves a pane that
+    /// was just hidden.
+    #[must_use]
+    pub fn neighbour(&self, from: FocusedPane, forward: bool) -> FocusedPane {
+        let count = FocusedPane::ALL.len();
+        let step = if forward { 1 } else { count - 1 };
+        let mut index = from.index();
+        for _ in 0..count {
+            index = (index + step) % count;
+            let candidate = FocusedPane::ALL[index];
+            if self.is_visible(candidate) {
+                return candidate;
+            }
+        }
+        from
+    }
+}
+
 /// What the shared command bar is currently capturing input for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandBarMode {
@@ -92,6 +161,12 @@ pub struct AppState {
 
     // UI State
     pub focused_pane: FocusedPane,
+    pub layout: PaneLayout,
+    /// The keys overlay (`?`) is open.
+    pub show_help: bool,
+    /// Rows the keys overlay is scrolled down, for a terminal too short to
+    /// show it whole. The renderer clamps it to what there is to scroll.
+    pub help_scroll: usize,
     pub should_exit: bool,
     pub command_bar_active: bool,
     pub command_bar_input: String,
@@ -164,6 +239,9 @@ impl AppState {
             active_downloads_count: 0,
 
             focused_pane: FocusedPane::Searches,
+            layout: PaneLayout::default(),
+            show_help: false,
+            help_scroll: 0,
             should_exit: false,
             command_bar_active: false,
             command_bar_input: String::new(),
@@ -193,6 +271,31 @@ impl AppState {
             results_pane_area: None,
             downloads_pane_area: None,
         }
+    }
+
+    /// Put the focus on `pane`, bringing it back on screen if it was hidden:
+    /// pressing a pane's number is also how it comes back.
+    pub const fn focus_pane(&mut self, pane: FocusedPane) {
+        self.layout.show(pane);
+        self.focused_pane = pane;
+    }
+
+    /// Move the focus to the next (or previous) visible pane.
+    pub fn cycle_focus(&mut self, forward: bool) {
+        self.focused_pane = self.layout.neighbour(self.focused_pane, forward);
+    }
+
+    /// Hide the focused pane and move the focus to its neighbour. The last
+    /// visible pane stays; there would be nowhere for the focus to go.
+    pub fn hide_focused_pane(&mut self) {
+        let pane = self.focused_pane;
+        if self.layout.hide(pane) {
+            self.focused_pane = self.layout.neighbour(pane, true);
+        }
+    }
+
+    pub const fn toggle_zoom(&mut self) {
+        self.layout.zoomed = !self.layout.zoomed;
     }
 
     /// Open the chat popup on a conversation with `peer`, ready to type.
@@ -288,6 +391,99 @@ mod tests {
         assert_eq!(state.active_chat_peer(), Some("alice"));
         state.cycle_chat_peer(false);
         assert_eq!(state.active_chat_peer(), Some("bob"));
+    }
+
+    fn visible(layout: &PaneLayout) -> Vec<FocusedPane> {
+        layout.visible().collect()
+    }
+
+    #[test]
+    fn every_pane_starts_visible_and_unzoomed() {
+        let state = AppState::new();
+        assert_eq!(visible(&state.layout), FocusedPane::ALL);
+        assert!(!state.layout.zoomed);
+        assert!(!state.show_help);
+    }
+
+    #[test]
+    fn tab_cycles_the_focus_through_the_visible_panes_and_wraps() {
+        let mut state = AppState::new();
+        assert_eq!(state.focused_pane, FocusedPane::Searches);
+        state.cycle_focus(true);
+        assert_eq!(state.focused_pane, FocusedPane::Results);
+        state.cycle_focus(true);
+        assert_eq!(state.focused_pane, FocusedPane::Downloads);
+        state.cycle_focus(true);
+        assert_eq!(state.focused_pane, FocusedPane::Searches, "wraps");
+        state.cycle_focus(false);
+        assert_eq!(state.focused_pane, FocusedPane::Downloads, "and back");
+    }
+
+    #[test]
+    fn hiding_the_focused_pane_moves_the_focus_past_it() {
+        let mut state = AppState::new();
+        state.focus_pane(FocusedPane::Results);
+        state.hide_focused_pane();
+        assert_eq!(
+            visible(&state.layout),
+            [FocusedPane::Searches, FocusedPane::Downloads]
+        );
+        assert_eq!(state.focused_pane, FocusedPane::Downloads);
+
+        // Tab now skips the hidden pane in both directions.
+        state.cycle_focus(true);
+        assert_eq!(state.focused_pane, FocusedPane::Searches);
+        state.cycle_focus(false);
+        assert_eq!(state.focused_pane, FocusedPane::Downloads);
+    }
+
+    #[test]
+    fn hiding_wraps_the_focus_to_the_first_pane() {
+        let mut state = AppState::new();
+        state.focus_pane(FocusedPane::Downloads);
+        state.hide_focused_pane();
+        assert_eq!(state.focused_pane, FocusedPane::Searches);
+    }
+
+    #[test]
+    fn the_last_visible_pane_cannot_be_hidden() {
+        let mut state = AppState::new();
+        state.hide_focused_pane();
+        state.hide_focused_pane();
+        assert_eq!(visible(&state.layout), [FocusedPane::Downloads]);
+        state.hide_focused_pane();
+        assert_eq!(
+            visible(&state.layout),
+            [FocusedPane::Downloads],
+            "one pane always stays on screen"
+        );
+        assert_eq!(state.focused_pane, FocusedPane::Downloads);
+    }
+
+    #[test]
+    fn focusing_a_hidden_pane_by_number_brings_it_back() {
+        let mut state = AppState::new();
+        state.focus_pane(FocusedPane::Results);
+        state.hide_focused_pane();
+        assert!(!state.layout.is_visible(FocusedPane::Results));
+
+        state.focus_pane(FocusedPane::Results);
+
+        assert!(state.layout.is_visible(FocusedPane::Results));
+        assert_eq!(state.focused_pane, FocusedPane::Results);
+    }
+
+    #[test]
+    fn zoom_toggles_and_leaves_hidden_panes_alone() {
+        let mut state = AppState::new();
+        state.focus_pane(FocusedPane::Searches);
+        state.hide_focused_pane();
+        state.toggle_zoom();
+        assert!(state.layout.zoomed);
+        assert!(!state.layout.is_visible(FocusedPane::Searches));
+        state.toggle_zoom();
+        assert!(!state.layout.zoomed);
+        assert!(!state.layout.is_visible(FocusedPane::Searches));
     }
 
     #[test]

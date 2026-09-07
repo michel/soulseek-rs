@@ -231,8 +231,8 @@ impl MainTui {
         self.state.results_table_state.select(Some(0));
         self.state.results_name_offset = 0;
 
-        // Switch focus to Results pane
-        self.state.focused_pane = FocusedPane::Results;
+        // Switch focus to Results pane, bringing it back if it was hidden
+        self.state.focus_pane(FocusedPane::Results);
 
         let client = self.client.clone();
         let timeout = self.search_timeout;

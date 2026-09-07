@@ -182,6 +182,11 @@ export const SHORTCUTS: readonly (readonly [string, string])[] = [
   ['c', 'chat'],
   ['/', 'filter'],
   ['a/A', 'select all/none'],
-  ['1-3', 'focus pane'],
+  ['h/l', 'scroll name'],
+  ['g/G', 'top/end'],
+  ['Tab/1-3', 'pane'],
+  ['z', 'zoom'],
+  ['w', 'hide'],
+  ['?', 'keys'],
   ['q', 'quit'],
 ]
