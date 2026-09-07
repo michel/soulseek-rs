@@ -17,6 +17,7 @@
 //!   STRESS_FILE_KB    size of every transferred file
 //!   STRESS_TIMEOUT    seconds before the run is called off
 //!   STRESS_SAVE=1     store this run as the new baseline
+//!   STRESS_REQUIRE_FUNCTIONAL=1  exit 1 if any transfer, search or browse was lost
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -766,6 +767,18 @@ struct Score {
     parts: Vec<(&'static str, f64, f64)>, // name, achieved 0-1, weight
 }
 
+/// The functional dimensions that fell short of 100%. Throughput is excluded:
+/// it measures how fast the machine is, the others measure whether the client
+/// silently lost work, which is the only failure a gate should stop on.
+fn gate_failures(score: &Score) -> Vec<String> {
+    score
+        .parts
+        .iter()
+        .filter(|(name, value, _)| *name != "throughput" && *value < 1.0)
+        .map(|(name, value, _)| format!("{name} {:.1}%", value * 100.0))
+        .collect()
+}
+
 fn compute_score(m: &Metrics, elapsed: Duration) -> Score {
     let bytes =
         Metrics::get(&m.bytes_downloaded) + Metrics::get(&m.bytes_uploaded);
@@ -1248,4 +1261,38 @@ fn main() {
 
     let _ = std::fs::remove_dir_all(&share_dir);
     let _ = std::fs::remove_dir_all(&download_dir);
+
+    let failures = gate_failures(&score);
+    if std::env::var("STRESS_REQUIRE_FUNCTIONAL").is_ok_and(|v| v == "1")
+        && !failures.is_empty()
+    {
+        eprintln!("stress: work was lost: {}", failures.join(", "));
+        std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn score(parts: &[(&'static str, f64)]) -> Score {
+        Score {
+            total: 0.0,
+            parts: parts.iter().map(|&(n, v)| (n, v, 0.2)).collect(),
+        }
+    }
+
+    #[test]
+    fn lost_work_fails_the_gate_but_slow_transfers_do_not() {
+        let clean =
+            score(&[("downloads", 1.0), ("uploads", 1.0), ("throughput", 0.1)]);
+        assert!(gate_failures(&clean).is_empty());
+
+        let lossy = score(&[
+            ("downloads", 0.98),
+            ("uploads", 1.0),
+            ("throughput", 1.0),
+        ]);
+        assert_eq!(gate_failures(&lossy), ["downloads 98.0%"]);
+    }
 }
