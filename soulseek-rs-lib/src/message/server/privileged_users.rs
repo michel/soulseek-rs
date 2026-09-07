@@ -14,7 +14,7 @@ use crate::{
 pub struct PrivilegedUsersHandler;
 
 impl MessageHandler<ServerMessage> for PrivilegedUsersHandler {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         69
     }
 
@@ -37,7 +37,7 @@ impl MessageHandler<ServerMessage> for PrivilegedUsersHandler {
 pub struct CheckPrivilegesHandler;
 
 impl MessageHandler<ServerMessage> for CheckPrivilegesHandler {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         92
     }
 

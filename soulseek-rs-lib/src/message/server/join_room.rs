@@ -8,7 +8,7 @@ use std::sync::mpsc::Sender;
 pub struct JoinRoomHandler;
 
 impl MessageHandler<ServerMessage> for JoinRoomHandler {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         14
     }
 
