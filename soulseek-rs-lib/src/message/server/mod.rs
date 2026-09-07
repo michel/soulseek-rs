@@ -1,3 +1,4 @@
+mod admin_message;
 mod connect_to_peer;
 mod excluded_search_phrases;
 mod file_search;
@@ -19,6 +20,7 @@ mod user_left_room;
 mod watch_user;
 mod wish_list_interval;
 
+pub use admin_message::AdminMessageHandler;
 pub use connect_to_peer::ConnectToPeerHandler;
 pub use excluded_search_phrases::ExcludedSearchPhrasesHandler;
 pub use file_search::FileSearchHandler;
