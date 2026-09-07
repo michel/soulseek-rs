@@ -1,7 +1,10 @@
 use super::MainTui;
-use crate::models::{CommandBarMode, FocusedPane};
+use crate::models::{CommandBarMode, FocusedPane, LogView};
 use crate::ui::pane_block;
-use crate::ui::panes::name_end_offset;
+use crate::ui::panes::{
+    InfoSubject, name_end_offset, query_end_offset, selected_transfer,
+    transfer_name_end_offset, upload_display_name,
+};
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -195,6 +198,14 @@ impl MainTui {
             return;
         }
 
+        // Paging keys move through the conversation's history.
+        if scroll_log(&mut self.state.chat_view, key) {
+            return;
+        }
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            return;
+        }
+
         match key.code {
             KeyCode::Char('i' | 'q') | KeyCode::Esc => {
                 self.state.show_messages = false;
@@ -375,6 +386,15 @@ impl MainTui {
         navigate_list(key, table, len, page)
     }
 
+    /// Rows a popup shows at once: its inner height less a tab bar and a
+    /// compose line, which is what its list or log has left.
+    pub(super) fn popup_page(&self) -> isize {
+        let rows = self.state.popup_area.map_or(1, |area| {
+            pane_block(false).inner(area).height.saturating_sub(2)
+        });
+        isize::try_from(rows.max(1)).unwrap_or(isize::MAX)
+    }
+
     /// Rows a pane shows at once: its inner height less the table header.
     fn page_size(&self, pane: FocusedPane) -> isize {
         let area = match pane {
@@ -389,7 +409,7 @@ impl MainTui {
     }
 
     fn handle_searches_input(&mut self, key: KeyEvent) {
-        if self.navigate_focused_list(key) {
+        if self.navigate_focused_list(key) || self.scroll_focused_name(key) {
             return;
         }
         match key.code {
@@ -426,20 +446,10 @@ impl MainTui {
     }
 
     fn handle_results_input(&mut self, key: KeyEvent) {
-        if self.navigate_focused_list(key) {
+        if self.navigate_focused_list(key) || self.scroll_focused_name(key) {
             return;
         }
         match key.code {
-            KeyCode::Right | KeyCode::Char('l') => {
-                self.scroll_names(NAME_SCROLL_STEP);
-            }
-            KeyCode::Left | KeyCode::Char('h') => {
-                self.scroll_names(-NAME_SCROLL_STEP);
-            }
-            KeyCode::Char('0') => self.state.results_name_offset = 0,
-            KeyCode::Char('$') => {
-                self.state.results_name_offset = self.highlighted_name_end();
-            }
             KeyCode::Char(' ') => {
                 let index = self
                     .state
@@ -475,24 +485,82 @@ impl MainTui {
         }
     }
 
-    fn scroll_names(&mut self, delta: isize) {
-        let end = self.highlighted_name_end();
-        let current = self.state.results_name_offset.min(end);
-        self.state.results_name_offset =
-            current.saturating_add_signed(delta).min(end);
+    /// The keys that scroll the focused list's long column sideways, the
+    /// same in every list: a file name in Results and Downloads, the query
+    /// in Searches. Says whether `key` was one of them.
+    fn scroll_focused_name(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.scroll_names(NAME_SCROLL_STEP);
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.scroll_names(-NAME_SCROLL_STEP);
+            }
+            KeyCode::Char('0') => {
+                *self.state.name_offset_mut(self.state.focused_pane) = 0;
+            }
+            KeyCode::Char('$') => {
+                let end = self.highlighted_name_end();
+                *self.state.name_offset_mut(self.state.focused_pane) = end;
+            }
+            _ => return false,
+        }
+        true
     }
 
+    fn scroll_names(&mut self, delta: isize) {
+        let end = self.highlighted_name_end();
+        let offset = self.state.name_offset_mut(self.state.focused_pane);
+        let current = (*offset).min(end);
+        *offset = current.saturating_add_signed(delta).min(end);
+    }
+
+    /// How far the highlighted row's long column can scroll before its end
+    /// is in view. Zero when nothing is highlighted or the pane is not drawn.
     fn highlighted_name_end(&self) -> usize {
-        let Some(area) = self.state.results_pane_area else {
-            return 0;
-        };
-        self.highlighted_result()
-            .map_or(0, |file| name_end_offset(&file.filename, area))
+        match self.state.focused_pane {
+            FocusedPane::Searches => {
+                let Some(area) = self.state.searches_pane_area else {
+                    return 0;
+                };
+                self.state
+                    .searches_table_state
+                    .selected()
+                    .and_then(|row| self.state.searches.get(row))
+                    .map_or(0, |search| query_end_offset(&search.query, area))
+            }
+            FocusedPane::Results => {
+                let Some(area) = self.state.results_pane_area else {
+                    return 0;
+                };
+                self.highlighted_result()
+                    .map_or(0, |file| name_end_offset(&file.filename, area))
+            }
+            FocusedPane::Downloads => {
+                let Some(area) = self.state.downloads_pane_area else {
+                    return 0;
+                };
+                let shown = match selected_transfer(
+                    self.state.downloads_table_state.selected(),
+                    &self.state.downloads,
+                    &self.state.uploads,
+                ) {
+                    Some(InfoSubject::Download(entry)) => {
+                        entry.download.filename.as_str()
+                    }
+                    Some(InfoSubject::Upload(upload)) => {
+                        upload_display_name(upload)
+                    }
+                    Some(InfoSubject::Result(_)) | None => return 0,
+                };
+                transfer_name_end_offset(shown, area)
+            }
+        }
     }
 
     fn handle_downloads_input(&mut self, key: KeyEvent) {
         // The pane lists downloads first, then uploads; navigation spans both.
-        if self.navigate_focused_list(key) {
+        if self.navigate_focused_list(key) || self.scroll_focused_name(key) {
             return;
         }
         match key.code {
@@ -539,9 +607,58 @@ impl MainTui {
     }
 }
 
-/// The keys every list answers alike: a row at a time wrapping at either
-/// end, a page or half a page at a time stopping there, and the two ends.
+/// A move over a whole list at once: to either end, or by a number of rows
+/// (negative is up).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ListJump {
+    First,
+    Last,
+    Rows(isize),
+}
+
+/// The keys every list and log answers alike for moving further than a row:
+/// the two ends, a page, half a page. `page` is how many rows the list shows.
+pub(super) fn list_jump(key: KeyEvent, page: isize) -> Option<ListJump> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let half = (page / 2).max(1);
+    Some(match key.code {
+        KeyCode::Home | KeyCode::Char('g') if !ctrl => ListJump::First,
+        KeyCode::End | KeyCode::Char('G') if !ctrl => ListJump::Last,
+        KeyCode::PageDown => ListJump::Rows(page),
+        KeyCode::PageUp => ListJump::Rows(-page),
+        KeyCode::Char('f') if ctrl => ListJump::Rows(page),
+        KeyCode::Char('b') if ctrl => ListJump::Rows(-page),
+        KeyCode::Char('d') if ctrl => ListJump::Rows(half),
+        KeyCode::Char('u') if ctrl => ListJump::Rows(-half),
+        _ => return None,
+    })
+}
+
+/// Apply the jump keys to a log, moving by the screenful it last showed.
 /// Says whether `key` was one of them.
+pub(super) fn scroll_log(view: &mut LogView, key: KeyEvent) -> bool {
+    let page = isize::try_from(view.page()).unwrap_or(isize::MAX);
+    match list_jump(key, page) {
+        Some(ListJump::First) => view.to_oldest(),
+        Some(ListJump::Last) => view.to_newest(),
+        Some(ListJump::Rows(rows)) => view.scroll(rows),
+        None => return false,
+    }
+    true
+}
+
+/// `selected` moved by `jump` over a list `len` long, stopping at the ends.
+pub(super) fn jumped(selected: usize, len: usize, jump: ListJump) -> usize {
+    let last = len.saturating_sub(1);
+    match jump {
+        ListJump::First => 0,
+        ListJump::Last => last,
+        ListJump::Rows(rows) => selected.saturating_add_signed(rows).min(last),
+    }
+}
+
+/// The keys every list answers alike: a row at a time wrapping at either
+/// end, and the jumps of [`list_jump`]. Says whether `key` was one of them.
 fn navigate_list(
     key: KeyEvent,
     table: &mut TableState,
@@ -549,23 +666,16 @@ fn navigate_list(
     page: isize,
 ) -> bool {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    let half = (page / 2).max(1);
     match key.code {
         KeyCode::Up | KeyCode::Char('k') if !ctrl => cycle(table, len, false),
         KeyCode::Down | KeyCode::Char('j') if !ctrl => cycle(table, len, true),
-        KeyCode::Home | KeyCode::Char('g') if !ctrl => {
-            select_row(table, len, 0);
-        }
-        KeyCode::End | KeyCode::Char('G') if !ctrl => {
-            select_row(table, len, len.saturating_sub(1));
-        }
-        KeyCode::PageDown => scroll_rows(table, len, page),
-        KeyCode::PageUp => scroll_rows(table, len, -page),
-        KeyCode::Char('f') if ctrl => scroll_rows(table, len, page),
-        KeyCode::Char('b') if ctrl => scroll_rows(table, len, -page),
-        KeyCode::Char('d') if ctrl => scroll_rows(table, len, half),
-        KeyCode::Char('u') if ctrl => scroll_rows(table, len, -half),
-        _ => return false,
+        _ => match list_jump(key, page) {
+            Some(jump) => {
+                let current = table.selected().unwrap_or(0);
+                select_row(table, len, jumped(current, len, jump));
+            }
+            None => return false,
+        },
     }
     true
 }
@@ -589,10 +699,4 @@ fn select_row(table: &mut TableState, len: usize, target: usize) {
     if len > 0 {
         table.select(Some(target.min(len - 1)));
     }
-}
-
-/// Move the selection `delta` rows, stopping at either end.
-fn scroll_rows(table: &mut TableState, len: usize, delta: isize) {
-    let current = table.selected().unwrap_or(0);
-    select_row(table, len, current.saturating_add_signed(delta));
 }

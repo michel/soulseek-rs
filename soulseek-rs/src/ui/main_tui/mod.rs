@@ -1548,12 +1548,12 @@ mod tests {
         let panes = row_with(&screen, "Panes");
         assert!(!panes.contains("Searches"), "one column: {panes}");
         assert!(screen.contains("focus a pane, hidden or not"), "{screen}");
-        assert!(!screen.contains("clear every finished one"), "{screen}");
+        assert!(!screen.contains("next room, chat or user"), "{screen}");
 
         press(&mut tui, KeyCode::End);
         let screen = screen_sized(&mut tui, 80, 24);
-        assert!(screen.contains("clear every finished one"), "{screen}");
-        assert!(!screen.contains("Tab / Shift-Tab"), "{screen}");
+        assert!(screen.contains("next room, chat or user"), "{screen}");
+        assert!(!screen.contains("next / previous pane"), "{screen}");
 
         press(&mut tui, KeyCode::Home);
         let screen = screen_sized(&mut tui, 80, 24);
@@ -1585,6 +1585,208 @@ mod tests {
             modifiers: KeyModifiers::NONE,
         });
         assert_eq!(tui.state.focused_pane, FocusedPane::Results);
+    }
+
+    #[test]
+    fn l_and_h_scroll_a_transfer_name_and_a_query_too() {
+        let mut tui = furnished_tui();
+        tui.state.downloads[0].download.filename = "y".repeat(120);
+        tui.state.searches[0].query = "z".repeat(60);
+        let _ = screen_of(&mut tui);
+
+        tui.state.focused_pane = FocusedPane::Downloads;
+        press(&mut tui, KeyCode::Char('l'));
+        assert_eq!(tui.state.downloads_name_offset, 8);
+        press(&mut tui, KeyCode::Char('$'));
+        let end = tui.state.downloads_name_offset;
+        assert!(end > 8, "the end is past a step: {end}");
+        let screen = screen_of(&mut tui);
+        assert!(row_with(&screen, "…yyyy").contains("…yyyy"), "{screen}");
+        press(&mut tui, KeyCode::Char('0'));
+        assert_eq!(tui.state.downloads_name_offset, 0);
+
+        tui.state.focused_pane = FocusedPane::Searches;
+        press(&mut tui, KeyCode::Right);
+        assert_eq!(tui.state.searches_query_offset, 8);
+        press(&mut tui, KeyCode::End);
+        assert_eq!(
+            tui.state.searches_table_state.selected(),
+            Some(0),
+            "End is still a row key, $ is the name key"
+        );
+        press(&mut tui, KeyCode::Char('$'));
+        assert!(tui.state.searches_query_offset > 8);
+        let screen = screen_of(&mut tui);
+        assert!(screen.contains("…zzzz"), "{screen}");
+        assert!(
+            tui.state.results_name_offset == 0,
+            "each list scrolls on its own"
+        );
+    }
+
+    fn browsed(tui: &mut MainTui, files: usize) {
+        tui.state.browse.open("bob");
+        let listing = vec![soulseek_rs::SharedDirectory {
+            name: "Music".to_string(),
+            files: (0..files).map(|i| (format!("{i:02}.mp3"), 1)).collect(),
+        }];
+        tui.state
+            .browse
+            .active_tab_mut()
+            .expect("tab")
+            .load(&listing);
+        tui.state.show_browse = true;
+        let _ = screen_of(tui);
+    }
+
+    #[test]
+    fn page_keys_walk_the_browse_tree_and_ctrl_d_does_not_download() {
+        let session = Arc::new(TalkativeSession::default());
+        let mut tui = attach(session);
+        browsed(&mut tui, 40);
+        let rows = tui.state.browse.active_tab().expect("tab").rows().len();
+        assert_eq!(rows, 41, "the folder and its files");
+
+        press(&mut tui, KeyCode::End);
+        let selected = |tui: &MainTui| {
+            tui.state.browse.active_tab().expect("tab").selected_row
+        };
+        assert_eq!(selected(&tui), 40);
+        press(&mut tui, KeyCode::Home);
+        assert_eq!(selected(&tui), 0);
+        press(&mut tui, KeyCode::PageDown);
+        let page = selected(&tui);
+        assert!(page > 1 && page < 40, "a page of rows: {page}");
+        ctrl(&mut tui, 'd');
+        assert!(selected(&tui) > page, "ctrl-d pages");
+        assert!(
+            tui.state.downloads.is_empty()
+                && tui.state.downloads_receiver_channel.is_none(),
+            "and does not download the folder"
+        );
+        press(&mut tui, KeyCode::Char('G'));
+        assert_eq!(selected(&tui), 40);
+        assert!(tui.state.show_browse, "still open");
+    }
+
+    fn in_a_room(tui: &mut MainTui, messages: usize) {
+        tui.state.rooms.apply_event(
+            soulseek_rs::RoomEvent::Joined {
+                room: "jazz".to_string(),
+                users: (0..30).map(|i| format!("user{i:02}")).collect(),
+            },
+            None,
+        );
+        tui.state.rooms.focus_or_open("jazz");
+        for i in 0..messages {
+            tui.state.rooms.apply_event(
+                soulseek_rs::RoomEvent::Message {
+                    room: "jazz".to_string(),
+                    username: "alice".to_string(),
+                    message: format!("line {i:03}"),
+                },
+                Some("jazz"),
+            );
+        }
+        tui.state.show_rooms = true;
+        let _ = screen_of(tui);
+    }
+
+    #[test]
+    fn page_up_scrolls_a_room_log_back_and_end_returns_to_the_newest() {
+        let mut tui = with_session(TalkativeSession::default());
+        in_a_room(&mut tui, 120);
+
+        let screen = screen_of(&mut tui);
+        assert!(screen.contains("line 119"), "tails by default: {screen}");
+        assert!(!screen.contains("line 000"), "{screen}");
+
+        press(&mut tui, KeyCode::PageUp);
+        let screen = screen_of(&mut tui);
+        assert!(!screen.contains("line 119"), "scrolled back: {screen}");
+
+        press(&mut tui, KeyCode::Home);
+        let screen = screen_of(&mut tui);
+        assert!(screen.contains("line 000"), "the oldest: {screen}");
+        press(&mut tui, KeyCode::PageUp);
+        let screen = screen_of(&mut tui);
+        assert!(screen.contains("line 000"), "clamped at the top: {screen}");
+
+        press(&mut tui, KeyCode::End);
+        let screen = screen_of(&mut tui);
+        assert!(screen.contains("line 119"), "{screen}");
+
+        // The member list keeps its own keys, and ctrl-x is not x.
+        press(&mut tui, KeyCode::Down);
+        assert_eq!(tui.state.rooms.user_selected, 1);
+        ctrl(&mut tui, 'x');
+        assert_eq!(tui.state.rooms.open.len(), 1, "still in the room");
+    }
+
+    #[test]
+    fn page_keys_move_through_the_room_list() {
+        let mut tui = with_session(TalkativeSession::default());
+        tui.state.rooms.apply_event(
+            soulseek_rs::RoomEvent::List(
+                (0..60)
+                    .map(|i| soulseek_rs::types::RoomInfo {
+                        name: format!("room{i:02}"),
+                        user_count: 60 - i,
+                    })
+                    .collect(),
+            ),
+            None,
+        );
+        tui.state.show_rooms = true;
+        let _ = screen_of(&mut tui);
+
+        press(&mut tui, KeyCode::End);
+        assert_eq!(tui.state.rooms.list_selected, 59);
+        press(&mut tui, KeyCode::PageUp);
+        assert!(tui.state.rooms.list_selected < 59);
+        press(&mut tui, KeyCode::Char('g'));
+        assert_eq!(tui.state.rooms.list_selected, 0);
+        ctrl(&mut tui, 'f');
+        assert!(tui.state.rooms.list_selected > 1);
+    }
+
+    #[test]
+    fn page_up_scrolls_a_conversation_and_switching_chats_resets_it() {
+        let mut tui = tui((0..80)
+            .map(|i| ChatMessageDto {
+                peer: "bob".into(),
+                outgoing: i % 2 == 0,
+                text: format!("msg {i:03}"),
+                at: i,
+            })
+            .chain(std::iter::once(ChatMessageDto {
+                peer: "carol".into(),
+                outgoing: false,
+                text: "hello".into(),
+                at: 100,
+            }))
+            .collect());
+        tui.state.chat_peer = Some("bob".to_string());
+        tui.state.show_messages = true;
+        let screen = screen_of(&mut tui);
+        assert!(screen.contains("msg 079"), "{screen}");
+
+        press(&mut tui, KeyCode::PageUp);
+        let screen = screen_of(&mut tui);
+        assert!(!screen.contains("msg 079"), "scrolled back: {screen}");
+        press(&mut tui, KeyCode::Char('g'));
+        let screen = screen_of(&mut tui);
+        assert!(screen.contains("msg 000"), "{screen}");
+
+        press(&mut tui, KeyCode::Tab);
+        assert_eq!(tui.state.active_chat_peer(), Some("carol"));
+        assert!(
+            tui.state.chat_view.following(),
+            "a fresh chat starts at its end"
+        );
+        press(&mut tui, KeyCode::BackTab);
+        let screen = screen_of(&mut tui);
+        assert!(screen.contains("msg 079"), "{screen}");
     }
 
     #[test]

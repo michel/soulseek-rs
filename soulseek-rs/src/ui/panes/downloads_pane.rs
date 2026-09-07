@@ -1,3 +1,4 @@
+use super::name_scroll::{column_width, end_offset, scroll_text};
 use crate::models::DownloadEntry;
 use crate::ui::{
     GLYPH_ACTIVE, GLYPH_DONE, GLYPH_FAILED, GLYPH_QUEUED, HIGHLIGHT_SYMBOL,
@@ -8,11 +9,42 @@ use crate::ui::{
 };
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Constraint, Rect},
     widgets::{Cell, HighlightSpacing, Paragraph, Row, Table, TableState},
 };
 use soulseek_rs::DownloadStatus;
 use soulseek_rs::types::{UploadInfo, UploadStatus};
+
+// Sized to the widest value each column shows in ordinary use — a
+// three-digit megabyte count on both sides of the progress — so the file
+// name keeps whatever width the pane has beyond that.
+const WIDTHS: [Constraint; 5] = [
+    Constraint::Length(6),
+    Constraint::Fill(1),
+    Constraint::Length(12),
+    Constraint::Length(25),
+    Constraint::Length(10),
+];
+
+/// Filename is the second column.
+const NAME_COLUMN: usize = 1;
+
+/// The offset that brings the end of a transfer's name into view.
+#[must_use]
+pub fn name_end_offset(name: &str, area: Rect) -> usize {
+    end_offset(name, area, &WIDTHS, NAME_COLUMN)
+}
+
+/// What the list shows for an upload: the peer-facing path is ours, so only
+/// the file's own name is worth a column.
+#[must_use]
+pub fn upload_display_name(upload: &UploadInfo) -> &str {
+    upload
+        .filename
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or(&upload.filename)
+}
 
 pub fn render_downloads_pane(
     frame: &mut Frame,
@@ -21,6 +53,7 @@ pub fn render_downloads_pane(
     uploads: &[UploadInfo],
     table_state: &mut TableState,
     focused: bool,
+    name_offset: usize,
 ) {
     if downloads.is_empty() && uploads.is_empty() {
         let empty_block = pane_block(focused).title(pane_title(
@@ -47,6 +80,7 @@ pub fn render_downloads_pane(
     ])
     .height(1);
 
+    let name_width = column_width(area, &WIDTHS, NAME_COLUMN);
     let mut rows: Vec<Row> = downloads
         .iter()
         .map(|download_entry| {
@@ -106,7 +140,12 @@ pub fn render_downloads_pane(
 
             Row::new(vec![
                 Cell::from(status_icon).style(status_style),
-                Cell::from(download.filename.clone()).style(body_style()),
+                Cell::from(scroll_text(
+                    &download.filename,
+                    name_offset,
+                    name_width,
+                ))
+                .style(body_style()),
                 Cell::from(download.username.clone()).style(info_style()),
                 Cell::from(progress_text).style(progress_style),
                 Cell::from(speed_text).style(warning_style()),
@@ -149,32 +188,21 @@ pub fn render_downloads_pane(
             }
             _ => "-".to_string(),
         };
-        let basename = upload
-            .filename
-            .rsplit(['\\', '/'])
-            .next()
-            .unwrap_or(&upload.filename);
         Row::new(vec![
             Cell::from(format!("↑ {status_icon}")).style(status_style),
-            Cell::from(basename.to_string()).style(body_style()),
+            Cell::from(scroll_text(
+                upload_display_name(upload),
+                name_offset,
+                name_width,
+            ))
+            .style(body_style()),
             Cell::from(upload.username.clone()).style(info_style()),
             Cell::from(progress_text).style(primary_style()),
             Cell::from(speed_text).style(warning_style()),
         ])
     }));
 
-    // Sized to the widest value each column shows in ordinary use — a
-    // three-digit megabyte count on both sides of the progress — so the file
-    // name keeps whatever width the pane has beyond that.
-    let widths = [
-        ratatui::layout::Constraint::Length(6),
-        ratatui::layout::Constraint::Fill(1),
-        ratatui::layout::Constraint::Length(12),
-        ratatui::layout::Constraint::Length(25),
-        ratatui::layout::Constraint::Length(10),
-    ];
-
-    let table = Table::new(rows, widths)
+    let table = Table::new(rows, WIDTHS)
         .header(header)
         .row_highlight_style(row_highlight_style())
         .highlight_symbol(HIGHLIGHT_SYMBOL)

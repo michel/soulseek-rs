@@ -50,6 +50,8 @@ const HELP_LEFT: &[(&str, &[(&str, &str)])] = &[
             ("Home End / g G", "first / last row"),
             ("PgUp PgDn / ^b ^f", "one page"),
             ("^u ^d", "half a page"),
+            ("h l / ← →", "scroll a long name sideways"),
+            ("0 / $", "its start / its end"),
         ],
     ),
 ];
@@ -71,8 +73,6 @@ const HELP_RIGHT: &[(&str, &[(&str, &str)])] = &[
             ("a / A", "select all / none"),
             ("Enter", "download the selection"),
             ("/", "filter, Enter keeps it, Esc clears"),
-            ("h l / ← →", "scroll the file name"),
-            ("0 / $", "start / end of the file name"),
             ("b", "browse the owner"),
             ("c", "chat rooms"),
         ],
@@ -85,6 +85,15 @@ const HELP_RIGHT: &[(&str, &[(&str, &str)])] = &[
             ("r", "retry a failed one"),
             ("d", "delete a queued or finished one"),
             ("c", "clear every finished one"),
+        ],
+    ),
+    (
+        "Chat and browse popups",
+        &[
+            ("PgUp PgDn / ^b ^f", "a page of messages, or of the tree"),
+            ("^u ^d", "half a page of them"),
+            ("Home End / g G", "oldest / newest, or first / last row"),
+            ("Tab / Shift-Tab", "next room, chat or user"),
         ],
     ),
 ];
@@ -192,6 +201,7 @@ impl MainTui {
                     &self.state.searches,
                     &mut self.state.searches_table_state,
                     focused,
+                    self.state.searches_query_offset,
                 );
             }
             FocusedPane::Results => {
@@ -207,6 +217,7 @@ impl MainTui {
                     &self.state.uploads,
                     &mut self.state.downloads_table_state,
                     focused,
+                    self.state.downloads_name_offset,
                 );
             }
         }
@@ -329,6 +340,7 @@ impl MainTui {
         // Browse tree overlays everything when open.
         if self.state.show_browse && !self.state.browse.is_empty() {
             let area = centered_rect(80, 80, frame.area());
+            self.state.popup_area = Some(area);
             frame.render_widget(ratatui::widgets::Clear, area);
             render_browse_pane(
                 frame,
@@ -347,11 +359,12 @@ impl MainTui {
         // Chat rooms overlay everything when open.
         if self.state.show_rooms {
             let area = centered_rect(85, 80, frame.area());
+            self.state.popup_area = Some(area);
             frame.render_widget(ratatui::widgets::Clear, area);
             render_rooms_pane(
                 frame,
                 area,
-                &self.state.rooms,
+                &mut self.state.rooms,
                 &mut self.state.rooms_list_table_state,
             );
         }
@@ -430,12 +443,14 @@ impl MainTui {
         );
     }
 
-    fn render_messages_popup(&self, frame: &mut Frame) {
+    fn render_messages_popup(&mut self, frame: &mut Frame) {
         // The per-conversation chat box supersedes the old flat message list;
         // it renders the messages and the compose line itself.
         let area = centered_rect(70, 60, frame.area());
         frame.render_widget(ratatui::widgets::Clear, area);
-        render_chat_pane(frame, area, &self.state, &self.client.username());
+        self.state.popup_area = Some(area);
+        let own = self.client.username();
+        render_chat_pane(frame, area, &mut self.state, &own);
     }
 
     /// Context shortcuts for the chat-rooms popup.
@@ -467,6 +482,7 @@ impl MainTui {
             }
             RoomsView::Chat => vec![
                 ("Enter", "say"),
+                ("PgUp/PgDn", "scroll"),
                 ("↑↓", "pick user"),
                 ("b", "browse user"),
                 ("m", "message user"),
@@ -520,6 +536,7 @@ impl MainTui {
             } else {
                 vec![
                     ("Enter", "type"),
+                    ("PgUp/PgDn", "scroll"),
                     ("↑↓/Tab", "switch chat"),
                     ("m", "new chat"),
                     ("i/Esc", "close"),
@@ -530,6 +547,7 @@ impl MainTui {
         } else if self.state.show_browse {
             vec![
                 ("↑↓", "move"),
+                ("PgUp/PgDn", "page"),
                 ("→←", "expand/collapse"),
                 ("Enter", "open/download"),
                 ("d", "download folder"),
@@ -579,6 +597,7 @@ impl MainTui {
                     ("i", "inbox"),
                     ("c", "chat"),
                     ("b", "browse user"),
+                    ("h/l", "scroll query"),
                 ],
                 FocusedPane::Results => vec![
                     ("Space", "select"),
@@ -597,6 +616,7 @@ impl MainTui {
                     ("d", "delete queued/done"),
                     ("c", "clear finished"),
                     ("b", "browse user"),
+                    ("h/l", "scroll name"),
                 ],
             };
             keys.extend(self.pane_shortcuts());
