@@ -1,6 +1,7 @@
 use crate::actor::{Actor, ActorHandle, ConnectionState};
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
+use crate::message::server::AdminMessageHandler;
 use crate::message::server::CheckPrivilegesHandler;
 use crate::message::server::ConnectToPeerHandler;
 use crate::message::server::ExcludedSearchPhrasesHandler;
@@ -383,6 +384,7 @@ impl ServerActor {
 
         handlers.register_handler(LoginHandler);
         handlers.register_handler(ReloggedHandler);
+        handlers.register_handler(AdminMessageHandler);
         handlers.register_handler(RoomListHandler);
         handlers.register_handler(GetUserStatusHandler);
         handlers.register_handler(WatchUserHandler);
