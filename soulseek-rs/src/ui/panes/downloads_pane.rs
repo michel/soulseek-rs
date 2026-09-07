@@ -163,12 +163,15 @@ pub fn render_downloads_pane(
         ])
     }));
 
+    // Sized to the widest value each column shows in ordinary use — a
+    // three-digit megabyte count on both sides of the progress — so the file
+    // name keeps whatever width the pane has beyond that.
     let widths = [
-        ratatui::layout::Constraint::Length(8),
-        ratatui::layout::Constraint::Fill(2),
-        ratatui::layout::Constraint::Length(15),
-        ratatui::layout::Constraint::Length(25),
+        ratatui::layout::Constraint::Length(6),
+        ratatui::layout::Constraint::Fill(1),
         ratatui::layout::Constraint::Length(12),
+        ratatui::layout::Constraint::Length(25),
+        ratatui::layout::Constraint::Length(10),
     ];
 
     let table = Table::new(rows, widths)

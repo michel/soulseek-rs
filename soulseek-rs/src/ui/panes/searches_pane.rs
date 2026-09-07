@@ -43,10 +43,12 @@ pub fn render_searches_pane(
             } else {
                 search.results.len()
             };
+            // Nothing yet from a search still out: the status column already
+            // says it is looking.
             let results_text = if results_count == 0
                 && search.status == SearchStatus::Active
             {
-                "Searching...".to_string()
+                "…".to_string()
             } else {
                 format!("{results_count}")
             };
@@ -59,10 +61,12 @@ pub fn render_searches_pane(
         })
         .collect();
 
+    // The pane shares a row with two others, so the fixed columns are as
+    // narrow as their widest word: the query gets the rest.
     let widths = [
-        ratatui::layout::Constraint::Length(15),
+        ratatui::layout::Constraint::Length(6),
         ratatui::layout::Constraint::Fill(1),
-        ratatui::layout::Constraint::Length(10),
+        ratatui::layout::Constraint::Length(7),
     ];
 
     let table = Table::new(rows, widths)

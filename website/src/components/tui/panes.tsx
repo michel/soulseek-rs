@@ -6,7 +6,7 @@ import { TuiPane } from './chrome'
 import type { ResultRow, SearchRow, TransferRow, TransferStatus } from './data'
 
 const RESULT_COLS = '30px 1fr 74px 92px 78px 74px 42px'
-const TRANSFER_COLS = '48px 1fr 96px 150px 74px'
+const TRANSFER_COLS = '48px 1fr 96px 168px 74px'
 
 interface SearchesPaneProps {
   searches: readonly SearchRow[]

@@ -91,6 +91,15 @@ soulseek-rs
 
 Everything else is a one-shot command that runs headless.
 
+### The TUI
+
+Results run across the top, with the whole width for long file names;
+Searches, Downloads and Info share the row underneath. `Tab`/`Shift-Tab` or
+`1`–`3` move the focus between panes, `z` zooms the focused pane to the whole
+window, and `w` hides it so the others widen (its number brings it back).
+Every list takes `↑`/`↓`, `Home`/`End`, `PgUp`/`PgDn` and the vim keys, and
+`?` shows every key for where you are.
+
 ### Daemon mode
 
 A one-shot command logs in, does its job, and exits. Run a daemon instead and

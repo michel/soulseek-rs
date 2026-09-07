@@ -158,22 +158,59 @@ pub fn download_status_glyph(status: &DownloadStatus) -> (&'static str, Style) {
     }
 }
 
-pub fn format_shortcuts_styled(shortcuts: &[(&str, &str)]) -> Line<'static> {
-    let mut spans = Vec::new();
+/// One `[key → action]` legend entry.
+fn shortcut_spans(key: &str, action: &str) -> Vec<Span<'static>> {
+    vec![
+        Span::styled("[", dimmed_style()),
+        Span::styled(key.to_string(), Style::default().fg(SIGNAL)),
+        Span::styled(format!(" {SHORTCUT_ARROW} "), dimmed_style()),
+        Span::styled(action.to_string(), body_style()),
+        Span::styled("]", dimmed_style()),
+    ]
+}
 
-    for (i, (key, action)) in shortcuts.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::raw(" "));
+/// The most rows the shortcuts bar grows to. Past that a terminal is too
+/// narrow for the legend to be worth the content rows it would take.
+pub const SHORTCUT_ROWS_MAX: usize = 3;
+
+/// Lay the legend out in rows no wider than `width`, never breaking inside an
+/// entry: a `[key → action]` split over two rows reads as two keys. Entries
+/// that do not fit in [`SHORTCUT_ROWS_MAX`] rows are dropped, so a bar always
+/// has at least one row and never more than that.
+pub fn pack_shortcuts(
+    shortcuts: &[(&str, &str)],
+    width: u16,
+) -> Vec<Line<'static>> {
+    let width = usize::from(width);
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    let mut row: Vec<Span<'static>> = Vec::new();
+    let mut row_width = 0;
+
+    for (key, action) in shortcuts {
+        let entry = shortcut_spans(key, action);
+        let entry_width: usize = entry.iter().map(Span::width).sum();
+        let needed = if row.is_empty() {
+            entry_width
+        } else {
+            row_width + 1 + entry_width
+        };
+        if !row.is_empty() && needed > width {
+            rows.push(Line::from(std::mem::take(&mut row)));
+            if rows.len() == SHORTCUT_ROWS_MAX {
+                return rows;
+            }
+            row_width = entry_width;
+        } else {
+            if !row.is_empty() {
+                row.push(Span::raw(" "));
+            }
+            row_width = needed;
         }
-
-        spans.push(Span::styled("[", dimmed_style()));
-        spans.push(Span::styled(key.to_string(), Style::default().fg(SIGNAL)));
-        spans.push(Span::styled(format!(" {SHORTCUT_ARROW} "), dimmed_style()));
-        spans.push(Span::styled(action.to_string(), body_style()));
-        spans.push(Span::styled("]", dimmed_style()));
+        row.extend(entry);
     }
 
-    Line::from(spans)
+    rows.push(Line::from(row));
+    rows
 }
 
 pub fn format_progress_bar(
@@ -251,6 +288,46 @@ mod tests {
         let cursor = row_highlight_style();
         assert_eq!(cursor.fg, None);
         assert_eq!(cursor.bg, Some(SELECTION));
+    }
+
+    fn texts(rows: &[Line<'static>]) -> Vec<String> {
+        rows.iter()
+            .map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn shortcuts_stay_on_one_row_when_they_fit() {
+        let rows = pack_shortcuts(&[("q", "quit"), ("s", "search")], 80);
+        assert_eq!(texts(&rows), ["[q → quit] [s → search]"]);
+    }
+
+    #[test]
+    fn shortcuts_wrap_between_entries_never_inside_one() {
+        let rows = pack_shortcuts(
+            &[("Space", "select"), ("Enter", "download"), ("q", "quit")],
+            30,
+        );
+        // "[Space → select] [Enter → download]" is 35 cells, over the 30 the
+        // bar has, so the second entry starts a new row whole.
+        assert_eq!(
+            texts(&rows),
+            ["[Space → select]", "[Enter → download] [q → quit]"]
+        );
+    }
+
+    #[test]
+    fn an_entry_wider_than_the_bar_still_gets_a_row() {
+        let rows = pack_shortcuts(&[("Enter", "download"), ("q", "quit")], 5);
+        assert_eq!(texts(&rows), ["[Enter → download]", "[q → quit]"]);
+    }
+
+    #[test]
+    fn the_bar_never_grows_past_its_cap() {
+        let keys: Vec<(&str, &str)> = (0..10).map(|_| ("k", "act")).collect();
+        let rows = pack_shortcuts(&keys, 12);
+        assert_eq!(rows.len(), SHORTCUT_ROWS_MAX);
+        assert_eq!(texts(&rows)[0], "[k → act]");
     }
 
     #[test]
