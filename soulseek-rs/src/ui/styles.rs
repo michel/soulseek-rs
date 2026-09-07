@@ -39,7 +39,8 @@ pub const GLYPH_FAILED: &str = "✗";
 pub const GLYPH_TIMED_OUT: &str = "⧗";
 pub const GLYPH_CURSOR: &str = "▮";
 pub const HIGHLIGHT_SYMBOL: &str = "›";
-pub const SHORTCUT_ARROW: &str = "→";
+/// Between a key and its action in the legend, spaced.
+pub const SHORTCUT_ARROW: &str = " → ";
 
 pub fn header_style() -> Style {
     Style::default().fg(DUST).add_modifier(Modifier::BOLD)
@@ -159,12 +160,15 @@ pub fn download_status_glyph(status: &DownloadStatus) -> (&'static str, Style) {
 }
 
 /// One `[key → action]` legend entry.
-fn shortcut_spans(key: &str, action: &str) -> Vec<Span<'static>> {
-    vec![
+fn shortcut_spans(
+    key: &'static str,
+    action: &'static str,
+) -> [Span<'static>; 5] {
+    [
         Span::styled("[", dimmed_style()),
-        Span::styled(key.to_string(), Style::default().fg(SIGNAL)),
-        Span::styled(format!(" {SHORTCUT_ARROW} "), dimmed_style()),
-        Span::styled(action.to_string(), body_style()),
+        Span::styled(key, info_style()),
+        Span::styled(SHORTCUT_ARROW, dimmed_style()),
+        Span::styled(action, body_style()),
         Span::styled("]", dimmed_style()),
     ]
 }
@@ -178,7 +182,7 @@ pub const SHORTCUT_ROWS_MAX: usize = 3;
 /// that do not fit in [`SHORTCUT_ROWS_MAX`] rows are dropped, so a bar always
 /// has at least one row and never more than that.
 pub fn pack_shortcuts(
-    shortcuts: &[(&str, &str)],
+    shortcuts: &[(&'static str, &'static str)],
     width: u16,
 ) -> Vec<Line<'static>> {
     let width = usize::from(width);
@@ -189,24 +193,19 @@ pub fn pack_shortcuts(
     for (key, action) in shortcuts {
         let entry = shortcut_spans(key, action);
         let entry_width: usize = entry.iter().map(Span::width).sum();
-        let needed = if row.is_empty() {
-            entry_width
-        } else {
-            row_width + 1 + entry_width
-        };
-        if !row.is_empty() && needed > width {
+        if !row.is_empty() && row_width + 1 + entry_width > width {
             rows.push(Line::from(std::mem::take(&mut row)));
             if rows.len() == SHORTCUT_ROWS_MAX {
                 return rows;
             }
-            row_width = entry_width;
-        } else {
-            if !row.is_empty() {
-                row.push(Span::raw(" "));
-            }
-            row_width = needed;
+            row_width = 0;
+        }
+        if !row.is_empty() {
+            row.push(Span::raw(" "));
+            row_width += 1;
         }
         row.extend(entry);
+        row_width += entry_width;
     }
 
     rows.push(Line::from(row));
