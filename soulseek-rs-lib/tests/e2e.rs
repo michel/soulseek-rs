@@ -3669,20 +3669,21 @@ fn a_leaf_adopts_a_parent_and_answers_the_searches_it_passes_down() {
     std::fs::write(share_dir.join("album").join("treesearch.mp3"), b"xxxx")
         .unwrap();
 
-    // The parent doubles as the searcher, so the leaf's answer comes back to
-    // the same listener. Bind all interfaces: soulfind reports the LAN address.
-    let parent_port = free_port().expect("parent port");
-    let listener =
-        std::net::TcpListener::bind(("0.0.0.0", parent_port)).unwrap();
+    // The parent and the searcher are two logged-in users with a listener
+    // each. Bind all interfaces: soulfind reports the LAN address.
     let server_addr = format!("{}:{}", server.host, server.port);
-    let mut parent_srv =
-        login_raw(&server_addr, "e2e_parent", "pw").expect("parent logs in");
-    parent_srv
-        .write_all(
-            &MessageFactory::build_set_wait_port_message(parent_port)
-                .get_buffer(),
+    let raw_user = |name: &str| {
+        let port = free_port().expect("a port for the raw user");
+        let listener = std::net::TcpListener::bind(("0.0.0.0", port)).unwrap();
+        let mut srv = login_raw(&server_addr, name, "pw").expect("raw login");
+        srv.write_all(
+            &MessageFactory::build_set_wait_port_message(port).get_buffer(),
         )
         .unwrap();
+        (listener, port, srv)
+    };
+    let (listener, parent_port, _parent_srv) = raw_user("e2e_parent");
+    let (searcher, _, _searcher_srv) = raw_user("e2e_searcher");
 
     let mut leaf = Client::with_settings(ClientSettings {
         shared_directories: vec![share_dir.display().to_string()],
@@ -3721,7 +3722,7 @@ fn a_leaf_adopts_a_parent_and_answers_the_searches_it_passes_down() {
     link.write_all(&distributed::build_branch_root("e2e_parent").get_buffer())
         .unwrap();
     link.write_all(
-        &distributed::build_search("e2e_parent", 4242, "treesearch")
+        &distributed::build_search("e2e_searcher", 4242, "treesearch")
             .get_buffer(),
     )
     .unwrap();
@@ -3736,9 +3737,10 @@ fn a_leaf_adopts_a_parent_and_answers_the_searches_it_passes_down() {
         "the first search from a candidate with a branch adopts it"
     );
 
-    // The answer arrives the ordinary way: a P connection to the searcher
-    // carrying a FileSearchResponse for our token.
-    let mut p = accept_within(&listener, Duration::from_secs(20))
+    // The answer goes to whoever asked, not to the parent that relayed it:
+    // a P connection to the searcher carrying a FileSearchResponse for the
+    // token.
+    let mut p = accept_within(&searcher, Duration::from_secs(20))
         .expect("the leaf dials the searcher to answer");
     assert_eq!(
         peer_init_of(&mut p).unwrap(),

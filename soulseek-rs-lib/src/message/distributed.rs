@@ -34,15 +34,27 @@ pub fn parse(message: &mut Message) -> Option<Distributed> {
     parse_at(message, message.get_init_code())
 }
 
-/// Decode the body that follows a one-byte `code`, the pointer already past it.
+/// Decode the body that follows a one-byte `code`, the pointer already past
+/// it. A code-93 envelope is unwrapped exactly once, as Nicotine+ does: an
+/// envelope inside an envelope is nobody's search.
 #[must_use]
 pub fn parse_at(message: &mut Message, code: u8) -> Option<Distributed> {
+    let code = if code == 93 {
+        message.read_int8()
+    } else {
+        code
+    };
     match code {
         3 => {
-            if message.read_int32() != SEARCH_IDENTIFIER {
+            if remaining(message) < 4
+                || message.read_int32() != SEARCH_IDENTIFIER
+            {
                 return None;
             }
             let username = message.read_string();
+            if remaining(message) < 4 {
+                return None;
+            }
             let token = message.read_int32();
             let query = message.read_string();
             (!username.is_empty() && !query.is_empty()).then_some(
@@ -53,15 +65,18 @@ pub fn parse_at(message: &mut Message, code: u8) -> Option<Distributed> {
                 },
             )
         }
-        4 => Some(Distributed::BranchLevel(message.read_int32() as i32)),
-        5 => Some(Distributed::BranchRoot(message.read_string())),
-        // Older branch roots wrap a search in a code-93 envelope.
-        93 => {
-            let inner = message.read_int8();
-            parse_at(message, inner)
+        4 => (remaining(message) >= 4)
+            .then(|| Distributed::BranchLevel(message.read_int32() as i32)),
+        5 => {
+            let root = message.read_string();
+            (!root.is_empty()).then_some(Distributed::BranchRoot(root))
         }
         _ => None,
     }
+}
+
+const fn remaining(message: &mut Message) -> usize {
+    message.get_size().saturating_sub(message.get_pointer())
 }
 
 /// A distributed frame with the one-byte `code`: what a parent (or a test
@@ -171,5 +186,59 @@ mod tests {
         assert_eq!(parse(&mut ping), None);
         let mut short = Message::new_with_data(vec![1, 0, 0, 0, 3]);
         assert_eq!(parse(&mut short), None);
+        let mut level = Message::new_with_data(vec![3, 0, 0, 0, 4, 1, 0]);
+        assert_eq!(parse(&mut level), None, "a level needs four bytes");
+        let mut root =
+            Message::new_with_data(build_branch_root("").get_buffer());
+        assert_eq!(parse(&mut root), None, "an empty root is no root");
+        let mut blank =
+            Message::new_with_data(build_search("seeker", 1, "").get_buffer());
+        assert_eq!(parse(&mut blank), None, "an empty query is no search");
+    }
+
+    // An envelope inside an envelope is unwrapped once and found empty; a
+    // frame that is nothing but envelopes must not recurse its way off the
+    // stack.
+    #[test]
+    fn a_nested_envelope_is_not_unwrapped_twice() {
+        let mut nested = Message::new();
+        nested.write_int8(93).write_raw_bytes(
+            Message::new()
+                .write_int8(93)
+                .write_raw_bytes(build_search("seeker", 5, "q").get_data())
+                .get_data(),
+        );
+        let mut message = Message::new_with_data(nested.get_buffer());
+        assert_eq!(parse(&mut message), None);
+
+        let mut onions = Message::new_with_data(
+            Message::new()
+                .write_raw_bytes(vec![93u8; 64 * 1024])
+                .get_buffer(),
+        );
+        assert_eq!(parse(&mut onions), None);
+    }
+
+    // The frame as the protocol documents it, byte for byte: code 3, the
+    // constant 49, then user, token and query.
+    #[test]
+    fn a_search_frame_matches_the_documented_layout() {
+        let mut bytes = vec![3u8, 49, 0, 0, 0];
+        bytes.extend(2u32.to_le_bytes());
+        bytes.extend(b"me");
+        bytes.extend(9u32.to_le_bytes());
+        bytes.extend(1u32.to_le_bytes());
+        bytes.extend(b"q");
+        let mut framed = (bytes.len() as u32).to_le_bytes().to_vec();
+        framed.extend(&bytes);
+        assert_eq!(build_search("me", 9, "q").get_buffer(), framed);
+        assert_eq!(
+            parse(&mut Message::new_with_data(framed)),
+            Some(Distributed::Search {
+                username: "me".to_string(),
+                token: 9,
+                query: "q".to_string()
+            })
+        );
     }
 }
