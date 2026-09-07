@@ -13,10 +13,15 @@ use crate::trace;
 use crate::types::{Download, DownloadStatus};
 use crate::utils::path::{PART_SUFFIX, expand_tilde};
 
-const READ_BUFFER_SIZE: usize = 8192;
+/// Read in 64 KiB slices: an eighth of the syscalls of the 8 KiB reads before,
+/// and what a fast peer fills per read. slskd reads 256 KiB, Nicotine+ ~50 KiB.
+const READ_BUFFER_SIZE: usize = 64 * 1024;
 const CANCEL_POLL: Duration = Duration::from_secs(1);
 const STALL_DEADLINE: Duration = Duration::from_secs(30);
-const PROGRESS_UPDATE_CHUNKS: usize = 15;
+/// Bytes between progress reports. Counting bytes rather than reads keeps
+/// the report volume flat however big a read is, and gives a slow peer's
+/// rate a window wide enough to mean something.
+const PROGRESS_INTERVAL_BYTES: usize = 128 * 1024;
 
 #[derive(Debug)]
 pub enum DownloadError {
@@ -351,8 +356,7 @@ impl DownloadPeer {
         client_context: &Arc<RwLock<ClientContext>>,
         download: Option<Download>,
     ) -> Result<(Download, String), DownloadError> {
-        let mut read_buffer = [0u8; READ_BUFFER_SIZE];
-        let mut chunk_counter = 0usize;
+        let mut read_buffer = vec![0u8; READ_BUFFER_SIZE];
         let mut bytes_since_last_update = 0usize;
         let mut last_update_time = Instant::now();
         let mut last_data = Instant::now();
@@ -414,10 +418,9 @@ impl DownloadPeer {
                     };
 
                     part.write(data)?;
-                    chunk_counter += 1;
                     bytes_since_last_update += bytes_read;
 
-                    if chunk_counter.is_multiple_of(PROGRESS_UPDATE_CHUNKS) {
+                    if bytes_since_last_update >= PROGRESS_INTERVAL_BYTES {
                         let elapsed = last_update_time.elapsed().as_secs_f64();
                         let speed = if elapsed > 0.0 {
                             bytes_since_last_update as f64 / elapsed
