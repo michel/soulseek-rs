@@ -13,8 +13,7 @@
 //!   cargo test -p soulseek-rs-lib --test e2e -- --nocapture
 //! ```
 //!
-//! No external crates are used — the library forbids dependencies, so the
-//! harness sticks to `std` and the library's own public API.
+//! The harness sticks to `std` and the library's own public API.
 
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -3366,4 +3365,61 @@ fn download_progress_reports_the_rate_actually_received() {
 
     let _ = uploader.join();
     let _ = std::fs::remove_dir_all(&download_dir);
+}
+
+// A listing went out in zlib "stored" blocks, so a big share cost every
+// browser its full uncompressed size; names repeat enough to shrink well.
+#[test]
+fn a_large_listing_travels_compressed() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    let album = share_dir.join("Artist - Album");
+    std::fs::create_dir_all(&album).unwrap();
+    let mut raw_bytes = 0;
+    for n in 0..3000 {
+        let name = format!("Artist - Album - {n:04} - Track Title.flac");
+        raw_bytes += name.len() + 21;
+        std::fs::write(album.join(name), b"x").unwrap();
+    }
+
+    let sharer_port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.listening_settings("e2e_zlib_sharer", "pw", sharer_port)
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let _qt = login_raw(&server_addr, "e2e_zlib_browser", "pw")
+        .expect("third-party client logs in");
+
+    let mut p = connect_retry(
+        &format!("127.0.0.1:{sharer_port}"),
+        Duration::from_secs(5),
+    )
+    .expect("dial the sharer");
+    p.set_read_timeout(Some(Duration::from_secs(15))).unwrap();
+    p.write_all(&peer_init_bytes("e2e_zlib_browser", "P", 0))
+        .unwrap();
+    p.write_all(&MessageFactory::build_get_share_file_list().get_buffer())
+        .unwrap();
+    p.flush().unwrap();
+    let mut response = expect_code(&mut p, 5, Duration::from_secs(15))
+        .expect("the sharer answers the browse");
+
+    let frame = response.get_size();
+    assert!(
+        frame < raw_bytes / 4,
+        "a {raw_bytes}-byte listing travelled as {frame} bytes"
+    );
+    response.set_pointer(8);
+    let directories =
+        soulseek_rs::message::peer::parse_shared_file_list(&mut response);
+    assert_eq!(
+        directories.iter().map(|d| d.files.len()).sum::<usize>(),
+        3000
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
 }
