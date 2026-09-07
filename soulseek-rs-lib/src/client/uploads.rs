@@ -1,7 +1,9 @@
 use super::{
     ActiveUpload, Arc, Client, ClientContext, DownloadStatus, PeerMessage,
-    RwLock, RwLockExt, collect_failed_tokens, error, next_upload_token, thread,
+    RwLock, RwLockExt, ServerMessage, collect_failed_tokens, error,
+    next_upload_token, thread,
 };
+use crate::message::server::MessageFactory;
 use crate::types::UploadStatus;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 
@@ -156,6 +158,7 @@ impl Client {
                     UploadStatus::Failed(e.to_string())
                 }
             };
+            let mut report = None;
             if let Ok(mut ctx) = context.write_safe()
                 && let Some(upload) = ctx.active_uploads.get_mut(&token)
             {
@@ -164,8 +167,17 @@ impl Client {
                 if let Some(bytes) = streamed
                     && secs > 0.0
                 {
-                    ctx.last_upload_speed = (bytes as f64 / secs) as u32;
+                    let speed = (bytes as f64 / secs) as u32;
+                    ctx.last_upload_speed = speed;
+                    report = ctx.server_sender.clone().map(|s| (s, speed));
                 }
+            }
+            // The server folds each finished upload's rate into the average
+            // speed it shows other users for us.
+            if let Some((server, speed)) = report {
+                let _ = server.send(ServerMessage::SendMessage(
+                    MessageFactory::build_send_upload_speed(speed),
+                ));
             }
             // The slot this transfer held is free now, so whoever is next in
             // line gets it without waiting for another request to arrive.
