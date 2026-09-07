@@ -1769,6 +1769,22 @@ fn two_real_clients_search_and_download() {
         "a finished upload sets the advertised speed"
     );
 
+    // The server hears about it too (SendUploadSpeed), which is where every
+    // other client's `user` lookup and the server's own ranking read it.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut recorded = 0;
+    while Instant::now() < deadline && recorded == 0 {
+        leecher
+            .request_user_info("e2e_sharer")
+            .expect("ask about the sharer");
+        std::thread::sleep(Duration::from_millis(250));
+        recorded = leecher
+            .user_info("e2e_sharer")
+            .and_then(|info| info.stats)
+            .map_or(0, |stats| stats.average_speed);
+    }
+    assert!(recorded > 0, "the server should record the upload's speed");
+
     let _ = std::fs::remove_dir_all(share_dir);
     let _ = std::fs::remove_dir_all(download_dir);
 }
