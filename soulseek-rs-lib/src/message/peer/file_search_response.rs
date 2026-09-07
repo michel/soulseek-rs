@@ -1,7 +1,7 @@
 use crate::message::{Message, MessageHandler};
 use crate::peer::PeerMessage;
 use crate::types::SearchResult;
-use crate::utils::zlib::compress_stored;
+use crate::utils::zlib::deflate;
 use std::sync::mpsc::Sender;
 
 /// A borrowed view of one file to advertise in a search response, kept
@@ -45,7 +45,7 @@ pub fn build_file_search_response(
         .write_int32(speed)
         .write_int32(queue_length);
 
-    let compressed = compress_stored(&payload.get_data());
+    let compressed = deflate(&payload.get_data());
     Message::new()
         .write_int32(9)
         .write_raw_bytes(compressed)
@@ -141,7 +141,7 @@ fn build_file_search_response_roundtrips_through_the_decoder() {
 fn the_trailer_carries_slots_speed_and_queue_length() {
     let message = build_file_search_response("me", 1, &[], 0, 900, 7);
     let mut body = Message::new_with_data(
-        crate::utils::zlib::deflate(&message.get_data()[4..]).unwrap(),
+        crate::utils::zlib::inflate(&message.get_data()[4..]).unwrap(),
     );
     body.read_string();
     body.read_int32();
