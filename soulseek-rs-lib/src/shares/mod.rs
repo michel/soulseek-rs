@@ -6,6 +6,7 @@
 
 mod audio;
 
+use crate::message::peer::{SharedDirectory, SharedFileEntry};
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -129,12 +130,13 @@ impl Shares {
     }
 
     /// Files grouped by their virtual directory (everything before the final
-    /// backslash), as `(directory, [(basename, size)])`. Used to build a
-    /// SharedFileListResponse.
+    /// backslash), in the form a browse or folder listing carries.
     #[must_use]
-    pub fn directories(&self) -> Vec<(String, Vec<(String, u64)>)> {
-        let mut by_dir: std::collections::BTreeMap<String, Vec<(String, u64)>> =
-            std::collections::BTreeMap::new();
+    pub fn directories(&self) -> Vec<SharedDirectory> {
+        let mut by_dir: std::collections::BTreeMap<
+            String,
+            Vec<SharedFileEntry>,
+        > = std::collections::BTreeMap::new();
         for file in &self.files {
             let (dir, base) = file
                 .virtual_path
@@ -143,9 +145,16 @@ impl Shares {
             by_dir
                 .entry(dir.to_string())
                 .or_default()
-                .push((base.to_string(), file.size));
+                .push(SharedFileEntry {
+                    name: base.to_string(),
+                    size: file.size,
+                    attributes: file.attributes.clone(),
+                });
         }
-        by_dir.into_iter().collect()
+        by_dir
+            .into_iter()
+            .map(|(name, files)| SharedDirectory { name, files })
+            .collect()
     }
 
     #[must_use]

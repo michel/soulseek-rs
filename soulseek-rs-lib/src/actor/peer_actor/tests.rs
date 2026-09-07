@@ -100,11 +100,10 @@ fn tick_reaps_a_peer_idle_past_the_deadline() {
 /// ticks proves the actor drains the socket rather than sipping 1 KiB a tick.
 fn big_listing() -> Vec<u8> {
     let files = (0..400u64)
-        .map(|i| {
-            (
-                format!("track-{i:03}-{}.flac", "x".repeat(i as usize % 17)),
-                i,
-            )
+        .map(|i| crate::message::peer::SharedFileEntry {
+            name: format!("track-{i:03}-{}.flac", "x".repeat(i as usize % 17)),
+            size: i,
+            attributes: Vec::new(),
         })
         .collect();
     let dir = crate::message::peer::SharedDirectory {
