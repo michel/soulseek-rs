@@ -61,6 +61,9 @@ pub enum PeerMessage {
         size: u64,
     },
     ProcessRead,
+    /// A newer connection to this peer took over. Deliver what is already
+    /// on the wire, then close.
+    Retire,
 }
 
 pub struct PeerActor {
@@ -101,6 +104,10 @@ pub struct PeerActor {
     /// control connection, and each one holds a descriptor and a thread for
     /// the life of the process.
     last_activity: Instant,
+    /// Set once a newer connection to the same peer replaced this one. The
+    /// stream stays open until then so a reply already in flight, a browse
+    /// listing say, still arrives; past it the actor closes and stops.
+    retire_deadline: Option<Instant>,
 }
 
 /// Cap on queued outbound bytes. A peer that stops reading must not be able to
@@ -112,6 +119,8 @@ const MAX_PENDING_WRITE: usize = 32 * 1024 * 1024;
 /// simply reconnects — every serious client reaps idle peers this way. Five
 /// minutes comfortably outlives a search's chatter and queue updates.
 const IDLE_DISCONNECT: Duration = Duration::from_mins(5);
+/// How long a replaced connection keeps listening for replies in flight.
+const RETIRE_GRACE: Duration = Duration::from_secs(30);
 
 impl PeerActor {
     #[must_use]
@@ -148,6 +157,7 @@ impl PeerActor {
             serving_tokens: std::collections::HashSet::new(),
             pending_write: Vec::new(),
             last_activity: Instant::now(),
+            retire_deadline: None,
         }
     }
 
@@ -228,6 +238,9 @@ impl PeerActor {
         match msg {
             PeerMessage::SendMessage(message) => {
                 self.send_message(message);
+            }
+            PeerMessage::Retire => {
+                self.retire_deadline = Some(Instant::now() + RETIRE_GRACE);
             }
             PeerMessage::FileSearchResult(file_search) => {
                 self.handle_file_search_result(file_search);
@@ -664,6 +677,12 @@ impl PeerActor {
     }
 
     fn disconnect_with_error(&mut self, error: Error) {
+        // A retired connection is expected to go: the peer closing it is not
+        // evidence the peer is gone, and must not fail its transfers on the
+        // connection that replaced this one.
+        if self.retire_deadline.is_some() {
+            return self.disconnect();
+        }
         let username = self.peer_username();
         // Include the cause: a failed outbound dial reports nothing else, so
         // without it an unreachable peer is indistinguishable from a clean
@@ -919,9 +938,24 @@ impl Actor for PeerActor {
                         );
                         self.disconnect();
                     }
+                    if self.stream.is_some()
+                        && self
+                            .retire_deadline
+                            .is_some_and(|d| d <= Instant::now())
+                    {
+                        self.disconnect();
+                    }
                 }
             }
-            ConnectionState::Disconnected => {}
+            // Nothing in the registry points at a retired actor any more, so
+            // it is the one to stop itself.
+            ConnectionState::Disconnected => {
+                if self.retire_deadline.is_some()
+                    && let Some(handle) = &self.self_handle
+                {
+                    let _ = handle.stop();
+                }
+            }
         }
     }
 }
@@ -929,6 +963,7 @@ impl Actor for PeerActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::message::peer::build_shared_file_list;
     use crate::peer::{ConnectionType, Peer};
     use std::net::{TcpListener, TcpStream};
     use std::sync::mpsc::Receiver;
@@ -1023,5 +1058,55 @@ mod tests {
             }
             other => panic!("expected a clean PeerDisconnected, got {other:?}"),
         }
+    }
+
+    // A connection replaced by a newer one to the same peer may still carry
+    // a reply already on the wire: it is retired, not cut.
+    #[test]
+    fn a_retired_actor_delivers_what_is_on_the_wire_then_closes() {
+        use std::io::Write;
+        let (mut actor, rx, mut far_end) = connected_actor();
+
+        actor.handle_message(PeerMessage::Retire);
+        far_end
+            .write_all(&build_shared_file_list(&[]).get_buffer())
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        actor.tick();
+
+        assert!(
+            matches!(rx.try_recv(), Ok(ClientOperation::BrowseResult { .. })),
+            "the listing on the wire still reaches the client"
+        );
+        assert!(actor.stream.is_some(), "retiring is not yet closing");
+
+        actor.retire_deadline =
+            Some(Instant::now().checked_sub(Duration::from_secs(1)).unwrap());
+        actor.tick();
+
+        assert!(actor.stream.is_none(), "past the grace the stream closes");
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientOperation::PeerDisconnected(7, _, None))
+        ));
+    }
+
+    #[test]
+    fn a_retired_actor_closed_by_the_peer_reports_a_clean_close() {
+        let (mut actor, rx, far_end) = connected_actor();
+
+        actor.handle_message(PeerMessage::Retire);
+        drop(far_end);
+        std::thread::sleep(Duration::from_millis(50));
+        actor.tick();
+
+        assert!(actor.stream.is_none());
+        assert!(
+            matches!(
+                rx.try_recv(),
+                Ok(ClientOperation::PeerDisconnected(7, _, None))
+            ),
+            "the peer dropping a retired connection is not an error"
+        );
     }
 }
