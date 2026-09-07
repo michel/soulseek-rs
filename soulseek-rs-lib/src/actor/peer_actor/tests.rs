@@ -96,52 +96,115 @@ fn tick_reaps_a_peer_idle_past_the_deadline() {
     }
 }
 
+/// A listing well past one socket buffer, so delivery within a couple of
+/// ticks proves the actor drains the socket rather than sipping 1 KiB a tick.
+fn big_listing() -> Vec<u8> {
+    let files = (0..400u64)
+        .map(|i| {
+            (
+                format!("track-{i:03}-{}.flac", "x".repeat(i as usize % 17)),
+                i,
+            )
+        })
+        .collect();
+    let dir = crate::message::peer::SharedDirectory {
+        name: "album".to_string(),
+        files,
+    };
+    let bytes = build_shared_file_list(std::slice::from_ref(&dir)).get_buffer();
+    assert!(bytes.len() > 4096, "the listing must span several reads");
+    bytes
+}
+
+fn self_handle(
+    actor: &mut PeerActor,
+) -> Receiver<crate::actor::ActorMessage<PeerMessage>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    actor.set_self_handle(ActorHandle { sender: tx });
+    rx
+}
+
 // A connection replaced by a newer one to the same peer may still carry
-// a reply already on the wire: it is retired, not cut.
+// a reply already on the wire: it is retired, not cut, and once nothing
+// more can come it is the one to stop itself.
 #[test]
-fn a_retired_actor_delivers_what_is_on_the_wire_then_closes() {
+fn a_retired_actor_delivers_what_is_on_the_wire_then_stops_itself() {
     use std::io::Write;
     let (mut actor, rx, mut far_end) = connected_actor();
+    let stop_rx = self_handle(&mut actor);
 
     actor.handle_message(PeerMessage::Retire);
-    far_end
-        .write_all(&build_shared_file_list(&[]).get_buffer())
-        .unwrap();
+    far_end.write_all(&big_listing()).unwrap();
     std::thread::sleep(Duration::from_millis(50));
     actor.tick();
+    actor.tick();
 
-    assert!(
-        matches!(rx.try_recv(), Ok(ClientOperation::BrowseResult { .. })),
-        "the listing on the wire still reaches the client"
-    );
+    match rx.try_recv() {
+        Ok(ClientOperation::BrowseResult { username, .. }) => {
+            assert_eq!(username, "bob");
+        }
+        other => {
+            panic!("expected the listing to reach the client, got {other:?}")
+        }
+    }
     assert!(actor.stream.is_some(), "retiring is not yet closing");
+    assert!(stop_rx.try_recv().is_err(), "not stopped while listening");
 
     actor.retire_deadline =
         Some(Instant::now().checked_sub(Duration::from_secs(1)).unwrap());
     actor.tick();
-
     assert!(actor.stream.is_none(), "past the grace the stream closes");
-    assert!(matches!(
-        rx.try_recv(),
-        Ok(ClientOperation::PeerDisconnected(7, _, None))
-    ));
+    match rx.try_recv() {
+        Ok(ClientOperation::PeerDisconnected(7, _, None)) => {}
+        other => panic!("expected a clean PeerDisconnected, got {other:?}"),
+    }
+
+    actor.tick();
+    assert!(
+        matches!(stop_rx.try_recv(), Ok(crate::actor::ActorMessage::Stop)),
+        "a closed retired actor stops itself"
+    );
 }
 
 #[test]
-fn a_retired_actor_closed_by_the_peer_reports_a_clean_close() {
-    let (mut actor, rx, far_end) = connected_actor();
+fn a_retired_actor_reporting_an_error_reports_a_clean_close() {
+    let (mut actor, rx, _far_end) = connected_actor();
 
     actor.handle_message(PeerMessage::Retire);
-    drop(far_end);
-    std::thread::sleep(Duration::from_millis(50));
-    actor.tick();
+    actor.disconnect_with_error(Error::from(io::ErrorKind::ConnectionReset));
 
-    assert!(actor.stream.is_none());
-    assert!(
-        matches!(
-            rx.try_recv(),
-            Ok(ClientOperation::PeerDisconnected(7, _, None))
+    match rx.try_recv() {
+        Ok(ClientOperation::PeerDisconnected(7, _, None)) => {}
+        other => panic!(
+            "a retired connection going away is not an error, got {other:?}"
         ),
-        "the peer dropping a retired connection is not an error"
-    );
+    }
+}
+
+// Retiring an actor whose dial has not completed: nothing went out, so
+// there is nothing to wait for, and it must not linger in the queue that
+// only a successful connection drains.
+#[test]
+fn retiring_a_connecting_actor_closes_it_at_once() {
+    let (mut actor, rx) = make_actor(None);
+    let stop_rx = self_handle(&mut actor);
+    actor.connection_state = ConnectionState::Connecting {
+        since: Instant::now(),
+    };
+
+    actor.handle_message(PeerMessage::Retire);
+
+    assert!(matches!(
+        actor.connection_state,
+        ConnectionState::Disconnected
+    ));
+    match rx.try_recv() {
+        Ok(ClientOperation::PeerDisconnected(7, _, None)) => {}
+        other => panic!("expected a clean PeerDisconnected, got {other:?}"),
+    }
+    actor.tick();
+    assert!(matches!(
+        stop_rx.try_recv(),
+        Ok(crate::actor::ActorMessage::Stop)
+    ));
 }
