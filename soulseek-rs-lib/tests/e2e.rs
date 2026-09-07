@@ -3180,3 +3180,70 @@ fn a_search_reply_reports_no_free_slot_while_the_only_slot_is_taken() {
 
     let _ = std::fs::remove_dir_all(share);
 }
+
+// "Download folder" in SoulseekQt and Nicotine+ asks the sharer for that one
+// folder (peer code 36) instead of the whole share; a sharer that never
+// answers leaves the folder download hanging.
+#[test]
+fn a_third_party_client_fetches_one_folder_of_our_shares() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    std::fs::create_dir_all(share_dir.join("album")).unwrap();
+    std::fs::create_dir_all(share_dir.join("other")).unwrap();
+    std::fs::write(share_dir.join("album").join("one.flac"), b"xxxx").unwrap();
+    std::fs::write(share_dir.join("album").join("two.flac"), b"yy").unwrap();
+    std::fs::write(share_dir.join("other").join("three.flac"), b"z").unwrap();
+    let root = share_dir.file_name().unwrap().to_str().unwrap().to_string();
+
+    let sharer_port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.listening_settings("e2e_folder_sharer", "pw", sharer_port)
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let _qt = login_raw(&server_addr, "e2e_folder_browser", "pw")
+        .expect("third-party client logs in");
+
+    let folder = format!("{root}\\album");
+    let mut p = connect_retry(
+        &format!("127.0.0.1:{sharer_port}"),
+        Duration::from_secs(5),
+    )
+    .expect("dial the sharer");
+    p.set_read_timeout(Some(Duration::from_secs(15))).unwrap();
+    p.write_all(&peer_init_bytes("e2e_folder_browser", "P", 0))
+        .unwrap();
+    let mut request = Message::new();
+    request
+        .write_int32(36)
+        .write_int32(77)
+        .write_string(&folder);
+    p.write_all(&request.get_buffer()).unwrap();
+    p.flush().unwrap();
+
+    let mut response = expect_code(&mut p, 37, Duration::from_secs(15))
+        .expect("the sharer answers with a FolderContentsResponse");
+    response.set_pointer(8);
+    let (token, echoed, directories) =
+        soulseek_rs::message::peer::parse_folder_contents(&mut response)
+            .expect("a well-formed folder listing");
+    assert_eq!(token, 77);
+    assert_eq!(echoed, folder);
+    let mut names: Vec<(String, Vec<String>)> = directories
+        .into_iter()
+        .map(|d| (d.name, d.files.into_iter().map(|(name, _)| name).collect()))
+        .collect();
+    for (_, files) in &mut names {
+        files.sort();
+    }
+    assert_eq!(
+        names,
+        [(folder, vec!["one.flac".to_string(), "two.flac".to_string()])],
+        "only the requested folder, with its files"
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
