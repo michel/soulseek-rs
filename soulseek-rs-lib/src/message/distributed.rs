@@ -5,6 +5,7 @@
 //! 93 EmbeddedMessage.
 
 use crate::message::Message;
+use crate::message::server::MessageFactory;
 
 /// A search relayed through the tree carries this in its first field; anything
 /// else is a frame we do not understand and must not answer.
@@ -30,10 +31,12 @@ pub fn parse(message: &mut Message) -> Option<Distributed> {
         return None;
     }
     message.set_pointer(5);
-    parse_body(message, message.get_init_code())
+    parse_at(message, message.get_init_code())
 }
 
-fn parse_body(message: &mut Message, code: u8) -> Option<Distributed> {
+/// Decode the body that follows a one-byte `code`, the pointer already past it.
+#[must_use]
+pub fn parse_at(message: &mut Message, code: u8) -> Option<Distributed> {
     match code {
         3 => {
             if message.read_int32() != SEARCH_IDENTIFIER {
@@ -55,7 +58,7 @@ fn parse_body(message: &mut Message, code: u8) -> Option<Distributed> {
         // Older branch roots wrap a search in a code-93 envelope.
         93 => {
             let inner = message.read_int8();
-            parse_body(message, inner)
+            parse_at(message, inner)
         }
         _ => None,
     }
@@ -85,6 +88,18 @@ pub fn build_branch_level(level: i32) -> Message {
     framed(4, |m| {
         m.write_int32(level as u32);
     })
+}
+
+/// What we tell the server about our place in the tree: the four messages
+/// Nicotine+ sends together whenever it changes.
+#[must_use]
+pub fn stance(root: &str, level: u32, has_parent: bool) -> Vec<Message> {
+    vec![
+        MessageFactory::build_have_no_parent(!has_parent),
+        MessageFactory::build_branch_root(root),
+        MessageFactory::build_branch_level(level),
+        MessageFactory::build_accept_children(false),
+    ]
 }
 
 #[must_use]
