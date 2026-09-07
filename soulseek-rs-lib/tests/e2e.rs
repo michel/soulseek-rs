@@ -3247,3 +3247,52 @@ fn a_third_party_client_fetches_one_folder_of_our_shares() {
 
     let _ = std::fs::remove_dir_all(share_dir);
 }
+
+// "User info" in SoulseekQt and Nicotine+ asks the peer directly (peer code
+// 15); a peer that never answers shows an endless spinner.
+#[test]
+fn a_third_party_client_reads_our_user_info() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    std::fs::write(share_dir.join("probe.flac"), b"xxxx").unwrap();
+    let sharer_port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.listening_settings("e2e_info_sharer", "pw", sharer_port)
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+    sharer.set_upload_slots(3);
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let _qt = login_raw(&server_addr, "e2e_info_asker", "pw")
+        .expect("third-party client logs in");
+
+    let mut p = connect_retry(
+        &format!("127.0.0.1:{sharer_port}"),
+        Duration::from_secs(5),
+    )
+    .expect("dial the sharer");
+    p.set_read_timeout(Some(Duration::from_secs(15))).unwrap();
+    p.write_all(&peer_init_bytes("e2e_info_asker", "P", 0))
+        .unwrap();
+    p.write_all(&Message::new().write_int32(15).get_buffer())
+        .unwrap();
+    p.flush().unwrap();
+
+    let mut reply = expect_code(&mut p, 16, Duration::from_secs(15))
+        .expect("the sharer answers with a UserInfoResponse");
+    reply.set_pointer(8);
+    let description = reply.read_string();
+    let has_picture = reply.read_bool();
+    let upload_slots = reply.read_int32();
+    let queue_size = reply.read_int32();
+    let slots_free = reply.read_bool();
+    assert!(description.is_empty(), "no description is configured");
+    assert!(!has_picture);
+    assert_eq!(upload_slots, 3, "the configured slot count");
+    assert_eq!(queue_size, 0, "nobody is waiting");
+    assert!(slots_free, "nothing is uploading");
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}

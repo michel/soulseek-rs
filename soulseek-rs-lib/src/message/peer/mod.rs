@@ -10,6 +10,7 @@ mod transfer_request;
 mod transfer_response;
 mod upload_denied;
 mod upload_failed;
+mod user_info;
 
 // Re-export handlers
 pub use file_search_response::{
@@ -31,3 +32,4 @@ pub use transfer_request::TransferRequest;
 pub use transfer_response::TransferResponse;
 pub use upload_denied::UploadDeniedHandler;
 pub use upload_failed::UploadFailedHandler;
+pub use user_info::{UserInfoRequest, build_user_info};
