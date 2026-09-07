@@ -21,7 +21,7 @@ use std::sync::mpsc::Sender;
 pub struct WatchUserHandler;
 
 impl MessageHandler<ServerMessage> for WatchUserHandler {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         5
     }
 

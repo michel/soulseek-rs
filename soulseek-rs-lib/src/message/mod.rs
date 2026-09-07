@@ -51,21 +51,19 @@ impl Message {
         }
     }
 
-    #[allow(dead_code)]
     #[must_use]
-    pub fn get_message_code_u32(&self) -> u32 {
+    pub fn get_message_code(&self) -> u32 {
         if self.data.len() < 8 {
             return 0;
         }
         self.data[4..8].try_into().map_or(0, u32::from_le_bytes)
     }
 
+    /// The one-byte code of a peer init frame (PierceFirewall 0, PeerInit 1),
+    /// the only messages whose code is not four bytes wide.
     #[must_use]
-    pub fn get_message_code(&self) -> u8 {
-        if self.data.len() <= 4 {
-            return 0;
-        }
-        self.data[4]
+    pub fn get_init_code(&self) -> u8 {
+        self.data.get(4).copied().unwrap_or(0)
     }
 
     #[must_use]
@@ -254,6 +252,7 @@ impl Message {
                 100 => Ok("AcceptChildren"),
                 102 => Ok("PossibleParents"),
                 104 => Ok("WishlistInterval"),
+                121 => Ok("SendUploadSpeed"),
                 160 => Ok("ExcludedSearchPhrases"),
                 1001 => Ok("CantConnectToPeer"),
                 _ => Err(Error(format!("Unknown server message code: {code}"))),
@@ -388,10 +387,19 @@ fn read_string_with_missing_length_prefix_does_not_panic() {
 #[test]
 fn get_message_code_on_short_message_does_not_panic() {
     // A zero-length frame drains to exactly the 4-byte length prefix, leaving
-    // no room for a message code at data[4].
+    // no room for a code after it.
     let msg = Message::new_with_data(vec![0, 0, 0, 0]);
     assert_eq!(msg.get_message_code(), 0);
-    assert_eq!(msg.get_message_code_u32(), 0);
+    assert_eq!(msg.get_init_code(), 0);
+}
+
+#[test]
+fn an_init_frame_reads_its_one_byte_code() {
+    let init = Message::new_with_data(
+        Message::new().write_int8(1).write_string("ab").get_buffer(),
+    );
+    assert_eq!(init.get_init_code(), 1);
+    assert_ne!(init.get_message_code(), 1);
 }
 
 #[test]

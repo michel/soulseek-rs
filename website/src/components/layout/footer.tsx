@@ -20,6 +20,7 @@ const COLUMNS: readonly FooterColumn[] = [
     links: [
       { label: "GitHub", href: LINKS.gh },
       { label: "Issues", href: LINKS.issues },
+      { label: "Contributing", href: LINKS.contributing },
       { label: "Releases", href: LINKS.releases },
       { label: "Changelog", href: LINKS.changelog },
     ],

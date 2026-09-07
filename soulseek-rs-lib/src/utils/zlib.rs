@@ -59,7 +59,8 @@ impl BitReader {
 
 use crate::error::{Result, SoulseekRs};
 
-pub fn deflate(input: &[u8]) -> Result<Vec<u8>> {
+/// Inflate a zlib stream, checking its adler32 trailer.
+pub fn inflate(input: &[u8]) -> Result<Vec<u8>> {
     let mut r = BitReader::new(input.to_vec());
     let cmf = r.read_byte()?;
     let cm = cmf & 15; // Compression method
@@ -83,35 +84,14 @@ pub fn deflate(input: &[u8]) -> Result<Vec<u8>> {
             "preset dictionary not supported".to_string(),
         ));
     }
-    let out = inflate(&mut r).map_err(SoulseekRs::CompressionError)?; // decompress DEFLATE data
-    let _adler32 = r.read_bytes(4)?; // Adler-32 checksum (for this exercise, we ignore it)
-    Ok(out)
-}
-
-/// Compress `data` into a valid zlib stream using only STORED blocks.
-///
-/// No real compressor is needed: standard zlib decoders (and [`deflate`] above)
-/// accept a `0x78 0x01` header, one or more uncompressed DEFLATE "stored" blocks
-/// of at most `0xFFFF` bytes, then a big-endian adler32 checksum.
-#[must_use]
-pub fn compress_stored(data: &[u8]) -> Vec<u8> {
-    let mut out = vec![0x78, 0x01];
-    if data.is_empty() {
-        // A single empty, final stored block: BFINAL=1, LEN=0, NLEN=0xFFFF.
-        out.extend_from_slice(&[0x01, 0x00, 0x00, 0xFF, 0xFF]);
-    } else {
-        let mut chunks = data.chunks(0xFFFF).peekable();
-        while let Some(chunk) = chunks.next() {
-            // BFINAL in bit 0, BTYPE=00 (stored) in bits 1-2.
-            out.push(u8::from(chunks.peek().is_none()));
-            let len = chunk.len() as u16;
-            out.extend_from_slice(&len.to_le_bytes());
-            out.extend_from_slice(&(!len).to_le_bytes());
-            out.extend_from_slice(chunk);
-        }
+    let out = inflate_blocks(&mut r).map_err(SoulseekRs::CompressionError)?;
+    // `read_bytes` assembles little-endian; the zlib trailer is big-endian.
+    if r.read_bytes(4)?.swap_bytes() != adler32(&out) {
+        return Err(SoulseekRs::CompressionError(
+            "adler32 checksum failed".to_string(),
+        ));
     }
-    out.extend_from_slice(&adler32(data).to_be_bytes());
-    out
+    Ok(out)
 }
 
 /// RFC 1950 adler32 checksum.
@@ -125,7 +105,7 @@ fn adler32(data: &[u8]) -> u32 {
     (b << 16) | a
 }
 
-fn inflate(r: &mut BitReader) -> std::result::Result<Vec<u8>, String> {
+fn inflate_blocks(r: &mut BitReader) -> std::result::Result<Vec<u8>, String> {
     let mut bfinal = 0;
     let mut out = Vec::new();
     while bfinal == 0 {
@@ -392,10 +372,233 @@ fn inflate_block_fixed(
     inflate_block_data(r, &literal_length_tree, &distance_tree, o)
 }
 
+struct BitWriter {
+    out: Vec<u8>,
+    bit: u32,
+    held: u32,
+}
+
+impl BitWriter {
+    fn new() -> Self {
+        Self {
+            out: vec![0x78, 0x01],
+            bit: 0,
+            held: 0,
+        }
+    }
+
+    /// Extra bits, least significant first.
+    fn bits(&mut self, value: u32, count: u32) {
+        self.held |= value << self.bit;
+        self.bit += count;
+        while self.bit >= 8 {
+            self.out.push((self.held & 0xFF) as u8);
+            self.held >>= 8;
+            self.bit -= 8;
+        }
+    }
+
+    /// A Huffman code, most significant bit first.
+    fn code(&mut self, value: u32, count: u32) {
+        for i in (0..count).rev() {
+            self.bits((value >> i) & 1, 1);
+        }
+    }
+
+    fn finish(mut self, trailer: u32) -> Vec<u8> {
+        if self.bit > 0 {
+            self.out.push((self.held & 0xFF) as u8);
+        }
+        self.out.extend_from_slice(&trailer.to_be_bytes());
+        self.out
+    }
+}
+
+const MIN_MATCH: usize = 3;
+const MAX_MATCH: usize = 258;
+const WINDOW: usize = 32_768;
+const MATCH_TRIES: usize = 128;
+/// A match this long is good enough to stop walking the chain.
+const NICE_MATCH: usize = 64;
+
+/// Hash table size for `len` bytes: a search reply of a few hundred bytes
+/// must not zero 256 KiB of table, a listing of megabytes wants all of it.
+fn hash_bits(len: usize) -> u32 {
+    len.max(2).next_power_of_two().trailing_zeros().clamp(8, 15)
+}
+
+/// The fixed Huffman code for a literal or length symbol (RFC 1951 3.2.6).
+fn symbol(w: &mut BitWriter, symbol: usize) {
+    let symbol = symbol as u32;
+    match symbol {
+        0..=143 => w.code(0x30 + symbol, 8),
+        144..=255 => w.code(0x190 + symbol - 144, 9),
+        256..=279 => w.code(symbol - 256, 7),
+        _ => w.code(0xC0 + symbol - 280, 8),
+    }
+}
+
+fn emit_match(w: &mut BitWriter, length: usize, distance: usize) {
+    let l = LENGTH_BASE
+        .iter()
+        .rposition(|&base| base as usize <= length)
+        .unwrap_or(0);
+    symbol(w, 257 + l);
+    w.bits(length as u32 - LENGTH_BASE[l], LENGTH_EXTRA_BITS[l] as u32);
+    let d = DISTANCE_BASE
+        .iter()
+        .rposition(|&base| base as usize <= distance)
+        .unwrap_or(0);
+    w.code(d as u32, 5);
+    w.bits(
+        distance as u32 - DISTANCE_BASE[d],
+        DISTANCE_EXTRA_BITS[d] as u32,
+    );
+}
+
+fn hash(data: &[u8], at: usize, bits: u32) -> usize {
+    let three = u32::from(data[at]) << 16
+        | u32::from(data[at + 1]) << 8
+        | u32::from(data[at + 2]);
+    (three.wrapping_mul(2_654_435_761) >> (32 - bits)) as usize
+}
+
+/// Chain the three bytes at `at` into the match finder.
+fn remember(head: &mut [usize], prev: &mut [usize], data: &[u8], at: usize) {
+    if at + MIN_MATCH > data.len() {
+        return;
+    }
+    let h = hash(data, at, head.len().trailing_zeros());
+    prev[at] = head[h];
+    head[h] = at;
+}
+
+/// Deflate `data` into a zlib stream.
+///
+/// One fixed-Huffman block over an LZ77 hash-chain match finder, which is
+/// what shrinks a listing's repeated path prefixes. ponytail: fixed codes, not
+/// dynamic; listings compress 5-10x either way and this is a tenth of the code.
+#[must_use]
+pub fn deflate(data: &[u8]) -> Vec<u8> {
+    let mut w = BitWriter::new();
+    w.bits(1, 1); // final block
+    w.bits(1, 2); // fixed Huffman codes
+    let bits = hash_bits(data.len());
+    let mut head = vec![usize::MAX; 1 << bits];
+    let mut prev = vec![usize::MAX; data.len()];
+    let mut i = 0;
+    while i < data.len() {
+        let mut best = (0, 0);
+        if i + MIN_MATCH <= data.len() {
+            let h = hash(data, i, bits);
+            let mut candidate = head[h];
+            let mut tries = MATCH_TRIES;
+            let max = MAX_MATCH.min(data.len() - i);
+            while candidate != usize::MAX
+                && tries > 0
+                && i - candidate <= WINDOW
+            {
+                let len = (0..max)
+                    .take_while(|&k| data[candidate + k] == data[i + k])
+                    .count();
+                if len > best.0 {
+                    best = (len, i - candidate);
+                    if len == max || len >= NICE_MATCH {
+                        break;
+                    }
+                }
+                candidate = prev[candidate];
+                tries -= 1;
+            }
+        }
+        remember(&mut head, &mut prev, data, i);
+        let (length, distance) = best;
+        if length < MIN_MATCH {
+            symbol(&mut w, usize::from(data[i]));
+            i += 1;
+            continue;
+        }
+        emit_match(&mut w, length, distance);
+        for at in i + 1..i + length {
+            remember(&mut head, &mut prev, data, at);
+        }
+        i += length;
+    }
+    symbol(&mut w, 256); // end of block
+    w.finish(adler32(data))
+}
+
 #[cfg(test)]
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn a_corrupt_adler32_trailer_is_rejected() {
+        let mut stream = deflate(b"the bytes a peer sent");
+        let last = stream.len() - 1;
+        stream[last] ^= 0xFF;
+        assert!(inflate(&stream).is_err(), "a bad checksum must not pass");
+    }
+
+    #[test]
+    fn a_reference_stream_inflates() {
+        let stream = [
+            120, 156, 203, 72, 205, 201, 201, 87, 8, 207, 47, 202, 73, 1, 0,
+            25, 107, 4, 61,
+        ];
+        assert_eq!(inflate(&stream).unwrap(), b"hello World");
+    }
+
+    fn listing() -> Vec<u8> {
+        (0..3000)
+            .flat_map(|n| {
+                format!("Artist - Album - {n:04} - Track Title.flac")
+                    .into_bytes()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_shape_round_trips() {
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        let mut noise = |n: usize| -> Vec<u8> {
+            (0..n)
+                .map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    (seed >> 24) as u8
+                })
+                .collect()
+        };
+        let cases = [
+            Vec::new(),
+            vec![0],
+            vec![0x41; 258],
+            vec![0x41; 70_000],
+            vec![0x5A; 100_000],
+            b"the same words the same words the same words".to_vec(),
+            listing(),
+            noise(1),
+            noise(4096),
+            noise(70_000),
+        ];
+        for data in cases {
+            assert_eq!(
+                inflate(&deflate(&data)).unwrap(),
+                data,
+                "{}",
+                data.len()
+            );
+        }
+    }
+
+    #[test]
+    fn a_repetitive_listing_shrinks() {
+        let data = listing();
+        assert!(deflate(&data).len() * 4 < data.len());
+    }
 
     #[test]
     fn decode_symbol_on_degenerate_tree_errors_instead_of_panicking() {
@@ -407,28 +610,6 @@ mod tests {
         tree.insert(0, 1, 42);
         let mut reader = BitReader::new(vec![0b0000_0001]); // first bit = 1
         assert!(decode_symbol(&mut reader, &tree).is_err());
-    }
-
-    #[test]
-    fn compress_stored_roundtrips_through_the_decoder() {
-        // Cover the block boundaries: empty, tiny, exactly 0xFFFF, and multi-block.
-        for size in [0usize, 1, 11, 65_534, 65_535, 65_536, 131_072, 200_000] {
-            let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
-            let compressed = compress_stored(&data);
-            assert_eq!(
-                deflate(&compressed).unwrap(),
-                data,
-                "roundtrip failed at size {size}"
-            );
-        }
-    }
-
-    #[test]
-    fn compress_stored_header_and_adler32_are_correct() {
-        assert_eq!(&compress_stored(b"")[0..2], &[120, 1]);
-        assert_eq!(adler32(b""), 1);
-        // a = 1+97+98+99 = 295 = 0x127; b = 98+294+589 = 981 = 0x24D.
-        assert_eq!(adler32(b"abc"), 0x024D_0127);
     }
 
     #[test]
@@ -450,13 +631,6 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_header_success() {
-        // [120, 156] is a valid zlib header
-        let result = deflate(&[120, 156, 3, 0, 0, 0, 0, 1]); // Minimal valid zlib stream
-        assert!(result.is_ok());
-    }
-
-    #[test]
     fn test_extract_header_fail_to_short() {
         let data = vec![120]; // Too short
         let mut reader = BitReader::new(data);
@@ -467,20 +641,7 @@ mod tests {
     }
 
     #[test]
-    fn test_deflate() {
-        // Test data from the original test - this should work with our new implementation
-        let data = vec![
-            120, 156, 203, 72, 205, 201, 201, 87, 8, 207, 47, 202, 73, 1, 0,
-            24, 11, 4, 93,
-        ];
-        let result = deflate(&data);
-        assert!(result.is_ok());
-        let decompressed = result.unwrap();
-        assert_eq!(decompressed, b"hello World");
-    }
-
-    #[test]
-    fn test_deflate2() {
+    fn a_dynamic_huffman_stream_from_a_real_peer_inflates() {
         let data = vec![
             120, 156, 99, 103, 96, 96, 72, 201, 79, 201, 76, 79, 204, 203, 213,
             158, 98, 194, 4, 228, 50, 250, 3, 9, 7, 135, 162, 156, 148, 194,
@@ -522,7 +683,7 @@ mod tests {
             0, 0, 0, 0, 0,
         ]
         .to_vec();
-        let result = deflate(&data);
+        let result = inflate(&data);
 
         assert!(result.is_ok());
         let decompressed = result.unwrap();

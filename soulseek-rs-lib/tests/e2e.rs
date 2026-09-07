@@ -13,8 +13,7 @@
 //!   cargo test -p soulseek-rs-lib --test e2e -- --nocapture
 //! ```
 //!
-//! No external crates are used — the library forbids dependencies, so the
-//! harness sticks to `std` and the library's own public API.
+//! The harness sticks to `std` and the library's own public API.
 
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -750,7 +749,7 @@ fn login_raw(
 /// passes. Returns the matching message.
 fn read_until_code(
     stream: &mut TcpStream,
-    code: u8,
+    code: u32,
     timeout: Duration,
 ) -> Option<Message> {
     let deadline = Instant::now() + timeout;
@@ -767,7 +766,7 @@ fn read_until_code(
 /// Like [`read_until_code`] but turns a miss into an `io::Error` for `?`.
 fn expect_code(
     stream: &mut TcpStream,
-    code: u8,
+    code: u32,
     timeout: Duration,
 ) -> std::io::Result<Message> {
     read_until_code(stream, code, timeout).ok_or_else(|| {
@@ -1379,7 +1378,7 @@ fn run_mock_direct_peer(cfg: &MockDirectUpload) -> std::io::Result<()> {
     p.set_nonblocking(false)?;
     p.set_read_timeout(Some(Duration::from_secs(10)))?;
     let mut init = read_framed(&mut p)?;
-    assert_eq!(init.get_message_code(), 1, "expected inbound PeerInit");
+    assert_eq!(init.get_init_code(), 1, "expected inbound PeerInit");
     init.set_pointer(5);
     assert_eq!(init.read_string(), cfg.downloader_username, "PeerInit user");
     assert_eq!(init.read_string(), "P", "PeerInit connection type");
@@ -1645,6 +1644,56 @@ fn a_file_downloads_from_a_firewalled_peer_via_server_broker() {
 // it — the entire search + connect + upload/download stack, no mock peer.
 // ---------------------------------------------------------------------------
 
+/// A sharer serving `share_dir` and a searcher, both logged in and listening,
+/// after a beat for soulfind to register both SetWaitPorts.
+fn sharer_and_searcher(
+    server: &TestServer,
+    share_dir: &std::path::Path,
+    sharer: &str,
+    searcher: &str,
+) -> (Client, Client) {
+    let mut sharing = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.listening_settings(
+            sharer,
+            "pw",
+            free_port().expect("sharer port"),
+        )
+    });
+    sharing.connect().expect("sharer connect");
+    assert!(sharing.login().expect("sharer login"));
+
+    let mut searching = Client::with_settings(server.listening_settings(
+        searcher,
+        "pw",
+        free_port().expect("searcher port"),
+    ));
+    searching.connect().expect("searcher connect");
+    assert!(searching.login().expect("searcher login"));
+
+    std::thread::sleep(Duration::from_secs(1));
+    (sharing, searching)
+}
+
+/// `sharer`'s answer to `query`, once it reaches `searcher`.
+fn reply_from(
+    searcher: &Client,
+    query: &str,
+    sharer: &str,
+) -> Option<soulseek_rs::SearchResult> {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let reply = searcher
+            .get_search_results(query)
+            .into_iter()
+            .find(|result| result.username == sharer);
+        if reply.is_some() || Instant::now() >= deadline {
+            return reply;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
 #[test]
 fn two_real_clients_search_and_download() {
     let server = server_or_skip!();
@@ -1655,48 +1704,21 @@ fn two_real_clients_search_and_download() {
     let filename = "e2e_probe_xyzzy.bin";
     std::fs::write(share_dir.join(filename), &content).unwrap();
 
-    let sharer_port = free_port().expect("sharer port");
-    let mut sharer = Client::with_settings(ClientSettings {
-        shared_directories: vec![share_dir.display().to_string()],
-        ..server.listening_settings("e2e_sharer", "pw", sharer_port)
-    });
-    sharer.connect().expect("sharer connect");
-    assert!(sharer.login().expect("sharer login"));
-
-    let leecher_port = free_port().expect("leecher port");
-    let mut leecher = Client::with_settings(server.listening_settings(
-        "e2e_leecher",
-        "pw",
-        leecher_port,
-    ));
-    leecher.connect().expect("leecher connect");
-    assert!(leecher.login().expect("leecher login"));
-
-    // Let soulfind register both SetWaitPorts before the search resolves peers.
-    std::thread::sleep(Duration::from_secs(1));
+    let (sharer, leecher) =
+        sharer_and_searcher(&server, &share_dir, "e2e_sharer", "e2e_leecher");
 
     let query = "xyzzy";
     let _ = leecher.search(query, Duration::from_secs(3));
 
-    // Poll until the sharer's response for our file arrives.
-    let mut hit: Option<(String, u64)> = None;
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while Instant::now() < deadline && hit.is_none() {
-        for result in leecher.get_search_results(query) {
-            if result.username == "e2e_sharer" {
-                for file in &result.files {
-                    if file.name.contains("e2e_probe_xyzzy") {
-                        hit = Some((file.name.clone(), file.size));
-                    }
-                }
-            }
-        }
-        if hit.is_none() {
-            std::thread::sleep(Duration::from_millis(200));
-        }
-    }
-    let (result_path, size) =
-        hit.expect("leecher should find the sharer's file");
+    let (result_path, size) = reply_from(&leecher, query, "e2e_sharer")
+        .and_then(|reply| {
+            reply
+                .files
+                .into_iter()
+                .find(|file| file.name.contains("e2e_probe_xyzzy"))
+        })
+        .map(|file| (file.name, file.size))
+        .expect("leecher should find the sharer's file");
     assert_eq!(size, content.len() as u64);
 
     // Download it from the sharer.
@@ -1737,6 +1759,31 @@ fn two_real_clients_search_and_download() {
         .expect("uploader should record a completed upload");
     assert_eq!(upload.username, "e2e_leecher");
     assert_eq!(upload.bytes_sent, size);
+
+    // The next reply advertises what that upload measured.
+    let _ = leecher.search(query, Duration::from_secs(1));
+    let reply = reply_from(&leecher, query, "e2e_sharer")
+        .expect("the sharer answers again");
+    assert!(
+        reply.speed > 0,
+        "a finished upload sets the advertised speed"
+    );
+
+    // The server hears about it too (SendUploadSpeed), which is where every
+    // other client's `user` lookup and the server's own ranking read it.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut recorded = 0;
+    while Instant::now() < deadline && recorded == 0 {
+        leecher
+            .request_user_info("e2e_sharer")
+            .expect("ask about the sharer");
+        std::thread::sleep(Duration::from_millis(250));
+        recorded = leecher
+            .user_info("e2e_sharer")
+            .and_then(|info| info.stats)
+            .map_or(0, |stats| stats.average_speed);
+    }
+    assert!(recorded > 0, "the server should record the upload's speed");
 
     let _ = std::fs::remove_dir_all(share_dir);
     let _ = std::fs::remove_dir_all(download_dir);
@@ -2056,7 +2103,7 @@ fn a_third_party_client_browses_our_shares_via_the_server_broker() {
 
     let mut pierce = read_framed(&mut p).expect("a PierceFirewall frame");
     assert_eq!(
-        pierce.get_message_code(),
+        pierce.get_init_code(),
         0,
         "the brokered connect-back must start with a PierceFirewall"
     );
@@ -2317,23 +2364,24 @@ fn place_of(sharer: &Client, username: &str, filename: &str) -> Option<u32> {
     })
 }
 
-/// Give `username` privileges in soulfind's own database.
+/// Set `column` ("privileges", or "admin" for the user whose private
+/// messages to "server" are commands) on `username` in soulfind's own
+/// database, good for a day: soulfind stores both as the unix timestamp
+/// they expire at.
 ///
-/// `false` means it could not be done — an external server, or no `sqlite3` on
-/// this machine — which the caller treats as a skip rather than a failure.
-fn grant_privileges(server: &TestServer, username: &str) -> bool {
+/// `false` means it could not be done — an external server, or no `sqlite3`
+/// on this machine — which the caller treats as a skip rather than a failure.
+fn grant(server: &TestServer, username: &str, column: &str) -> bool {
     let Some(db) = server.db.as_ref() else {
         return false;
     };
-    // soulfind stores privileges as the unix timestamp they expire at.
     let expiry = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_secs() + 86_400);
     Command::new("sqlite3")
         .arg(db)
         .arg(format!(
-            "UPDATE users SET privileges = {expiry} WHERE username = \
-             '{username}';"
+            "UPDATE users SET {column} = {expiry} WHERE username = '{username}';"
         ))
         .status()
         .is_ok_and(|status| status.success())
@@ -2442,7 +2490,7 @@ fn a_privileged_peer_overtakes_one_already_waiting_for_a_slot() {
         login_raw(&server_addr, "e2e_q_donor", "pw")
             .expect("the donor registers"),
     );
-    if !grant_privileges(&server, "e2e_q_donor") {
+    if !grant(&server, "e2e_q_donor", "privileges") {
         eprintln!(
             "privilege e2e skipped: cannot write soulfind's database (needs a \
              locally spawned server and sqlite3)"
@@ -3038,4 +3086,395 @@ fn watching_a_user_the_server_does_not_know_reports_their_absence() {
         "a username the server does not know must not stay watched"
     );
     assert!(watcher.user_info("e2e_watch_nobody_here").is_none());
+}
+
+// A query that matches most of a big share must not ship the whole share to
+// whoever typed it: a reply is a shortlist, and the searcher's other sources
+// cover the rest.
+#[test]
+fn a_search_reply_carries_at_most_the_file_cap() {
+    let server = server_or_skip!();
+
+    let cap = soulseek_rs::types::MAX_SEARCH_REPLY_FILES;
+    let share_dir = unique_download_dir();
+    for i in 0..cap + 20 {
+        std::fs::write(share_dir.join(format!("probe_cap_{i:04}.bin")), b"x")
+            .unwrap();
+    }
+    let (_sharer, searcher) = sharer_and_searcher(
+        &server,
+        &share_dir,
+        "e2e_cap_sharer",
+        "e2e_cap_searcher",
+    );
+
+    let query = "probe_cap";
+    let _ = searcher.search(query, Duration::from_secs(3));
+
+    let reply = reply_from(&searcher, query, "e2e_cap_sharer")
+        .expect("the sharer should answer the search");
+    assert_eq!(reply.files.len(), cap, "a reply is capped at {cap} files");
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+// Tokens were the first five hex digits of the query's MD5, so two queries
+// could share one and a peer's answer to either went to whichever search the
+// map handed back first. These two queries collide under that scheme.
+#[test]
+fn two_live_searches_never_share_a_token() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    std::fs::write(share_dir.join("tokenprobe aeabna.bin"), b"x").unwrap();
+    let (_sharer, searcher) = sharer_and_searcher(
+        &server,
+        &share_dir,
+        "e2e_token_sharer",
+        "e2e_token_searcher",
+    );
+
+    let matching = "tokenprobe aeabna";
+    let colliding = "tokenprobe soyvgt";
+    let _ = searcher.search(colliding, Duration::from_millis(100));
+    let _ = searcher.search(matching, Duration::from_secs(3));
+
+    let live = searcher.get_all_searches();
+    assert_ne!(
+        live[matching].token, live[colliding].token,
+        "two live searches must not share a token"
+    );
+
+    assert!(
+        reply_from(&searcher, matching, "e2e_token_sharer").is_some(),
+        "the sharer's answer should land in the search it answers"
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+// Searchers pick sources by the free-slot flag in a reply, and every reply
+// said "free" whatever the queue looked like.
+#[test]
+fn a_search_reply_reports_no_free_slot_while_the_only_slot_is_taken() {
+    let server = server_or_skip!();
+    let (share, folder) =
+        queue_share("honest", &["blocker.mp3", "probe_honest.bin"]);
+    let (sharer, searcher) = sharer_and_searcher(
+        &server,
+        &share,
+        "e2e_honest_sharer",
+        "e2e_honest_searcher",
+    );
+    sharer.set_upload_slots(1);
+
+    let query = "probe_honest";
+    let _ = searcher.search(query, Duration::from_secs(1));
+    let reply = reply_from(&searcher, query, "e2e_honest_sharer")
+        .expect("the sharer answers");
+    assert_eq!(reply.slots, 1, "nothing is uploading yet");
+
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let listen_addr =
+        format!("127.0.0.1:{}", sharer.listen_port().expect("listening"));
+    let mut blocker = queue_as(
+        &server_addr,
+        &listen_addr,
+        "e2e_honest_blocker",
+        &format!("{folder}\\blocker.mp3"),
+    )
+    .expect("blocker queues");
+    assert!(
+        blocker.takes_a_slot(),
+        "the blocker is offered the only slot"
+    );
+
+    let _ = searcher.search(query, Duration::from_secs(1));
+    let reply = reply_from(&searcher, query, "e2e_honest_sharer")
+        .expect("the sharer answers again");
+    assert_eq!(reply.slots, 0, "the only slot is taken");
+
+    let _ = std::fs::remove_dir_all(share);
+}
+
+// "Download folder" in SoulseekQt and Nicotine+ asks the sharer for that one
+// folder (peer code 36) instead of the whole share; a sharer that never
+// answers leaves the folder download hanging.
+#[test]
+fn a_third_party_client_fetches_one_folder_of_our_shares() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    std::fs::create_dir_all(share_dir.join("album")).unwrap();
+    std::fs::create_dir_all(share_dir.join("other")).unwrap();
+    std::fs::write(share_dir.join("album").join("one.flac"), b"xxxx").unwrap();
+    std::fs::write(share_dir.join("album").join("two.flac"), b"yy").unwrap();
+    std::fs::write(share_dir.join("other").join("three.flac"), b"z").unwrap();
+    let root = share_dir.file_name().unwrap().to_str().unwrap().to_string();
+
+    let sharer_port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.listening_settings("e2e_folder_sharer", "pw", sharer_port)
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let _qt = login_raw(&server_addr, "e2e_folder_browser", "pw")
+        .expect("third-party client logs in");
+
+    let folder = format!("{root}\\album");
+    let mut p = connect_retry(
+        &format!("127.0.0.1:{sharer_port}"),
+        Duration::from_secs(5),
+    )
+    .expect("dial the sharer");
+    p.set_read_timeout(Some(Duration::from_secs(15))).unwrap();
+    p.write_all(&peer_init_bytes("e2e_folder_browser", "P", 0))
+        .unwrap();
+    let mut request = Message::new();
+    request
+        .write_int32(36)
+        .write_int32(77)
+        .write_string(&folder);
+    p.write_all(&request.get_buffer()).unwrap();
+    p.flush().unwrap();
+
+    let mut response = expect_code(&mut p, 37, Duration::from_secs(15))
+        .expect("the sharer answers with a FolderContentsResponse");
+    response.set_pointer(8);
+    let (token, echoed, directories) =
+        soulseek_rs::message::peer::parse_folder_contents(&mut response)
+            .expect("a well-formed folder listing");
+    assert_eq!(token, 77);
+    assert_eq!(echoed, folder);
+    let mut names: Vec<(String, Vec<String>)> = directories
+        .into_iter()
+        .map(|d| (d.name, d.files.into_iter().map(|(name, _)| name).collect()))
+        .collect();
+    for (_, files) in &mut names {
+        files.sort();
+    }
+    assert_eq!(
+        names,
+        [(folder, vec!["one.flac".to_string(), "two.flac".to_string()])],
+        "only the requested folder, with its files"
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+// "User info" in SoulseekQt and Nicotine+ asks the peer directly (peer code
+// 15); a peer that never answers shows an endless spinner.
+#[test]
+fn a_third_party_client_reads_our_user_info() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    std::fs::write(share_dir.join("probe.flac"), b"xxxx").unwrap();
+    let sharer_port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.listening_settings("e2e_info_sharer", "pw", sharer_port)
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+    sharer.set_upload_slots(3);
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let _qt = login_raw(&server_addr, "e2e_info_asker", "pw")
+        .expect("third-party client logs in");
+
+    let mut p = connect_retry(
+        &format!("127.0.0.1:{sharer_port}"),
+        Duration::from_secs(5),
+    )
+    .expect("dial the sharer");
+    p.set_read_timeout(Some(Duration::from_secs(15))).unwrap();
+    p.write_all(&peer_init_bytes("e2e_info_asker", "P", 0))
+        .unwrap();
+    p.write_all(&Message::new().write_int32(15).get_buffer())
+        .unwrap();
+    p.flush().unwrap();
+
+    let mut reply = expect_code(&mut p, 16, Duration::from_secs(15))
+        .expect("the sharer answers with a UserInfoResponse");
+    reply.set_pointer(8);
+    let description = reply.read_string();
+    let has_picture = reply.read_bool();
+    let upload_slots = reply.read_int32();
+    let queue_size = reply.read_int32();
+    let slots_free = reply.read_bool();
+    assert!(description.is_empty(), "no description is configured");
+    assert!(!has_picture);
+    assert_eq!(upload_slots, 3, "the configured slot count");
+    assert_eq!(queue_size, 0, "nobody is waiting");
+    assert!(slots_free, "nothing is uploading");
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+// Progress assumed every read filled the buffer, so a peer that trickles
+// small chunks was reported at several times its real rate.
+#[test]
+fn download_progress_reports_the_rate_actually_received() {
+    let server = server_or_skip!();
+
+    let listen_port = free_port().expect("free listen port");
+    let mut client = Client::with_settings(server.listening_settings(
+        "e2e_rate_dl",
+        "pw",
+        listen_port,
+    ));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login"));
+
+    let filename = "trickle.mp3";
+    let content: Vec<u8> = (0..400_000u32).map(|i| (i % 251) as u8).collect();
+    let download_dir = unique_download_dir();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let cfg = MockUpload {
+        listen_addr: format!("127.0.0.1:{listen_port}"),
+        peer_username: "e2e_rate_up".to_string(),
+        filename: filename.to_string(),
+        content: content.clone(),
+        token: 424_260_u32,
+        ready: ready_tx,
+        token_delay: Duration::ZERO,
+    };
+    let uploader =
+        std::thread::spawn(move || run_mock_slow_uploader(&cfg, None));
+    ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("mock uploader P connection");
+    std::thread::sleep(Duration::from_millis(1500));
+
+    let (_download, status_rx) = client
+        .download(
+            filename.to_string(),
+            "e2e_rate_up".to_string(),
+            content.len() as u64,
+            download_dir.display().to_string(),
+        )
+        .expect("start download");
+
+    let mut fastest = 0.0f64;
+    let mut completed = false;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !completed {
+        match status_rx.recv_timeout(Duration::from_millis(500)) {
+            Ok(DownloadStatus::InProgress {
+                speed_bytes_per_sec,
+                ..
+            }) => fastest = fastest.max(speed_bytes_per_sec),
+            Ok(DownloadStatus::Completed) => completed = true,
+            Ok(DownloadStatus::Failed(_) | DownloadStatus::TimedOut) => break,
+            _ => {}
+        }
+    }
+    assert!(completed, "the trickled download should complete");
+    assert!(fastest > 0.0, "progress should report a rate");
+    // The mock sends 4 KiB every 20 ms.
+    let sent_rate = 4096.0 / 0.020;
+    assert!(
+        fastest < 1.5 * sent_rate,
+        "reported {fastest} B/s for a peer sending {sent_rate} B/s"
+    );
+
+    let _ = uploader.join();
+    let _ = std::fs::remove_dir_all(&download_dir);
+}
+
+// A listing went out in zlib "stored" blocks, so a big share cost every
+// browser its full uncompressed size; names repeat enough to shrink well.
+#[test]
+fn a_large_listing_travels_compressed() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    let album = share_dir.join("Artist - Album");
+    std::fs::create_dir_all(&album).unwrap();
+    let mut raw_bytes = 0;
+    for n in 0..3000 {
+        let name = format!("Artist - Album - {n:04} - Track Title.flac");
+        raw_bytes += name.len() + 21;
+        std::fs::write(album.join(name), b"x").unwrap();
+    }
+
+    let sharer_port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.listening_settings("e2e_zlib_sharer", "pw", sharer_port)
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let _qt = login_raw(&server_addr, "e2e_zlib_browser", "pw")
+        .expect("third-party client logs in");
+
+    let mut p = connect_retry(
+        &format!("127.0.0.1:{sharer_port}"),
+        Duration::from_secs(5),
+    )
+    .expect("dial the sharer");
+    p.set_read_timeout(Some(Duration::from_secs(15))).unwrap();
+    p.write_all(&peer_init_bytes("e2e_zlib_browser", "P", 0))
+        .unwrap();
+    p.write_all(&MessageFactory::build_get_share_file_list().get_buffer())
+        .unwrap();
+    p.flush().unwrap();
+    let mut response = expect_code(&mut p, 5, Duration::from_secs(15))
+        .expect("the sharer answers the browse");
+
+    let frame = response.get_size();
+    assert!(
+        frame < raw_bytes / 4,
+        "a {raw_bytes}-byte listing travelled as {frame} bytes"
+    );
+    response.set_pointer(8);
+    let directories =
+        soulseek_rs::message::peer::parse_shared_file_list(&mut response);
+    assert_eq!(
+        directories.iter().map(|d| d.files.len()).sum::<usize>(),
+        3000
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+// The server's announcements (code 66) were dropped on the floor; they are
+// how a server tells everyone it is going down.
+#[test]
+fn a_server_announcement_arrives_as_a_message_from_the_server() {
+    let server = server_or_skip!();
+
+    let mut admin = Client::with_settings(server.settings("e2e_admin", "pw"));
+    let mut bob =
+        Client::with_settings(server.settings("e2e_announce_bob", "pw"));
+    admin.connect().expect("admin connect");
+    bob.connect().expect("bob connect");
+    assert!(admin.login().expect("admin login"));
+    assert!(bob.login().expect("bob login"));
+    if !grant(&server, "e2e_admin", "admin") {
+        println!("e2e skipped: cannot make an admin on this server");
+        return;
+    }
+
+    admin
+        .send_private_message("server", "announcement going down at nine")
+        .expect("send the admin command");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut received = Vec::new();
+    while Instant::now() < deadline {
+        received.extend(bob.take_private_messages());
+        if received.iter().any(|m| m.username() == "server") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let announcement = received
+        .iter()
+        .find(|m| m.username() == "server")
+        .expect("bob should hear the announcement");
+    assert_eq!(announcement.message(), "going down at nine");
 }

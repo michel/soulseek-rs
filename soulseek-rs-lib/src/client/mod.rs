@@ -17,7 +17,7 @@ use crate::{
     peer::{ConnectionType, DownloadPeer, Peer, PeerMessage, listen::Listen},
     shares::Shares,
     types::{Download, Search, SearchResult},
-    utils::{lock::RwLockExt, md5},
+    utils::lock::RwLockExt,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -90,6 +90,17 @@ fn next_download_token() -> u32 {
     NEXT_DOWNLOAD_TOKEN.fetch_add(1, Ordering::Relaxed) % 0x8000_0000
 }
 
+/// Source of search tokens.
+///
+/// A counter, not a hash of the query: a peer's answer is routed to the first
+/// search holding its token, so two queries sharing one would pour results
+/// into each other.
+static NEXT_SEARCH_TOKEN: AtomicU32 = AtomicU32::new(1);
+
+fn next_search_token() -> u32 {
+    NEXT_SEARCH_TOKEN.fetch_add(1, Ordering::Relaxed)
+}
+
 /// A file we have agreed to serve to a peer, awaiting their TransferResponse.
 struct UploadJob {
     downloader: String,
@@ -139,6 +150,9 @@ fn build_search_response(
     own_username: &str,
     token: u32,
     query: &str,
+    free_slot: bool,
+    speed: u32,
+    queue_length: u32,
 ) -> Option<crate::message::Message> {
     let matches = shares.search(query);
     if matches.is_empty() {
@@ -146,6 +160,7 @@ fn build_search_response(
     }
     let entries: Vec<FileEntry> = matches
         .iter()
+        .take(crate::types::MAX_SEARCH_REPLY_FILES)
         .map(|f| FileEntry {
             name: &f.virtual_path,
             size: f.size,
@@ -156,8 +171,9 @@ fn build_search_response(
         own_username,
         token,
         &entries,
-        1,
-        0,
+        u8::from(free_slot),
+        speed,
+        queue_length,
     ))
 }
 
@@ -276,6 +292,16 @@ pub enum ClientOperation {
     ShareListRequested {
         requester_key: String,
     },
+    /// A peer asked what we say about ourselves; send a UserInfoResponse.
+    UserInfoRequested {
+        requester_key: String,
+    },
+    /// A peer asked for one folder of our shares; send a FolderContentsResponse.
+    FolderContentsRequested {
+        requester_key: String,
+        token: u32,
+        folder: String,
+    },
     /// A peer we are browsing returned their shared-file listing.
     BrowseResult {
         username: String,
@@ -364,6 +390,9 @@ pub struct ClientContext {
     upload_seq: u64,
     /// How many uploads may be in flight at once.
     upload_slots: usize,
+    /// Bytes per second of the last completed upload, advertised in search
+    /// replies; zero until one has finished.
+    last_upload_speed: u32,
     /// Queued-upload states that came and went between two polls of
     /// [`Client::uploads`]. A caller sampling that snapshot would otherwise
     /// never see a peer that queued and was served inside one poll interval,
@@ -446,6 +475,7 @@ impl ClientContext {
             upload_queue: Vec::new(),
             upload_seq: 0,
             upload_slots: DEFAULT_UPLOAD_SLOTS,
+            last_upload_speed: 0,
             upload_events: Vec::new(),
             downloads: DownloadStore::new(),
             actor_system,

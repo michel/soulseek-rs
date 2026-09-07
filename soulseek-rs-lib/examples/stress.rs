@@ -316,7 +316,9 @@ impl Seeder {
             Metrics::bump(&self.metrics.mocks_offline);
             return;
         };
-        let Ok(listener) = TcpListener::bind(("127.0.0.1", port)) else {
+        // All interfaces: soulfind reports the host's LAN address for a
+        // loopback login, and the client dials that.
+        let Ok(listener) = TcpListener::bind(("0.0.0.0", port)) else {
             Metrics::bump(&self.metrics.mocks_offline);
             return;
         };
@@ -415,7 +417,7 @@ impl SeederState {
             })
             .collect();
         let response =
-            build_file_search_response(&self.name, token, &entries, 1, 0);
+            build_file_search_response(&self.name, token, &entries, 1, 0, 0);
 
         let Ok(mut guard) = self.conn.lock() else {
             return;
@@ -481,7 +483,7 @@ impl SeederState {
             let Ok(init) = read_framed(&mut p) else {
                 return;
             };
-            if init.get_message_code() != 1 {
+            if init.get_init_code() != 1 {
                 return;
             }
         }
@@ -630,7 +632,9 @@ impl Leecher {
             Metrics::bump(&self.metrics.mocks_offline);
             return;
         };
-        let Ok(listener) = TcpListener::bind(("127.0.0.1", port)) else {
+        // All interfaces: soulfind reports the host's LAN address for a
+        // loopback login, and the client dials that.
+        let Ok(listener) = TcpListener::bind(("0.0.0.0", port)) else {
             Metrics::bump(&self.metrics.mocks_offline);
             return;
         };
@@ -735,7 +739,7 @@ fn accept_file_connection(
         let Ok(mut init) = read_framed(&mut stream) else {
             continue;
         };
-        if init.get_message_code() != 1 {
+        if init.get_init_code() != 1 {
             continue;
         }
         init.set_pointer(5);

@@ -13,7 +13,7 @@ use crate::{
 pub struct WishListIntervalHandler;
 
 impl MessageHandler<ServerMessage> for WishListIntervalHandler {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         104
     }
 

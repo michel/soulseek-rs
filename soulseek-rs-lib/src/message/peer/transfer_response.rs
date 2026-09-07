@@ -7,7 +7,7 @@ use std::sync::mpsc::Sender;
 pub struct TransferResponse;
 
 impl MessageHandler<PeerMessage> for TransferResponse {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         41
     }
 

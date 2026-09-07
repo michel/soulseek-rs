@@ -8,7 +8,7 @@ use std::sync::mpsc::Sender;
 /// owns the shares) builds the real SharedFileListResponse in reply.
 pub struct GetShareFileList;
 impl MessageHandler<PeerMessage> for GetShareFileList {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         4
     }
     fn handle(&self, _message: &mut Message, sender: Sender<PeerMessage>) {

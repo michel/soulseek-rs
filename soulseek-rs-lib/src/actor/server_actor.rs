@@ -1,6 +1,7 @@
 use crate::actor::{Actor, ActorHandle, ConnectionState};
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
+use crate::message::server::AdminMessageHandler;
 use crate::message::server::CheckPrivilegesHandler;
 use crate::message::server::ConnectToPeerHandler;
 use crate::message::server::ExcludedSearchPhrasesHandler;
@@ -41,109 +42,15 @@ use std::time::{Duration, Instant};
 
 use crate::{SoulseekRs, debug, error, trace, warn};
 
+mod types;
+pub use types::{Context, PeerAddress, UserMessage};
+
 /// Ceiling on the wait for the server's login verdict. A loaded server can
 /// take seconds to answer, so this stays inside the caller's own 45s bound
 /// rather than undercutting it.
 const LOGIN_VERDICT_TIMEOUT: Duration = Duration::from_secs(30);
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-
-#[derive(Debug, Clone)]
-pub struct PeerAddress {
-    host: String,
-    port: u16,
-}
-
-impl PeerAddress {
-    #[must_use]
-    pub const fn new(host: String, port: u16) -> Self {
-        Self { host, port }
-    }
-
-    #[must_use]
-    pub fn get_host(&self) -> &str {
-        &self.host
-    }
-
-    #[must_use]
-    pub const fn get_port(&self) -> u16 {
-        self.port
-    }
-}
-
-impl std::fmt::Display for PeerAddress {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}:{}", self.host, self.port)
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct Context {
-    pub logged_in: Option<bool>,
-}
-
-impl Context {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-#[derive(Debug, Clone)]
-pub struct UserMessage {
-    id: u32,
-    timestamp: u32,
-    username: String,
-    message: String,
-    new_message: bool,
-}
-impl UserMessage {
-    #[must_use]
-    pub const fn new(
-        id: u32,
-        timestamp: u32,
-        username: String,
-        message: String,
-        new_message: bool,
-    ) -> Self {
-        Self {
-            id,
-            timestamp,
-            username,
-            message,
-            new_message,
-        }
-    }
-    /// The server-assigned id of this message (used to acknowledge it).
-    #[must_use]
-    pub const fn id(&self) -> u32 {
-        self.id
-    }
-
-    /// Unix timestamp the server recorded for this message.
-    #[must_use]
-    pub const fn timestamp(&self) -> u32 {
-        self.timestamp
-    }
-
-    /// The username of the sender.
-    #[must_use]
-    pub fn username(&self) -> &str {
-        &self.username
-    }
-
-    /// The message body.
-    #[must_use]
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-
-    /// Whether the server flagged this as freshly delivered (as opposed to a
-    /// message replayed because it was queued while the recipient was offline).
-    #[must_use]
-    pub const fn is_new(&self) -> bool {
-        self.new_message
-    }
-}
 
 /// The server actor's mailbox. Marked non-exhaustive: each protocol message
 /// the client learns adds a variant, and that must not break callers.
@@ -330,7 +237,7 @@ impl ServerActor {
     }
 
     fn initiate_connection(&mut self) -> bool {
-        let stream = (self.address.host.as_str(), self.address.port)
+        let stream = (self.address.get_host(), self.address.get_port())
             .to_socket_addrs()
             .ok()
             .and_then(|mut addrs| {
@@ -350,6 +257,9 @@ impl ServerActor {
             return false;
         }
         stream.set_nodelay(true).ok();
+        if let Err(e) = crate::utils::keepalive::set_keepalive(&stream) {
+            warn!("[server] keepalive not set: {}", e);
+        }
 
         self.stream = Some(stream);
         self.connection_state = ConnectionState::Connecting {
@@ -380,6 +290,7 @@ impl ServerActor {
 
         handlers.register_handler(LoginHandler);
         handlers.register_handler(ReloggedHandler);
+        handlers.register_handler(AdminMessageHandler);
         handlers.register_handler(RoomListHandler);
         handlers.register_handler(GetUserStatusHandler);
         handlers.register_handler(WatchUserHandler);
@@ -474,6 +385,36 @@ impl ServerActor {
             ServerMessage::PrivateMessageReceived(user_message) => {
                 self.handle_private_message_received(user_message);
             }
+            ServerMessage::ProcessRead => {
+                self.process_read();
+            }
+            ServerMessage::Login {
+                username,
+                password,
+                version,
+                response,
+            } => {
+                self.handle_login(username, password, version, response);
+            }
+            ServerMessage::FileSearch { token, query } => {
+                self.file_search(token, &query);
+            }
+            ServerMessage::FileSearchRequest {
+                username,
+                token,
+                query,
+            } => {
+                self.handle_file_search_request(username, token, query);
+            }
+            other => self.handle_social_message(other),
+        }
+    }
+
+    /// Rooms and users (codes 7, 5, 36, 13-17, 64): forwarded as room events
+    /// and user status or stats. Split out, like the standing traffic below,
+    /// only to keep `handle_message`'s match readable.
+    fn handle_social_message(&mut self, message: ServerMessage) {
+        match message {
             ServerMessage::RoomListReceived(rooms) => {
                 self.forward_room_event(RoomEvent::List(rooms));
             }
@@ -549,27 +490,6 @@ impl ServerActor {
             }
             ServerMessage::RoomUserLeft { room, username } => {
                 self.forward_room_event(RoomEvent::UserLeft { room, username });
-            }
-            ServerMessage::ProcessRead => {
-                self.process_read();
-            }
-            ServerMessage::Login {
-                username,
-                password,
-                version,
-                response,
-            } => {
-                self.handle_login(username, password, version, response);
-            }
-            ServerMessage::FileSearch { token, query } => {
-                self.file_search(token, &query);
-            }
-            ServerMessage::FileSearchRequest {
-                username,
-                token,
-                query,
-            } => {
-                self.handle_file_search_request(username, token, query);
             }
             other => self.handle_standing_message(other),
         }
@@ -803,7 +723,7 @@ impl ServerActor {
                         message
                             .get_message_name(
                                 MessageType::Server,
-                                u32::from(message.get_message_code())
+                                message.get_message_code()
                             )
                             .map_err(|e| e.to_string())
                     );
@@ -998,205 +918,4 @@ impl Actor for ServerActor {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn code_of(message: &Message) -> u32 {
-        u32::from_le_bytes(message.get_data()[0..4].try_into().unwrap())
-    }
-
-    #[test]
-    fn a_timed_out_connect_parks_the_actor_in_disconnected() {
-        let mut actor = parked_actor(1);
-        actor.connection_state = ConnectionState::Connecting {
-            since: Instant::now().checked_sub(Duration::from_secs(21)).unwrap(),
-        };
-
-        actor.tick();
-
-        assert!(
-            matches!(actor.connection_state, ConnectionState::Disconnected),
-            "a timed-out connect must leave Connecting"
-        );
-    }
-
-    fn parked_actor(port: u16) -> ServerActor {
-        let (tx, _rx) = std::sync::mpsc::channel();
-        ServerActor::new(
-            PeerAddress::new("127.0.0.1".to_string(), port),
-            tx,
-            0,
-            false,
-            0,
-            0,
-        )
-    }
-
-    #[test]
-    fn dropping_the_connection_forgets_the_dispatcher_and_the_verdict() {
-        let mut actor = parked_actor(1);
-        actor.initialize_dispatcher();
-        actor.connection_state = ConnectionState::Connected;
-        actor.handle_login_status(true);
-
-        actor.disconnect_with_error();
-
-        assert_eq!(actor.session.loss(), Some(SessionLoss::Disconnected));
-        assert!(
-            actor.dispatcher_sender.is_none(),
-            "a login queued now must wait in the buffer, not in a channel \
-             the next connection replaces"
-        );
-        assert_eq!(
-            actor.context.read().unwrap().logged_in,
-            None,
-            "the old verdict must not answer the next login"
-        );
-    }
-
-    #[test]
-    fn disconnect_clears_a_partial_frame_so_the_next_session_reframes_clean() {
-        use std::io::Write;
-
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let client = TcpStream::connect(addr).unwrap();
-        let (mut server_side, _) = listener.accept().unwrap();
-        let partial_frame = [10u8, 0, 0, 0, 1, 2, 3];
-        server_side.write_all(&partial_frame).unwrap();
-        server_side.flush().unwrap();
-        client.set_nonblocking(true).unwrap();
-
-        let mut actor = parked_actor(addr.port());
-        actor.stream = Some(client);
-        actor.connection_state = ConnectionState::Connected;
-        for _ in 0..50 {
-            actor.process_read();
-            if actor.reader.buffer_len() > 0 {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        assert!(
-            actor.reader.buffer_len() > 0,
-            "an incomplete frame should be waiting for its rest"
-        );
-
-        actor.disconnect();
-
-        assert_eq!(
-            actor.reader.buffer_len(),
-            0,
-            "a stale partial frame carried across a reconnect reads the next \
-             session's bytes as a length prefix and wedges recovery"
-        );
-    }
-
-    #[test]
-    fn a_login_on_a_parked_actor_dials_again_and_queues_the_login() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let mut actor = parked_actor(listener.local_addr().unwrap().port());
-        actor.session.record(SessionLoss::Disconnected);
-        let (response, _verdict) = std::sync::mpsc::channel();
-
-        actor.handle_login(
-            "u".into(),
-            "p".into(),
-            ClientVersion::default(),
-            response,
-        );
-
-        assert!(
-            matches!(
-                actor.connection_state,
-                ConnectionState::Connecting { .. }
-            ),
-            "a parked actor must dial again on login"
-        );
-        assert_eq!(
-            actor.queued_messages.len(),
-            1,
-            "the login waits for the connection to come up"
-        );
-    }
-
-    #[test]
-    fn a_parked_actor_handles_login_rather_than_queueing_it() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let mut actor = parked_actor(listener.local_addr().unwrap().port());
-        actor.session.record(SessionLoss::Disconnected);
-        let (response, _verdict) = std::sync::mpsc::channel();
-
-        actor.handle_message(ServerMessage::Login {
-            username: "u".into(),
-            password: "p".into(),
-            version: ClientVersion::default(),
-            response,
-        });
-
-        assert!(
-            matches!(
-                actor.connection_state,
-                ConnectionState::Connecting { .. }
-            ),
-            "a parked actor must act on a login, not park it in the queue"
-        );
-        assert!(
-            actor
-                .queued_messages
-                .iter()
-                .all(|m| !matches!(m, ServerMessage::Login { .. })),
-            "the login must not be sitting unhandled in the queue"
-        );
-    }
-
-    #[test]
-    fn a_login_with_nobody_listening_is_refused_at_once() {
-        let mut actor = parked_actor(1);
-        let (response, verdict) = std::sync::mpsc::channel();
-
-        actor.handle_login(
-            "u".into(),
-            "p".into(),
-            ClientVersion::default(),
-            response,
-        );
-
-        assert!(
-            matches!(
-                verdict.recv_timeout(Duration::from_secs(5)),
-                Ok(Err(SoulseekRs::NotConnected))
-            ),
-            "a refused dial must not make the caller wait out the verdict \
-             timeout"
-        );
-    }
-
-    #[test]
-    fn a_successful_login_marks_the_session_live_again() {
-        let mut actor = parked_actor(1);
-        actor.session.record(SessionLoss::Disconnected);
-
-        actor.handle_login_status(true);
-
-        assert_eq!(actor.session.loss(), None);
-    }
-
-    #[test]
-    fn post_login_messages_carry_counts_and_conditional_wait_port() {
-        let messages = post_login_messages(true, 4321, 3, 7);
-        let codes: Vec<u32> = messages.iter().map(code_of).collect();
-        // SharedFolders, HaveNoParent, SetStatus, SetWaitPort.
-        assert_eq!(codes, vec![35, 71, 28, 2]);
-
-        // The SharedFolders message (code 35) carries the real counts.
-        let shared = messages[0].get_data();
-        assert_eq!(u32::from_le_bytes(shared[4..8].try_into().unwrap()), 3);
-        assert_eq!(u32::from_le_bytes(shared[8..12].try_into().unwrap()), 7);
-
-        // Not listening omits SetWaitPort (code 2).
-        let no_listen = post_login_messages(false, 4321, 3, 7);
-        let codes: Vec<u32> = no_listen.iter().map(code_of).collect();
-        assert_eq!(codes, vec![35, 71, 28]);
-    }
-}
+mod tests;
