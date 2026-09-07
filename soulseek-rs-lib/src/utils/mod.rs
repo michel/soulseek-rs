@@ -1,5 +1,6 @@
 #[macro_use]
 pub mod logger;
+pub(crate) mod keepalive;
 pub mod lock;
 pub mod md5;
 pub mod path;
