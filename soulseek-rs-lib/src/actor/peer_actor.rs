@@ -121,6 +121,8 @@ const MAX_PENDING_WRITE: usize = 32 * 1024 * 1024;
 const IDLE_DISCONNECT: Duration = Duration::from_mins(5);
 /// How long a replaced connection keeps listening for replies in flight.
 const RETIRE_GRACE: Duration = Duration::from_secs(30);
+/// Socket buffers read per tick: 64 KiB, against a 100 ms tick.
+const READS_PER_TICK: usize = 64;
 
 impl PeerActor {
     #[must_use]
@@ -228,6 +230,13 @@ impl PeerActor {
         if matches!(self.connection_state, ConnectionState::Connecting { .. }) {
             match &msg {
                 PeerMessage::SetUsername(_) | PeerMessage::ProcessRead => {}
+                // Nothing has gone out on a dial still in progress, so there
+                // is nothing to wait for.
+                PeerMessage::Retire => {
+                    self.retire_deadline = Some(Instant::now());
+                    self.disconnect();
+                    return;
+                }
                 _ => {
                     self.queued_messages.push(msg);
                     return;
@@ -497,7 +506,7 @@ impl PeerActor {
                 return;
             };
 
-            match self.reader.read_from_socket(stream) {
+            match Self::drain(&mut self.reader, stream) {
                 Ok(()) => {
                     self.last_activity = Instant::now();
                 }
@@ -543,6 +552,24 @@ impl PeerActor {
             }
         }
         self.extract_and_process_messages();
+    }
+
+    /// Read what the socket holds, up to `READS_PER_TICK` buffers, so a big
+    /// listing lands in a few ticks rather than a few minutes; the cap keeps
+    /// a peer that never stops sending from starving the mailbox.
+    fn drain(
+        reader: &mut MessageReader,
+        stream: &mut TcpStream,
+    ) -> io::Result<()> {
+        reader.read_from_socket(stream)?;
+        for _ in 1..READS_PER_TICK {
+            match reader.read_from_socket(stream) {
+                Ok(()) => {}
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
     }
 
     fn extract_and_process_messages(&mut self) {
