@@ -766,6 +766,19 @@ impl Client {
                             },
                         );
                     }
+                    ClientOperation::UserInfoRequested { requester_key } => {
+                        Self::reply_to_peer(
+                            &client_context,
+                            &requester_key,
+                            |ctx| {
+                                crate::message::peer::build_user_info(
+                                    ctx.upload_slots as u32,
+                                    ctx.upload_queue.len() as u32,
+                                    ctx.has_free_upload_slot(),
+                                )
+                            },
+                        );
+                    }
                     ClientOperation::FolderContentsRequested {
                         requester_key,
                         token,
