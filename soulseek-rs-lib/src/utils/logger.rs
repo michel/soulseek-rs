@@ -3,7 +3,7 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::sync::{
     Mutex, Once,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU8, Ordering},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -16,7 +16,23 @@ pub enum LogLevel {
 }
 
 static INIT: Once = Once::new();
-static mut LOG_LEVEL: LogLevel = LogLevel::Warn;
+static LOG_LEVEL: AtomicU8 = AtomicU8::new(LogLevel::Warn as u8);
+
+/// Change the level at runtime, from any thread.
+pub fn set_log_level(level: LogLevel) {
+    LOG_LEVEL.store(level as u8, Ordering::Relaxed);
+}
+
+#[must_use]
+pub fn log_level() -> LogLevel {
+    match LOG_LEVEL.load(Ordering::Relaxed) {
+        0 => LogLevel::Error,
+        2 => LogLevel::Info,
+        3 => LogLevel::Debug,
+        4 => LogLevel::Trace,
+        _ => LogLevel::Warn,
+    }
+}
 
 static BUFFER: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static BUFFERING: AtomicBool = AtomicBool::new(false);
@@ -29,15 +45,13 @@ pub fn init() {
             .unwrap_or_else(|_| "WARN".to_string())
             .to_uppercase();
 
-        unsafe {
-            LOG_LEVEL = match level.as_str() {
-                "ERROR" => LogLevel::Error,
-                "INFO" => LogLevel::Info,
-                "DEBUG" | "VERBOSE" => LogLevel::Debug, // Map VERBOSE to DEBUG
-                "TRACE" => LogLevel::Trace,
-                _ => LogLevel::Warn, // "WARN" or default
-            };
-        }
+        set_log_level(match level.as_str() {
+            "ERROR" => LogLevel::Error,
+            "INFO" => LogLevel::Info,
+            "DEBUG" | "VERBOSE" => LogLevel::Debug,
+            "TRACE" => LogLevel::Trace,
+            _ => LogLevel::Warn,
+        });
 
         // Initialize log file if LOG_FILE env var is set
         if let Ok(log_file_path) = env::var("LOG_FILE") {
@@ -85,8 +99,8 @@ fn has_log_file() -> bool {
 }
 
 pub fn log(level: LogLevel, message: &str) {
-    unsafe {
-        if level <= LOG_LEVEL {
+    if level <= log_level() {
+        {
             let (name, colour) = match level {
                 LogLevel::Error => ("ERROR", "\x1b[31m"), // Red
                 LogLevel::Warn => ("WARN", "\x1b[33m"),   // Yellow
@@ -239,7 +253,16 @@ macro_rules! trace {
 
 #[cfg(test)]
 mod tests {
-    use super::{LogSink, choose_sink};
+    use super::{LogLevel, LogSink, choose_sink, log_level, set_log_level};
+
+    #[test]
+    fn the_level_can_be_changed_while_running() {
+        let before = log_level();
+        set_log_level(LogLevel::Trace);
+        assert_eq!(log_level(), LogLevel::Trace);
+        set_log_level(before);
+        assert_eq!(log_level(), before);
+    }
 
     #[test]
     fn a_configured_file_bypasses_buffering_so_lines_are_not_duplicated() {
