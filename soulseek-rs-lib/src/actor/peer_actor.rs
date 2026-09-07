@@ -2,10 +2,10 @@ use crate::actor::{Actor, ActorHandle, ConnectionState};
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
 use crate::message::peer::{
-    FileSearchResponse, GetShareFileList, PeerInit, PlaceInQueueRequest,
-    PlaceInQueueResponse, QueueUploadHandler, SharedDirectory,
-    SharedFileListResponseHandler, TransferRequest, TransferResponse,
-    UploadDeniedHandler, UploadFailedHandler,
+    FileSearchResponse, FolderContentsRequest, GetShareFileList, PeerInit,
+    PlaceInQueueRequest, PlaceInQueueResponse, QueueUploadHandler,
+    SharedDirectory, SharedFileListResponseHandler, TransferRequest,
+    TransferResponse, UploadDeniedHandler, UploadFailedHandler,
 };
 use crate::message::server::MessageFactory;
 use crate::message::{Handlers, Message, MessageReader, MessageType};
@@ -46,6 +46,11 @@ pub enum PeerMessage {
     ShareListRequested,
     /// A peer we are browsing sent us their shared-file listing (code 5).
     ShareListReceived(Vec<SharedDirectory>),
+    /// A peer asked for one folder of our shares (they sent us code 36).
+    FolderContentsRequested {
+        token: u32,
+        folder: String,
+    },
     /// Offer the queued file to that peer: send an upload TransferRequest.
     ServeUpload {
         token: u32,
@@ -178,6 +183,7 @@ impl PeerActor {
         handlers.register_handler(TransferRequest);
         handlers.register_handler(TransferResponse);
         handlers.register_handler(GetShareFileList);
+        handlers.register_handler(FolderContentsRequest);
         handlers.register_handler(UploadDeniedHandler);
         handlers.register_handler(UploadFailedHandler);
         handlers.register_handler(PlaceInQueueRequest);
@@ -272,6 +278,9 @@ impl PeerActor {
             }
             PeerMessage::ShareListReceived(directories) => {
                 self.handle_share_list_received(directories);
+            }
+            PeerMessage::FolderContentsRequested { token, folder } => {
+                self.handle_folder_contents_requested(token, folder);
             }
             PeerMessage::RequestTransfer(download) => {
                 let message = MessageFactory::build_transfer_request_message(
@@ -438,6 +447,20 @@ impl PeerActor {
             .send(ClientOperation::ShareListRequested { requester_key })
         {
             error!("[peer_actor] forward ShareListRequested: {}", e);
+        }
+    }
+
+    fn handle_folder_contents_requested(&self, token: u32, folder: String) {
+        let requester_key = self.peer_username();
+        if let Err(e) =
+            self.client_channel
+                .send(ClientOperation::FolderContentsRequested {
+                    requester_key,
+                    token,
+                    folder,
+                })
+        {
+            error!("[peer_actor] forward FolderContentsRequested: {}", e);
         }
     }
 

@@ -756,35 +756,36 @@ impl Client {
                         }
                     }
                     ClientOperation::ShareListRequested { requester_key } => {
-                        // Reply with our full shared-file listing.
-                        let (registry, message) = match client_context
-                            .read_safe()
-                        {
-                            Ok(ctx) => {
-                                let dirs = ctx
-                                    .shares
-                                    .directories()
-                                    .into_iter()
-                                    .map(|(name, files)| {
-                                        crate::message::peer::SharedDirectory {
-                                            name,
-                                            files,
-                                        }
-                                    })
-                                    .collect::<Vec<_>>();
-                                (
-                                    ctx.peer_registry.clone(),
-                                    crate::message::peer::build_shared_file_list(&dirs),
+                        Self::reply_to_peer(
+                            &client_context,
+                            &requester_key,
+                            |ctx| {
+                                crate::message::peer::build_shared_file_list(
+                                    &shared_directories(ctx),
                                 )
-                            }
-                            Err(_) => continue,
-                        };
-                        if let Some(registry) = registry {
-                            let _ = registry.send_to_peer(
-                                &requester_key,
-                                PeerMessage::SendMessage(message),
-                            );
-                        }
+                            },
+                        );
+                    }
+                    ClientOperation::FolderContentsRequested {
+                        requester_key,
+                        token,
+                        folder,
+                    } => {
+                        // ponytail: walks the whole share for one folder, as a
+                        // browse does; index by directory if it ever shows up.
+                        Self::reply_to_peer(
+                            &client_context,
+                            &requester_key,
+                            |ctx| {
+                                let dirs: Vec<_> = shared_directories(ctx)
+                                    .into_iter()
+                                    .filter(|dir| dir.name == folder)
+                                    .collect();
+                                crate::message::peer::build_folder_contents(
+                                    token, &folder, &dirs,
+                                )
+                            },
+                        );
                     }
                     ClientOperation::BrowseResult {
                         username,
@@ -845,6 +846,22 @@ impl Client {
         });
     }
 
+    /// Answer a peer with the message `build` derives from the client state.
+    fn reply_to_peer(
+        client_context: &Arc<RwLock<ClientContext>>,
+        requester_key: &str,
+        build: impl FnOnce(&ClientContext) -> crate::message::Message,
+    ) {
+        let (registry, message) = match client_context.read_safe() {
+            Ok(ctx) => (ctx.peer_registry.clone(), build(&ctx)),
+            Err(_) => return,
+        };
+        if let Some(registry) = registry {
+            let _ = registry
+                .send_to_peer(requester_key, PeerMessage::SendMessage(message));
+        }
+    }
+
     fn sweep_expired_connects(client_context: &Arc<RwLock<ClientContext>>) {
         let expired = match client_context.write_safe() {
             Ok(mut ctx) => ctx.take_expired_connects(Instant::now()),
@@ -854,4 +871,18 @@ impl Client {
             Self::fail_queued_downloads(client_context, &username);
         }
     }
+}
+
+/// Our shares in the wire form a browse or folder reply carries.
+fn shared_directories(
+    ctx: &ClientContext,
+) -> Vec<crate::message::peer::SharedDirectory> {
+    ctx.shares
+        .directories()
+        .into_iter()
+        .map(|(name, files)| crate::message::peer::SharedDirectory {
+            name,
+            files,
+        })
+        .collect()
 }
