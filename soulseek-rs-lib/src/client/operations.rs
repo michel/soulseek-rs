@@ -17,9 +17,6 @@ impl Client {
         own_username: String,
     ) {
         thread::spawn(move || {
-            if let Ok(mut ctx) = client_context.write_safe() {
-                ctx.leaf = super::distributed::Leaf::new(&own_username);
-            }
             let mut last_sweep = Instant::now();
             loop {
                 let next = reader.recv_timeout(CONNECT_SWEEP_INTERVAL);
@@ -27,6 +24,9 @@ impl Client {
                     last_sweep = Instant::now();
                     Self::sweep_expired_connects(&client_context);
                     Self::sweep_stale_offers(&client_context);
+                    if let Ok(mut ctx) = client_context.write_safe() {
+                        ctx.expire_pending_peer_messages(Instant::now());
+                    }
                 }
                 let operation = match next {
                     Ok(operation) => operation,
@@ -716,18 +716,45 @@ impl Client {
                             );
                         }
                     }
-                    ClientOperation::ParentBranchLevel { parent, level } => {
-                        if let Ok(mut ctx) = client_context.write_safe() {
-                            ctx.leaf.branch_level(&parent, level);
+                    ClientOperation::ParentBranchLevel {
+                        parent,
+                        link,
+                        level,
+                    } => {
+                        let Ok(mut ctx) = client_context.write_safe() else {
+                            continue;
+                        };
+                        if let Some(branch) =
+                            ctx.leaf.branch_level(&parent, link, level)
+                        {
+                            super::distributed::announce(
+                                ctx.server_sender.as_ref(),
+                                &branch,
+                                true,
+                            );
                         }
                     }
-                    ClientOperation::ParentBranchRoot { parent, root } => {
-                        if let Ok(mut ctx) = client_context.write_safe() {
-                            ctx.leaf.branch_root(&parent, &root);
+                    ClientOperation::ParentBranchRoot {
+                        parent,
+                        link,
+                        root,
+                    } => {
+                        let Ok(mut ctx) = client_context.write_safe() else {
+                            continue;
+                        };
+                        if let Some(branch) =
+                            ctx.leaf.branch_root(&parent, link, &root)
+                        {
+                            super::distributed::announce(
+                                ctx.server_sender.as_ref(),
+                                &branch,
+                                true,
+                            );
                         }
                     }
                     ClientOperation::ParentSearch {
                         parent,
+                        link,
                         username,
                         token,
                         query,
@@ -735,14 +762,17 @@ impl Client {
                         let Ok(mut ctx) = client_context.write_safe() else {
                             continue;
                         };
-                        if let Some(branch) = ctx.leaf.search_from(&parent) {
+                        if let Some(branch) =
+                            ctx.leaf.search_from(&parent, link)
+                        {
                             super::distributed::announce(
                                 ctx.server_sender.as_ref(),
                                 &branch,
                                 true,
                             );
                         }
-                        if ctx.leaf.is_parent(&parent)
+                        if ctx.leaf.is_parent(&parent, link)
+                            && ctx.leaf.admit_search(Instant::now())
                             && let Some(ops) = &ctx.operations
                         {
                             let _ = ops.send(ClientOperation::IncomingSearch {
@@ -752,11 +782,11 @@ impl Client {
                             });
                         }
                     }
-                    ClientOperation::ParentClosed { parent } => {
+                    ClientOperation::ParentClosed { parent, link } => {
                         let Ok(mut ctx) = client_context.write_safe() else {
                             continue;
                         };
-                        if ctx.leaf.closed(&parent) {
+                        if ctx.leaf.closed(&parent, link) {
                             super::distributed::announce(
                                 ctx.server_sender.as_ref(),
                                 &ctx.leaf.branch(),
@@ -764,6 +794,8 @@ impl Client {
                             );
                         }
                     }
+                    // Also what a fresh login means: whatever tree we hung
+                    // from belongs to the old session.
                     ClientOperation::ResetDistributed => {
                         let Ok(mut ctx) = client_context.write_safe() else {
                             continue;

@@ -193,18 +193,10 @@ fn a_successful_login_marks_the_session_live_again() {
 
 #[test]
 fn post_login_messages_carry_counts_and_conditional_wait_port() {
-    let messages = post_login_messages(true, 4321, 3, 7, "me");
+    let messages = post_login_messages(true, 4321, 3, 7);
     let codes: Vec<u32> = messages.iter().map(code_of).collect();
-    // SharedFolders; the distributed stance HaveNoParent, BranchRoot,
-    // BranchLevel, AcceptChildren; SetStatus; SetWaitPort.
-    assert_eq!(codes, vec![35, 71, 127, 126, 100, 28, 2]);
-    // A leaf with no parent is its own branch root at level 0, and it
-    // declines children.
-    let mut root = messages[2].clone();
-    root.set_pointer(4);
-    assert_eq!(root.read_string(), "me");
-    assert_eq!(&messages[3].get_data()[4..8], &0u32.to_le_bytes());
-    assert_eq!(messages[4].get_data()[4], 0);
+    // SharedFolders; SetStatus; SetWaitPort.
+    assert_eq!(codes, vec![35, 28, 2]);
 
     // The SharedFolders message (code 35) carries the real counts.
     let shared = messages[0].get_data();
@@ -212,7 +204,7 @@ fn post_login_messages_carry_counts_and_conditional_wait_port() {
     assert_eq!(u32::from_le_bytes(shared[8..12].try_into().unwrap()), 7);
 
     // Not listening omits SetWaitPort (code 2).
-    let no_listen = post_login_messages(false, 4321, 3, 7, "me");
+    let no_listen = post_login_messages(false, 4321, 3, 7);
     let codes: Vec<u32> = no_listen.iter().map(code_of).collect();
-    assert_eq!(codes, vec![35, 71, 127, 126, 100, 28]);
+    assert_eq!(codes, vec![35, 28]);
 }

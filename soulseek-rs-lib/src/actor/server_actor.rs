@@ -183,12 +183,10 @@ pub struct ServerActor {
     shared_folder_count: u32,
     shared_file_count: u32,
     session: SessionWatch,
-    /// The name we logged in as, once a login has been asked for.
-    username: String,
 }
 
 /// The messages a client sends right after a successful login: its shared-file
-/// counts, its distributed-network stance, online status, and (when listening)
+/// counts, online status, and (when listening)
 /// the port peers should connect to. Kept as a free function so it can be
 /// tested without a live connection.
 fn post_login_messages(
@@ -196,7 +194,6 @@ fn post_login_messages(
     listen_port: u16,
     shared_folders: u32,
     shared_files: u32,
-    own_username: &str,
 ) -> Vec<Message> {
     let mut messages = vec![
         MessageFactory::build_shared_folders_message(
@@ -205,17 +202,10 @@ fn post_login_messages(
         ),
         MessageFactory::build_set_status_message(2),
     ];
-    messages.splice(1..1, parentless_stance(own_username));
     if enable_listen {
         messages.push(MessageFactory::build_set_wait_port_message(listen_port));
     }
     messages
-}
-
-/// What a leaf tells the server while it has no parent: it is its own branch
-/// root at level 0.
-fn parentless_stance(own_username: &str) -> Vec<Message> {
-    crate::message::distributed::stance(own_username, 0, false)
 }
 
 impl ServerActor {
@@ -245,7 +235,6 @@ impl ServerActor {
             shared_folder_count,
             shared_file_count,
             session: SessionWatch::default(),
-            username: String::new(),
         }
     }
 
@@ -579,11 +568,13 @@ impl ServerActor {
                 self.listen_port,
                 self.shared_folder_count,
                 self.shared_file_count,
-                &self.username,
             ) {
                 self.send_message(msg);
             }
             self.session.clear();
+            // The distributed stance is the leaf's to announce, and a new
+            // session starts without a parent.
+            self.forward_to_client(ClientOperation::ResetDistributed);
         }
         match self.context.write_safe() {
             Ok(mut ctx) => ctx.logged_in = Some(message),
@@ -651,7 +642,6 @@ impl ServerActor {
         version: ClientVersion,
         response: std::sync::mpsc::Sender<Result<bool, SoulseekRs>>,
     ) {
-        self.username.clone_from(&username);
         if self.stream.is_none() && !self.initiate_connection() {
             let _ = response.send(Err(SoulseekRs::NotConnected));
             return;
