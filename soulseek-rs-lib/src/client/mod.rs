@@ -292,6 +292,12 @@ pub enum ClientOperation {
     ShareListRequested {
         requester_key: String,
     },
+    /// A peer asked for one folder of our shares; send a FolderContentsResponse.
+    FolderContentsRequested {
+        requester_key: String,
+        token: u32,
+        folder: String,
+    },
     /// A peer we are browsing returned their shared-file listing.
     BrowseResult {
         username: String,
