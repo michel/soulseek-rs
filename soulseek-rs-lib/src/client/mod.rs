@@ -292,6 +292,10 @@ pub enum ClientOperation {
     ShareListRequested {
         requester_key: String,
     },
+    /// A peer asked what we say about ourselves; send a UserInfoResponse.
+    UserInfoRequested {
+        requester_key: String,
+    },
     /// A peer asked for one folder of our shares; send a FolderContentsResponse.
     FolderContentsRequested {
         requester_key: String,
