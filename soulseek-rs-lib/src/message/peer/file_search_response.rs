@@ -22,6 +22,7 @@ pub fn build_file_search_response(
     files: &[FileEntry],
     slots: u8,
     speed: u32,
+    queue_length: u32,
 ) -> Message {
     let mut payload = Message::new();
     payload
@@ -39,7 +40,10 @@ pub fn build_file_search_response(
             payload.write_int32(code).write_int32(value);
         }
     }
-    payload.write_int8(slots).write_int32(speed).write_int32(0); // free upload slots / queue length (well-formed trailer)
+    payload
+        .write_int8(slots)
+        .write_int32(speed)
+        .write_int32(queue_length);
 
     let compressed = compress_stored(&payload.get_data());
     Message::new()
@@ -112,7 +116,7 @@ fn build_file_search_response_roundtrips_through_the_decoder() {
             attribs: &[],
         },
     ];
-    let message = build_file_search_response("e2e_sharer", 42, &files, 1, 0);
+    let message = build_file_search_response("e2e_sharer", 42, &files, 1, 0, 0);
 
     // Decode via the exact production decoder used for real peer responses:
     // the dispatcher positions the pointer at 8 (past length + code).
@@ -131,4 +135,19 @@ fn build_file_search_response_roundtrips_through_the_decoder() {
     assert_eq!(result.files[1].size, 456);
     assert!(result.files[1].attribs.is_empty());
     assert_eq!(result.slots, 1);
+}
+
+#[test]
+fn the_trailer_carries_slots_speed_and_queue_length() {
+    let message = build_file_search_response("me", 1, &[], 0, 900, 7);
+    let mut body = Message::new_with_data(
+        crate::utils::zlib::deflate(&message.get_data()[4..]).unwrap(),
+    );
+    body.read_string();
+    body.read_int32();
+    assert_eq!(body.read_int32(), 0, "no files");
+    assert_eq!(
+        (body.read_int8(), body.read_int32(), body.read_int32()),
+        (0, 900, 7)
+    );
 }

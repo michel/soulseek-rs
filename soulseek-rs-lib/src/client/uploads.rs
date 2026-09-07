@@ -145,8 +145,9 @@ impl Client {
                 &bytes_sent,
                 &cancel,
             );
+            let streamed = result.as_ref().ok().copied();
             let status = match &result {
-                Ok(()) => UploadStatus::Completed,
+                Ok(_) => UploadStatus::Completed,
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
                     UploadStatus::Cancelled
                 }
@@ -158,7 +159,13 @@ impl Client {
             if let Ok(mut ctx) = context.write_safe()
                 && let Some(upload) = ctx.active_uploads.get_mut(&token)
             {
+                let secs = upload.started.elapsed().as_secs_f64();
                 upload.status = status;
+                if let Some(bytes) = streamed
+                    && secs > 0.0
+                {
+                    ctx.last_upload_speed = (bytes as f64 / secs) as u32;
+                }
             }
             // The slot this transfer held is free now, so whoever is next in
             // line gets it without waiting for another request to arrive.
