@@ -5,8 +5,8 @@ mod rooms;
 mod settings;
 
 pub use app_state::{
-    AppState, ChatMessage, CommandBarMode, DownloadEntry, FocusedPane,
-    MessageDirection, SearchEntry, SearchStatus,
+    AppState, ChatMessage, CommandBarMode, DownloadEntry, FocusedPane, LogView,
+    MessageDirection, PaneLayout, SearchEntry, SearchStatus,
 };
 pub use browse::{
     BrowseState, BrowseStatus, BrowseTabs, files_under, find_node,

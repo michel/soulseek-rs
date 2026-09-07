@@ -1,3 +1,4 @@
+use super::name_scroll::{column_width, end_offset, scroll_text};
 use crate::models::FileDisplayData;
 use crate::ui::{
     BYTES_PER_MB, HIGHLIGHT_SYMBOL, body_style, dimmed_style, format_bytes,
@@ -6,12 +7,11 @@ use crate::ui::{
 };
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Rect},
     text::{Line, Span},
     widgets::{Cell, HighlightSpacing, Paragraph, Row, Table, TableState},
 };
 use std::collections::HashSet;
-use unicode_width::UnicodeWidthChar;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -39,59 +39,12 @@ pub struct ResultsPaneParams<'a> {
     pub name_offset: usize,
 }
 
-fn name_column_width(area: Rect) -> usize {
-    let inner = pane_block(false).inner(area);
-    let symbol = Line::from(HIGHLIGHT_SYMBOL).width() as u16;
-    let [_, columns] =
-        Layout::horizontal([Constraint::Length(symbol), Constraint::Fill(0)])
-            .areas(inner);
-    usize::from(Layout::horizontal(WIDTHS).spacing(1).split(columns)[1].width)
-}
-
-const fn overflow(cells: usize, width: usize) -> usize {
-    if cells <= width { 0 } else { cells + 1 - width }
-}
+/// Filename is the second column.
+const NAME_COLUMN: usize = 1;
 
 #[must_use]
 pub fn name_end_offset(name: &str, area: Rect) -> usize {
-    overflow(Span::raw(name).width(), name_column_width(area))
-}
-
-fn scroll_name(name: &str, offset: usize, width: usize) -> Line<'_> {
-    if offset == 0 {
-        return Line::from(name);
-    }
-    let mut tail_cells = 0;
-    let mut furthest = name.len();
-    for (index, ch) in name.char_indices().rev() {
-        let cells = ch.width().unwrap_or(0);
-        if tail_cells + cells >= width {
-            if index == 0 && tail_cells + cells == width {
-                return Line::from(name);
-            }
-            break;
-        }
-        tail_cells += cells;
-        furthest = index;
-    }
-    if furthest == 0 {
-        return Line::from(name);
-    }
-    let mut skipped = 0;
-    let mut start = furthest;
-    for (index, ch) in name.char_indices() {
-        if index >= furthest || skipped >= offset {
-            start = index;
-            break;
-        }
-        skipped += ch.width().unwrap_or(0);
-    }
-    while let Some(ch) = name[start..].chars().next()
-        && ch.width() == Some(0)
-    {
-        start += ch.len_utf8();
-    }
-    Line::from(vec![Span::raw("…"), Span::raw(&name[start..])])
+    end_offset(name, area, &WIDTHS, NAME_COLUMN)
 }
 
 /// Whether the rendered row `display_idx` is selected. `selected_indices` holds
@@ -173,7 +126,7 @@ pub fn render_results_pane(
     ])
     .height(1);
 
-    let name_width = name_column_width(area);
+    let name_width = column_width(area, &WIDTHS, NAME_COLUMN);
     let rows: Vec<Row> = items
         .iter()
         .enumerate()
@@ -206,7 +159,7 @@ pub fn render_results_pane(
 
             Row::new(vec![
                 Cell::from(checkbox).style(checkbox_style),
-                Cell::from(scroll_name(
+                Cell::from(scroll_text(
                     &file.filename,
                     name_offset,
                     name_width,

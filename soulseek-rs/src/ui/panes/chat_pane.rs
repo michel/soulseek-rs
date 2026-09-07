@@ -1,4 +1,4 @@
-use crate::models::{AppState, MessageDirection};
+use crate::models::{AppState, ChatMessage, LogView, MessageDirection};
 use crate::ui::{
     accent_style, border_style, dimmed_style, highlight_style, info_style,
     primary_style, wrap_chat_line,
@@ -17,10 +17,11 @@ use ratatui::{
 pub fn render_chat_pane(
     frame: &mut Frame,
     area: Rect,
-    state: &AppState,
+    state: &mut AppState,
     own_username: &str,
 ) {
-    let peer = state.active_chat_peer();
+    let peer = state.active_chat_peer().map(str::to_string);
+    let peer = peer.as_deref();
     let title = peer.map_or_else(
         || " Messages  (m: compose, i/Esc: close) ".to_string(),
         |peer| format!(" {peer}  (↑↓/Tab: switch, m: to…, i/Esc: close) "),
@@ -51,7 +52,14 @@ pub fn render_chat_pane(
         return;
     };
 
-    render_messages(frame, body[0], state, peer, own_username);
+    render_messages(
+        frame,
+        body[0],
+        &state.messages,
+        &mut state.chat_view,
+        peer,
+        own_username,
+    );
     render_compose(frame, chunks[1], state);
 }
 
@@ -94,13 +102,13 @@ fn render_peers(
 fn render_messages(
     frame: &mut Frame,
     area: Rect,
-    state: &AppState,
+    messages: &[ChatMessage],
+    view: &mut LogView,
     peer: &str,
     own_username: &str,
 ) {
     let width = area.width as usize;
-    let lines: Vec<Line> = state
-        .messages
+    let lines: Vec<Line> = messages
         .iter()
         .filter(|m| m.peer == peer)
         .flat_map(|m| {
@@ -123,9 +131,9 @@ fn render_messages(
         })
         .collect();
 
-    // Auto-scroll: tail by rendered rows so the newest message stays visible.
-    let start = lines.len().saturating_sub((area.height as usize).max(1));
-    frame.render_widget(Paragraph::new(lines[start..].to_vec()), area);
+    // The newest rows, unless the reader is holding a place in the history.
+    let window = view.window(lines.len(), usize::from(area.height));
+    frame.render_widget(Paragraph::new(lines[window].to_vec()), area);
 }
 
 fn render_compose(frame: &mut Frame, area: Rect, state: &AppState) {
