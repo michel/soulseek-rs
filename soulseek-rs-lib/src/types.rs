@@ -88,8 +88,9 @@ pub const MAX_SEARCH_FILES: usize = 10_000;
 ///
 /// A broad query against a big share would otherwise hand the whole index
 /// to whoever typed it, on every such search that arrives. Nicotine+ sends
-/// 150 by default; a searcher with more sources than that has plenty.
-pub const MAX_SEARCH_REPLY_FILES: usize = 150;
+/// 300 by default and slskd 500; a searcher with that many sources from one
+/// peer has plenty.
+pub const MAX_SEARCH_REPLY_FILES: usize = 300;
 
 impl Search {
     /// Store one peer's response, unless this search already holds enough.
