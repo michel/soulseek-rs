@@ -7,7 +7,7 @@ use std::sync::mpsc::Sender;
 pub struct ReloggedHandler;
 
 impl MessageHandler<ServerMessage> for ReloggedHandler {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         41
     }
 

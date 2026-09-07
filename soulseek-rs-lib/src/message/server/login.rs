@@ -8,7 +8,7 @@ use crate::message::MessageHandler;
 pub struct LoginHandler;
 
 impl MessageHandler<ServerMessage> for LoginHandler {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         1
     }
 

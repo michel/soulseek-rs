@@ -12,7 +12,7 @@ use std::sync::mpsc::Sender;
 pub struct PlaceInQueueRequest;
 
 impl MessageHandler<PeerMessage> for PlaceInQueueRequest {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         51
     }
 

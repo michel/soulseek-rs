@@ -336,7 +336,7 @@ fn a_transfer_denial_carries_the_token_and_the_reason() {
     let message =
         MessageFactory::build_transfer_denial_message(555, "Cancelled");
     let mut decoded = Message::new_with_data(message.get_buffer());
-    assert_eq!(decoded.get_message_code_u32(), 41);
+    assert_eq!(decoded.get_message_code(), 41);
     decoded.set_pointer(8);
     assert_eq!(decoded.read_int32(), 555);
     assert!(!decoded.read_bool());

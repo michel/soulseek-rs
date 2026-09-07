@@ -7,7 +7,7 @@ use std::sync::mpsc::Sender;
 pub struct LeaveRoomHandler;
 
 impl MessageHandler<ServerMessage> for LeaveRoomHandler {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         15
     }
 
