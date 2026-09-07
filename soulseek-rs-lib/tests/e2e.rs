@@ -3296,3 +3296,74 @@ fn a_third_party_client_reads_our_user_info() {
 
     let _ = std::fs::remove_dir_all(share_dir);
 }
+
+// Progress assumed every read filled the buffer, so a peer that trickles
+// small chunks was reported at several times its real rate.
+#[test]
+fn download_progress_reports_the_rate_actually_received() {
+    let server = server_or_skip!();
+
+    let listen_port = free_port().expect("free listen port");
+    let mut client = Client::with_settings(server.listening_settings(
+        "e2e_rate_dl",
+        "pw",
+        listen_port,
+    ));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login"));
+
+    let filename = "trickle.mp3";
+    let content: Vec<u8> = (0..400_000u32).map(|i| (i % 251) as u8).collect();
+    let download_dir = unique_download_dir();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let cfg = MockUpload {
+        listen_addr: format!("127.0.0.1:{listen_port}"),
+        peer_username: "e2e_rate_up".to_string(),
+        filename: filename.to_string(),
+        content: content.clone(),
+        token: 424_260_u32,
+        ready: ready_tx,
+        token_delay: Duration::ZERO,
+    };
+    let uploader =
+        std::thread::spawn(move || run_mock_slow_uploader(&cfg, None));
+    ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("mock uploader P connection");
+    std::thread::sleep(Duration::from_millis(1500));
+
+    let (_download, status_rx) = client
+        .download(
+            filename.to_string(),
+            "e2e_rate_up".to_string(),
+            content.len() as u64,
+            download_dir.display().to_string(),
+        )
+        .expect("start download");
+
+    let mut fastest = 0.0f64;
+    let mut completed = false;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && !completed {
+        match status_rx.recv_timeout(Duration::from_millis(500)) {
+            Ok(DownloadStatus::InProgress {
+                speed_bytes_per_sec,
+                ..
+            }) => fastest = fastest.max(speed_bytes_per_sec),
+            Ok(DownloadStatus::Completed) => completed = true,
+            Ok(DownloadStatus::Failed(_) | DownloadStatus::TimedOut) => break,
+            _ => {}
+        }
+    }
+    assert!(completed, "the trickled download should complete");
+    assert!(fastest > 0.0, "progress should report a rate");
+    // The mock sends 4 KiB every 20 ms.
+    let sent_rate = 4096.0 / 0.020;
+    assert!(
+        fastest < 1.5 * sent_rate,
+        "reported {fastest} B/s for a peer sending {sent_rate} B/s"
+    );
+
+    let _ = uploader.join();
+    let _ = std::fs::remove_dir_all(&download_dir);
+}
