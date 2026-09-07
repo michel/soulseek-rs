@@ -350,6 +350,9 @@ impl ServerActor {
             return false;
         }
         stream.set_nodelay(true).ok();
+        if let Err(e) = crate::utils::keepalive::set_keepalive(&stream) {
+            warn!("[server] keepalive not set: {}", e);
+        }
 
         self.stream = Some(stream);
         self.connection_state = ConnectionState::Connecting {
@@ -1017,6 +1020,22 @@ mod tests {
         assert!(
             matches!(actor.connection_state, ConnectionState::Disconnected),
             "a timed-out connect must leave Connecting"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_server_socket_keeps_itself_alive() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut actor = parked_actor(listener.local_addr().unwrap().port());
+
+        assert!(actor.initiate_connection());
+
+        assert!(
+            crate::utils::keepalive::keepalive_enabled(
+                actor.stream.as_ref().unwrap()
+            ),
+            "an idle NAT mapping must be kept alive and a dead path noticed"
         );
     }
 
