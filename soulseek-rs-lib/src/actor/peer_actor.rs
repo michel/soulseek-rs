@@ -21,7 +21,9 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
+/// Marked non-exhaustive: each peer message the client learns adds a variant.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum PeerMessage {
     SendMessage(Message),
     FileSearchResult(SearchResult),

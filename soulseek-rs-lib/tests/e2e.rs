@@ -24,10 +24,9 @@ use std::time::{Duration, Instant};
 
 use soulseek_rs::message::Message;
 use soulseek_rs::message::server::MessageFactory;
-use soulseek_rs::peer::ConnectionType;
 use soulseek_rs::{
-    Client, ClientSettings, ClientVersion, DownloadStatus, PeerAddress,
-    SessionLoss, UploadStatus,
+    Client, ClientSettings, ClientVersion, ConnectionType, DownloadStatus,
+    PeerAddress, SessionLoss, UploadStatus,
 };
 
 /// Only one test at a time may drive a server.
