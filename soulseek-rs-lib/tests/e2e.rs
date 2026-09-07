@@ -2348,23 +2348,24 @@ fn place_of(sharer: &Client, username: &str, filename: &str) -> Option<u32> {
     })
 }
 
-/// Give `username` privileges in soulfind's own database.
+/// Set `column` ("privileges", or "admin" for the user whose private
+/// messages to "server" are commands) on `username` in soulfind's own
+/// database, good for a day: soulfind stores both as the unix timestamp
+/// they expire at.
 ///
-/// `false` means it could not be done — an external server, or no `sqlite3` on
-/// this machine — which the caller treats as a skip rather than a failure.
-fn grant_privileges(server: &TestServer, username: &str) -> bool {
+/// `false` means it could not be done — an external server, or no `sqlite3`
+/// on this machine — which the caller treats as a skip rather than a failure.
+fn grant(server: &TestServer, username: &str, column: &str) -> bool {
     let Some(db) = server.db.as_ref() else {
         return false;
     };
-    // soulfind stores privileges as the unix timestamp they expire at.
     let expiry = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_secs() + 86_400);
     Command::new("sqlite3")
         .arg(db)
         .arg(format!(
-            "UPDATE users SET privileges = {expiry} WHERE username = \
-             '{username}';"
+            "UPDATE users SET {column} = {expiry} WHERE username = '{username}';"
         ))
         .status()
         .is_ok_and(|status| status.success())
@@ -2473,7 +2474,7 @@ fn a_privileged_peer_overtakes_one_already_waiting_for_a_slot() {
         login_raw(&server_addr, "e2e_q_donor", "pw")
             .expect("the donor registers"),
     );
-    if !grant_privileges(&server, "e2e_q_donor") {
+    if !grant(&server, "e2e_q_donor", "privileges") {
         eprintln!(
             "privilege e2e skipped: cannot write soulfind's database (needs a \
              locally spawned server and sqlite3)"
@@ -3422,4 +3423,42 @@ fn a_large_listing_travels_compressed() {
     );
 
     let _ = std::fs::remove_dir_all(share_dir);
+}
+
+// The server's announcements (code 66) were dropped on the floor; they are
+// how a server tells everyone it is going down.
+#[test]
+fn a_server_announcement_arrives_as_a_message_from_the_server() {
+    let server = server_or_skip!();
+
+    let mut admin = Client::with_settings(server.settings("e2e_admin", "pw"));
+    let mut bob =
+        Client::with_settings(server.settings("e2e_announce_bob", "pw"));
+    admin.connect().expect("admin connect");
+    bob.connect().expect("bob connect");
+    assert!(admin.login().expect("admin login"));
+    assert!(bob.login().expect("bob login"));
+    if !grant(&server, "e2e_admin", "admin") {
+        println!("e2e skipped: cannot make an admin on this server");
+        return;
+    }
+
+    admin
+        .send_private_message("server", "announcement going down at nine")
+        .expect("send the admin command");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut received = Vec::new();
+    while Instant::now() < deadline {
+        received.extend(bob.take_private_messages());
+        if received.iter().any(|m| m.username() == "server") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let announcement = received
+        .iter()
+        .find(|m| m.username() == "server")
+        .expect("bob should hear the announcement");
+    assert_eq!(announcement.message(), "going down at nine");
 }
