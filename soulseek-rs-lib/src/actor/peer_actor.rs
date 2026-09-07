@@ -556,17 +556,18 @@ impl PeerActor {
 
     /// Read what the socket holds, up to `READS_PER_TICK` buffers, so a big
     /// listing lands in a few ticks rather than a few minutes; the cap keeps
-    /// a peer that never stops sending from starving the mailbox.
+    /// a peer that never stops sending from starving the mailbox. Only the
+    /// first read reports an error: a peer that sends its reply and hangs up
+    /// has still sent the reply, which must be parsed before the close is
+    /// acted on, and the socket says so again on the next call.
     fn drain(
         reader: &mut MessageReader,
         stream: &mut TcpStream,
     ) -> io::Result<()> {
         reader.read_from_socket(stream)?;
         for _ in 1..READS_PER_TICK {
-            match reader.read_from_socket(stream) {
-                Ok(()) => {}
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                Err(e) => return Err(e),
+            if reader.read_from_socket(stream).is_err() {
+                break;
             }
         }
         Ok(())
