@@ -34,7 +34,7 @@ pub use actor::server_actor::{PeerAddress, UserMessage};
 pub use client::{Client, ClientSettings};
 pub use error::{Result, SoulseekRs};
 pub use message::peer::{SharedDirectory, SharedFileEntry};
-pub use peer::ConnectionType;
+pub use peer::{ConnectionType, ParseConnectionTypeError};
 pub use types::{
     ClientVersion, DownloadStatus, File, RoomEvent, RoomInfo, Search,
     SearchResult, SessionLoss, Transfer, UploadInfo, UploadStatus, UserInfo,
