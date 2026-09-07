@@ -3092,3 +3092,38 @@ fn a_search_reply_carries_at_most_the_file_cap() {
 
     let _ = std::fs::remove_dir_all(share_dir);
 }
+
+// Tokens were the first five hex digits of the query's MD5, so two queries
+// could share one and a peer's answer to either went to whichever search the
+// map handed back first. These two queries collide under that scheme.
+#[test]
+fn two_live_searches_never_share_a_token() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    std::fs::write(share_dir.join("tokenprobe aeabna.bin"), b"x").unwrap();
+    let (_sharer, searcher) = sharer_and_searcher(
+        &server,
+        &share_dir,
+        "e2e_token_sharer",
+        "e2e_token_searcher",
+    );
+
+    let matching = "tokenprobe aeabna";
+    let colliding = "tokenprobe soyvgt";
+    let _ = searcher.search(colliding, Duration::from_millis(100));
+    let _ = searcher.search(matching, Duration::from_secs(3));
+
+    let live = searcher.get_all_searches();
+    assert_ne!(
+        live[matching].token, live[colliding].token,
+        "two live searches must not share a token"
+    );
+
+    assert!(
+        reply_from(&searcher, matching, "e2e_token_sharer").is_some(),
+        "the sharer's answer should land in the search it answers"
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
