@@ -23,6 +23,7 @@ impl Client {
                 if last_sweep.elapsed() >= CONNECT_SWEEP_INTERVAL {
                     last_sweep = Instant::now();
                     Self::sweep_expired_connects(&client_context);
+                    Self::sweep_stale_offers(&client_context);
                 }
                 let operation = match next {
                     Ok(operation) => operation,
@@ -718,9 +719,10 @@ impl Client {
                         // address (from the code-9 GetPeerAddress) and
                         // stream the file, or queue until it resolves.
                         let (job_addr, downloader) = match client_context
-                            .read_safe()
+                            .write_safe()
                         {
-                            Ok(ctx) => {
+                            Ok(mut ctx) => {
+                                ctx.mark_offer_answered(token);
                                 let Some(job) = ctx.uploads.get(&token) else {
                                     continue;
                                 };
@@ -872,6 +874,15 @@ impl Client {
         if let Some(registry) = registry {
             let _ = registry
                 .send_to_peer(requester_key, PeerMessage::SendMessage(message));
+        }
+    }
+
+    fn sweep_stale_offers(client_context: &Arc<RwLock<ClientContext>>) {
+        let freed = client_context
+            .write_safe()
+            .is_ok_and(|mut ctx| ctx.expire_stale_offers(Instant::now()));
+        if freed {
+            Self::pump_upload_queue(client_context);
         }
     }
 
