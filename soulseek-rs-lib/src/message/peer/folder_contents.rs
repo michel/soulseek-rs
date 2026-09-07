@@ -3,6 +3,8 @@
 //! folder" in other clients asks for.
 
 use crate::message::peer::SharedDirectory;
+#[cfg(test)]
+use crate::message::peer::SharedFileEntry;
 use crate::message::peer::shared_file_list::{
     decompress_body, read_directories, write_directories,
 };
@@ -56,7 +58,18 @@ pub fn parse_folder_contents(
 fn a_folder_listing_round_trips() {
     let dirs = vec![SharedDirectory {
         name: "music\\album".to_string(),
-        files: vec![("one.flac".to_string(), 40), ("two.flac".to_string(), 50)],
+        files: vec![
+            SharedFileEntry {
+                name: "one.flac".to_string(),
+                size: 40,
+                attributes: vec![(0, 992)],
+            },
+            SharedFileEntry {
+                name: "two.flac".to_string(),
+                size: 50,
+                attributes: Vec::new(),
+            },
+        ],
     }];
     let built = build_folder_contents(7, "music\\album", &dirs);
     let mut message = Message::new_with_data(built.get_data());

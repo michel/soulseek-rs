@@ -948,21 +948,8 @@
       "SharedDirectoryDto": {
         "properties": {
           "files": {
-            "description": "Basename and size; join with the directory to get a downloadable path.",
             "items": {
-              "maxItems": 2,
-              "minItems": 2,
-              "prefixItems": [
-                {
-                  "type": "string"
-                },
-                {
-                  "format": "uint64",
-                  "minimum": 0,
-                  "type": "integer"
-                }
-              ],
-              "type": "array"
+              "$ref": "#/components/schemas/SharedFileEntryDto"
             },
             "type": "array"
           },
@@ -973,6 +960,46 @@
         "required": [
           "name",
           "files"
+        ],
+        "type": "object"
+      },
+      "SharedFileEntryDto": {
+        "properties": {
+          "attributes": {
+            "description": "`(code, value)` audio attributes the owner advertises.",
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            "type": "array"
+          },
+          "name": {
+            "description": "Basename; join with the directory to get a downloadable path.",
+            "type": "string"
+          },
+          "size": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "size",
+          "attributes"
         ],
         "type": "object"
       },
@@ -1313,7 +1340,7 @@
       "name": "MIT"
     },
     "title": "soulseek-rs daemon",
-    "version": "1"
+    "version": "2"
   },
   "methods": [
     {

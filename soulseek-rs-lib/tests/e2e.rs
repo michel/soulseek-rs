@@ -1838,7 +1838,7 @@ fn a_runtime_share_update_is_visible_to_browsers() {
     assert!(
         directories
             .iter()
-            .any(|d| d.files.iter().any(|(name, _)| name == "late.mp3")),
+            .any(|d| d.files.iter().any(|f| f.name == "late.mp3")),
         "the listing should include the file shared at runtime"
     );
 
@@ -1888,7 +1888,7 @@ fn browse_a_peers_shared_files() {
     assert!(
         directories
             .iter()
-            .any(|d| { d.files.iter().any(|(name, _)| name == "track.flac") }),
+            .any(|d| { d.files.iter().any(|f| f.name == "track.flac") }),
         "the listing should include the shared file"
     );
 
@@ -1949,7 +1949,7 @@ fn browse_a_firewalled_peer_via_broker() {
     assert!(
         directories
             .iter()
-            .any(|d| d.files.iter().any(|(name, _)| name == "hidden.flac")),
+            .any(|d| d.files.iter().any(|f| f.name == "hidden.flac")),
         "the brokered listing should include the shared file"
     );
 
@@ -2019,7 +2019,7 @@ fn a_third_party_client_browses_our_shares_directly() {
     assert!(
         directories
             .iter()
-            .any(|d| d.files.iter().any(|(name, _)| name == "track.flac")),
+            .any(|d| d.files.iter().any(|f| f.name == "track.flac")),
         "the listing should include the shared file, got {directories:?}"
     );
 
@@ -2127,7 +2127,7 @@ fn a_third_party_client_browses_our_shares_via_the_server_broker() {
     assert!(
         directories
             .iter()
-            .any(|d| d.files.iter().any(|(name, _)| name == "brokered.flac")),
+            .any(|d| d.files.iter().any(|f| f.name == "brokered.flac")),
         "the brokered listing should include the shared file, got {directories:?}"
     );
 
@@ -2180,7 +2180,7 @@ fn a_stalled_peer_connection_does_not_wedge_the_listener() {
     assert!(
         directories
             .iter()
-            .any(|d| d.files.iter().any(|(name, _)| name == "still.flac")),
+            .any(|d| d.files.iter().any(|f| f.name == "still.flac")),
         "the listing should include the shared file, got {directories:?}"
     );
 
@@ -3255,7 +3255,7 @@ fn a_third_party_client_fetches_one_folder_of_our_shares() {
     assert_eq!(echoed, folder);
     let mut names: Vec<(String, Vec<String>)> = directories
         .into_iter()
-        .map(|d| (d.name, d.files.into_iter().map(|(name, _)| name).collect()))
+        .map(|d| (d.name, d.files.into_iter().map(|f| f.name).collect()))
         .collect();
     for (_, files) in &mut names {
         files.sort();
@@ -3569,6 +3569,51 @@ fn a_shared_mp3_advertises_its_bitrate_and_duration() {
     assert_eq!(file.attribs.get(&0), Some(&128), "bitrate in kbps");
     assert_eq!(file.attribs.get(&1), Some(&26), "duration in seconds");
     assert_eq!(file.attribs.get(&2), Some(&0), "constant bitrate");
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+// A browse shows what a search shows: the bitrate and duration a searcher
+// filters on are in the listing too, as Nicotine+ sends them.
+#[test]
+fn a_browse_listing_carries_the_files_attributes() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    std::fs::write(share_dir.join("listed.mp3"), cbr_mp3(1000)).unwrap();
+    let sharer_port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.listening_settings("e2e_lattr_sharer", "pw", sharer_port)
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let _qt = login_raw(&server_addr, "e2e_lattr_browser", "pw")
+        .expect("third-party client logs in");
+
+    let directories = third_party_browse(
+        &format!("127.0.0.1:{sharer_port}"),
+        "e2e_lattr_browser",
+        Duration::ZERO,
+        Duration::from_secs(15),
+    )
+    .expect("a listing");
+    let listed = directories
+        .iter()
+        .flat_map(|d| d.files.iter())
+        .find(|f| f.name == "listed.mp3")
+        .expect("the mp3 is listed");
+    assert!(
+        listed.attributes.contains(&(0, 128)),
+        "{:?}",
+        listed.attributes
+    );
+    assert!(
+        listed.attributes.contains(&(1, 26)),
+        "{:?}",
+        listed.attributes
+    );
 
     let _ = std::fs::remove_dir_all(share_dir);
 }

@@ -19,8 +19,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Soulseek file attribute codes the network agrees on.
-const ATTR_BITRATE: u32 = 0;
-const ATTR_DURATION: u32 = 1;
+pub const ATTR_BITRATE: u32 = 0;
+pub const ATTR_DURATION: u32 = 1;
 
 /// What to keep out of the raw result set. Every field is a further
 /// restriction: a candidate has to satisfy all of them.
@@ -388,10 +388,10 @@ fn resolve_sizes(
                 listing
                     .iter()
                     .flat_map(|directory| {
-                        directory.files.iter().map(|(basename, size)| {
+                        directory.files.iter().map(|file| {
                             (
-                                social::full_path(&directory.name, basename),
-                                *size,
+                                social::full_path(&directory.name, &file.name),
+                                file.size,
                             )
                         })
                     })
