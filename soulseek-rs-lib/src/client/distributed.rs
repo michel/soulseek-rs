@@ -20,6 +20,13 @@ use std::time::{Duration, Instant};
 const LINK_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// How often an idle link looks at its cancel flag.
 const CANCEL_POLL: Duration = Duration::from_secs(1);
+/// A parent relays the network's whole search stream; one that says nothing
+/// for this long is gone, and holding its slot would block every later
+/// candidate.
+const LINK_IDLE: Duration = Duration::from_mins(1);
+/// Moves of our branch are told to the server at most this often; a parent
+/// that flaps its level must not make us flood the server.
+const MOVE_INTERVAL: Duration = Duration::from_secs(1);
 /// A distributed frame is a search or a branch fact; anything bigger is not
 /// one of ours.
 const MAX_FRAME: usize = 64 * 1024;
@@ -82,6 +89,10 @@ pub struct Leaf {
     candidates: HashMap<String, Candidate>,
     next_link: u64,
     searches: (Instant, u32),
+    /// When we last told the server we moved, and whether a move since then
+    /// is still waiting to be told.
+    moved: Option<Instant>,
+    move_pending: bool,
 }
 
 impl Leaf {
@@ -94,6 +105,8 @@ impl Leaf {
             candidates: HashMap::new(),
             next_link: 1,
             searches: (Instant::now(), 0),
+            moved: None,
+            move_pending: false,
         }
     }
 
@@ -163,7 +176,7 @@ impl Leaf {
         }
         let candidate = self.candidates.get_mut(username)?;
         candidate.level = u32::try_from(level).ok();
-        if level == 0 && candidate.root.is_none() {
+        if level == 0 {
             candidate.root = Some(username.to_string());
         }
         self.moved_with_parent(username)
@@ -251,8 +264,24 @@ impl Leaf {
         if branch == self.branch {
             return None;
         }
-        self.branch = branch.clone();
-        Some(branch)
+        self.branch = branch;
+        self.move_pending = true;
+        self.due_announcement(Instant::now())
+    }
+
+    /// The branch to tell the server about, if a move is waiting and the
+    /// last one was told at least [`MOVE_INTERVAL`] ago.
+    pub fn due_announcement(&mut self, now: Instant) -> Option<Branch> {
+        if !self.move_pending
+            || self
+                .moved
+                .is_some_and(|at| now.duration_since(at) < MOVE_INTERVAL)
+        {
+            return None;
+        }
+        self.move_pending = false;
+        self.moved = Some(now);
+        Some(self.branch.clone())
     }
 
     fn cancel_candidates(&mut self) {
@@ -328,18 +357,25 @@ fn link(
             .get_buffer(),
     )?;
     let mut reader = MessageReader::new();
+    let mut heard = Instant::now();
     loop {
         if dial.cancel.load(Ordering::Relaxed) {
             return Ok(());
         }
         match reader.read_from_socket(&mut stream) {
-            Ok(()) => {}
+            Ok(()) => heard = Instant::now(),
             Err(e)
                 if matches!(
                     e.kind(),
                     io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
                 ) =>
             {
+                if heard.elapsed() > LINK_IDLE {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "silent parent",
+                    ));
+                }
                 continue;
             }
             Err(e) => return Err(e),
@@ -516,7 +552,7 @@ mod tests {
     }
 
     #[test]
-    fn the_parents_later_moves_move_us_too() {
+    fn the_parents_later_moves_move_us_too_but_are_told_once_a_second() {
         let mut leaf = leaf();
         let alice = dial(&mut leaf, &["alice"])["alice"].link;
         leaf.branch_level("alice", alice, 0);
@@ -528,9 +564,36 @@ mod tests {
         );
         assert_eq!(
             leaf.branch_level("alice", alice, 2),
+            None,
+            "a second move within the second waits"
+        );
+        assert_eq!(leaf.branch(), Branch::under("grand", 3), "but it took");
+        assert_eq!(leaf.due_announcement(Instant::now()), None);
+        assert_eq!(
+            leaf.due_announcement(Instant::now() + MOVE_INTERVAL),
             Some(Branch::under("grand", 3))
         );
-        assert_eq!(leaf.branch(), Branch::under("grand", 3));
+        assert_eq!(
+            leaf.due_announcement(Instant::now() + MOVE_INTERVAL),
+            None,
+            "told once"
+        );
+    }
+
+    #[test]
+    fn a_parent_that_becomes_a_root_is_the_root_from_then_on() {
+        let mut leaf = leaf();
+        let alice = dial(&mut leaf, &["alice"])["alice"].link;
+        leaf.branch_root("alice", alice, "grand");
+        leaf.branch_level("alice", alice, 5);
+        assert_eq!(
+            leaf.search_from("alice", alice),
+            Some(Branch::under("grand", 6))
+        );
+        assert_eq!(
+            leaf.branch_level("alice", alice, 0),
+            Some(Branch::under("alice", 1))
+        );
     }
 
     #[test]
