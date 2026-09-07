@@ -39,6 +39,141 @@ pub enum FocusedPane {
     Downloads,
 }
 
+impl FocusedPane {
+    /// Every focusable pane, in the order `Tab` walks them: the number each
+    /// carries in its legend, which is also declaration order.
+    pub const ALL: [Self; 3] = [Self::Searches, Self::Results, Self::Downloads];
+
+    /// Its position in [`Self::ALL`].
+    const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// Which panes are on screen. A hidden pane gives its space to the others; a
+/// zoomed one takes the whole content area for itself, so `Tab` through the
+/// panes while zoomed reads as switching windows.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PaneLayout {
+    hidden: [bool; FocusedPane::ALL.len()],
+    pub zoomed: bool,
+}
+
+impl PaneLayout {
+    #[must_use]
+    pub const fn is_visible(&self, pane: FocusedPane) -> bool {
+        !self.hidden[pane.index()]
+    }
+
+    /// The panes still on screen, in `Tab` order.
+    pub fn visible(&self) -> impl Iterator<Item = FocusedPane> + '_ {
+        FocusedPane::ALL
+            .into_iter()
+            .filter(move |pane| self.is_visible(*pane))
+    }
+
+    /// Take `pane` off the screen. Refuses when it is the last one showing —
+    /// an empty window has nothing to press a key in — and says so.
+    pub fn hide(&mut self, pane: FocusedPane) -> bool {
+        if self.visible().count() <= 1 {
+            return false;
+        }
+        self.hidden[pane.index()] = true;
+        true
+    }
+
+    pub const fn show(&mut self, pane: FocusedPane) {
+        self.hidden[pane.index()] = false;
+    }
+
+    /// The visible pane after (or before) `from`, wrapping around. `from`
+    /// itself may already be hidden, which is how focus leaves a pane that
+    /// was just hidden.
+    #[must_use]
+    pub fn neighbour(&self, from: FocusedPane, forward: bool) -> FocusedPane {
+        let count = FocusedPane::ALL.len();
+        let step = if forward { 1 } else { count - 1 };
+        let mut index = from.index();
+        for _ in 0..count {
+            index = (index + step) % count;
+            let candidate = FocusedPane::ALL[index];
+            if self.is_visible(candidate) {
+                return candidate;
+            }
+        }
+        from
+    }
+}
+
+/// Where a scrolling log is being read.
+///
+/// Either following its newest line, or held at a row of its history so
+/// that arriving messages do not push the reader along. The renderer records
+/// the log's size at each draw, which is what lets the keys move by a
+/// screenful and stop at the ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LogView {
+    /// The first visible row while held in the history; `None` follows the
+    /// tail.
+    top: Option<usize>,
+    /// Rows the log had, and rows the window showed, at the last draw.
+    rows: usize,
+    height: usize,
+}
+
+impl LogView {
+    /// Whether the newest line is on screen, so new messages are being seen.
+    #[must_use]
+    pub const fn following(&self) -> bool {
+        self.top.is_none()
+    }
+
+    /// Rows a page key moves: what the window showed last time.
+    #[must_use]
+    pub const fn page(&self) -> usize {
+        self.height
+    }
+
+    const fn last_top(&self) -> usize {
+        self.rows.saturating_sub(self.height)
+    }
+
+    /// The rows of a log `len` long to draw in a window `height` tall. A
+    /// held position that has reached the tail goes back to following it.
+    pub fn window(
+        &mut self,
+        len: usize,
+        height: usize,
+    ) -> std::ops::Range<usize> {
+        self.rows = len;
+        self.height = height.max(1);
+        let top = match self.top {
+            Some(top) if top < self.last_top() => top,
+            _ => {
+                self.top = None;
+                self.last_top()
+            }
+        };
+        top..(top + self.height).min(len)
+    }
+
+    /// Move the window `rows` down the log (up, when negative), holding
+    /// wherever it lands unless that is the tail.
+    pub fn scroll(&mut self, rows: isize) {
+        let current = self.top.unwrap_or_else(|| self.last_top());
+        let next = current.saturating_add_signed(rows);
+        self.top = (next < self.last_top()).then_some(next);
+    }
+
+    pub const fn to_oldest(&mut self) {
+        self.top = Some(0);
+    }
+
+    pub const fn to_newest(&mut self) {
+        self.top = None;
+    }
+}
+
 /// What the shared command bar is currently capturing input for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandBarMode {
@@ -70,6 +205,8 @@ pub struct AppState {
     pub searches: Vec<SearchEntry>,
     pub searches_table_state: TableState,
     pub selected_search_index: Option<usize>,
+    /// Cells the query column is scrolled to the left.
+    pub searches_query_offset: usize,
 
     // Results
     pub results_items: Vec<FileDisplayData>,
@@ -79,11 +216,14 @@ pub struct AppState {
     pub results_selected_indices: std::collections::HashSet<usize>,
     pub results_filter_query: String,
     pub results_is_filtering: bool,
+    /// Cells the file-name column is scrolled to the left.
     pub results_name_offset: usize,
 
     // Downloads
     pub downloads: Vec<DownloadEntry>,
     pub downloads_table_state: TableState,
+    /// Cells the transfers' file-name column is scrolled to the left.
+    pub downloads_name_offset: usize,
     pub downloads_receiver_channel:
         Option<Receiver<(Download, Receiver<DownloadStatus>)>>,
     pub downloads_sender_channel:
@@ -92,6 +232,12 @@ pub struct AppState {
 
     // UI State
     pub focused_pane: FocusedPane,
+    pub layout: PaneLayout,
+    /// The keys overlay (`?`) is open.
+    pub show_help: bool,
+    /// Where the keys overlay is being read, for a terminal too short to
+    /// show it whole.
+    pub help_view: LogView,
     pub should_exit: bool,
     pub command_bar_active: bool,
     pub command_bar_input: String,
@@ -108,6 +254,8 @@ pub struct AppState {
     /// Compose buffer for the active conversation.
     pub chat_input: String,
     pub chat_composing: bool,
+    /// Where the conversation is being read.
+    pub chat_view: LogView,
 
     // Browse users' shared files (one tab per user)
     pub browse: BrowseTabs,
@@ -129,6 +277,9 @@ pub struct AppState {
     pub searches_pane_area: Option<Rect>,
     pub results_pane_area: Option<Rect>,
     pub downloads_pane_area: Option<Rect>,
+    /// Where the open popup was last drawn, for its page size. Only one is
+    /// ever open, so one record serves them all.
+    pub popup_area: Option<Rect>,
 }
 
 impl AppState {
@@ -147,6 +298,7 @@ impl AppState {
             searches: Vec::new(),
             searches_table_state,
             selected_search_index: None,
+            searches_query_offset: 0,
 
             results_items: Vec::new(),
             results_filtered_items: Vec::new(),
@@ -159,11 +311,15 @@ impl AppState {
 
             downloads: Vec::new(),
             downloads_table_state,
+            downloads_name_offset: 0,
             downloads_receiver_channel: None,
             downloads_sender_channel: None,
             active_downloads_count: 0,
 
             focused_pane: FocusedPane::Searches,
+            layout: PaneLayout::default(),
+            show_help: false,
+            help_view: LogView::default(),
             should_exit: false,
             command_bar_active: false,
             command_bar_input: String::new(),
@@ -176,6 +332,7 @@ impl AppState {
             chat_peer: None,
             chat_input: String::new(),
             chat_composing: false,
+            chat_view: LogView::default(),
 
             browse: BrowseTabs::new(),
             show_browse: false,
@@ -192,13 +349,59 @@ impl AppState {
             searches_pane_area: None,
             results_pane_area: None,
             downloads_pane_area: None,
+            popup_area: None,
         }
+    }
+
+    /// How far the focused list's long column is scrolled sideways.
+    pub const fn name_offset_mut(&mut self, pane: FocusedPane) -> &mut usize {
+        match pane {
+            FocusedPane::Searches => &mut self.searches_query_offset,
+            FocusedPane::Results => &mut self.results_name_offset,
+            FocusedPane::Downloads => &mut self.downloads_name_offset,
+        }
+    }
+
+    /// Where `pane` was last drawn; `None` while it is hidden.
+    #[must_use]
+    pub const fn pane_area(&self, pane: FocusedPane) -> Option<Rect> {
+        match pane {
+            FocusedPane::Searches => self.searches_pane_area,
+            FocusedPane::Results => self.results_pane_area,
+            FocusedPane::Downloads => self.downloads_pane_area,
+        }
+    }
+
+    /// Put the focus on `pane`, bringing it back on screen if it was hidden:
+    /// pressing a pane's number is also how it comes back.
+    pub const fn focus_pane(&mut self, pane: FocusedPane) {
+        self.layout.show(pane);
+        self.focused_pane = pane;
+    }
+
+    /// Move the focus to the next (or previous) visible pane.
+    pub fn cycle_focus(&mut self, forward: bool) {
+        self.focused_pane = self.layout.neighbour(self.focused_pane, forward);
+    }
+
+    /// Hide the focused pane and move the focus to its neighbour. The last
+    /// visible pane stays; there would be nowhere for the focus to go.
+    pub fn hide_focused_pane(&mut self) {
+        let pane = self.focused_pane;
+        if self.layout.hide(pane) {
+            self.focused_pane = self.layout.neighbour(pane, true);
+        }
+    }
+
+    pub const fn toggle_zoom(&mut self) {
+        self.layout.zoomed = !self.layout.zoomed;
     }
 
     /// Open the chat popup on a conversation with `peer`, ready to type.
     pub fn open_chat(&mut self, peer: String) {
         self.chat_peer = Some(peer);
         self.chat_input.clear();
+        self.chat_view.to_newest();
         self.chat_composing = true;
         self.show_messages = true;
         self.unread_messages = 0;
@@ -248,6 +451,10 @@ impl AppState {
             (current + peers.len() - 1) % peers.len()
         };
         let peer = peers[next].to_string();
+        // A different conversation opens at its end; the same one stays put.
+        if next != current {
+            self.chat_view.to_newest();
+        }
         self.chat_peer = Some(peer);
     }
 }
@@ -288,6 +495,148 @@ mod tests {
         assert_eq!(state.active_chat_peer(), Some("alice"));
         state.cycle_chat_peer(false);
         assert_eq!(state.active_chat_peer(), Some("bob"));
+    }
+
+    fn visible(layout: &PaneLayout) -> Vec<FocusedPane> {
+        layout.visible().collect()
+    }
+
+    #[test]
+    fn every_pane_starts_visible_and_unzoomed() {
+        let state = AppState::new();
+        assert_eq!(visible(&state.layout), FocusedPane::ALL);
+        assert!(!state.layout.zoomed);
+        assert!(!state.show_help);
+    }
+
+    #[test]
+    fn tab_cycles_the_focus_through_the_visible_panes_and_wraps() {
+        let mut state = AppState::new();
+        assert_eq!(state.focused_pane, FocusedPane::Searches);
+        state.cycle_focus(true);
+        assert_eq!(state.focused_pane, FocusedPane::Results);
+        state.cycle_focus(true);
+        assert_eq!(state.focused_pane, FocusedPane::Downloads);
+        state.cycle_focus(true);
+        assert_eq!(state.focused_pane, FocusedPane::Searches, "wraps");
+        state.cycle_focus(false);
+        assert_eq!(state.focused_pane, FocusedPane::Downloads, "and back");
+    }
+
+    #[test]
+    fn hiding_the_focused_pane_moves_the_focus_past_it() {
+        let mut state = AppState::new();
+        state.focus_pane(FocusedPane::Results);
+        state.hide_focused_pane();
+        assert_eq!(
+            visible(&state.layout),
+            [FocusedPane::Searches, FocusedPane::Downloads]
+        );
+        assert_eq!(state.focused_pane, FocusedPane::Downloads);
+
+        // Tab now skips the hidden pane in both directions.
+        state.cycle_focus(true);
+        assert_eq!(state.focused_pane, FocusedPane::Searches);
+        state.cycle_focus(false);
+        assert_eq!(state.focused_pane, FocusedPane::Downloads);
+    }
+
+    #[test]
+    fn hiding_wraps_the_focus_to_the_first_pane() {
+        let mut state = AppState::new();
+        state.focus_pane(FocusedPane::Downloads);
+        state.hide_focused_pane();
+        assert_eq!(state.focused_pane, FocusedPane::Searches);
+    }
+
+    #[test]
+    fn the_last_visible_pane_cannot_be_hidden() {
+        let mut state = AppState::new();
+        state.hide_focused_pane();
+        state.hide_focused_pane();
+        assert_eq!(visible(&state.layout), [FocusedPane::Downloads]);
+        state.hide_focused_pane();
+        assert_eq!(
+            visible(&state.layout),
+            [FocusedPane::Downloads],
+            "one pane always stays on screen"
+        );
+        assert_eq!(state.focused_pane, FocusedPane::Downloads);
+    }
+
+    #[test]
+    fn focusing_a_hidden_pane_by_number_brings_it_back() {
+        let mut state = AppState::new();
+        state.focus_pane(FocusedPane::Results);
+        state.hide_focused_pane();
+        assert!(!state.layout.is_visible(FocusedPane::Results));
+
+        state.focus_pane(FocusedPane::Results);
+
+        assert!(state.layout.is_visible(FocusedPane::Results));
+        assert_eq!(state.focused_pane, FocusedPane::Results);
+    }
+
+    #[test]
+    fn zoom_toggles_and_leaves_hidden_panes_alone() {
+        let mut state = AppState::new();
+        state.focus_pane(FocusedPane::Searches);
+        state.hide_focused_pane();
+        state.toggle_zoom();
+        assert!(state.layout.zoomed);
+        assert!(!state.layout.is_visible(FocusedPane::Searches));
+        state.toggle_zoom();
+        assert!(!state.layout.zoomed);
+        assert!(!state.layout.is_visible(FocusedPane::Searches));
+    }
+
+    #[test]
+    fn a_log_view_follows_the_tail_until_held_and_holds_against_new_rows() {
+        let mut view = LogView::default();
+        assert_eq!(view.window(100, 10), 90..100);
+        assert!(view.following());
+
+        view.scroll(-10);
+        assert_eq!(view.window(100, 10), 80..90);
+        assert!(!view.following());
+
+        // Five more rows arrive: the held window does not move.
+        assert_eq!(view.window(105, 10), 80..90);
+
+        // Back down to the tail resumes following, including new rows.
+        view.scroll(10);
+        view.scroll(10);
+        assert_eq!(view.window(105, 10), 95..105);
+        assert!(view.following());
+
+        view.to_oldest();
+        assert_eq!(view.window(105, 10), 0..10);
+        view.scroll(-10);
+        assert_eq!(view.window(105, 10), 0..10, "clamped at the top");
+        view.to_newest();
+        assert_eq!(view.window(105, 10), 95..105);
+    }
+
+    #[test]
+    fn a_log_shorter_than_its_window_is_never_held() {
+        let mut view = LogView::default();
+        assert_eq!(view.window(3, 10), 0..3);
+        view.to_oldest();
+        assert_eq!(view.window(3, 10), 0..3);
+        assert!(view.following(), "nothing to hold");
+    }
+
+    #[test]
+    fn cycling_to_the_same_chat_keeps_the_place() {
+        let mut state = AppState::new();
+        say(&mut state, "alice");
+        state.chat_view.window(50, 10);
+        state.chat_view.scroll(-10);
+        state.cycle_chat_peer(true);
+        assert!(!state.chat_view.following(), "only one chat: nothing moved");
+        say(&mut state, "bob");
+        state.cycle_chat_peer(true);
+        assert!(state.chat_view.following(), "a new chat opens at its end");
     }
 
     #[test]

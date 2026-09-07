@@ -1,4 +1,5 @@
 use super::MainTui;
+use super::input::{jumped, list_jump, scroll_log};
 use crate::models::RoomsView;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -38,6 +39,16 @@ impl MainTui {
 
     fn handle_rooms_list_input(&mut self, key: KeyEvent) {
         let len = self.state.rooms.filtered_rooms().len();
+        if let Some(jump) = list_jump(key, self.popup_page()) {
+            self.state.rooms.list_selected =
+                jumped(self.state.rooms.list_selected, len, jump);
+            return;
+        }
+        // Control combinations are only ever jumps; the letters below are
+        // not theirs to trigger.
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            return;
+        }
         match key.code {
             // Esc peels back one level: clear a lingering filter first (as the
             // title's "Esc: clear" promises), otherwise close the popup.
@@ -92,6 +103,16 @@ impl MainTui {
     }
 
     fn handle_rooms_chat_input(&mut self, key: KeyEvent) {
+        // Paging keys move through the room's history; the member list is a
+        // row at a time.
+        if let Some(view) = self.state.rooms.active_view_mut()
+            && scroll_log(view, key)
+        {
+            return;
+        }
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            return;
+        }
         match key.code {
             KeyCode::Char('q') => self.state.show_rooms = false,
             KeyCode::Esc | KeyCode::Char('l') => {
@@ -208,15 +229,23 @@ impl MainTui {
         self.state.rooms.composing = false;
     }
 
+    /// The room whose newest messages are on screen, if any: the active one
+    /// in the chat view, unless the reader is held back in its history, when
+    /// what arrives still counts as unread.
+    pub(super) fn viewed_room(&self) -> Option<String> {
+        if !self.state.show_rooms || self.state.rooms.view != RoomsView::Chat {
+            return None;
+        }
+        self.state
+            .rooms
+            .active_room()
+            .filter(|room| room.view.following())
+            .map(|room| room.name.clone())
+    }
+
     /// Drain chat-room events into the rooms state, tracking unread badges.
     pub(super) fn poll_room_events(&mut self) {
-        let viewing = if self.state.show_rooms
-            && self.state.rooms.view == RoomsView::Chat
-        {
-            self.state.rooms.active_room().map(|r| r.name.clone())
-        } else {
-            None
-        };
+        let viewing = self.viewed_room();
         for event in self.client.take_room_events() {
             self.state.rooms.apply_event(event, viewing.as_deref());
         }
