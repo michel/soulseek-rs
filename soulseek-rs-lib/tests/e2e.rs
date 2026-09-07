@@ -1761,6 +1761,15 @@ fn two_real_clients_search_and_download() {
     assert_eq!(upload.username, "e2e_leecher");
     assert_eq!(upload.bytes_sent, size);
 
+    // The next reply advertises what that upload measured.
+    let _ = leecher.search(query, Duration::from_secs(1));
+    let reply = reply_from(&leecher, query, "e2e_sharer")
+        .expect("the sharer answers again");
+    assert!(
+        reply.speed > 0,
+        "a finished upload sets the advertised speed"
+    );
+
     let _ = std::fs::remove_dir_all(share_dir);
     let _ = std::fs::remove_dir_all(download_dir);
 }
@@ -3126,4 +3135,48 @@ fn two_live_searches_never_share_a_token() {
     );
 
     let _ = std::fs::remove_dir_all(share_dir);
+}
+
+// Searchers pick sources by the free-slot flag in a reply, and every reply
+// said "free" whatever the queue looked like.
+#[test]
+fn a_search_reply_reports_no_free_slot_while_the_only_slot_is_taken() {
+    let server = server_or_skip!();
+    let (share, folder) =
+        queue_share("honest", &["blocker.mp3", "probe_honest.bin"]);
+    let (sharer, searcher) = sharer_and_searcher(
+        &server,
+        &share,
+        "e2e_honest_sharer",
+        "e2e_honest_searcher",
+    );
+    sharer.set_upload_slots(1);
+
+    let query = "probe_honest";
+    let _ = searcher.search(query, Duration::from_secs(1));
+    let reply = reply_from(&searcher, query, "e2e_honest_sharer")
+        .expect("the sharer answers");
+    assert_eq!(reply.slots, 1, "nothing is uploading yet");
+
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let listen_addr =
+        format!("127.0.0.1:{}", sharer.listen_port().expect("listening"));
+    let mut blocker = queue_as(
+        &server_addr,
+        &listen_addr,
+        "e2e_honest_blocker",
+        &format!("{folder}\\blocker.mp3"),
+    )
+    .expect("blocker queues");
+    assert!(
+        blocker.takes_a_slot(),
+        "the blocker is offered the only slot"
+    );
+
+    let _ = searcher.search(query, Duration::from_secs(1));
+    let reply = reply_from(&searcher, query, "e2e_honest_sharer")
+        .expect("the sharer answers again");
+    assert_eq!(reply.slots, 0, "the only slot is taken");
+
+    let _ = std::fs::remove_dir_all(share);
 }
