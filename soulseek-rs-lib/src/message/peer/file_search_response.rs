@@ -50,7 +50,7 @@ pub fn build_file_search_response(
 
 pub struct FileSearchResponse;
 impl MessageHandler<PeerMessage> for FileSearchResponse {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         9
     }
     fn handle(&self, message: &mut Message, sender: Sender<PeerMessage>) {

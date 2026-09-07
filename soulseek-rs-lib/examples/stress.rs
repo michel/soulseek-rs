@@ -481,7 +481,7 @@ impl SeederState {
             let Ok(init) = read_framed(&mut p) else {
                 return;
             };
-            if init.get_message_code() != 1 {
+            if init.get_init_code() != 1 {
                 return;
             }
         }
@@ -735,7 +735,7 @@ fn accept_file_connection(
         let Ok(mut init) = read_framed(&mut stream) else {
             continue;
         };
-        if init.get_message_code() != 1 {
+        if init.get_init_code() != 1 {
             continue;
         }
         init.set_pointer(5);

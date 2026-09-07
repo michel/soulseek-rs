@@ -37,3 +37,40 @@ impl<Op> MessageDispatcher<Op> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::MessageHandler;
+    use std::sync::mpsc::channel;
+
+    struct Echo(u32);
+
+    impl MessageHandler<u32> for Echo {
+        fn get_code(&self) -> u32 {
+            self.0
+        }
+        fn handle(&self, _: &mut Message, sender: Sender<u32>) {
+            let _ = sender.send(self.0);
+        }
+    }
+
+    fn framed(code: u32) -> Message {
+        Message::new_with_data(Message::new().write_int32(code).get_buffer())
+    }
+
+    #[test]
+    fn a_code_above_255_is_not_confused_with_its_low_byte() {
+        let (sender, received) = channel();
+        let mut handlers = Handlers::new();
+        handlers.register_handler(Echo(1));
+        handlers.register_handler(Echo(1001));
+        let dispatcher =
+            MessageDispatcher::new("test".to_string(), sender, handlers);
+
+        dispatcher.dispatch(&mut framed(257));
+        dispatcher.dispatch(&mut framed(1001));
+
+        assert_eq!(received.try_iter().collect::<Vec<_>>(), [1001]);
+    }
+}

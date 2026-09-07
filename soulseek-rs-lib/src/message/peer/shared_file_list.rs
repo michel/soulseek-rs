@@ -17,7 +17,7 @@ pub struct SharedDirectory {
 /// Receives a peer's `SharedFileListResponse` (peer code 5) when browsing them.
 pub struct SharedFileListResponseHandler;
 impl MessageHandler<PeerMessage> for SharedFileListResponseHandler {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         5
     }
     fn handle(&self, message: &mut Message, sender: Sender<PeerMessage>) {

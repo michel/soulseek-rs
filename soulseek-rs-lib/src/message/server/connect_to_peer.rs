@@ -5,7 +5,7 @@ use std::sync::mpsc::Sender;
 pub struct ConnectToPeerHandler;
 
 impl MessageHandler<ServerMessage> for ConnectToPeerHandler {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         18
     }
     fn handle(&self, message: &mut Message, sender: Sender<ServerMessage>) {

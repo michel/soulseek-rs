@@ -803,7 +803,7 @@ impl ServerActor {
                         message
                             .get_message_name(
                                 MessageType::Server,
-                                u32::from(message.get_message_code())
+                                message.get_message_code()
                             )
                             .map_err(|e| e.to_string())
                     );
