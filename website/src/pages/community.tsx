@@ -239,10 +239,15 @@ export const Community = () => {
               open-source Soulseek server; run it locally to develop against a real protocol
               implementation without touching the public network.
             </p>
+            <p>
+              Pull requests go to <Code>develop</Code>; <Code>master</Code> only moves on a
+              release.
+            </p>
             <div className="mt-1 flex flex-wrap gap-2 sm:gap-3">
               <Button href={LINKS.issues} variant="accent">
                 Open an issue
               </Button>
+              <Button href={LINKS.contributing}>Contributing</Button>
               <Button href={LINKS.gh}>GitHub</Button>
             </div>
           </Prose>
