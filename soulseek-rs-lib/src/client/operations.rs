@@ -26,6 +26,15 @@ impl Client {
                     Self::sweep_stale_offers(&client_context);
                     if let Ok(mut ctx) = client_context.write_safe() {
                         ctx.expire_pending_peer_messages(Instant::now());
+                        if let Some(branch) =
+                            ctx.leaf.due_announcement(Instant::now())
+                        {
+                            super::distributed::announce(
+                                ctx.server_sender.as_ref(),
+                                &branch,
+                                true,
+                            );
+                        }
                     }
                 }
                 let operation = match next {

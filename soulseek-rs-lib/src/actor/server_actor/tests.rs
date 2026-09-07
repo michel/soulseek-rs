@@ -36,15 +36,22 @@ fn the_server_socket_keeps_itself_alive() {
 }
 
 fn parked_actor(port: u16) -> ServerActor {
-    let (tx, _rx) = std::sync::mpsc::channel();
-    ServerActor::new(
+    parked_actor_with_client(port).0
+}
+
+fn parked_actor_with_client(
+    port: u16,
+) -> (ServerActor, std::sync::mpsc::Receiver<ClientOperation>) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let actor = ServerActor::new(
         PeerAddress::new("127.0.0.1".to_string(), port),
         tx,
         0,
         false,
         0,
         0,
-    )
+    );
+    (actor, rx)
 }
 
 #[test]
@@ -189,6 +196,22 @@ fn a_successful_login_marks_the_session_live_again() {
     actor.handle_login_status(true);
 
     assert_eq!(actor.session.loss(), None);
+}
+
+// A new session starts without a parent: the leaf drops whatever tree it
+// hung from and announces its parentless stance from there.
+#[test]
+fn a_successful_login_resets_the_distributed_leaf() {
+    let (mut actor, client) = parked_actor_with_client(1);
+
+    actor.handle_login_status(true);
+
+    assert!(matches!(
+        client.try_recv(),
+        Ok(ClientOperation::ResetDistributed)
+    ));
+    actor.handle_login_status(false);
+    assert!(client.try_recv().is_err(), "a failed login resets nothing");
 }
 
 #[test]

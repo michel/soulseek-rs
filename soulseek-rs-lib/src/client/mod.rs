@@ -388,7 +388,8 @@ pub struct ClientContext {
     /// Peer listen addresses learned from GetPeerAddress responses.
     peer_addresses: HashMap<String, (String, u32)>,
     /// Peer messages waiting for a control connection to that peer, and
-    /// since when: a peer that never answers must not keep them forever.
+    /// when the last was queued: a peer that never answers must not keep
+    /// them forever.
     pending_peer_messages:
         HashMap<String, (Instant, Vec<crate::message::Message>)>,
     /// Uploads we have offered, keyed by our transfer token.
@@ -741,11 +742,12 @@ impl ClientContext {
         username: &str,
         message: crate::message::Message,
     ) {
-        self.pending_peer_messages
+        let entry = self
+            .pending_peer_messages
             .entry(username.to_string())
-            .or_insert_with(|| (Instant::now(), Vec::new()))
-            .1
-            .push(message);
+            .or_insert_with(|| (Instant::now(), Vec::new()));
+        entry.0 = Instant::now();
+        entry.1.push(message);
     }
 
     /// Remove and return the messages queued for `username`.
