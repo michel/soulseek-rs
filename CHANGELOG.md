@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [16.0.0](https://github.com/michel/soulseek-rs/compare/v15.0.0...v16.0.0) - 2026-09-07
+
+### Added
+
+- *(tui)* scroll long names in every list and page through popups and chat
+- *(tui)* results across the top, with panes you can hide, zoom and Tab through
+
+### Other
+
+- Merge remote-tracking branch 'origin/develop'
+- *(tui)* fold the keys overlay onto LogView and dedupe the pane lookups
+
 ## [15.0.0](https://github.com/michel/soulseek-rs/compare/v14.2.1...v15.0.0) - 2026-09-06
 
 ### Added
