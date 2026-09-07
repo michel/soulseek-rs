@@ -4,6 +4,7 @@ use crate::dispatcher::MessageDispatcher;
 use crate::message::server::AdminMessageHandler;
 use crate::message::server::CheckPrivilegesHandler;
 use crate::message::server::ConnectToPeerHandler;
+use crate::message::server::EmbeddedMessageHandler;
 use crate::message::server::ExcludedSearchPhrasesHandler;
 use crate::message::server::FileSearchHandler;
 use crate::message::server::GetPeerAddressHandler;
@@ -14,8 +15,10 @@ use crate::message::server::MessageFactory;
 use crate::message::server::MessageUser;
 use crate::message::server::ParentMinSpeedHandler;
 use crate::message::server::ParentSpeedRatioHandler;
+use crate::message::server::PossibleParentsHandler;
 use crate::message::server::PrivilegedUsersHandler;
 use crate::message::server::ReloggedHandler;
+use crate::message::server::ResetDistributedHandler;
 use crate::message::server::SayChatroomHandler;
 use crate::message::server::UserJoinedRoomHandler;
 use crate::message::server::UserLeftRoomHandler;
@@ -156,6 +159,11 @@ pub enum ServerMessage {
         room: String,
         username: String,
     },
+    /// Peers the server suggests as distributed-network parents: username,
+    /// host, port.
+    PossibleParents(Vec<(String, String, u16)>),
+    /// The server asks us to drop our parent and start over.
+    ResetDistributed,
 }
 
 pub struct ServerActor {
@@ -205,14 +213,9 @@ fn post_login_messages(
 }
 
 /// What a leaf tells the server while it has no parent: it is its own branch
-/// root at level 0 and takes no children. Nicotine+ sends the same four.
+/// root at level 0.
 fn parentless_stance(own_username: &str) -> Vec<Message> {
-    vec![
-        MessageFactory::build_have_no_parent(true),
-        MessageFactory::build_branch_root(own_username),
-        MessageFactory::build_branch_level(0),
-        MessageFactory::build_accept_children(false),
-    ]
+    crate::message::distributed::stance(own_username, 0, false)
 }
 
 impl ServerActor {
@@ -306,6 +309,9 @@ impl ServerActor {
         handlers.register_handler(LoginHandler);
         handlers.register_handler(ReloggedHandler);
         handlers.register_handler(AdminMessageHandler);
+        handlers.register_handler(PossibleParentsHandler);
+        handlers.register_handler(ResetDistributedHandler);
+        handlers.register_handler(EmbeddedMessageHandler);
         handlers.register_handler(RoomListHandler);
         handlers.register_handler(GetUserStatusHandler);
         handlers.register_handler(WatchUserHandler);
@@ -517,6 +523,14 @@ impl ServerActor {
     /// length; there is no behaviour here beyond dispatch.
     fn handle_standing_message(&mut self, message: ServerMessage) {
         match message {
+            ServerMessage::PossibleParents(candidates) => {
+                self.forward_to_client(ClientOperation::PossibleParents(
+                    candidates,
+                ));
+            }
+            ServerMessage::ResetDistributed => {
+                self.forward_to_client(ClientOperation::ResetDistributed);
+            }
             ServerMessage::WishlistSearch { token, query } => {
                 self.queue_message(MessageFactory::build_wishlist_search(
                     token, &query,

@@ -17,6 +17,9 @@ impl Client {
         own_username: String,
     ) {
         thread::spawn(move || {
+            if let Ok(mut ctx) = client_context.write_safe() {
+                ctx.leaf = super::distributed::Leaf::new(&own_username);
+            }
             let mut last_sweep = Instant::now();
             loop {
                 let next = reader.recv_timeout(CONNECT_SWEEP_INTERVAL);
@@ -695,6 +698,82 @@ impl Client {
                                 ),
                             );
                         }
+                    }
+                    ClientOperation::PossibleParents(candidates) => {
+                        let (dials, ops) = match client_context.write_safe() {
+                            Ok(mut ctx) => (
+                                ctx.leaf.consider(candidates),
+                                ctx.operations.clone(),
+                            ),
+                            Err(_) => continue,
+                        };
+                        let Some(ops) = ops else { continue };
+                        for dial in dials {
+                            super::distributed::spawn_link(
+                                dial,
+                                own_username.clone(),
+                                ops.clone(),
+                            );
+                        }
+                    }
+                    ClientOperation::ParentBranchLevel { parent, level } => {
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.leaf.branch_level(&parent, level);
+                        }
+                    }
+                    ClientOperation::ParentBranchRoot { parent, root } => {
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.leaf.branch_root(&parent, &root);
+                        }
+                    }
+                    ClientOperation::ParentSearch {
+                        parent,
+                        username,
+                        token,
+                        query,
+                    } => {
+                        let Ok(mut ctx) = client_context.write_safe() else {
+                            continue;
+                        };
+                        if let Some(branch) = ctx.leaf.search_from(&parent) {
+                            super::distributed::announce(
+                                ctx.server_sender.as_ref(),
+                                &branch,
+                                true,
+                            );
+                        }
+                        if ctx.leaf.is_parent(&parent)
+                            && let Some(ops) = &ctx.operations
+                        {
+                            let _ = ops.send(ClientOperation::IncomingSearch {
+                                username,
+                                token,
+                                query,
+                            });
+                        }
+                    }
+                    ClientOperation::ParentClosed { parent } => {
+                        let Ok(mut ctx) = client_context.write_safe() else {
+                            continue;
+                        };
+                        if ctx.leaf.closed(&parent) {
+                            super::distributed::announce(
+                                ctx.server_sender.as_ref(),
+                                &ctx.leaf.branch(),
+                                false,
+                            );
+                        }
+                    }
+                    ClientOperation::ResetDistributed => {
+                        let Ok(mut ctx) = client_context.write_safe() else {
+                            continue;
+                        };
+                        ctx.leaf.reset();
+                        super::distributed::announce(
+                            ctx.server_sender.as_ref(),
+                            &ctx.leaf.branch(),
+                            false,
+                        );
                     }
                     ClientOperation::PrivilegedUsers(users) => {
                         if let Ok(mut ctx) = client_context.write_safe() {

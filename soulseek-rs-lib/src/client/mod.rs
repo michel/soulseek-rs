@@ -334,11 +334,40 @@ pub enum ClientOperation {
         requester_key: String,
         filename: String,
     },
+    /// Distributed-network parent candidates, from the server or a host.
+    PossibleParents(Vec<(String, String, u16)>),
+    /// The server told us to drop our parent.
+    ResetDistributed,
+    /// A parent candidate told us how deep it sits.
+    ParentBranchLevel {
+        parent: String,
+        level: i32,
+    },
+    /// A parent candidate told us whose branch it is on.
+    ParentBranchRoot {
+        parent: String,
+        root: String,
+    },
+    /// A search came down the tree from `parent`.
+    ParentSearch {
+        parent: String,
+        username: String,
+        token: u32,
+        query: String,
+    },
+    /// The link to a parent or candidate is gone.
+    ParentClosed {
+        parent: String,
+    },
 }
 pub struct ClientContext {
     pub peer_registry: Option<PeerRegistry>,
     pub downloads: DownloadStore,
     server_sender: Option<Sender<ServerMessage>>,
+    /// Where anything outside the operations loop posts operations.
+    operations: Option<Sender<ClientOperation>>,
+    /// Our place in the distributed search network.
+    leaf: distributed::Leaf,
     searches: HashMap<String, Search>,
     private_messages: Vec<UserMessage>,
     /// Correlation tokens for server-brokered (firewalled) connections, mapping
@@ -452,6 +481,8 @@ impl ClientContext {
         Self {
             peer_registry: None,
             server_sender: None,
+            operations: None,
+            leaf: distributed::Leaf::new(""),
             searches: HashMap::new(),
             private_messages: Vec::new(),
             pending_connect_tokens: HashMap::new(),
@@ -982,6 +1013,7 @@ impl Client {
 }
 
 mod connection;
+mod distributed;
 mod downloads;
 mod operations;
 mod rooms;
