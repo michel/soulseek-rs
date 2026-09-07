@@ -8,12 +8,10 @@ use crate::ui::panes::{
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use ratatui::layout::Position;
+use ratatui::layout::{Position, Rect};
 use ratatui::widgets::TableState;
 
 const NAME_SCROLL_STEP: isize = 8;
-/// Rows a page key moves the keys overlay, which has no table to measure.
-const HELP_PAGE: usize = 10;
 
 impl MainTui {
     pub(super) fn handle_key_event(&mut self, key: KeyEvent) {
@@ -23,22 +21,18 @@ impl MainTui {
         }
 
         // The keys list closes on the key that opened it, or the usual two,
-        // and scrolls like any list for a terminal too short to show it all.
+        // and scrolls like any log for a terminal too short to show it all.
         if self.state.show_help {
-            let scroll = &mut self.state.help_scroll;
+            let view = &mut self.state.help_view;
             match key.code {
                 KeyCode::Char('?' | 'q') | KeyCode::Esc => {
                     self.state.show_help = false;
                 }
-                KeyCode::Down | KeyCode::Char('j') => *scroll += 1,
-                KeyCode::Up | KeyCode::Char('k') => {
-                    *scroll = scroll.saturating_sub(1);
+                KeyCode::Down | KeyCode::Char('j') => view.scroll(1),
+                KeyCode::Up | KeyCode::Char('k') => view.scroll(-1),
+                _ => {
+                    scroll_log(view, key);
                 }
-                KeyCode::PageDown => *scroll += HELP_PAGE,
-                KeyCode::PageUp => *scroll = scroll.saturating_sub(HELP_PAGE),
-                KeyCode::Home | KeyCode::Char('g') => *scroll = 0,
-                KeyCode::End | KeyCode::Char('G') => *scroll = usize::MAX,
-                _ => {}
             }
             return;
         }
@@ -81,19 +75,13 @@ impl MainTui {
             }
             KeyCode::Char('?') => {
                 self.state.show_help = true;
-                self.state.help_scroll = 0;
+                self.state.help_view.to_oldest();
                 return;
             }
-            KeyCode::Char('1') => {
-                self.state.focus_pane(FocusedPane::Searches);
-                return;
-            }
-            KeyCode::Char('2') => {
-                self.state.focus_pane(FocusedPane::Results);
-                return;
-            }
-            KeyCode::Char('3') => {
-                self.state.focus_pane(FocusedPane::Downloads);
+            // A pane's number is its place in the legend order.
+            KeyCode::Char(digit @ '1'..='3') => {
+                let index = usize::from(digit as u8 - b'1');
+                self.state.focus_pane(FocusedPane::ALL[index]);
                 return;
             }
             KeyCode::Tab => {
@@ -368,7 +356,7 @@ impl MainTui {
     /// The list the focus is on and how far one page moves it.
     fn navigate_focused_list(&mut self, key: KeyEvent) -> bool {
         let focused = self.state.focused_pane;
-        let page = self.page_size(focused);
+        let page = self.page_size();
         let (table, len) = match focused {
             FocusedPane::Searches => (
                 &mut self.state.searches_table_state,
@@ -388,24 +376,14 @@ impl MainTui {
 
     /// Rows a popup shows at once: its inner height less a tab bar and a
     /// compose line, which is what its list or log has left.
-    pub(super) fn popup_page(&self) -> isize {
-        let rows = self.state.popup_area.map_or(1, |area| {
-            pane_block(false).inner(area).height.saturating_sub(2)
-        });
-        isize::try_from(rows.max(1)).unwrap_or(isize::MAX)
+    pub(super) fn popup_page(&self) -> usize {
+        page_of(self.state.popup_area, 2)
     }
 
-    /// Rows a pane shows at once: its inner height less the table header.
-    fn page_size(&self, pane: FocusedPane) -> isize {
-        let area = match pane {
-            FocusedPane::Searches => self.state.searches_pane_area,
-            FocusedPane::Results => self.state.results_pane_area,
-            FocusedPane::Downloads => self.state.downloads_pane_area,
-        };
-        let rows = area.map_or(1, |area| {
-            pane_block(false).inner(area).height.saturating_sub(1)
-        });
-        isize::try_from(rows.max(1)).unwrap_or(isize::MAX)
+    /// Rows the focused pane shows at once: its inner height less the table
+    /// header.
+    fn page_size(&self) -> usize {
+        page_of(self.state.pane_area(self.state.focused_pane), 1)
     }
 
     fn handle_searches_input(&mut self, key: KeyEvent) {
@@ -518,28 +496,21 @@ impl MainTui {
     /// How far the highlighted row's long column can scroll before its end
     /// is in view. Zero when nothing is highlighted or the pane is not drawn.
     fn highlighted_name_end(&self) -> usize {
-        match self.state.focused_pane {
-            FocusedPane::Searches => {
-                let Some(area) = self.state.searches_pane_area else {
-                    return 0;
-                };
-                self.state
-                    .searches_table_state
-                    .selected()
-                    .and_then(|row| self.state.searches.get(row))
-                    .map_or(0, |search| query_end_offset(&search.query, area))
-            }
-            FocusedPane::Results => {
-                let Some(area) = self.state.results_pane_area else {
-                    return 0;
-                };
-                self.highlighted_result()
-                    .map_or(0, |file| name_end_offset(&file.filename, area))
-            }
+        let pane = self.state.focused_pane;
+        let Some(area) = self.state.pane_area(pane) else {
+            return 0;
+        };
+        match pane {
+            FocusedPane::Searches => self
+                .state
+                .searches_table_state
+                .selected()
+                .and_then(|row| self.state.searches.get(row))
+                .map_or(0, |search| query_end_offset(&search.query, area)),
+            FocusedPane::Results => self
+                .highlighted_result()
+                .map_or(0, |file| name_end_offset(&file.filename, area)),
             FocusedPane::Downloads => {
-                let Some(area) = self.state.downloads_pane_area else {
-                    return 0;
-                };
                 let shown = match selected_transfer(
                     self.state.downloads_table_state.selected(),
                     &self.state.downloads,
@@ -589,22 +560,29 @@ impl MainTui {
         }
 
         let clicked = Position::new(mouse.column, mouse.row);
-        let panes = [
-            (self.state.searches_pane_area, FocusedPane::Searches),
-            (self.state.results_pane_area, FocusedPane::Results),
-            (self.state.downloads_pane_area, FocusedPane::Downloads),
-        ];
         // The areas are from the last draw. A pane hidden since then, in the
         // same batch of events, still has one, and is not there to click.
-        for (area, pane) in panes {
-            if area.is_some_and(|area| area.contains(clicked))
-                && self.state.layout.is_visible(pane)
-            {
-                self.state.focused_pane = pane;
-                return;
-            }
+        let hit = FocusedPane::ALL.into_iter().find(|pane| {
+            self.state.layout.is_visible(*pane)
+                && self
+                    .state
+                    .pane_area(*pane)
+                    .is_some_and(|area| area.contains(clicked))
+        });
+        if let Some(pane) = hit {
+            self.state.focused_pane = pane;
         }
     }
+}
+
+/// Rows a list in `area` shows at once, less the `chrome` rows above it: a
+/// table header, a popup's tab bar and compose line. At least one, so a page
+/// key always moves, even before the first draw.
+fn page_of(area: Option<Rect>, chrome: u16) -> usize {
+    area.map_or(0, |area| {
+        usize::from(pane_block(false).inner(area).height.saturating_sub(chrome))
+    })
+    .max(1)
 }
 
 /// A move over a whole list at once: to either end, or by a number of rows
@@ -618,8 +596,9 @@ pub(super) enum ListJump {
 
 /// The keys every list and log answers alike for moving further than a row:
 /// the two ends, a page, half a page. `page` is how many rows the list shows.
-pub(super) fn list_jump(key: KeyEvent, page: isize) -> Option<ListJump> {
+pub(super) fn list_jump(key: KeyEvent, page: usize) -> Option<ListJump> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let page = isize::try_from(page).unwrap_or(isize::MAX);
     let half = (page / 2).max(1);
     Some(match key.code {
         KeyCode::Home | KeyCode::Char('g') if !ctrl => ListJump::First,
@@ -637,8 +616,7 @@ pub(super) fn list_jump(key: KeyEvent, page: isize) -> Option<ListJump> {
 /// Apply the jump keys to a log, moving by the screenful it last showed.
 /// Says whether `key` was one of them.
 pub(super) fn scroll_log(view: &mut LogView, key: KeyEvent) -> bool {
-    let page = isize::try_from(view.page()).unwrap_or(isize::MAX);
-    match list_jump(key, page) {
+    match list_jump(key, view.page()) {
         Some(ListJump::First) => view.to_oldest(),
         Some(ListJump::Last) => view.to_newest(),
         Some(ListJump::Rows(rows)) => view.scroll(rows),
@@ -663,19 +641,21 @@ fn navigate_list(
     key: KeyEvent,
     table: &mut TableState,
     len: usize,
-    page: isize,
+    page: usize,
 ) -> bool {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         KeyCode::Up | KeyCode::Char('k') if !ctrl => cycle(table, len, false),
         KeyCode::Down | KeyCode::Char('j') if !ctrl => cycle(table, len, true),
-        _ => match list_jump(key, page) {
-            Some(jump) => {
+        _ => {
+            let Some(jump) = list_jump(key, page) else {
+                return false;
+            };
+            if len > 0 {
                 let current = table.selected().unwrap_or(0);
-                select_row(table, len, jumped(current, len, jump));
+                table.select(Some(jumped(current, len, jump)));
             }
-            None => return false,
-        },
+        }
     }
     true
 }
@@ -692,11 +672,4 @@ fn cycle(table: &mut TableState, len: usize, forward: bool) {
         (current + len - 1) % len
     };
     table.select(Some(next));
-}
-
-/// Put the selection on `target`, or the last row when that is past the end.
-fn select_row(table: &mut TableState, len: usize, target: usize) {
-    if len > 0 {
-        table.select(Some(target.min(len - 1)));
-    }
 }

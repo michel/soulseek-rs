@@ -41,15 +41,12 @@ pub enum FocusedPane {
 
 impl FocusedPane {
     /// Every focusable pane, in the order `Tab` walks them: the number each
-    /// carries in its legend.
+    /// carries in its legend, which is also declaration order.
     pub const ALL: [Self; 3] = [Self::Searches, Self::Results, Self::Downloads];
 
+    /// Its position in [`Self::ALL`].
     const fn index(self) -> usize {
-        match self {
-            Self::Searches => 0,
-            Self::Results => 1,
-            Self::Downloads => 2,
-        }
+        self as usize
     }
 }
 
@@ -58,7 +55,7 @@ impl FocusedPane {
 /// panes while zoomed reads as switching windows.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PaneLayout {
-    hidden: [bool; 3],
+    hidden: [bool; FocusedPane::ALL.len()],
     pub zoomed: bool,
 }
 
@@ -238,9 +235,9 @@ pub struct AppState {
     pub layout: PaneLayout,
     /// The keys overlay (`?`) is open.
     pub show_help: bool,
-    /// Rows the keys overlay is scrolled down, for a terminal too short to
-    /// show it whole. The renderer clamps it to what there is to scroll.
-    pub help_scroll: usize,
+    /// Where the keys overlay is being read, for a terminal too short to
+    /// show it whole.
+    pub help_view: LogView,
     pub should_exit: bool,
     pub command_bar_active: bool,
     pub command_bar_input: String,
@@ -322,7 +319,7 @@ impl AppState {
             focused_pane: FocusedPane::Searches,
             layout: PaneLayout::default(),
             show_help: false,
-            help_scroll: 0,
+            help_view: LogView::default(),
             should_exit: false,
             command_bar_active: false,
             command_bar_input: String::new(),
@@ -362,6 +359,16 @@ impl AppState {
             FocusedPane::Searches => &mut self.searches_query_offset,
             FocusedPane::Results => &mut self.results_name_offset,
             FocusedPane::Downloads => &mut self.downloads_name_offset,
+        }
+    }
+
+    /// Where `pane` was last drawn; `None` while it is hidden.
+    #[must_use]
+    pub const fn pane_area(&self, pane: FocusedPane) -> Option<Rect> {
+        match pane {
+            FocusedPane::Searches => self.searches_pane_area,
+            FocusedPane::Results => self.results_pane_area,
+            FocusedPane::Downloads => self.downloads_pane_area,
         }
     }
 

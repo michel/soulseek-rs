@@ -6,13 +6,14 @@ use crate::ui::panes::{
     render_rooms_pane, render_searches_pane, selected_transfer,
 };
 use crate::ui::{
-    SIGNAL, accent_style, body_style, dimmed_style, pack_shortcuts, pane_block,
-    plain_title, primary_style, render_download_stats, warning_style,
+    accent_style, body_style, dimmed_style, info_style, pack_shortcuts,
+    pane_block, plain_title, primary_style, render_download_stats,
+    warning_style,
 };
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout, Position, Rect},
-    style::{Modifier, Style},
+    style::Modifier,
     text::{Line, Span},
     widgets::Paragraph,
 };
@@ -147,10 +148,11 @@ impl MainTui {
             return;
         }
 
-        let row_panes: Vec<FocusedPane> =
-            [FocusedPane::Searches, FocusedPane::Downloads]
+        // Transfers carry the most columns, so they get the most width.
+        let row_panes: Vec<(FocusedPane, u16)> =
+            [(FocusedPane::Searches, 5), (FocusedPane::Downloads, 10)]
                 .into_iter()
-                .filter(|pane| self.state.layout.is_visible(*pane))
+                .filter(|(pane, _)| self.state.layout.is_visible(*pane))
                 .collect();
 
         let row_area = if self.state.layout.is_visible(FocusedPane::Results) {
@@ -168,18 +170,13 @@ impl MainTui {
             area
         };
 
-        // Transfers carry the most columns, so they get the most width.
         let mut constraints: Vec<Constraint> = row_panes
             .iter()
-            .map(|pane| match pane {
-                FocusedPane::Searches => Constraint::Fill(5),
-                FocusedPane::Downloads => Constraint::Fill(10),
-                FocusedPane::Results => unreachable!("not a row pane"),
-            })
+            .map(|(_, weight)| Constraint::Fill(*weight))
             .collect();
         constraints.push(Constraint::Fill(6)); // Info
         let chunks = Layout::horizontal(constraints).split(row_area);
-        for (chunk, pane) in chunks.iter().zip(&row_panes) {
+        for (chunk, (pane, _)) in chunks.iter().zip(&row_panes) {
             self.render_pane(frame, *chunk, *pane);
         }
         self.render_info_pane(frame, chunks[row_panes.len()]);
@@ -295,8 +292,10 @@ impl MainTui {
         let screen = frame.area();
         // Borders and padding on either side of the text.
         let frame_width = 4;
-        let width = screen.width.min(help_width() + frame_width);
-        let columns = help_columns(width.saturating_sub(frame_width));
+        let columns = help_columns(screen.width.saturating_sub(frame_width));
+        let gaps = HELP_GAP * (columns.len() as u16 - 1);
+        let text_width = columns.iter().map(|lines| widest(lines)).sum::<u16>();
+        let width = screen.width.min(text_width + gaps + frame_width);
         let tallest = columns.iter().map(Vec::len).max().unwrap_or(0);
         let height = screen
             .height
@@ -314,10 +313,12 @@ impl MainTui {
         frame.render_widget(block, area);
 
         // Both columns scroll together, and no further than the taller one
-        // needs; the clamp is written back so the keys cannot run past it.
-        let furthest = tallest.saturating_sub(usize::from(inner.height));
-        self.state.help_scroll = self.state.help_scroll.min(furthest);
-        let scroll = u16::try_from(self.state.help_scroll).unwrap_or(u16::MAX);
+        // needs.
+        let window = self
+            .state
+            .help_view
+            .window(tallest, usize::from(inner.height));
+        let scroll = u16::try_from(window.start).unwrap_or(u16::MAX);
 
         let areas =
             Layout::horizontal(vec![Constraint::Fill(1); columns.len()])
@@ -734,19 +735,10 @@ fn key_column_width(sections: &[(&str, &[(&str, &str)])]) -> usize {
         .unwrap_or(0)
 }
 
-/// Cells a column of the keys list needs to show every line whole.
-fn help_column_width(sections: &[(&str, &[(&str, &str)])]) -> u16 {
-    let widest = help_lines(sections)
-        .iter()
-        .map(Line::width)
-        .max()
-        .unwrap_or(0);
-    u16::try_from(widest).unwrap_or(u16::MAX)
-}
-
-/// The text width of the keys list with both halves side by side.
-fn help_width() -> u16 {
-    help_column_width(HELP_LEFT) + HELP_GAP + help_column_width(HELP_RIGHT)
+/// Cells the widest of `lines` takes.
+fn widest(lines: &[Line<'_>]) -> u16 {
+    let cells = lines.iter().map(Line::width).max().unwrap_or(0);
+    u16::try_from(cells).unwrap_or(u16::MAX)
 }
 
 /// The keys list laid out for `width` cells of text: two columns when both
@@ -754,7 +746,7 @@ fn help_width() -> u16 {
 fn help_columns(width: u16) -> Vec<Vec<Line<'static>>> {
     let left = help_lines(HELP_LEFT);
     let right = help_lines(HELP_RIGHT);
-    if width >= help_width() {
+    if width >= widest(&left) + HELP_GAP + widest(&right) {
         return vec![left, right];
     }
     let mut stacked = left;
@@ -776,10 +768,7 @@ fn help_lines(sections: &[(&str, &[(&str, &str)])]) -> Vec<Line<'static>> {
         ));
         for (key, action) in *keys {
             lines.push(Line::from(vec![
-                Span::styled(
-                    format!("{key:<key_width$}  "),
-                    Style::default().fg(SIGNAL),
-                ),
+                Span::styled(format!("{key:<key_width$}  "), info_style()),
                 Span::styled((*action).to_string(), body_style()),
             ]));
         }

@@ -110,10 +110,14 @@ fn render_chat(frame: &mut Frame, area: Rect, rooms: &mut RoomsState) {
 
     render_tab_bar(frame, chunks[0], rooms);
 
-    let user_selected = rooms.user_selected;
-    let composing = rooms.composing;
-    let active_index = rooms.active;
-    let Some(active) = rooms.open.get_mut(active_index) else {
+    let RoomsState {
+        open,
+        active: active_index,
+        user_selected,
+        composing,
+        ..
+    } = rooms;
+    let Some(active) = open.get_mut(*active_index) else {
         frame.render_widget(
             Paragraph::new("No open rooms. Press l for the room list.")
                 .style(dimmed_style()),
@@ -128,10 +132,10 @@ fn render_chat(frame: &mut Frame, area: Rect, rooms: &mut RoomsState) {
             .split(chunks[1]);
 
     render_messages(frame, body[0], active.lines.as_slice(), &mut active.view);
-    render_users(frame, body[1], &active.users, user_selected);
+    render_users(frame, body[1], &active.users, *user_selected);
 
     // Compose line or hint.
-    if composing {
+    if *composing {
         let line = Line::from(vec![
             Span::styled("› ", accent_style()),
             Span::styled(active.input.clone(), primary_style()),

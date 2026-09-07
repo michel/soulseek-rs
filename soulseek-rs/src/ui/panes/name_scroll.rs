@@ -7,7 +7,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     text::{Line, Span},
 };
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Cells column `column` of a table laid out with `widths` gets inside a pane
 /// drawn over `area`: what the pane keeps for its border, padding and the
@@ -15,7 +15,7 @@ use unicode_width::UnicodeWidthChar;
 #[must_use]
 pub fn column_width(area: Rect, widths: &[Constraint], column: usize) -> usize {
     let inner = pane_block(false).inner(area);
-    let symbol = Line::from(HIGHLIGHT_SYMBOL).width() as u16;
+    let symbol = HIGHLIGHT_SYMBOL.width() as u16;
     let [_, columns] =
         Layout::horizontal([Constraint::Length(symbol), Constraint::Fill(0)])
             .areas(inner);
@@ -38,7 +38,7 @@ pub fn end_offset(
     widths: &[Constraint],
     column: usize,
 ) -> usize {
-    overflow(Span::raw(text).width(), column_width(area, widths, column))
+    overflow(text.width(), column_width(area, widths, column))
 }
 
 /// `text` scrolled `offset` cells to the left, with an ellipsis where it was
