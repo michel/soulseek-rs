@@ -191,7 +191,7 @@ fn test_new_from_message2() {
     let mut message = Message::new_with_data(data);
     message.set_pointer(8);
 
-    println!("code: {}", message.get_message_code_u32());
+    println!("code: {}", message.get_message_code());
 
     let peer = Peer::new_from_message(&mut message).unwrap();
 

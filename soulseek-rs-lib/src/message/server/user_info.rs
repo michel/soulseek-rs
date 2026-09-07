@@ -12,7 +12,7 @@ use std::sync::mpsc::Sender;
 pub struct GetUserStatusHandler;
 
 impl MessageHandler<ServerMessage> for GetUserStatusHandler {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         7
     }
 
@@ -33,7 +33,7 @@ impl MessageHandler<ServerMessage> for GetUserStatusHandler {
 pub struct GetUserStatsHandler;
 
 impl MessageHandler<ServerMessage> for GetUserStatsHandler {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         36
     }
 

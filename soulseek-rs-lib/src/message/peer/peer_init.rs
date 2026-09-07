@@ -8,7 +8,7 @@ use crate::{
 
 pub struct PeerInit;
 impl MessageHandler<PeerMessage> for PeerInit {
-    fn get_code(&self) -> u8 {
+    fn get_code(&self) -> u32 {
         1
     }
 

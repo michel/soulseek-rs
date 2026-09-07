@@ -750,7 +750,7 @@ fn login_raw(
 /// passes. Returns the matching message.
 fn read_until_code(
     stream: &mut TcpStream,
-    code: u8,
+    code: u32,
     timeout: Duration,
 ) -> Option<Message> {
     let deadline = Instant::now() + timeout;
@@ -767,7 +767,7 @@ fn read_until_code(
 /// Like [`read_until_code`] but turns a miss into an `io::Error` for `?`.
 fn expect_code(
     stream: &mut TcpStream,
-    code: u8,
+    code: u32,
     timeout: Duration,
 ) -> std::io::Result<Message> {
     read_until_code(stream, code, timeout).ok_or_else(|| {
@@ -1379,7 +1379,7 @@ fn run_mock_direct_peer(cfg: &MockDirectUpload) -> std::io::Result<()> {
     p.set_nonblocking(false)?;
     p.set_read_timeout(Some(Duration::from_secs(10)))?;
     let mut init = read_framed(&mut p)?;
-    assert_eq!(init.get_message_code(), 1, "expected inbound PeerInit");
+    assert_eq!(init.get_init_code(), 1, "expected inbound PeerInit");
     init.set_pointer(5);
     assert_eq!(init.read_string(), cfg.downloader_username, "PeerInit user");
     assert_eq!(init.read_string(), "P", "PeerInit connection type");
@@ -2079,7 +2079,7 @@ fn a_third_party_client_browses_our_shares_via_the_server_broker() {
 
     let mut pierce = read_framed(&mut p).expect("a PierceFirewall frame");
     assert_eq!(
-        pierce.get_message_code(),
+        pierce.get_init_code(),
         0,
         "the brokered connect-back must start with a PierceFirewall"
     );
