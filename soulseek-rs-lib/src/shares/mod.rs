@@ -13,6 +13,9 @@ use std::path::{Path, PathBuf};
 pub struct SharedFile {
     /// Backslash-separated path exposed to peers, e.g. `music\album\song.mp3`.
     pub virtual_path: String,
+    /// `virtual_path` lowercased once at scan time, so answering a search does
+    /// not lowercase every shared path again.
+    search_key: String,
     /// The real filesystem path used to serve the bytes.
     pub real_path: PathBuf,
     pub size: u64,
@@ -106,10 +109,7 @@ impl Shares {
         }
         self.files
             .iter()
-            .filter(|f| {
-                let haystack = f.virtual_path.to_lowercase();
-                terms.iter().all(|t| haystack.contains(t.as_str()))
-            })
+            .filter(|f| terms.iter().all(|t| f.search_key.contains(t.as_str())))
             .collect()
     }
 
@@ -200,6 +200,7 @@ fn scan_root(
                 }
                 let virtual_path = virtual_path_for(root_name, root, &path);
                 files.push(SharedFile {
+                    search_key: virtual_path.to_lowercase(),
                     virtual_path,
                     real_path: path,
                     size: meta.len(),
@@ -275,6 +276,20 @@ mod tests {
         let file = shares.get(&vpath).expect("nested file indexed");
         assert_eq!(file.size, 6);
         assert!(shares.get("does\\not\\exist").is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_mixed_case_path_matches_a_lowercase_query() {
+        let root = std::env::temp_dir()
+            .join(format!("soulseek-shares-case-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("Live Set")).unwrap();
+        std::fs::write(root.join("Live Set").join("Opening TRACK.flac"), b"x")
+            .unwrap();
+        let shares = Shares::scan(&root).unwrap();
+
+        assert_eq!(shares.search("live opening track").len(), 1);
         let _ = std::fs::remove_dir_all(root);
     }
 
