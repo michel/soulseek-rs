@@ -253,13 +253,12 @@ mod tests {
             .join(format!("soulseek-shares-audio-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        // 100 frames of MPEG-1 Layer III at 128 kbps, 44.1 kHz.
-        let mut mp3 = Vec::new();
-        for _ in 0..100 {
-            mp3.extend_from_slice(&[0xFF, 0xFB, 0x90, 0x00]);
-            mp3.resize(mp3.len() + 413, 0);
-        }
-        std::fs::write(root.join("track.mp3"), &mp3).unwrap();
+        // 100 frames at 128 kbps is 2.6 seconds.
+        std::fs::write(
+            root.join("track.mp3"),
+            super::audio::tests::cbr_mp3(100),
+        )
+        .unwrap();
         std::fs::write(root.join("cover.jpg"), b"jpeg").unwrap();
 
         let shares = Shares::scan(&root).unwrap();

@@ -13,8 +13,9 @@ const VBR: u32 = 2;
 const SAMPLE_RATE: u32 = 4;
 const BIT_DEPTH: u32 = 5;
 
-/// Enough of a file's head for an MP3 frame header plus its Xing block, or a
-/// FLAC STREAMINFO.
+/// How much of a file's head one read takes. A frame header with its Xing
+/// block needs under a hundred bytes; the rest is margin so a typical ID3v2
+/// tag of a few kilobytes fits in the first read too.
 const HEAD: usize = 8 * 1024;
 
 /// The attributes for `path`, or none when the format is not one we read or
@@ -47,18 +48,23 @@ fn flac(path: &Path) -> Option<Vec<(u32, u32)>> {
     }
     let mut attributes = Vec::new();
     if samples > 0 {
-        attributes.push((DURATION, (samples / u64::from(sample_rate)) as u32));
+        let seconds = samples / u64::from(sample_rate);
+        attributes.push((DURATION, u32::try_from(seconds).unwrap_or(u32::MAX)));
     }
     attributes.push((SAMPLE_RATE, sample_rate));
     attributes.push((BIT_DEPTH, bits));
     Some(attributes)
 }
 
+/// Layer III bitrates in kbps by the header's four-bit index, for MPEG-1 and
+/// for MPEG-2 and 2.5, which halve the table.
 const MPEG1_BITRATES: [u32; 15] = [
     0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320,
 ];
 const MPEG2_BITRATES: [u32; 15] =
     [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
+/// Sample rates by the header's two-bit index, one row per version: MPEG-2.5,
+/// MPEG-2, MPEG-1.
 const SAMPLE_RATES: [[u32; 3]; 3] = [
     [11_025, 12_000, 8_000],
     [22_050, 24_000, 16_000],
@@ -92,6 +98,8 @@ fn frame(h: &[u8]) -> Option<Frame> {
     }
     let mpeg1 = version == 3;
     let mono = (h[3] >> 6) & 3 == 3;
+    // Protection bit clear means a two-byte CRC precedes the side info.
+    let crc = usize::from(h[1] & 1 == 0) * 2;
     let rates = SAMPLE_RATES[if version == 0 {
         0
     } else if mpeg1 {
@@ -107,86 +115,104 @@ fn frame(h: &[u8]) -> Option<Frame> {
         }[bitrate_index],
         sample_rate: rates[rate_index],
         samples: if mpeg1 { 1152 } else { 576 },
-        xing_at: 4 + match (mpeg1, mono) {
-            (true, false) => 32,
-            (true, true) | (false, false) => 17,
-            (false, true) => 9,
-        },
+        // Side info is 32 bytes for MPEG-1 stereo, 17 for MPEG-1 mono and
+        // MPEG-2 stereo, 9 for MPEG-2 mono.
+        xing_at: 4
+            + crc
+            + match (mpeg1, mono) {
+                (true, false) => 32,
+                (true, true) | (false, false) => 17,
+                (false, true) => 9,
+            },
     })
 }
 
 fn mp3(path: &Path) -> Option<Vec<(u32, u32)>> {
     let mut file = std::fs::File::open(path).ok()?;
     let total = file.metadata().ok()?.len();
-    let mut head = vec![0u8; HEAD];
-    let read = file.read(&mut head).ok()?;
-    head.truncate(read);
+    let mut head = [0u8; HEAD];
+    let mut len = file.read(&mut head).ok()?;
     // An ID3v2 tag in front: its size is four syncsafe bytes, plus a footer.
+    // `base` is where `head` sits in the file once a big tag forces a second
+    // read, so the audio length below counts from the first frame.
+    let mut base = 0usize;
     let mut audio_at = 0usize;
-    if head.len() >= 10 && &head[0..3] == b"ID3" {
+    if len >= 10 && &head[0..3] == b"ID3" {
         let size = head[6..10]
             .iter()
             .fold(0usize, |acc, &b| (acc << 7) | usize::from(b & 0x7F));
         audio_at = 10 + size + if head[5] & 0x10 != 0 { 10 } else { 0 };
-        if audio_at + 4 > head.len() {
+        if audio_at + 4 > len {
             file.seek(SeekFrom::Start(audio_at as u64)).ok()?;
-            head = vec![0u8; HEAD];
-            let read = file.read(&mut head).ok()?;
-            head.truncate(read);
+            len = file.read(&mut head).ok()?;
+            base = audio_at;
             audio_at = 0;
         }
     }
-    let start = (audio_at..head.len().saturating_sub(4))
+    let head = &head[..len];
+    let start = (audio_at..len.saturating_sub(4))
         .find(|&i| frame(&head[i..]).is_some())?;
     let frame = frame(&head[start..])?;
-    let audio_bytes = total.saturating_sub((start + audio_at) as u64);
+    let audio_bytes = total.saturating_sub((base + start) as u64);
+    let at_frame_rate = |bytes: u64| {
+        (bytes * 8 / (u64::from(frame.bitrate_kbps) * 1000)) as u32
+    };
 
     let xing = start + frame.xing_at;
     let tag = head.get(xing..xing + 4);
-    let (duration, bitrate, vbr) = if tag == Some(b"Xing")
-        || tag == Some(b"Info")
-    {
-        let flags =
-            u32::from_be_bytes(head.get(xing + 4..xing + 8)?.try_into().ok()?);
-        let mut at = xing + 8;
-        let mut frames = None;
-        if flags & 1 != 0 {
-            frames = Some(u32::from_be_bytes(
-                head.get(at..at + 4)?.try_into().ok()?,
-            ));
-            at += 4;
-        }
-        let bytes = if flags & 2 != 0 {
-            u64::from(u32::from_be_bytes(
-                head.get(at..at + 4)?.try_into().ok()?,
-            ))
-        } else {
-            audio_bytes
-        };
-        let seconds = f64::from(frames?) * f64::from(frame.samples)
-            / f64::from(frame.sample_rate);
-        let kbps = if seconds > 0.0 {
-            (bytes as f64 * 8.0 / seconds / 1000.0) as u32
-        } else {
-            frame.bitrate_kbps
-        };
-        (seconds as u32, kbps, u32::from(tag == Some(b"Xing")))
+    let vbr = u32::from(tag == Some(b"Xing"));
+    if tag != Some(b"Xing") && tag != Some(b"Info") {
+        return Some(vec![
+            (BITRATE, frame.bitrate_kbps),
+            (DURATION, at_frame_rate(audio_bytes)),
+            (VBR, 0),
+        ]);
+    }
+    let flags =
+        u32::from_be_bytes(head.get(xing + 4..xing + 8)?.try_into().ok()?);
+    let mut at = xing + 8;
+    let mut frames = None;
+    if flags & 1 != 0 {
+        frames =
+            Some(u32::from_be_bytes(head.get(at..at + 4)?.try_into().ok()?));
+        at += 4;
+    }
+    let bytes = if flags & 2 != 0 {
+        u64::from(u32::from_be_bytes(head.get(at..at + 4)?.try_into().ok()?))
     } else {
-        let seconds = audio_bytes * 8 / (u64::from(frame.bitrate_kbps) * 1000);
-        (seconds as u32, frame.bitrate_kbps, 0)
+        audio_bytes
     };
-    Some(vec![(BITRATE, bitrate), (DURATION, duration), (VBR, vbr)])
+    // Without a frame count the block adds nothing the first frame did not say.
+    let Some(frames) = frames else {
+        return Some(vec![
+            (BITRATE, frame.bitrate_kbps),
+            (DURATION, at_frame_rate(bytes)),
+            (VBR, vbr),
+        ]);
+    };
+    let seconds = f64::from(frames) * f64::from(frame.samples)
+        / f64::from(frame.sample_rate);
+    let kbps = if seconds > 0.0 {
+        (bytes as f64 * 8.0 / seconds / 1000.0) as u32
+    } else {
+        frame.bitrate_kbps
+    };
+    Some(vec![
+        (BITRATE, kbps),
+        (DURATION, seconds as u32),
+        (VBR, vbr),
+    ])
 }
 
 #[cfg(test)]
-mod tests {
+pub(in crate::shares) mod tests {
     use super::*;
 
     /// One MPEG-1 Layer III frame header: 128 kbps, 44.1 kHz, stereo.
     const CBR_128: [u8; 4] = [0xFF, 0xFB, 0x90, 0x00];
     const CBR_128_FRAME_LEN: usize = 417;
 
-    fn cbr_mp3(frames: usize) -> Vec<u8> {
+    pub(in crate::shares) fn cbr_mp3(frames: usize) -> Vec<u8> {
         let mut out = Vec::new();
         for _ in 0..frames {
             out.extend_from_slice(&CBR_128);
@@ -211,13 +237,62 @@ mod tests {
         assert_eq!(probe(&path), [(0, 128), (1, 2), (2, 0)]);
     }
 
+    /// An ID3v2 tag of `size` bytes (syncsafe in the header) with no footer.
+    fn id3v2(size: usize) -> Vec<u8> {
+        let mut tag = b"ID3\x04\x00\x00".to_vec();
+        tag.push(((size >> 21) & 0x7F) as u8);
+        tag.push(((size >> 14) & 0x7F) as u8);
+        tag.push(((size >> 7) & 0x7F) as u8);
+        tag.push((size & 0x7F) as u8);
+        tag.resize(10 + size, 0);
+        tag
+    }
+
     #[test]
     fn an_id3v2_tag_in_front_of_the_frames_is_skipped() {
-        let mut bytes = b"ID3\x04\x00\x00\x00\x00\x02\x00".to_vec();
-        bytes.resize(bytes.len() + 256, 0); // 0x0200 syncsafe = 256 bytes
-        bytes.extend_from_slice(&cbr_mp3(100));
+        // 50 frames is 1.31 s; counting the 8000-byte tag as audio, or the
+        // tag twice, would put the duration at 0.
+        let mut bytes = id3v2(8000);
+        bytes.extend_from_slice(&cbr_mp3(50));
         let path = write("tagged.mp3", &bytes);
+        assert_eq!(probe(&path), [(0, 128), (1, 1), (2, 0)]);
+    }
+
+    #[test]
+    fn a_tag_larger_than_the_first_read_is_skipped_too() {
+        // 20 KiB of tag pushes the frames past the first read; 100 frames is
+        // 2.61 s, and counting the tag as audio would say 3.
+        let mut bytes = id3v2(20_480);
+        bytes.extend_from_slice(&cbr_mp3(100));
+        let path = write("big-tag.mp3", &bytes);
         assert_eq!(probe(&path), [(0, 128), (1, 2), (2, 0)]);
+    }
+
+    #[test]
+    fn a_crc_protected_frame_still_finds_its_xing_header() {
+        // Protection bit clear: a two-byte CRC sits before the side info.
+        let mut bytes = cbr_mp3(1);
+        bytes[1] = 0xFA;
+        let xing_at = 4 + 2 + 32;
+        bytes[xing_at..xing_at + 4].copy_from_slice(b"Xing");
+        bytes[xing_at + 4..xing_at + 8].copy_from_slice(&3u32.to_be_bytes());
+        bytes[xing_at + 8..xing_at + 12].copy_from_slice(&200u32.to_be_bytes());
+        bytes[xing_at + 12..xing_at + 16]
+            .copy_from_slice(&104_250u32.to_be_bytes());
+        let path = write("crc.mp3", &bytes);
+        assert_eq!(probe(&path), [(0, 159), (1, 5), (2, 1)]);
+    }
+
+    #[test]
+    fn a_xing_header_without_a_frame_count_falls_back_to_the_frame_header() {
+        let mut bytes = cbr_mp3(100);
+        let xing_at = 4 + 32;
+        bytes[xing_at..xing_at + 4].copy_from_slice(b"Xing");
+        bytes[xing_at + 4..xing_at + 8].copy_from_slice(&2u32.to_be_bytes());
+        bytes[xing_at + 8..xing_at + 12]
+            .copy_from_slice(&41_700u32.to_be_bytes());
+        let path = write("no-frames.mp3", &bytes);
+        assert_eq!(probe(&path), [(0, 128), (1, 2), (2, 1)]);
     }
 
     #[test]
