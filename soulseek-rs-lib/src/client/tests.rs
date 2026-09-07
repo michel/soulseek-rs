@@ -160,8 +160,9 @@ fn build_search_response_matches_shares_and_echoes_token() {
     std::fs::write(dir.join("probe_xyzzy.bin"), b"data").unwrap();
     let shares = Shares::scan(&dir).unwrap();
 
-    let response = build_search_response(&shares, "me", 99, "xyzzy")
-        .expect("a matching share yields a response");
+    let response =
+        build_search_response(&shares, "me", 99, "xyzzy", true, 0, 0)
+            .expect("a matching share yields a response");
     let mut decoded =
         crate::message::Message::new_with_data(response.get_buffer());
     decoded.set_pointer(8);
@@ -170,7 +171,10 @@ fn build_search_response_matches_shares_and_echoes_token() {
     assert_eq!(result.token, 99);
     assert!(result.files.iter().any(|f| f.name.contains("probe_xyzzy")));
 
-    assert!(build_search_response(&shares, "me", 1, "nomatch").is_none());
+    assert!(
+        build_search_response(&shares, "me", 1, "nomatch", true, 0, 0)
+            .is_none()
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
 

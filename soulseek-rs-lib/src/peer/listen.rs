@@ -360,7 +360,7 @@ fn handle_incoming_connection(
 
     // A firewalled peer brokered through the server connects back with a
     // PierceFirewall (code 0) instead of a PeerInit (code 1).
-    if message.get_message_code() == 0 {
+    if message.get_init_code() == 0 {
         handle_pierce_firewall(
             message, stream, reader, &context, &peer_ip, peer_port,
         );

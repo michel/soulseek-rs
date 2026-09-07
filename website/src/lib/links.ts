@@ -3,6 +3,7 @@ export const LINKS = {
   issues: 'https://github.com/michel/soulseek-rs/issues',
   releases: 'https://github.com/michel/soulseek-rs/releases',
   changelog: 'https://github.com/michel/soulseek-rs/blob/master/CHANGELOG.md',
+  contributing: 'https://github.com/michel/soulseek-rs/blob/master/CONTRIBUTING.md',
   license: 'https://github.com/michel/soulseek-rs/blob/master/LICENSE',
   cratesClient: 'https://crates.io/crates/soulseek-rs',
   cratesLib: 'https://crates.io/crates/soulseek-rs-lib',

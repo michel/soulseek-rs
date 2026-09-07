@@ -19,7 +19,8 @@ use crate::trace;
 /// START_DOWNLOAD offset before we stream the file.
 ///
 /// `bytes_sent` is updated as the transfer progresses, and setting `cancel`
-/// aborts the stream with an [`io::ErrorKind::Interrupted`] error.
+/// aborts the stream with an [`io::ErrorKind::Interrupted`] error. Returns the
+/// bytes streamed by this call, which a resumed transfer's prefix is not.
 ///
 /// # Errors
 /// Returns any I/O error opening the file or talking to the peer.
@@ -31,7 +32,7 @@ pub fn serve_file(
     path: &Path,
     bytes_sent: &AtomicU64,
     cancel: &AtomicBool,
-) -> io::Result<()> {
+) -> io::Result<u64> {
     let mut file = File::open(path)?;
 
     let socket = format!("{host}:{port}")
@@ -78,6 +79,7 @@ pub fn serve_file(
     }
 
     let mut buffer = vec![0u8; 64 * 1024];
+    let mut streamed = 0u64;
     loop {
         if cancel.load(Ordering::Relaxed) {
             return Err(io::Error::new(
@@ -91,6 +93,7 @@ pub fn serve_file(
         }
         stream.write_all(&buffer[..read])?;
         bytes_sent.fetch_add(read as u64, Ordering::Relaxed);
+        streamed += read as u64;
     }
     stream.flush()?;
 
@@ -100,7 +103,7 @@ pub fn serve_file(
     // a slot cap is time no other peer can use.
     stream.shutdown(std::net::Shutdown::Write).ok();
     trace!("[upload] served {} to {}:{}", path.display(), host, port);
-    Ok(())
+    Ok(streamed)
 }
 
 #[cfg(test)]

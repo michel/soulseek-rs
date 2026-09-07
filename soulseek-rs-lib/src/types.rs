@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::mpsc::Sender};
 
-use crate::{error::Result, message::Message, utils::zlib::deflate};
+use crate::{error::Result, message::Message, utils::zlib::inflate};
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -84,6 +84,14 @@ pub const MAX_SEARCH_RESPONSES: usize = 500;
 /// matching collections cannot blow past the response cap.
 pub const MAX_SEARCH_FILES: usize = 10_000;
 
+/// Files one reply to a peer's search carries at most.
+///
+/// A broad query against a big share would otherwise hand the whole index
+/// to whoever typed it, on every such search that arrives. Nicotine+ sends
+/// 300 by default and slskd 500; a searcher with that many sources from one
+/// peer has plenty.
+pub const MAX_SEARCH_REPLY_FILES: usize = 300;
+
 impl Search {
     /// Store one peer's response, unless this search already holds enough.
     ///
@@ -106,7 +114,7 @@ impl SearchResult {
         let pointer = message.get_pointer();
         let size = message.get_size();
         let data: Vec<u8> = message.get_slice(pointer, size);
-        let deflated = deflate(&data)?;
+        let deflated = inflate(&data)?;
         let mut message = Message::new_with_data(deflated);
 
         let username = message.read_string();
@@ -415,7 +423,7 @@ mod tests {
         body.extend_from_slice(&0u32.to_le_bytes()); // username "" (len 0)
         body.extend_from_slice(&7u32.to_le_bytes()); // token
         body.extend_from_slice(&u32::MAX.to_le_bytes()); // n_files (hostile)
-        let compressed = crate::utils::zlib::compress_stored(&body);
+        let compressed = crate::utils::zlib::deflate(&body);
         let mut message = Message::new_with_data(compressed);
         let result = SearchResult::new_from_message(&mut message)
             .expect("hostile count should parse, not error");
