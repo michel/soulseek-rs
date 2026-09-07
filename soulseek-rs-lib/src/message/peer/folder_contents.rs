@@ -8,7 +8,7 @@ use crate::message::peer::shared_file_list::{
 };
 use crate::message::{Message, MessageHandler};
 use crate::peer::PeerMessage;
-use crate::utils::zlib::compress_stored;
+use crate::utils::zlib::deflate;
 use std::sync::mpsc::Sender;
 
 pub struct FolderContentsRequest;
@@ -36,7 +36,7 @@ pub fn build_folder_contents(
     write_directories(&mut payload, dirs);
     Message::new()
         .write_int32(37)
-        .write_raw_bytes(compress_stored(&payload.get_data()))
+        .write_raw_bytes(deflate(&payload.get_data()))
         .clone()
 }
 
