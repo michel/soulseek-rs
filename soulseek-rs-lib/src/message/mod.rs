@@ -252,6 +252,7 @@ impl Message {
                 100 => Ok("AcceptChildren"),
                 102 => Ok("PossibleParents"),
                 104 => Ok("WishlistInterval"),
+                121 => Ok("SendUploadSpeed"),
                 160 => Ok("ExcludedSearchPhrases"),
                 1001 => Ok("CantConnectToPeer"),
                 _ => Err(Error(format!("Unknown server message code: {code}"))),
