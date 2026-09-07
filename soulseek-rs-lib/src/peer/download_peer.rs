@@ -16,7 +16,7 @@ use crate::utils::path::{PART_SUFFIX, expand_tilde};
 const READ_BUFFER_SIZE: usize = 8192;
 const CANCEL_POLL: Duration = Duration::from_secs(1);
 const STALL_DEADLINE: Duration = Duration::from_secs(30);
-const PROGRESS_UPDATE_CHUNKS: usize = 15; // ~120KB (15 * 8192 bytes)
+const PROGRESS_UPDATE_CHUNKS: usize = 15;
 
 #[derive(Debug)]
 pub enum DownloadError {
@@ -353,6 +353,7 @@ impl DownloadPeer {
     ) -> Result<(Download, String), DownloadError> {
         let mut read_buffer = [0u8; READ_BUFFER_SIZE];
         let mut chunk_counter = 0usize;
+        let mut bytes_since_last_update = 0usize;
         let mut last_update_time = Instant::now();
         let mut last_data = Instant::now();
         stream
@@ -414,11 +415,10 @@ impl DownloadPeer {
 
                     part.write(data)?;
                     chunk_counter += 1;
+                    bytes_since_last_update += bytes_read;
 
                     if chunk_counter.is_multiple_of(PROGRESS_UPDATE_CHUNKS) {
                         let elapsed = last_update_time.elapsed().as_secs_f64();
-                        let bytes_since_last_update =
-                            PROGRESS_UPDATE_CHUNKS * READ_BUFFER_SIZE;
                         let speed = if elapsed > 0.0 {
                             bytes_since_last_update as f64 / elapsed
                         } else {
@@ -430,6 +430,7 @@ impl DownloadPeer {
                             part.written,
                             speed,
                         );
+                        bytes_since_last_update = 0;
                         last_update_time = Instant::now();
                     }
 
