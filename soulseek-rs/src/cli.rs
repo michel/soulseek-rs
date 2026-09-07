@@ -172,7 +172,11 @@ pub struct Cli {
     pub log_file: Option<PathBuf>,
 }
 
+/// Non-exhaustive: this enum is public through the crate's library target so
+/// the integration tests can reach it, and a new subcommand must not read as a
+/// breaking change of that library.
 #[derive(Subcommand, Debug)]
+#[non_exhaustive]
 pub enum Commands {
     /// Search the network and print matching files
     Search(SearchArgs),
@@ -254,6 +258,7 @@ pub struct DaemonArgs {
 }
 
 #[derive(Subcommand, Debug)]
+#[non_exhaustive]
 pub enum DaemonCommand {
     /// Print the token remote clients authenticate with
     Token,
@@ -266,6 +271,7 @@ pub enum DaemonCommand {
 }
 
 #[derive(Subcommand, Debug)]
+#[non_exhaustive]
 pub enum CompletionsCommand {
     /// Write the completion script where the shell looks for it
     Install(CompletionsArgs),

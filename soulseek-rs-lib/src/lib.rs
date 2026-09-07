@@ -2,14 +2,17 @@
 // example in it, so a signature change cannot leave the advertised usage stale.
 #![doc = include_str!("../README.md")]
 
-// Core modules
-pub mod actor;
+// The public surface is the client, its types, the wire codec and the share
+// index. The actors, dispatcher, peer plumbing and download store are how the
+// client is built, not what a host programs against, so they stay inside the
+// crate and a change to them is not a change to the library's API.
+pub(crate) mod actor;
 pub mod client;
-pub mod dispatcher;
-pub mod download_store;
+pub(crate) mod dispatcher;
+pub(crate) mod download_store;
 pub mod error;
 pub mod message;
-pub mod peer;
+pub(crate) mod peer;
 pub mod shares;
 pub mod types;
 #[macro_use]
@@ -31,6 +34,7 @@ pub use actor::server_actor::{PeerAddress, UserMessage};
 pub use client::{Client, ClientSettings};
 pub use error::{Result, SoulseekRs};
 pub use message::peer::{SharedDirectory, SharedFileEntry};
+pub use peer::ConnectionType;
 pub use types::{
     ClientVersion, DownloadStatus, File, RoomEvent, RoomInfo, Search,
     SearchResult, SessionLoss, Transfer, UploadInfo, UploadStatus, UserInfo,
