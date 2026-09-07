@@ -6,6 +6,7 @@ use crate::message::peer::{
     PlaceInQueueRequest, PlaceInQueueResponse, QueueUploadHandler,
     SharedDirectory, SharedFileListResponseHandler, TransferRequest,
     TransferResponse, UploadDeniedHandler, UploadFailedHandler,
+    UserInfoRequest,
 };
 use crate::message::server::MessageFactory;
 use crate::message::{Handlers, Message, MessageReader, MessageType};
@@ -46,6 +47,8 @@ pub enum PeerMessage {
     ShareListRequested,
     /// A peer we are browsing sent us their shared-file listing (code 5).
     ShareListReceived(Vec<SharedDirectory>),
+    /// A peer asked what we say about ourselves (they sent us code 15).
+    UserInfoRequested,
     /// A peer asked for one folder of our shares (they sent us code 36).
     FolderContentsRequested {
         token: u32,
@@ -184,6 +187,7 @@ impl PeerActor {
         handlers.register_handler(TransferResponse);
         handlers.register_handler(GetShareFileList);
         handlers.register_handler(FolderContentsRequest);
+        handlers.register_handler(UserInfoRequest);
         handlers.register_handler(UploadDeniedHandler);
         handlers.register_handler(UploadFailedHandler);
         handlers.register_handler(PlaceInQueueRequest);
@@ -274,13 +278,27 @@ impl PeerActor {
                 self.handle_serve_upload(token, filename, size);
             }
             PeerMessage::ShareListRequested => {
-                self.handle_share_list_requested();
+                self.forward(ClientOperation::ShareListRequested {
+                    requester_key: self.peer_username(),
+                });
             }
             PeerMessage::ShareListReceived(directories) => {
-                self.handle_share_list_received(directories);
+                self.forward(ClientOperation::BrowseResult {
+                    username: self.peer_username(),
+                    directories,
+                });
+            }
+            PeerMessage::UserInfoRequested => {
+                self.forward(ClientOperation::UserInfoRequested {
+                    requester_key: self.peer_username(),
+                });
             }
             PeerMessage::FolderContentsRequested { token, folder } => {
-                self.handle_folder_contents_requested(token, folder);
+                self.forward(ClientOperation::FolderContentsRequested {
+                    requester_key: self.peer_username(),
+                    token,
+                    folder,
+                });
             }
             PeerMessage::RequestTransfer(download) => {
                 let message = MessageFactory::build_transfer_request_message(
@@ -440,39 +458,9 @@ impl PeerActor {
         self.send_message(message);
     }
 
-    fn handle_share_list_requested(&self) {
-        let requester_key = self.peer_username();
-        if let Err(e) = self
-            .client_channel
-            .send(ClientOperation::ShareListRequested { requester_key })
-        {
-            error!("[peer_actor] forward ShareListRequested: {}", e);
-        }
-    }
-
-    fn handle_folder_contents_requested(&self, token: u32, folder: String) {
-        let requester_key = self.peer_username();
-        if let Err(e) =
-            self.client_channel
-                .send(ClientOperation::FolderContentsRequested {
-                    requester_key,
-                    token,
-                    folder,
-                })
-        {
-            error!("[peer_actor] forward FolderContentsRequested: {}", e);
-        }
-    }
-
-    fn handle_share_list_received(&self, directories: Vec<SharedDirectory>) {
-        let username = self.peer_username();
-        if let Err(e) =
-            self.client_channel.send(ClientOperation::BrowseResult {
-                username,
-                directories,
-            })
-        {
-            error!("[peer_actor] forward BrowseResult: {}", e);
+    fn forward(&self, operation: ClientOperation) {
+        if let Err(e) = self.client_channel.send(operation) {
+            error!("[peer_actor] forward to client: {}", e);
         }
     }
 
