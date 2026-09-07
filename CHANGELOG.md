@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [17.0.0](https://github.com/michel/soulseek-rs/compare/v16.0.0...v17.0.0) - 2026-09-07
+
+### Added
+
+- *(lib)* report each finished upload's rate to the server
+- *(lib)* surface server announcements as messages from "server"
+- *(lib)* answer UserInfoRequest with our slots and queue
+- *(lib)* answer FolderContentsRequest with the folder's listing
+
+### Fixed
+
+- *(lib)* keep the log level in an atomic and let hosts change it
+- *(lib)* compress peer listings and reject a bad zlib checksum
+- *(lib)* report a download's rate from the bytes actually read
+- *(lib)* keep the server connection alive with TCP keepalive
+- *(lib)* advertise real slot, speed and queue figures in search replies
+- *(lib)* route on the full four-byte message code
+- *(lib)* give each search its own token
+- *(lib)* cap a search reply at 150 files
+
+### Other
+
+- *(lib)* split the server actor's value types and tests out
+- *(lib)* lowercase each shared path once at scan time
+- *(lib)* read downloads in 64 KiB slices
+- Merge pull request #69 from michel/lib/user-info
+
 ## [16.0.0](https://github.com/michel/soulseek-rs/compare/v15.0.0...v16.0.0) - 2026-09-07
 
 ### Added
