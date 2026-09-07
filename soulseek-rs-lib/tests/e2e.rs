@@ -2312,7 +2312,12 @@ impl QueueingPeer {
     /// place in the queue" is also true of a peer that never asked, so polling
     /// for that would pass against a completely broken pump.
     fn takes_a_slot(&mut self) -> bool {
-        read_until_code(&mut self.peer, 40, Duration::from_secs(10)).is_some()
+        self.takes_a_slot_within(Duration::from_secs(10))
+    }
+
+    fn takes_a_slot_within(&mut self, timeout: Duration) -> bool {
+        let _ = self.peer.set_read_timeout(Some(timeout));
+        read_until_code(&mut self.peer, 40, timeout).is_some()
     }
 }
 
@@ -3477,4 +3482,53 @@ fn a_server_announcement_arrives_as_a_message_from_the_server() {
         .find(|m| m.username() == "server")
         .expect("bob should hear the announcement");
     assert_eq!(announcement.message(), "going down at nine");
+}
+
+// A peer that is offered a slot and never answers must not keep it: with
+// two slots by default, two such peers shut uploads down for the session.
+#[test]
+fn an_unanswered_upload_offer_frees_its_slot() {
+    let server = server_or_skip!();
+    let (share, folder) = queue_share("expiry", &["silent.mp3", "patient.mp3"]);
+    let server_addr = format!("{}:{}", server.host, server.port);
+
+    let sharer_port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share.display().to_string()],
+        ..server.listening_settings("e2e_expiry_sharer", "pw", sharer_port)
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+    sharer.set_upload_slots(1);
+    let listen_addr = format!("127.0.0.1:{sharer_port}");
+
+    let mut silent = queue_as(
+        &server_addr,
+        &listen_addr,
+        "e2e_expiry_silent",
+        &format!("{folder}\\silent.mp3"),
+    )
+    .expect("silent peer queues");
+    assert!(silent.takes_a_slot(), "the silent peer is offered the slot");
+
+    let mut patient = queue_as(
+        &server_addr,
+        &listen_addr,
+        "e2e_expiry_patient",
+        &format!("{folder}\\patient.mp3"),
+    )
+    .expect("patient peer queues");
+    assert!(
+        patient.takes_a_slot_within(Duration::from_mins(1)),
+        "the slot must come free once the silent peer's offer expires"
+    );
+    assert!(
+        sharer.take_upload_events().iter().any(|event| {
+            event.username == "e2e_expiry_silent"
+                && matches!(event.status, UploadStatus::Failed(_))
+        }),
+        "the operator sees the unanswered offer fail"
+    );
+
+    let _ = std::fs::remove_dir_all(share);
 }

@@ -107,6 +107,8 @@ struct UploadJob {
     real_path: std::path::PathBuf,
     virtual_path: String,
     size: u64,
+    /// When the offer went out; `None` once the peer has answered it.
+    offered: Option<Instant>,
 }
 
 /// Live bookkeeping for an upload being served (or recently finished).

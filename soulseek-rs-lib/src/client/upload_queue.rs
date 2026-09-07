@@ -10,13 +10,18 @@
 //! policy (per-user fairness, small-file-first) would be a different promise
 //! than the one the rules ask for.
 
-use super::{ClientContext, PeerRegistry, UploadJob};
+use super::{ClientContext, Duration, Instant, PeerRegistry, UploadJob};
 use crate::types::{UploadInfo, UploadStatus};
 use std::path::PathBuf;
 
 /// Cap on remembered queued-upload states, so a caller that never drains
 /// them cannot grow the list without bound.
 const MAX_UPLOAD_EVENTS: usize = 256;
+
+/// How long an offered slot waits for the peer's TransferResponse. A peer that
+/// never answers, having gone away or hung, would otherwise hold the slot for
+/// the life of the process; with two slots, two of them shut uploads down.
+const OFFER_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A queued upload that has just been given a slot, ready to be offered to the
 /// peer that asked for it.
@@ -142,6 +147,7 @@ impl ClientContext {
                     real_path: job.real_path,
                     virtual_path: job.virtual_path,
                     size: job.size,
+                    offered: Some(Instant::now()),
                 },
             );
         }
@@ -237,6 +243,46 @@ impl ClientContext {
     #[must_use]
     pub fn is_privileged(&self, username: &str) -> bool {
         self.privileged_users.contains(username)
+    }
+
+    /// Drop offers older than [`OFFER_TIMEOUT`], recording each as a failed
+    /// upload so an operator sees why the peer never got its file. Returns
+    /// whether anything was dropped, which is the caller's cue to pump again.
+    pub fn expire_stale_offers(&mut self, now: Instant) -> bool {
+        let stale: Vec<u32> = self
+            .uploads
+            .iter()
+            .filter(|(_, job)| {
+                job.offered.is_some_and(|sent| {
+                    now.duration_since(sent) >= OFFER_TIMEOUT
+                })
+            })
+            .map(|(&token, _)| token)
+            .collect();
+        for token in &stale {
+            let Some(job) = self.uploads.remove(token) else {
+                continue;
+            };
+            self.upload_events.push(UploadInfo {
+                username: job.downloader,
+                filename: job.virtual_path,
+                size: job.size,
+                bytes_sent: 0,
+                speed_bytes_per_sec: 0.0,
+                status: UploadStatus::Failed(
+                    "no answer to the transfer offer".to_string(),
+                ),
+            });
+        }
+        !stale.is_empty()
+    }
+
+    /// The peer accepted the offer for `token`; it may still take a while to
+    /// resolve their address and connect, and that wait must not expire it.
+    pub fn mark_offer_answered(&mut self, token: u32) {
+        if let Some(job) = self.uploads.get_mut(&token) {
+            job.offered = None;
+        }
     }
 
     /// Forget everything `downloader` was waiting for or had been offered, and
@@ -347,6 +393,7 @@ mod tests {
 /// go untested.
 #[cfg(test)]
 mod context_tests {
+    use super::OFFER_TIMEOUT;
     use crate::client::{ClientContext, DEFAULT_UPLOAD_SLOTS};
     use crate::types::UploadStatus;
     use std::path::PathBuf;
@@ -462,6 +509,38 @@ mod context_tests {
         ctx.uploads.clear();
         assert_eq!(offered(&mut ctx, &mut token), ["second"]);
         assert_eq!(ctx.place_in_queue("second", "f.mp3"), None);
+    }
+
+    #[test]
+    fn an_offer_nobody_answers_frees_its_slot_after_the_timeout() {
+        let (mut ctx, mut token) = context(1);
+        ask(&mut ctx, "gone", "f.mp3");
+        ask(&mut ctx, "next", "f.mp3");
+        assert_eq!(offered(&mut ctx, &mut token), ["gone"]);
+
+        let now = std::time::Instant::now();
+        assert!(!ctx.expire_stale_offers(now), "a fresh offer stays");
+        assert!(
+            ctx.expire_stale_offers(now + OFFER_TIMEOUT),
+            "an unanswered offer expires"
+        );
+        assert_eq!(offered(&mut ctx, &mut token), ["next"]);
+        assert!(ctx.take_upload_events().iter().any(|event| {
+            event.username == "gone"
+                && matches!(event.status, UploadStatus::Failed(_))
+        }));
+    }
+
+    #[test]
+    fn an_accepted_offer_waiting_on_an_address_does_not_expire() {
+        let (mut ctx, mut token) = context(1);
+        ask(&mut ctx, "slow", "f.mp3");
+        offered(&mut ctx, &mut token);
+
+        ctx.mark_offer_answered(1);
+        let later = std::time::Instant::now() + OFFER_TIMEOUT * 2;
+        assert!(!ctx.expire_stale_offers(later), "an answered offer stays");
+        assert!(ctx.uploads.contains_key(&1));
     }
 
     #[test]
