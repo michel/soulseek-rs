@@ -143,6 +143,16 @@ impl MessageFactory {
         Message::new().write_int32(7).write_string(username).clone()
     }
 
+    /// Tell the server (code 121) what a finished upload averaged, in bytes
+    /// per second; it folds that into the speed other users see for us.
+    #[must_use]
+    pub fn build_send_upload_speed(bytes_per_second: u32) -> Message {
+        Message::new()
+            .write_int32(121)
+            .write_int32(bytes_per_second)
+            .clone()
+    }
+
     /// Ask the server (code 36) for a user's share statistics.
     #[must_use]
     pub fn build_get_user_stats(username: &str) -> Message {
@@ -473,4 +483,13 @@ fn test_build_unwatch_user() {
     let message = MessageFactory::build_unwatch_user("bob");
     let expect: Vec<u8> = [6, 0, 0, 0, 3, 0, 0, 0, b'b', b'o', b'b'].to_vec();
     assert_eq!(expect, message.get_data());
+}
+
+#[test]
+fn an_upload_speed_report_carries_the_rate() {
+    let message = MessageFactory::build_send_upload_speed(900);
+    let mut decoded = Message::new_with_data(message.get_buffer());
+    assert_eq!(decoded.get_message_code(), 121);
+    decoded.set_pointer(8);
+    assert_eq!(decoded.read_int32(), 900);
 }
