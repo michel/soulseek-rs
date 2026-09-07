@@ -1,5 +1,6 @@
 pub use crate::{debug, error, info, trace, warn};
 
+pub mod distributed;
 pub mod handlers;
 mod message_reader;
 pub mod peer;
