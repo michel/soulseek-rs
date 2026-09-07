@@ -647,6 +647,12 @@ soulfind instead of skipping.
   points `SOULFIND_BIN` at it, and runs both the library and CLI e2e suites
   with `SOULSEEK_E2E_REQUIRED=1`, so a missing server fails instead of skipping.
 
+## Contributing
+
+Issues and pull requests both welcome. Branch off `develop`, keep the change
+small, and see [CONTRIBUTING.md](./CONTRIBUTING.md) for the commit convention
+and the checks CI runs.
+
 ## License
 
 MIT. See [LICENSE](./LICENSE).
