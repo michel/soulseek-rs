@@ -1645,6 +1645,56 @@ fn a_file_downloads_from_a_firewalled_peer_via_server_broker() {
 // it — the entire search + connect + upload/download stack, no mock peer.
 // ---------------------------------------------------------------------------
 
+/// A sharer serving `share_dir` and a searcher, both logged in and listening,
+/// after a beat for soulfind to register both SetWaitPorts.
+fn sharer_and_searcher(
+    server: &TestServer,
+    share_dir: &std::path::Path,
+    sharer: &str,
+    searcher: &str,
+) -> (Client, Client) {
+    let mut sharing = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.listening_settings(
+            sharer,
+            "pw",
+            free_port().expect("sharer port"),
+        )
+    });
+    sharing.connect().expect("sharer connect");
+    assert!(sharing.login().expect("sharer login"));
+
+    let mut searching = Client::with_settings(server.listening_settings(
+        searcher,
+        "pw",
+        free_port().expect("searcher port"),
+    ));
+    searching.connect().expect("searcher connect");
+    assert!(searching.login().expect("searcher login"));
+
+    std::thread::sleep(Duration::from_secs(1));
+    (sharing, searching)
+}
+
+/// `sharer`'s answer to `query`, once it reaches `searcher`.
+fn reply_from(
+    searcher: &Client,
+    query: &str,
+    sharer: &str,
+) -> Option<soulseek_rs::SearchResult> {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let reply = searcher
+            .get_search_results(query)
+            .into_iter()
+            .find(|result| result.username == sharer);
+        if reply.is_some() || Instant::now() >= deadline {
+            return reply;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
 #[test]
 fn two_real_clients_search_and_download() {
     let server = server_or_skip!();
@@ -1655,48 +1705,21 @@ fn two_real_clients_search_and_download() {
     let filename = "e2e_probe_xyzzy.bin";
     std::fs::write(share_dir.join(filename), &content).unwrap();
 
-    let sharer_port = free_port().expect("sharer port");
-    let mut sharer = Client::with_settings(ClientSettings {
-        shared_directories: vec![share_dir.display().to_string()],
-        ..server.listening_settings("e2e_sharer", "pw", sharer_port)
-    });
-    sharer.connect().expect("sharer connect");
-    assert!(sharer.login().expect("sharer login"));
-
-    let leecher_port = free_port().expect("leecher port");
-    let mut leecher = Client::with_settings(server.listening_settings(
-        "e2e_leecher",
-        "pw",
-        leecher_port,
-    ));
-    leecher.connect().expect("leecher connect");
-    assert!(leecher.login().expect("leecher login"));
-
-    // Let soulfind register both SetWaitPorts before the search resolves peers.
-    std::thread::sleep(Duration::from_secs(1));
+    let (sharer, leecher) =
+        sharer_and_searcher(&server, &share_dir, "e2e_sharer", "e2e_leecher");
 
     let query = "xyzzy";
     let _ = leecher.search(query, Duration::from_secs(3));
 
-    // Poll until the sharer's response for our file arrives.
-    let mut hit: Option<(String, u64)> = None;
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while Instant::now() < deadline && hit.is_none() {
-        for result in leecher.get_search_results(query) {
-            if result.username == "e2e_sharer" {
-                for file in &result.files {
-                    if file.name.contains("e2e_probe_xyzzy") {
-                        hit = Some((file.name.clone(), file.size));
-                    }
-                }
-            }
-        }
-        if hit.is_none() {
-            std::thread::sleep(Duration::from_millis(200));
-        }
-    }
-    let (result_path, size) =
-        hit.expect("leecher should find the sharer's file");
+    let (result_path, size) = reply_from(&leecher, query, "e2e_sharer")
+        .and_then(|reply| {
+            reply
+                .files
+                .into_iter()
+                .find(|file| file.name.contains("e2e_probe_xyzzy"))
+        })
+        .map(|file| (file.name, file.size))
+        .expect("leecher should find the sharer's file");
     assert_eq!(size, content.len() as u64);
 
     // Download it from the sharer.
@@ -3038,4 +3061,34 @@ fn watching_a_user_the_server_does_not_know_reports_their_absence() {
         "a username the server does not know must not stay watched"
     );
     assert!(watcher.user_info("e2e_watch_nobody_here").is_none());
+}
+
+// A query that matches most of a big share must not ship the whole share to
+// whoever typed it: a reply is a shortlist, and the searcher's other sources
+// cover the rest.
+#[test]
+fn a_search_reply_carries_at_most_the_file_cap() {
+    let server = server_or_skip!();
+
+    let cap = soulseek_rs::types::MAX_SEARCH_REPLY_FILES;
+    let share_dir = unique_download_dir();
+    for i in 0..cap + 20 {
+        std::fs::write(share_dir.join(format!("probe_cap_{i:04}.bin")), b"x")
+            .unwrap();
+    }
+    let (_sharer, searcher) = sharer_and_searcher(
+        &server,
+        &share_dir,
+        "e2e_cap_sharer",
+        "e2e_cap_searcher",
+    );
+
+    let query = "probe_cap";
+    let _ = searcher.search(query, Duration::from_secs(3));
+
+    let reply = reply_from(&searcher, query, "e2e_cap_sharer")
+        .expect("the sharer should answer the search");
+    assert_eq!(reply.files.len(), cap, "a reply is capped at {cap} files");
+
+    let _ = std::fs::remove_dir_all(share_dir);
 }
