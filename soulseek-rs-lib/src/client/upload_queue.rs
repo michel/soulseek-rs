@@ -123,7 +123,7 @@ impl ClientContext {
         mut next_token: impl FnMut() -> u32,
     ) -> (Option<PeerRegistry>, Vec<UploadOffer>) {
         let mut offers = Vec::new();
-        while self.uploads_in_flight() < self.upload_slots {
+        while self.has_free_upload_slot() {
             let Some(index) = next_to_serve(&self.upload_queue) else {
                 break;
             };
@@ -188,6 +188,10 @@ impl ClientContext {
                     matches!(upload.status, UploadStatus::InProgress)
                 })
                 .count()
+    }
+
+    pub(super) fn has_free_upload_slot(&self) -> bool {
+        self.uploads_in_flight() < self.upload_slots
     }
 
     /// The peers still waiting, in the order they will be served, each carrying

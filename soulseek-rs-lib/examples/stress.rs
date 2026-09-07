@@ -415,7 +415,7 @@ impl SeederState {
             })
             .collect();
         let response =
-            build_file_search_response(&self.name, token, &entries, 1, 0);
+            build_file_search_response(&self.name, token, &entries, 1, 0, 0);
 
         let Ok(mut guard) = self.conn.lock() else {
             return;
