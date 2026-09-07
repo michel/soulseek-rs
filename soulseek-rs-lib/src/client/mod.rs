@@ -17,7 +17,7 @@ use crate::{
     peer::{ConnectionType, DownloadPeer, Peer, PeerMessage, listen::Listen},
     shares::Shares,
     types::{Download, Search, SearchResult},
-    utils::{lock::RwLockExt, md5},
+    utils::lock::RwLockExt,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -88,6 +88,17 @@ static NEXT_DOWNLOAD_TOKEN: AtomicU32 = AtomicU32::new(1);
 
 fn next_download_token() -> u32 {
     NEXT_DOWNLOAD_TOKEN.fetch_add(1, Ordering::Relaxed) % 0x8000_0000
+}
+
+/// Source of search tokens.
+///
+/// A counter, not a hash of the query: a peer's answer is routed to the first
+/// search holding its token, so two queries sharing one would pour results
+/// into each other.
+static NEXT_SEARCH_TOKEN: AtomicU32 = AtomicU32::new(1);
+
+fn next_search_token() -> u32 {
+    NEXT_SEARCH_TOKEN.fetch_add(1, Ordering::Relaxed)
 }
 
 /// A file we have agreed to serve to a peer, awaiting their TransferResponse.
