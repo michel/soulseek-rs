@@ -1,6 +1,7 @@
 use super::MainTui;
+use super::input::{jumped, list_jump};
 use crate::models::{BrowseStatus, files_under, find_node};
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::{thread, time::Duration};
 
 /// How long to wait for a browse response before showing a timeout notice.
@@ -10,6 +11,11 @@ impl MainTui {
     pub(super) fn handle_browse_input(&mut self, key: KeyEvent) {
         if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
             self.state.show_browse = false;
+            return;
+        }
+        let jump = list_jump(key, self.popup_page());
+        // Control combinations are only ever jumps: ctrl-d pages, d downloads.
+        if jump.is_none() && key.modifiers.contains(KeyModifiers::CONTROL) {
             return;
         }
 
@@ -59,6 +65,14 @@ impl MainTui {
             let row = rows[sel].clone();
             (rows, sel, row)
         };
+
+        if let Some(jump) = jump {
+            if let Some(browse) = self.state.browse.active_tab_mut() {
+                browse.selected_row = jumped(sel, rows.len(), jump);
+            }
+            self.sync_browse_selection();
+            return;
+        }
 
         // Downloads need `&self.client` free of the browse borrow.
         match key.code {

@@ -36,7 +36,8 @@ const PANE_KEYS: readonly (readonly [string, string])[] = [
   ['w', 'hide the focused pane; the others widen'],
   ['↑ ↓ · j k', 'move a row in any list'],
   ['Home End · g G', 'first / last row'],
-  ['PgUp PgDn · ^u ^d', 'a page, or half a page'],
+  ['PgUp PgDn · ^u ^d', 'a page, or half a page; in a chat, back through the log'],
+  ['h l · ← →', 'scroll a long name or query sideways, 0 and $ to either end'],
 ]
 
 const ROOM_KEYS: readonly (readonly [string, string])[] = [

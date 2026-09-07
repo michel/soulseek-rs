@@ -1,3 +1,4 @@
+use super::name_scroll::{column_width, end_offset, scroll_text};
 use crate::models::{SearchEntry, SearchStatus};
 use crate::ui::{
     HIGHLIGHT_SYMBOL, body_style, dimmed_style, header_style, pane_block,
@@ -5,9 +6,26 @@ use crate::ui::{
 };
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Constraint, Rect},
     widgets::{Cell, HighlightSpacing, Row, Table, TableState},
 };
+
+// The pane shares a row with two others, so the fixed columns are as
+// narrow as their widest word: the query gets the rest.
+const WIDTHS: [Constraint; 3] = [
+    Constraint::Length(6),
+    Constraint::Fill(1),
+    Constraint::Length(7),
+];
+
+/// Query is the second column.
+const QUERY_COLUMN: usize = 1;
+
+/// The offset that brings the end of a query into view.
+#[must_use]
+pub fn query_end_offset(query: &str, area: Rect) -> usize {
+    end_offset(query, area, &WIDTHS, QUERY_COLUMN)
+}
 
 pub fn render_searches_pane(
     frame: &mut Frame,
@@ -15,6 +33,7 @@ pub fn render_searches_pane(
     searches: &[SearchEntry],
     table_state: &mut TableState,
     focused: bool,
+    query_offset: usize,
 ) {
     let header = Row::new(vec![
         Cell::from("Status").style(header_style()),
@@ -23,6 +42,7 @@ pub fn render_searches_pane(
     ])
     .height(1);
 
+    let query_width = column_width(area, &WIDTHS, QUERY_COLUMN);
     let rows: Vec<Row> = searches
         .iter()
         .map(|search| {
@@ -55,21 +75,18 @@ pub fn render_searches_pane(
 
             Row::new(vec![
                 status_cell,
-                Cell::from(search.query.clone()).style(body_style()),
+                Cell::from(scroll_text(
+                    &search.query,
+                    query_offset,
+                    query_width,
+                ))
+                .style(body_style()),
                 Cell::from(results_text).style(dimmed_style()),
             ])
         })
         .collect();
 
-    // The pane shares a row with two others, so the fixed columns are as
-    // narrow as their widest word: the query gets the rest.
-    let widths = [
-        ratatui::layout::Constraint::Length(6),
-        ratatui::layout::Constraint::Fill(1),
-        ratatui::layout::Constraint::Length(7),
-    ];
-
-    let table = Table::new(rows, widths)
+    let table = Table::new(rows, WIDTHS)
         .header(header)
         .row_highlight_style(row_highlight_style())
         .highlight_symbol(HIGHLIGHT_SYMBOL)

@@ -108,6 +108,75 @@ impl PaneLayout {
     }
 }
 
+/// Where a scrolling log is being read.
+///
+/// Either following its newest line, or held at a row of its history so
+/// that arriving messages do not push the reader along. The renderer records
+/// the log's size at each draw, which is what lets the keys move by a
+/// screenful and stop at the ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LogView {
+    /// The first visible row while held in the history; `None` follows the
+    /// tail.
+    top: Option<usize>,
+    /// Rows the log had, and rows the window showed, at the last draw.
+    rows: usize,
+    height: usize,
+}
+
+impl LogView {
+    /// Whether the newest line is on screen, so new messages are being seen.
+    #[must_use]
+    pub const fn following(&self) -> bool {
+        self.top.is_none()
+    }
+
+    /// Rows a page key moves: what the window showed last time.
+    #[must_use]
+    pub const fn page(&self) -> usize {
+        self.height
+    }
+
+    const fn last_top(&self) -> usize {
+        self.rows.saturating_sub(self.height)
+    }
+
+    /// The rows of a log `len` long to draw in a window `height` tall. A
+    /// held position that has reached the tail goes back to following it.
+    pub fn window(
+        &mut self,
+        len: usize,
+        height: usize,
+    ) -> std::ops::Range<usize> {
+        self.rows = len;
+        self.height = height.max(1);
+        let top = match self.top {
+            Some(top) if top < self.last_top() => top,
+            _ => {
+                self.top = None;
+                self.last_top()
+            }
+        };
+        top..(top + self.height).min(len)
+    }
+
+    /// Move the window `rows` down the log (up, when negative), holding
+    /// wherever it lands unless that is the tail.
+    pub fn scroll(&mut self, rows: isize) {
+        let current = self.top.unwrap_or_else(|| self.last_top());
+        let next = current.saturating_add_signed(rows);
+        self.top = (next < self.last_top()).then_some(next);
+    }
+
+    pub const fn to_oldest(&mut self) {
+        self.top = Some(0);
+    }
+
+    pub const fn to_newest(&mut self) {
+        self.top = None;
+    }
+}
+
 /// What the shared command bar is currently capturing input for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandBarMode {
@@ -139,6 +208,8 @@ pub struct AppState {
     pub searches: Vec<SearchEntry>,
     pub searches_table_state: TableState,
     pub selected_search_index: Option<usize>,
+    /// Cells the query column is scrolled to the left.
+    pub searches_query_offset: usize,
 
     // Results
     pub results_items: Vec<FileDisplayData>,
@@ -148,11 +219,14 @@ pub struct AppState {
     pub results_selected_indices: std::collections::HashSet<usize>,
     pub results_filter_query: String,
     pub results_is_filtering: bool,
+    /// Cells the file-name column is scrolled to the left.
     pub results_name_offset: usize,
 
     // Downloads
     pub downloads: Vec<DownloadEntry>,
     pub downloads_table_state: TableState,
+    /// Cells the transfers' file-name column is scrolled to the left.
+    pub downloads_name_offset: usize,
     pub downloads_receiver_channel:
         Option<Receiver<(Download, Receiver<DownloadStatus>)>>,
     pub downloads_sender_channel:
@@ -183,6 +257,8 @@ pub struct AppState {
     /// Compose buffer for the active conversation.
     pub chat_input: String,
     pub chat_composing: bool,
+    /// Where the conversation is being read.
+    pub chat_view: LogView,
 
     // Browse users' shared files (one tab per user)
     pub browse: BrowseTabs,
@@ -204,6 +280,9 @@ pub struct AppState {
     pub searches_pane_area: Option<Rect>,
     pub results_pane_area: Option<Rect>,
     pub downloads_pane_area: Option<Rect>,
+    /// Where the open popup was last drawn, for its page size. Only one is
+    /// ever open, so one record serves them all.
+    pub popup_area: Option<Rect>,
 }
 
 impl AppState {
@@ -222,6 +301,7 @@ impl AppState {
             searches: Vec::new(),
             searches_table_state,
             selected_search_index: None,
+            searches_query_offset: 0,
 
             results_items: Vec::new(),
             results_filtered_items: Vec::new(),
@@ -234,6 +314,7 @@ impl AppState {
 
             downloads: Vec::new(),
             downloads_table_state,
+            downloads_name_offset: 0,
             downloads_receiver_channel: None,
             downloads_sender_channel: None,
             active_downloads_count: 0,
@@ -254,6 +335,7 @@ impl AppState {
             chat_peer: None,
             chat_input: String::new(),
             chat_composing: false,
+            chat_view: LogView::default(),
 
             browse: BrowseTabs::new(),
             show_browse: false,
@@ -270,6 +352,16 @@ impl AppState {
             searches_pane_area: None,
             results_pane_area: None,
             downloads_pane_area: None,
+            popup_area: None,
+        }
+    }
+
+    /// How far the focused list's long column is scrolled sideways.
+    pub const fn name_offset_mut(&mut self, pane: FocusedPane) -> &mut usize {
+        match pane {
+            FocusedPane::Searches => &mut self.searches_query_offset,
+            FocusedPane::Results => &mut self.results_name_offset,
+            FocusedPane::Downloads => &mut self.downloads_name_offset,
         }
     }
 
@@ -302,6 +394,7 @@ impl AppState {
     pub fn open_chat(&mut self, peer: String) {
         self.chat_peer = Some(peer);
         self.chat_input.clear();
+        self.chat_view.to_newest();
         self.chat_composing = true;
         self.show_messages = true;
         self.unread_messages = 0;
@@ -351,6 +444,10 @@ impl AppState {
             (current + peers.len() - 1) % peers.len()
         };
         let peer = peers[next].to_string();
+        // A different conversation opens at its end; the same one stays put.
+        if next != current {
+            self.chat_view.to_newest();
+        }
         self.chat_peer = Some(peer);
     }
 }
@@ -484,6 +581,55 @@ mod tests {
         state.toggle_zoom();
         assert!(!state.layout.zoomed);
         assert!(!state.layout.is_visible(FocusedPane::Searches));
+    }
+
+    #[test]
+    fn a_log_view_follows_the_tail_until_held_and_holds_against_new_rows() {
+        let mut view = LogView::default();
+        assert_eq!(view.window(100, 10), 90..100);
+        assert!(view.following());
+
+        view.scroll(-10);
+        assert_eq!(view.window(100, 10), 80..90);
+        assert!(!view.following());
+
+        // Five more rows arrive: the held window does not move.
+        assert_eq!(view.window(105, 10), 80..90);
+
+        // Back down to the tail resumes following, including new rows.
+        view.scroll(10);
+        view.scroll(10);
+        assert_eq!(view.window(105, 10), 95..105);
+        assert!(view.following());
+
+        view.to_oldest();
+        assert_eq!(view.window(105, 10), 0..10);
+        view.scroll(-10);
+        assert_eq!(view.window(105, 10), 0..10, "clamped at the top");
+        view.to_newest();
+        assert_eq!(view.window(105, 10), 95..105);
+    }
+
+    #[test]
+    fn a_log_shorter_than_its_window_is_never_held() {
+        let mut view = LogView::default();
+        assert_eq!(view.window(3, 10), 0..3);
+        view.to_oldest();
+        assert_eq!(view.window(3, 10), 0..3);
+        assert!(view.following(), "nothing to hold");
+    }
+
+    #[test]
+    fn cycling_to_the_same_chat_keeps_the_place() {
+        let mut state = AppState::new();
+        say(&mut state, "alice");
+        state.chat_view.window(50, 10);
+        state.chat_view.scroll(-10);
+        state.cycle_chat_peer(true);
+        assert!(!state.chat_view.following(), "only one chat: nothing moved");
+        say(&mut state, "bob");
+        state.cycle_chat_peer(true);
+        assert!(state.chat_view.following(), "a new chat opens at its end");
     }
 
     #[test]
