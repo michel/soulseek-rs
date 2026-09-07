@@ -150,6 +150,9 @@ fn build_search_response(
     own_username: &str,
     token: u32,
     query: &str,
+    free_slot: bool,
+    speed: u32,
+    queue_length: u32,
 ) -> Option<crate::message::Message> {
     let matches = shares.search(query);
     if matches.is_empty() {
@@ -168,8 +171,9 @@ fn build_search_response(
         own_username,
         token,
         &entries,
-        1,
-        0,
+        u8::from(free_slot),
+        speed,
+        queue_length,
     ))
 }
 
@@ -376,6 +380,9 @@ pub struct ClientContext {
     upload_seq: u64,
     /// How many uploads may be in flight at once.
     upload_slots: usize,
+    /// Bytes per second of the last completed upload, advertised in search
+    /// replies; zero until one has finished.
+    last_upload_speed: u32,
     /// Queued-upload states that came and went between two polls of
     /// [`Client::uploads`]. A caller sampling that snapshot would otherwise
     /// never see a peer that queued and was served inside one poll interval,
@@ -458,6 +465,7 @@ impl ClientContext {
             upload_queue: Vec::new(),
             upload_seq: 0,
             upload_slots: DEFAULT_UPLOAD_SLOTS,
+            last_upload_speed: 0,
             upload_events: Vec::new(),
             downloads: DownloadStore::new(),
             actor_system,

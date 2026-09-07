@@ -593,6 +593,9 @@ impl Client {
                                 &own_username,
                                 token,
                                 &query,
+                                ctx.has_free_upload_slot(),
+                                ctx.last_upload_speed,
+                                ctx.upload_queue.len() as u32,
                             ),
                             Err(e) => {
                                 error!("[client] IncomingSearch read: {}", e);
