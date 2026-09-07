@@ -21,3 +21,7 @@ workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.189"
+
+[[example]]
+name = "stress"
+test = true
