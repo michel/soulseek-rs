@@ -496,18 +496,7 @@ impl SeederState {
                 Err(_) => return,
             };
             match msg.get_message_code() {
-                // GetShareFileList: reply with everything we hold.
-                4 => {
-                    let dir = SharedDirectory {
-                        name: format!("stress\\{}", self.name),
-                        files: self.files.clone(),
-                    };
-                    let list =
-                        build_shared_file_list(std::slice::from_ref(&dir));
-                    if !self.reply(&mut p, shared, &list.get_buffer()) {
-                        return;
-                    }
-                }
+                4 if !self.send_listing(&mut p, shared) => return,
                 // QueueUpload: offer the transfer, then stream it once allowed.
                 43 => {
                     msg.set_pointer(8);
@@ -527,7 +516,7 @@ impl SeederState {
                     if !self.reply(&mut p, shared, &tr.get_buffer()) {
                         return;
                     }
-                    if !self.wait_for_allow(&mut p, token) {
+                    if !self.wait_for_allow(&mut p, shared, token) {
                         return;
                     }
                     let content = self.content.clone();
@@ -543,8 +532,25 @@ impl SeederState {
         }
     }
 
-    /// Wait for the client's `TransferResponse` allowing `token`.
-    fn wait_for_allow(&self, p: &mut TcpStream, token: u32) -> bool {
+    /// Everything we hold, the answer to a GetShareFileList.
+    fn send_listing(&self, p: &mut TcpStream, shared: bool) -> bool {
+        let dir = SharedDirectory {
+            name: format!("stress\\{}", self.name),
+            files: self.files.clone(),
+        };
+        let list = build_shared_file_list(std::slice::from_ref(&dir));
+        self.reply(p, shared, &list.get_buffer())
+    }
+
+    /// Wait for the client's `TransferResponse` allowing `token`. A browse
+    /// that arrives meanwhile is answered: a busy client accepts an offer
+    /// late, and a browse it sent in between is not lost work on its side.
+    fn wait_for_allow(
+        &self,
+        p: &mut TcpStream,
+        shared: bool,
+        token: u32,
+    ) -> bool {
         let deadline = Instant::now() + Duration::from_secs(30);
         while Instant::now() < deadline && !self.stop.load(Ordering::Relaxed) {
             match read_framed(p) {
@@ -553,6 +559,12 @@ impl SeederState {
                     if msg.read_int32() == token {
                         return true;
                     }
+                }
+                Ok(msg)
+                    if msg.get_message_code() == 4
+                        && !self.send_listing(p, shared) =>
+                {
+                    return false;
                 }
                 Ok(_) => {}
                 Err(ref e) if is_timeout(e) => {}
