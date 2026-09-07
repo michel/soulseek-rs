@@ -166,6 +166,32 @@ fn a_retired_actor_delivers_what_is_on_the_wire_then_stops_itself() {
     );
 }
 
+// The peer that replaced the connection considers the old one done too: it
+// writes its reply and hangs up in the same breath. The reply still counts.
+#[test]
+fn a_reply_sent_right_before_the_peer_hangs_up_is_still_delivered() {
+    use std::io::Write;
+    let (mut actor, rx, mut far_end) = connected_actor();
+
+    actor.handle_message(PeerMessage::Retire);
+    far_end.write_all(&big_listing()).unwrap();
+    drop(far_end);
+    std::thread::sleep(Duration::from_millis(50));
+    actor.tick();
+    actor.tick();
+
+    match rx.try_recv() {
+        Ok(ClientOperation::BrowseResult { username, .. }) => {
+            assert_eq!(username, "bob");
+        }
+        other => panic!("expected the listing before the close, got {other:?}"),
+    }
+    match rx.try_recv() {
+        Ok(ClientOperation::PeerDisconnected(7, _, None)) => {}
+        other => panic!("expected a clean PeerDisconnected, got {other:?}"),
+    }
+}
+
 #[test]
 fn a_retired_actor_reporting_an_error_reports_a_clean_close() {
     let (mut actor, rx, _far_end) = connected_actor();
