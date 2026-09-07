@@ -1,11 +1,14 @@
 use super::MainTui;
-use crate::models::{CommandBarMode, FocusedPane};
+use crate::models::{CommandBarMode, FocusedPane, LogView};
 use crate::ui::pane_block;
-use crate::ui::panes::name_end_offset;
+use crate::ui::panes::{
+    InfoSubject, name_end_offset, query_end_offset, selected_transfer,
+    transfer_name_end_offset, upload_display_name,
+};
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use ratatui::layout::Position;
+use ratatui::layout::{Position, Rect};
 use ratatui::widgets::TableState;
 
 const NAME_SCROLL_STEP: isize = 8;
@@ -15,6 +18,23 @@ impl MainTui {
         // Command bar takes priority
         if self.state.command_bar_active {
             return self.handle_command_bar_input(key);
+        }
+
+        // The keys list closes on the key that opened it, or the usual two,
+        // and scrolls like any log for a terminal too short to show it all.
+        if self.state.show_help {
+            let view = &mut self.state.help_view;
+            match key.code {
+                KeyCode::Char('?' | 'q') | KeyCode::Esc => {
+                    self.state.show_help = false;
+                }
+                KeyCode::Down | KeyCode::Char('j') => view.scroll(1),
+                KeyCode::Up | KeyCode::Char('k') => view.scroll(-1),
+                _ => {
+                    scroll_log(view, key);
+                }
+            }
+            return;
         }
 
         // Chat popup takes over navigation while open.
@@ -33,10 +53,10 @@ impl MainTui {
             return self.handle_settings_input(key);
         }
 
+        // Control combinations only ever page a list, so they never reach
+        // the letter keys below: ctrl-d is not d.
         if key.modifiers.contains(KeyModifiers::CONTROL) {
-            if self.state.focused_pane == FocusedPane::Results {
-                self.handle_results_input(key);
-            }
+            self.navigate_focused_list(key);
             return;
         }
 
@@ -53,16 +73,35 @@ impl MainTui {
                 self.state.should_exit = true;
                 return;
             }
-            KeyCode::Char('1') => {
-                self.state.focused_pane = FocusedPane::Searches;
+            KeyCode::Char('?') => {
+                self.state.show_help = true;
+                self.state.help_view.to_oldest();
                 return;
             }
-            KeyCode::Char('2') => {
-                self.state.focused_pane = FocusedPane::Results;
+            // A pane's number is its place in the legend order.
+            KeyCode::Char(digit @ '1'..='3') => {
+                let index = usize::from(digit as u8 - b'1');
+                self.state.focus_pane(FocusedPane::ALL[index]);
                 return;
             }
-            KeyCode::Char('3') => {
-                self.state.focused_pane = FocusedPane::Downloads;
+            KeyCode::Tab => {
+                self.state.cycle_focus(true);
+                return;
+            }
+            KeyCode::BackTab => {
+                self.state.cycle_focus(false);
+                return;
+            }
+            KeyCode::Char('z') => {
+                self.state.toggle_zoom();
+                return;
+            }
+            KeyCode::Char('w') => {
+                self.state.hide_focused_pane();
+                return;
+            }
+            KeyCode::Esc if self.state.layout.zoomed => {
+                self.state.layout.zoomed = false;
                 return;
             }
             KeyCode::Char('s') => {
@@ -144,6 +183,14 @@ impl MainTui {
                 }
                 _ => {}
             }
+            return;
+        }
+
+        // Paging keys move through the conversation's history.
+        if scroll_log(&mut self.state.chat_view, key) {
+            return;
+        }
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
             return;
         }
 
@@ -306,15 +353,44 @@ impl MainTui {
         }
     }
 
+    /// The list the focus is on and how far one page moves it.
+    fn navigate_focused_list(&mut self, key: KeyEvent) -> bool {
+        let focused = self.state.focused_pane;
+        let page = self.page_size();
+        let (table, len) = match focused {
+            FocusedPane::Searches => (
+                &mut self.state.searches_table_state,
+                self.state.searches.len(),
+            ),
+            FocusedPane::Results => {
+                let len = self.visible_results().len();
+                (&mut self.state.results_table_state, len)
+            }
+            FocusedPane::Downloads => (
+                &mut self.state.downloads_table_state,
+                self.state.downloads.len() + self.state.uploads.len(),
+            ),
+        };
+        navigate_list(key, table, len, page)
+    }
+
+    /// Rows a popup shows at once: its inner height less a tab bar and a
+    /// compose line, which is what its list or log has left.
+    pub(super) fn popup_page(&self) -> usize {
+        page_of(self.state.popup_area, 2)
+    }
+
+    /// Rows the focused pane shows at once: its inner height less the table
+    /// header.
+    fn page_size(&self) -> usize {
+        page_of(self.state.pane_area(self.state.focused_pane), 1)
+    }
+
     fn handle_searches_input(&mut self, key: KeyEvent) {
-        let rows = self.state.searches.len();
+        if self.navigate_focused_list(key) || self.scroll_focused_name(key) {
+            return;
+        }
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                cycle(&mut self.state.searches_table_state, rows, false);
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                cycle(&mut self.state.searches_table_state, rows, true);
-            }
             KeyCode::Enter => {
                 if let Some(selected) =
                     self.state.searches_table_state.selected()
@@ -329,7 +405,7 @@ impl MainTui {
                         self.state.results_selected_indices.clear();
                         self.state.results_name_offset = 0;
                         self.state.results_table_state.select(Some(0));
-                        self.state.focused_pane = FocusedPane::Results;
+                        self.state.focus_pane(FocusedPane::Results);
                     }
                 }
             }
@@ -348,41 +424,10 @@ impl MainTui {
     }
 
     fn handle_results_input(&mut self, key: KeyEvent) {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        if ctrl && !matches!(key.code, KeyCode::Char('f' | 'b' | 'd' | 'u')) {
+        if self.navigate_focused_list(key) || self.scroll_focused_name(key) {
             return;
         }
-        let items_count = self.visible_results().len();
-        let page = self.results_page_size();
-        let half = (page / 2).max(1);
-
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                cycle(&mut self.state.results_table_state, items_count, false);
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                cycle(&mut self.state.results_table_state, items_count, true);
-            }
-            KeyCode::Home | KeyCode::Char('g') => self.select_row(0),
-            KeyCode::End | KeyCode::Char('G') => {
-                self.select_row(items_count.saturating_sub(1));
-            }
-            KeyCode::PageDown => self.scroll_rows(page),
-            KeyCode::PageUp => self.scroll_rows(-page),
-            KeyCode::Char('f') if ctrl => self.scroll_rows(page),
-            KeyCode::Char('b') if ctrl => self.scroll_rows(-page),
-            KeyCode::Char('d') if ctrl => self.scroll_rows(half),
-            KeyCode::Char('u') if ctrl => self.scroll_rows(-half),
-            KeyCode::Right | KeyCode::Char('l') => {
-                self.scroll_names(NAME_SCROLL_STEP);
-            }
-            KeyCode::Left | KeyCode::Char('h') => {
-                self.scroll_names(-NAME_SCROLL_STEP);
-            }
-            KeyCode::Char('0') => self.state.results_name_offset = 0,
-            KeyCode::Char('$') => {
-                self.state.results_name_offset = self.highlighted_name_end();
-            }
             KeyCode::Char(' ') => {
                 let index = self
                     .state
@@ -418,52 +463,78 @@ impl MainTui {
         }
     }
 
-    fn select_row(&mut self, target: usize) {
-        let len = self.visible_results().len();
-        if len > 0 {
-            self.state
-                .results_table_state
-                .select(Some(target.min(len - 1)));
+    /// The keys that scroll the focused list's long column sideways, the
+    /// same in every list: a file name in Results and Downloads, the query
+    /// in Searches. Says whether `key` was one of them.
+    fn scroll_focused_name(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.scroll_names(NAME_SCROLL_STEP);
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.scroll_names(-NAME_SCROLL_STEP);
+            }
+            KeyCode::Char('0') => {
+                *self.state.name_offset_mut(self.state.focused_pane) = 0;
+            }
+            KeyCode::Char('$') => {
+                let end = self.highlighted_name_end();
+                *self.state.name_offset_mut(self.state.focused_pane) = end;
+            }
+            _ => return false,
         }
-    }
-
-    fn scroll_rows(&mut self, delta: isize) {
-        let current = self.state.results_table_state.selected().unwrap_or(0);
-        self.select_row(current.saturating_add_signed(delta));
+        true
     }
 
     fn scroll_names(&mut self, delta: isize) {
         let end = self.highlighted_name_end();
-        let current = self.state.results_name_offset.min(end);
-        self.state.results_name_offset =
-            current.saturating_add_signed(delta).min(end);
+        let offset = self.state.name_offset_mut(self.state.focused_pane);
+        let current = (*offset).min(end);
+        *offset = current.saturating_add_signed(delta).min(end);
     }
 
+    /// How far the highlighted row's long column can scroll before its end
+    /// is in view. Zero when nothing is highlighted or the pane is not drawn.
     fn highlighted_name_end(&self) -> usize {
-        let Some(area) = self.state.results_pane_area else {
+        let pane = self.state.focused_pane;
+        let Some(area) = self.state.pane_area(pane) else {
             return 0;
         };
-        self.highlighted_result()
-            .map_or(0, |file| name_end_offset(&file.filename, area))
-    }
-
-    fn results_page_size(&self) -> isize {
-        let rows = self.state.results_pane_area.map_or(1, |area| {
-            pane_block(false).inner(area).height.saturating_sub(1)
-        });
-        rows.max(1) as isize
+        match pane {
+            FocusedPane::Searches => self
+                .state
+                .searches_table_state
+                .selected()
+                .and_then(|row| self.state.searches.get(row))
+                .map_or(0, |search| query_end_offset(&search.query, area)),
+            FocusedPane::Results => self
+                .highlighted_result()
+                .map_or(0, |file| name_end_offset(&file.filename, area)),
+            FocusedPane::Downloads => {
+                let shown = match selected_transfer(
+                    self.state.downloads_table_state.selected(),
+                    &self.state.downloads,
+                    &self.state.uploads,
+                ) {
+                    Some(InfoSubject::Download(entry)) => {
+                        entry.download.filename.as_str()
+                    }
+                    Some(InfoSubject::Upload(upload)) => {
+                        upload_display_name(upload)
+                    }
+                    Some(InfoSubject::Result(_)) | None => return 0,
+                };
+                transfer_name_end_offset(shown, area)
+            }
+        }
     }
 
     fn handle_downloads_input(&mut self, key: KeyEvent) {
         // The pane lists downloads first, then uploads; navigation spans both.
-        let rows = self.state.downloads.len() + self.state.uploads.len();
+        if self.navigate_focused_list(key) || self.scroll_focused_name(key) {
+            return;
+        }
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                cycle(&mut self.state.downloads_table_state, rows, false);
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                cycle(&mut self.state.downloads_table_state, rows, true);
-            }
             KeyCode::Char('x') => {
                 self.cancel_selected_transfer();
             }
@@ -489,18 +560,104 @@ impl MainTui {
         }
 
         let clicked = Position::new(mouse.column, mouse.row);
-        let panes = [
-            (self.state.searches_pane_area, FocusedPane::Searches),
-            (self.state.results_pane_area, FocusedPane::Results),
-            (self.state.downloads_pane_area, FocusedPane::Downloads),
-        ];
-        for (area, pane) in panes {
-            if area.is_some_and(|area| area.contains(clicked)) {
-                self.state.focused_pane = pane;
-                return;
+        // The areas are from the last draw. A pane hidden since then, in the
+        // same batch of events, still has one, and is not there to click.
+        let hit = FocusedPane::ALL.into_iter().find(|pane| {
+            self.state.layout.is_visible(*pane)
+                && self
+                    .state
+                    .pane_area(*pane)
+                    .is_some_and(|area| area.contains(clicked))
+        });
+        if let Some(pane) = hit {
+            self.state.focused_pane = pane;
+        }
+    }
+}
+
+/// Rows a list in `area` shows at once, less the `chrome` rows above it: a
+/// table header, a popup's tab bar and compose line. At least one, so a page
+/// key always moves, even before the first draw.
+fn page_of(area: Option<Rect>, chrome: u16) -> usize {
+    area.map_or(0, |area| {
+        usize::from(pane_block(false).inner(area).height.saturating_sub(chrome))
+    })
+    .max(1)
+}
+
+/// A move over a whole list at once: to either end, or by a number of rows
+/// (negative is up).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ListJump {
+    First,
+    Last,
+    Rows(isize),
+}
+
+/// The keys every list and log answers alike for moving further than a row:
+/// the two ends, a page, half a page. `page` is how many rows the list shows.
+pub(super) fn list_jump(key: KeyEvent, page: usize) -> Option<ListJump> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let page = isize::try_from(page).unwrap_or(isize::MAX);
+    let half = (page / 2).max(1);
+    Some(match key.code {
+        KeyCode::Home | KeyCode::Char('g') if !ctrl => ListJump::First,
+        KeyCode::End | KeyCode::Char('G') if !ctrl => ListJump::Last,
+        KeyCode::PageDown => ListJump::Rows(page),
+        KeyCode::PageUp => ListJump::Rows(-page),
+        KeyCode::Char('f') if ctrl => ListJump::Rows(page),
+        KeyCode::Char('b') if ctrl => ListJump::Rows(-page),
+        KeyCode::Char('d') if ctrl => ListJump::Rows(half),
+        KeyCode::Char('u') if ctrl => ListJump::Rows(-half),
+        _ => return None,
+    })
+}
+
+/// Apply the jump keys to a log, moving by the screenful it last showed.
+/// Says whether `key` was one of them.
+pub(super) fn scroll_log(view: &mut LogView, key: KeyEvent) -> bool {
+    match list_jump(key, view.page()) {
+        Some(ListJump::First) => view.to_oldest(),
+        Some(ListJump::Last) => view.to_newest(),
+        Some(ListJump::Rows(rows)) => view.scroll(rows),
+        None => return false,
+    }
+    true
+}
+
+/// `selected` moved by `jump` over a list `len` long, stopping at the ends.
+pub(super) fn jumped(selected: usize, len: usize, jump: ListJump) -> usize {
+    let last = len.saturating_sub(1);
+    match jump {
+        ListJump::First => 0,
+        ListJump::Last => last,
+        ListJump::Rows(rows) => selected.saturating_add_signed(rows).min(last),
+    }
+}
+
+/// The keys every list answers alike: a row at a time wrapping at either
+/// end, and the jumps of [`list_jump`]. Says whether `key` was one of them.
+fn navigate_list(
+    key: KeyEvent,
+    table: &mut TableState,
+    len: usize,
+    page: usize,
+) -> bool {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') if !ctrl => cycle(table, len, false),
+        KeyCode::Down | KeyCode::Char('j') if !ctrl => cycle(table, len, true),
+        _ => {
+            let Some(jump) = list_jump(key, page) else {
+                return false;
+            };
+            if len > 0 {
+                let current = table.selected().unwrap_or(0);
+                table.select(Some(jumped(current, len, jump)));
             }
         }
     }
+    true
 }
 
 /// Move a table's selection one row, wrapping at either end.

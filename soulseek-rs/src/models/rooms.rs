@@ -1,3 +1,4 @@
+use crate::models::LogView;
 use chrono::{DateTime, Local};
 use soulseek_rs::types::{RoomEvent, RoomInfo};
 
@@ -38,6 +39,8 @@ pub struct OpenRoom {
     pub unread: usize,
     /// Per-room compose buffer.
     pub input: String,
+    /// Where the log is being read.
+    pub view: LogView,
 }
 
 impl OpenRoom {
@@ -158,6 +161,11 @@ impl RoomsState {
     pub fn selected_user(&self) -> Option<String> {
         self.active_room()
             .and_then(|r| r.users.get(self.user_selected).cloned())
+    }
+
+    /// Where the active room's log is being read, to move it.
+    pub fn active_view_mut(&mut self) -> Option<&mut LogView> {
+        self.open.get_mut(self.active).map(|room| &mut room.view)
     }
 
     pub const fn select_user_up(&mut self) {

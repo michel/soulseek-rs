@@ -1,4 +1,4 @@
-use crate::models::{RoomsState, RoomsView};
+use crate::models::{LogView, RoomsState, RoomsView};
 use crate::ui::{
     HIGHLIGHT_SYMBOL, PANE_PADDING, accent_style, dimmed_style,
     highlight_style, info_style, pane_block, plain_title, primary_style,
@@ -20,7 +20,7 @@ use ratatui::{
 pub fn render_rooms_pane(
     frame: &mut Frame,
     area: Rect,
-    rooms: &RoomsState,
+    rooms: &mut RoomsState,
     list_table_state: &mut TableState,
 ) {
     match rooms.view {
@@ -94,7 +94,7 @@ fn render_list(
     frame.render_stateful_widget(table, area, table_state);
 }
 
-fn render_chat(frame: &mut Frame, area: Rect, rooms: &RoomsState) {
+fn render_chat(frame: &mut Frame, area: Rect, rooms: &mut RoomsState) {
     let block = pane_block(true).title(
         " Chat rooms  (Tab: switch, l: room list, x: leave, Esc: back) ",
     );
@@ -110,7 +110,14 @@ fn render_chat(frame: &mut Frame, area: Rect, rooms: &RoomsState) {
 
     render_tab_bar(frame, chunks[0], rooms);
 
-    let Some(active) = rooms.active_room() else {
+    let RoomsState {
+        open,
+        active: active_index,
+        user_selected,
+        composing,
+        ..
+    } = rooms;
+    let Some(active) = open.get_mut(*active_index) else {
         frame.render_widget(
             Paragraph::new("No open rooms. Press l for the room list.")
                 .style(dimmed_style()),
@@ -124,11 +131,11 @@ fn render_chat(frame: &mut Frame, area: Rect, rooms: &RoomsState) {
         Layout::horizontal([Constraint::Fill(1), Constraint::Length(22)])
             .split(chunks[1]);
 
-    render_messages(frame, body[0], active.lines.as_slice());
-    render_users(frame, body[1], &active.users, rooms.user_selected);
+    render_messages(frame, body[0], active.lines.as_slice(), &mut active.view);
+    render_users(frame, body[1], &active.users, *user_selected);
 
     // Compose line or hint.
-    if rooms.composing {
+    if *composing {
         let line = Line::from(vec![
             Span::styled("› ", accent_style()),
             Span::styled(active.input.clone(), primary_style()),
@@ -173,9 +180,10 @@ fn render_messages(
     frame: &mut Frame,
     area: Rect,
     lines: &[crate::models::RoomLine],
+    view: &mut LogView,
 ) {
-    // Wrap each message to the pane width, then auto-scroll: tail by rendered
-    // rows so the newest message is always fully visible.
+    // Wrap each message to the pane width, then show the rows the reader is
+    // at: the newest ones, unless they are holding a place in the history.
     let width = area.width as usize;
     let rendered: Vec<Line> = lines
         .iter()
@@ -198,8 +206,8 @@ fn render_messages(
             }
         })
         .collect();
-    let start = rendered.len().saturating_sub((area.height as usize).max(1));
-    frame.render_widget(Paragraph::new(rendered[start..].to_vec()), area);
+    let window = view.window(rendered.len(), usize::from(area.height));
+    frame.render_widget(Paragraph::new(rendered[window].to_vec()), area);
 }
 
 fn render_users(

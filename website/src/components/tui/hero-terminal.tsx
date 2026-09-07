@@ -37,45 +37,44 @@ export const HeroTerminal = () => {
             >
               <StatusLine counts={demo.counts} pct={demo.pct} />
 
-              <div className="mt-3 grid gap-2.5" style={{ gridTemplateColumns: '300px 1fr' }}>
-                <div className="min-h-[498px]">
-                  <SearchesPane
-                    searches={demo.searches}
-                    activeId={demo.activeId}
-                    active={demo.focus === 1}
-                    onPick={demo.pickSearch}
-                    onSubmit={demo.submitSearch}
+              {/* Results across the top with the whole width for long names;
+                  Searches, Transfers and Info share the row underneath. */}
+              <div className="mt-3 grid gap-2.5" style={{ gridTemplateRows: '330px 300px' }}>
+                <div className="relative min-h-0 overflow-hidden">
+                  <ResultsPane
+                    query={demo.query}
+                    rows={demo.rows}
+                    selected={demo.selected}
+                    active={demo.focus === 2}
+                    onSelect={demo.selectRow}
+                    onQueue={demo.queueRow}
                   />
+                  {demo.searching && (
+                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-[color-mix(in_srgb,var(--color-sleeve)_35%,transparent)] text-[13.5px] tracking-[0.02em] text-[var(--color-dust)]">
+                      searching the network
+                      <span className="ml-1.5 inline-block h-[15px] w-2 translate-y-[2px] rounded-[1.5px] bg-[var(--color-oxide)] motion-safe:animate-cursor-blink" />
+                    </div>
+                  )}
                 </div>
 
-                <div className="grid min-h-0 gap-2.5" style={{ gridTemplateRows: '1fr 300px' }}>
-                  <div className="relative min-h-[250px] overflow-hidden">
-                    <ResultsPane
-                      query={demo.query}
-                      rows={demo.rows}
-                      selected={demo.selected}
-                      active={demo.focus === 2}
-                      onSelect={demo.selectRow}
-                      onQueue={demo.queueRow}
+                <div
+                  className="grid min-h-0 gap-2.5"
+                  style={{ gridTemplateColumns: '320px 1fr 340px' }}
+                >
+                  <div className="min-h-0 min-w-0 overflow-hidden">
+                    <SearchesPane
+                      searches={demo.searches}
+                      activeId={demo.activeId}
+                      active={demo.focus === 1}
+                      onPick={demo.pickSearch}
+                      onSubmit={demo.submitSearch}
                     />
-                    {demo.searching && (
-                      <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-[color-mix(in_srgb,var(--color-sleeve)_35%,transparent)] text-[13.5px] tracking-[0.02em] text-[var(--color-dust)]">
-                        searching the network
-                        <span className="ml-1.5 inline-block h-[15px] w-2 translate-y-[2px] rounded-[1.5px] bg-[var(--color-oxide)] motion-safe:animate-cursor-blink" />
-                      </div>
-                    )}
                   </div>
-
-                  <div
-                    className="grid min-h-0 gap-2.5"
-                    style={{ gridTemplateColumns: '1fr 340px' }}
-                  >
-                    <div className="min-h-0 min-w-0 overflow-hidden">
-                      <TransfersPane rows={demo.transfers.slice(0, 7)} active={demo.focus === 3} />
-                    </div>
-                    <div className="min-h-0 min-w-0 overflow-hidden">
-                      <InfoPane row={demo.infoRow} />
-                    </div>
+                  <div className="min-h-0 min-w-0 overflow-hidden">
+                    <TransfersPane rows={demo.transfers.slice(0, 7)} active={demo.focus === 3} />
+                  </div>
+                  <div className="min-h-0 min-w-0 overflow-hidden">
+                    <InfoPane row={demo.infoRow} />
                   </div>
                 </div>
               </div>
