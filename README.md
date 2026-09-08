@@ -10,12 +10,19 @@
 Search the network, share your files, browse someone's collection, join a room.
 It runs over ssh on the machine where your music already lives.
 
+
+
+
 Soulseek is a closed-source P2P network from the 2000s, still used by music
 enthusiasts to share niche music. This repository is that client plus
-[`soulseek-rs-lib`](./soulseek-rs-lib), the protocol library under it.
+[`soulseek-rs-lib`](./soulseek-rs-lib), the protocol library under it. Check the website: **[re-invention.nl/soulseek-rs](https://re-invention.nl/soulseek-rs/)** for more information/documentation.
 
-**[re-invention.nl/soulseek-rs](https://re-invention.nl/soulseek-rs/)**: what it
-does, how to install it, and every `config.toml` setting.
+
+***Quick install:***
+
+`curl -fsSL https://re-invention.nl/soulseek-rs/install.sh | sh`
+
+
 
 ## Demo
 
