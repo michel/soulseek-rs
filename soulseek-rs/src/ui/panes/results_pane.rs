@@ -3,7 +3,7 @@ use crate::models::FileDisplayData;
 use crate::ui::{
     BYTES_PER_MB, HIGHLIGHT_SYMBOL, body_style, dimmed_style, format_bytes,
     header_style, info_style, pane_block, pane_title, row_highlight_style,
-    success_style, warning_style,
+    split_path, success_style, warning_style,
 };
 use ratatui::{
     Frame,
@@ -15,9 +15,13 @@ use std::collections::HashSet;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const WIDTHS: [Constraint; 7] = [
+// The file name and its folder share whatever width the fixed columns leave,
+// the name getting the larger part: it is what a search is after, and a
+// folder's tail is a scroll away.
+const WIDTHS: [Constraint; 8] = [
     Constraint::Length(3),
     Constraint::Fill(3),
+    Constraint::Fill(2),
     Constraint::Length(12),
     Constraint::Length(15),
     Constraint::Length(10),
@@ -39,12 +43,22 @@ pub struct ResultsPaneParams<'a> {
     pub name_offset: usize,
 }
 
-/// Filename is the second column.
+/// The file name is the second column, the folder it sits in the third.
 const NAME_COLUMN: usize = 1;
+const FOLDER_COLUMN: usize = 2;
 
+/// The offset that brings the end of a result's longer column into view.
+/// One offset scrolls the name and the folder together, so it runs until
+/// both tails are showing.
 #[must_use]
-pub fn name_end_offset(name: &str, area: Rect) -> usize {
-    end_offset(name, area, &WIDTHS, NAME_COLUMN)
+pub fn name_end_offset(path: &str, area: Rect) -> usize {
+    let (folder, name) = split_path(path);
+    end_offset(name, area, &WIDTHS, NAME_COLUMN).max(end_offset(
+        folder,
+        area,
+        &WIDTHS,
+        FOLDER_COLUMN,
+    ))
 }
 
 /// Whether the rendered row `display_idx` is selected. `selected_indices` holds
@@ -118,6 +132,7 @@ pub fn render_results_pane(
     let header = Row::new(vec![
         Cell::from("✓").style(header_style()),
         Cell::from("Filename").style(header_style()),
+        Cell::from("Folder").style(header_style()),
         Cell::from("Size").style(header_style()),
         Cell::from("User").style(header_style()),
         Cell::from("Bitrate").style(header_style()),
@@ -127,10 +142,12 @@ pub fn render_results_pane(
     .height(1);
 
     let name_width = column_width(area, &WIDTHS, NAME_COLUMN);
+    let folder_width = column_width(area, &WIDTHS, FOLDER_COLUMN);
     let rows: Vec<Row> = items
         .iter()
         .enumerate()
         .map(|(idx, file)| {
+            let (folder, name) = split_path(&file.filename);
             let checkbox =
                 if row_is_selected(idx, original_indices, selected_indices) {
                     "[✓]"
@@ -159,12 +176,10 @@ pub fn render_results_pane(
 
             Row::new(vec![
                 Cell::from(checkbox).style(checkbox_style),
-                Cell::from(scroll_text(
-                    &file.filename,
-                    name_offset,
-                    name_width,
-                ))
-                .style(body_style()),
+                Cell::from(scroll_text(name, name_offset, name_width))
+                    .style(body_style()),
+                Cell::from(scroll_text(folder, name_offset, folder_width))
+                    .style(dimmed_style()),
                 Cell::from(format_bytes(file.size)).style(warning_style()),
                 Cell::from(file.username.clone()).style(info_style()),
                 Cell::from(bitrate_str).style(dimmed_style()),
@@ -202,8 +217,10 @@ mod tests {
     fn render_rows(items: &[FileDisplayData], name_offset: usize) -> String {
         let mut state = TableState::default();
         state.select(Some(0));
+        // Wide enough for the name column to hold 11 cells, with 7 for the
+        // folder beside it.
         let mut terminal =
-            Terminal::new(TestBackend::new(80, 6)).expect("backend");
+            Terminal::new(TestBackend::new(88, 6)).expect("backend");
         terminal
             .draw(|frame| {
                 render_results_pane(
@@ -265,6 +282,59 @@ mod tests {
         let screen = render_rows(&items, 6);
         assert!(screen.contains("…yyyyyyyyyy"), "{screen}");
         assert!(!screen.contains("…\u{301}"), "{screen}");
+    }
+
+    #[test]
+    fn a_path_shows_its_name_and_folder_in_separate_columns() {
+        let items = [file("@@abc\\Music\\Album\\01.flac"), file("cover.jpg")];
+        let screen = render_rows(&items, 0);
+        let header = screen.lines().nth(1).expect("header");
+        let name = header.find("Filename").expect("name header");
+        let folder = header.find("Folder").expect("folder header");
+        assert!(name < folder, "{header}");
+
+        let row = screen.lines().nth(2).expect("first row");
+        assert!(row.contains("01.flac "), "{row}");
+        assert!(!row.contains("Album\\01.flac"), "the name alone: {row}");
+        assert!(row.contains("@@abc\\M"), "{row}");
+        assert!(
+            row.find("01.flac") < row.find("@@abc"),
+            "the name before the folder: {row}"
+        );
+
+        let row = screen.lines().nth(3).expect("second row");
+        assert!(row.contains("cover.jpg"), "{row}");
+    }
+
+    #[test]
+    fn one_offset_scrolls_the_name_and_the_folder_together() {
+        let items = [file("@@abc\\Music\\Album\\abcdefghijklmnopqrstuvwxyz")];
+        let screen = render_rows(&items, 4);
+        assert!(screen.contains("…efghijklmn"), "{screen}");
+        assert!(screen.contains("…c\\Musi"), "{screen}");
+    }
+
+    #[test]
+    fn the_end_offset_is_the_longer_columns() {
+        use super::name_end_offset;
+        use ratatui::layout::Rect;
+        // 88 cells wide: 11 for the name, 7 for the folder.
+        let area = Rect::new(0, 0, 88, 6);
+        assert_eq!(name_end_offset("short.mp3", area), 0);
+        assert_eq!(name_end_offset(&"x".repeat(40), area), 30);
+        assert_eq!(
+            name_end_offset(&format!("{}\\short.mp3", "f".repeat(20)), area),
+            14,
+            "the folder overflows its narrower column"
+        );
+        assert_eq!(
+            name_end_offset(
+                &format!("{}\\{}", "f".repeat(20), "x".repeat(40)),
+                area
+            ),
+            30,
+            "whichever runs further"
+        );
     }
 
     #[test]

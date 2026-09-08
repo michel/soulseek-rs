@@ -1158,8 +1158,9 @@ mod tests {
         let mut tui = with_session(TalkativeSession::default());
         tui.state.results_items = results(n);
         tui.state.focused_pane = FocusedPane::Results;
+        // 88 cells wide gives the name column 11 cells and the folder 7.
         tui.state.results_pane_area =
-            Some(ratatui::layout::Rect::new(0, 0, 80, 13));
+            Some(ratatui::layout::Rect::new(0, 0, 88, 13));
         tui
     }
 
@@ -1271,6 +1272,18 @@ mod tests {
             tui.state.results_name_offset, 0,
             "a step left lands within the row now highlighted"
         );
+    }
+
+    #[test]
+    fn scrolling_runs_to_the_end_of_the_folder_when_it_is_the_longer() {
+        let mut tui = results_tui(3);
+        tui.state.results_items[1].filename =
+            format!("{}\\short.mp3", "f".repeat(20));
+        tui.state.results_table_state.select(Some(1));
+        press(&mut tui, KeyCode::Char('$'));
+        assert_eq!(tui.state.results_name_offset, 14);
+        press(&mut tui, KeyCode::Char('l'));
+        assert_eq!(tui.state.results_name_offset, 14, "stops at the end");
     }
 
     #[test]
