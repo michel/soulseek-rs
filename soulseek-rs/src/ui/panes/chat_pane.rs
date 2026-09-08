@@ -1,7 +1,7 @@
 use crate::models::{AppState, MessageDirection, contains_filter};
 use crate::ui::{
-    accent_style, border_style, dimmed_style, highlight_style, info_style,
-    primary_style, wrap_chat_line,
+    accent_style, border_style, dimmed_style, filter_title, highlight_style,
+    info_style, primary_style, wrap_chat_line,
 };
 use ratatui::{
     Frame,
@@ -22,19 +22,19 @@ pub fn render_chat_pane(
 ) {
     let peer = state.active_chat_peer().map(str::to_string);
     let peer = peer.as_deref();
-    let title = match peer {
-        None => " Messages  (m: compose, i/Esc: close) ".to_string(),
-        Some(peer) if state.chat_filtering || !state.chat_filter.is_empty() => {
-            format!(
-                " {peer} · filter: {}{}  (Enter: keep, Esc: clear) ",
-                state.chat_filter,
-                if state.chat_filtering { "_" } else { "" }
+    let title = peer.map_or_else(
+        || " Messages  (m: compose, i/Esc: close) ".to_string(),
+        |peer| {
+            filter_title(
+                peer,
+                &state.chat_filter,
+                state.chat_filtering,
+                &format!(
+                    " {peer}  (↑↓/Tab: switch, /: find, m: to…, i/Esc: close) "
+                ),
             )
-        }
-        Some(peer) => {
-            format!(" {peer}  (↑↓/Tab: switch, /: find, m: to…, i/Esc: close) ")
-        }
-    };
+        },
+    );
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(border_style(true))

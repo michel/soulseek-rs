@@ -2,8 +2,8 @@ use super::name_scroll::{column_width, end_offset, scroll_text};
 use crate::models::FileDisplayData;
 use crate::ui::{
     BYTES_PER_MB, HIGHLIGHT_SYMBOL, body_style, dimmed_style, format_bytes,
-    header_style, info_style, page_of, pane_block, pane_title,
-    row_highlight_style, success_style, visible_range, warning_style,
+    header_style, info_style, page_window, pane_block, pane_title, render_page,
+    row_highlight_style, success_style, warning_style,
 };
 use ratatui::{
     Frame,
@@ -149,17 +149,7 @@ pub fn render_results_pane(
 
     let name_width = column_width(area, &WIDTHS, NAME_COLUMN);
     let folder_width = column_width(area, &WIDTHS, FOLDER_COLUMN);
-    // A selection past the end, after a filter shrank the list, lands on the
-    // last row, as the table would have put it.
-    if let Some(selected) = table_state.selected_mut() {
-        *selected = (*selected).min(items.len() - 1);
-    }
-    let window = visible_range(
-        table_state.offset(),
-        table_state.selected(),
-        items.len(),
-        page_of(Some(area), 1),
-    );
+    let window = page_window(table_state, items.len(), area, 1);
     let start = window.start;
     let rows: Vec<Row> = (start..)
         .zip(&items[window])
@@ -221,11 +211,7 @@ pub fn render_results_pane(
         .highlight_spacing(HighlightSpacing::Always)
         .block(pane_block(focused).title(pane_title("2", &title, focused)));
 
-    // The table holds one page, so the state it gets is shifted onto it.
-    let mut page_state = TableState::default()
-        .with_selected(table_state.selected().map(|selected| selected - start));
-    frame.render_stateful_widget(table, area, &mut page_state);
-    *table_state.offset_mut() = start;
+    render_page(frame, table, area, table_state, start);
 }
 
 #[cfg(test)]
@@ -361,16 +347,6 @@ mod tests {
         assert!(!screen.contains(" [ ] 0.mp3"), "{screen}");
         assert_eq!(state.offset(), 9_997, "the next frame starts here");
         assert_eq!(state.selected(), Some(9_999));
-    }
-
-    #[test]
-    fn a_selection_off_the_end_lands_on_the_last_row() {
-        let items = [file("a.mp3"), file("b.mp3")];
-        let mut state = TableState::default();
-        state.select(Some(7));
-        let screen = render_with(&items, &mut state, 0);
-        assert!(screen.contains("›[ ] b.mp3"), "{screen}");
-        assert_eq!(state.selected(), Some(1));
     }
 
     #[test]

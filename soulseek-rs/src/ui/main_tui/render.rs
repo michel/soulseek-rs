@@ -114,6 +114,17 @@ const HELP_RIGHT: &[(&str, &[(&str, &str)])] = &[
     ),
 ];
 
+/// What the bar offers while a filter is being typed, wherever that is,
+/// with the keys that still move around there.
+fn filter_keys(
+    moves: &[(&'static str, &'static str)],
+) -> Vec<(&'static str, &'static str)> {
+    let mut keys = vec![("Type", "filter")];
+    keys.extend_from_slice(moves);
+    keys.extend([("Enter", "keep filter"), ("Esc", "clear filter")]);
+    keys
+}
+
 impl MainTui {
     pub(super) fn render(&mut self, frame: &mut Frame) {
         let shortcuts = self.shortcut_rows(frame.area().width);
@@ -497,13 +508,7 @@ impl MainTui {
                 }
             }
             RoomsView::Chat if self.state.rooms.filtering.is_some() => {
-                vec![
-                    ("Type", "filter"),
-                    ("PgUp/PgDn", "scroll"),
-                    ("↑↓", "pick user"),
-                    ("Enter", "keep filter"),
-                    ("Esc", "clear filter"),
-                ]
+                filter_keys(&[("PgUp/PgDn", "scroll"), ("↑↓", "pick user")])
             }
             RoomsView::Chat => vec![
                 ("Enter", "say"),
@@ -565,12 +570,7 @@ impl MainTui {
                     ("Esc", "stop typing"),
                 ]
             } else if self.state.chat_filtering {
-                vec![
-                    ("Type", "filter"),
-                    ("PgUp/PgDn", "scroll"),
-                    ("Enter", "keep filter"),
-                    ("Esc", "clear filter"),
-                ]
+                filter_keys(&[("PgUp/PgDn", "scroll")])
             } else {
                 vec![
                     ("Enter", "type"),
@@ -586,13 +586,7 @@ impl MainTui {
         } else if self.state.show_browse {
             if self.state.browse.active_tab().is_some_and(|b| b.filtering) {
                 // Typing goes to the filter, so no letter keys are on offer.
-                vec![
-                    ("Type", "filter"),
-                    ("↑/↓", "navigate"),
-                    ("PgUp/PgDn", "page"),
-                    ("Enter", "keep filter"),
-                    ("Esc", "clear filter"),
-                ]
+                filter_keys(&[("↑/↓", "navigate"), ("PgUp/PgDn", "page")])
             } else {
                 vec![
                     ("↑↓", "move"),
@@ -632,13 +626,7 @@ impl MainTui {
             && self.state.focused_pane == FocusedPane::Results
         {
             // Typing goes to the filter, so no letter keys are on offer here.
-            vec![
-                ("Type", "filter"),
-                ("↑/↓", "navigate"),
-                ("PgUp/PgDn", "page"),
-                ("Enter", "keep filter"),
-                ("Esc", "clear filter"),
-            ]
+            filter_keys(&[("↑/↓", "navigate"), ("PgUp/PgDn", "page")])
         } else {
             let mut keys = match self.state.focused_pane {
                 FocusedPane::Searches => vec![

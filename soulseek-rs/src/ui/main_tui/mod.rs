@@ -1738,6 +1738,12 @@ mod tests {
         assert_eq!(rows(&tui), 3, "music, alpha, a2.flac");
         let screen = screen_of(&mut tui);
         assert!(screen.contains("filter: flac_"), "{screen}");
+        ctrl(&mut tui, 'd');
+        assert_eq!(
+            tui.state.browse.active_tab().expect("tab").filter(),
+            "flac",
+            "a control chord pages, it does not type"
+        );
         press(&mut tui, KeyCode::Enter);
         press(&mut tui, KeyCode::Char('j'));
         press(&mut tui, KeyCode::Char('j'));
@@ -1775,6 +1781,8 @@ mod tests {
         assert!(screen.contains("line 010"), "{screen}");
         assert!(!screen.contains("line 029"), "{screen}");
         assert!(screen.contains("filter: line 01_"), "{screen}");
+        ctrl(&mut tui, 'u');
+        assert_eq!(tui.state.rooms.log_filter, "line 01", "^u scrolls");
         press(&mut tui, KeyCode::Enter);
         press(&mut tui, KeyCode::Esc);
         assert!(tui.state.rooms.log_filter.is_empty());
