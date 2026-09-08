@@ -61,13 +61,15 @@ pub fn browse(ctx: &Ctx, args: &BrowseArgs) -> CliResult {
 
     let mut files = 0usize;
     for directory in &directories {
-        for (basename, size) in &directory.files {
+        for file in &directory.files {
             files += 1;
             ctx.out.emit(&BrowseRecord {
                 user: args.user.clone(),
                 directory: directory.name.clone(),
-                path: full_path(&directory.name, basename),
-                size: *size,
+                path: full_path(&directory.name, &file.name),
+                size: file.size,
+                bitrate: file.attribute(super::transfer::ATTR_BITRATE),
+                duration: file.attribute(super::transfer::ATTR_DURATION),
             });
         }
     }

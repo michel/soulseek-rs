@@ -4,12 +4,19 @@
 //! peer-facing *virtual path* (the shared directory's own name followed by the
 //! backslash-separated relative path, matching the Soulseek wire convention).
 
+mod audio;
+
+use crate::message::peer::{SharedDirectory, SharedFileEntry};
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
 /// One shared file: its peer-facing virtual path and where it lives on disk.
+///
+/// Built by the scan, never by a host, so fields can be added without a
+/// breaking release.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SharedFile {
     /// Backslash-separated path exposed to peers, e.g. `music\album\song.mp3`.
     pub virtual_path: String,
@@ -19,7 +26,8 @@ pub struct SharedFile {
     /// The real filesystem path used to serve the bytes.
     pub real_path: PathBuf,
     pub size: u64,
-    /// Optional `(code, value)` audio attributes (empty for now).
+    /// `(code, value)` audio attributes read from the file's headers: bitrate,
+    /// duration, VBR, sample rate, bit depth, as far as the format gives them.
     pub attributes: Vec<(u32, u32)>,
 }
 
@@ -126,12 +134,13 @@ impl Shares {
     }
 
     /// Files grouped by their virtual directory (everything before the final
-    /// backslash), as `(directory, [(basename, size)])`. Used to build a
-    /// SharedFileListResponse.
+    /// backslash), in the form a browse or folder listing carries.
     #[must_use]
-    pub fn directories(&self) -> Vec<(String, Vec<(String, u64)>)> {
-        let mut by_dir: std::collections::BTreeMap<String, Vec<(String, u64)>> =
-            std::collections::BTreeMap::new();
+    pub fn directories(&self) -> Vec<SharedDirectory> {
+        let mut by_dir: std::collections::BTreeMap<
+            String,
+            Vec<SharedFileEntry>,
+        > = std::collections::BTreeMap::new();
         for file in &self.files {
             let (dir, base) = file
                 .virtual_path
@@ -140,9 +149,16 @@ impl Shares {
             by_dir
                 .entry(dir.to_string())
                 .or_default()
-                .push((base.to_string(), file.size));
+                .push(SharedFileEntry {
+                    name: base.to_string(),
+                    size: file.size,
+                    attributes: file.attributes.clone(),
+                });
         }
-        by_dir.into_iter().collect()
+        by_dir
+            .into_iter()
+            .map(|(name, files)| SharedDirectory { name, files })
+            .collect()
     }
 
     #[must_use]
@@ -202,9 +218,9 @@ fn scan_root(
                 files.push(SharedFile {
                     search_key: virtual_path.to_lowercase(),
                     virtual_path,
+                    attributes: audio::probe(&path),
                     real_path: path,
                     size: meta.len(),
-                    attributes: Vec::new(),
                 });
                 folders_with_files.insert(dir.clone());
             }
@@ -242,6 +258,39 @@ mod tests {
         std::fs::write(root.join("album").join("song two.flac"), b"cc")
             .unwrap();
         root
+    }
+
+    #[test]
+    fn a_scanned_mp3_carries_its_bitrate() {
+        let root = std::env::temp_dir()
+            .join(format!("soulseek-shares-audio-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // 100 frames at 128 kbps is 2.6 seconds.
+        std::fs::write(
+            root.join("track.mp3"),
+            super::audio::tests::cbr_mp3(100),
+        )
+        .unwrap();
+        std::fs::write(root.join("cover.jpg"), b"jpeg").unwrap();
+
+        let shares = Shares::scan(&root).unwrap();
+        let track = shares
+            .get(
+                "soulseek-shares-audio-{pid}\\track.mp3"
+                    .replace("{pid}", &std::process::id().to_string())
+                    .as_str(),
+            )
+            .unwrap();
+        assert!(track.attributes.contains(&(0, 128)));
+        assert!(track.attributes.contains(&(1, 2)));
+        let cover = shares
+            .files()
+            .iter()
+            .find(|f| f.virtual_path.ends_with("cover.jpg"))
+            .unwrap();
+        assert!(cover.attributes.is_empty());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 mod admin_message;
 mod connect_to_peer;
+mod distributed;
 mod excluded_search_phrases;
 mod file_search;
 mod get_peer_address;
@@ -22,6 +23,9 @@ mod wish_list_interval;
 
 pub use admin_message::AdminMessageHandler;
 pub use connect_to_peer::ConnectToPeerHandler;
+pub use distributed::{
+    EmbeddedMessageHandler, PossibleParentsHandler, ResetDistributedHandler,
+};
 pub use excluded_search_phrases::ExcludedSearchPhrasesHandler;
 pub use file_search::FileSearchHandler;
 pub use get_peer_address::GetPeerAddressHandler;

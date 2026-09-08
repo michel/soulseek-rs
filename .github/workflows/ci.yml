@@ -127,3 +127,48 @@ jobs:
           SOULSEEK_E2E_REQUIRED: "1"
           SOULSEEK_E2E_MODE: daemon
         run: cargo test -p soulseek-rs --test cli_e2e -- --nocapture --test-threads=1
+
+  # A mixed load of mock peers around one real client. Every ceiling this
+  # project has hit only showed under simultaneous searches, downloads,
+  # uploads and browses, and three of the four lost work silently, so the
+  # gate is the functional dimensions at 100%, never the throughput number.
+  stress:
+    name: Stress (soulfind)
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install SQLite runtime/dev libraries
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      - name: Install D toolchain (LDC)
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-latest
+
+      - name: Build soulfind server
+        run: |
+          git clone --depth 1 https://github.com/soulfind-dev/soulfind.git soulfind
+          dub build :server --root soulfind
+          test -x soulfind/bin/soulfind
+          echo "SOULFIND_BIN=$PWD/soulfind/bin/soulfind" >> "$GITHUB_ENV"
+
+      # An eighth of the local profile: soulfind on a four-core runner brings
+      # about 150 mock logins online, and the point is lost work, not load.
+      - name: Run the stress benchmark with the functional gate
+        env:
+          STRESS_REQUIRE_FUNCTIONAL: "1"
+          STRESS_PEERS: "128"
+          STRESS_SEARCHES: "32"
+          STRESS_DOWNLOADS: "128"
+          STRESS_LEECHERS: "64"
+          STRESS_BROWSES: "32"
+        run: |
+          ulimit -n 20000
+          cargo run --release -p soulseek-rs-lib --example stress

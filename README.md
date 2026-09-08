@@ -344,7 +344,7 @@ the message field empty. `serve`'s `status` is `queued`, `uploading`,
 | Command            | Extra fields                                                                                                                    |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
 | `search`           | `duration`, `slots`, `speed`, `free_slot`                                                                                       |
-| `browse`           | `directory`                                                                                                                     |
+| `browse`           | `directory`, `bitrate`, `duration`                                                                                                                     |
 | `download` / `get` | `user`, remote `path`, `size`, beside the local `file`                                                                          |
 | `whoami`           | `listening`, `listen_port`, `download_dir`, `privilege_seconds`                                                                 |
 | `user`             | `privileged`, `shared_folders`                                                                                                  |

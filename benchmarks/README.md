@@ -32,6 +32,13 @@ with headroom, so the score still moves when transfer handling regresses.
 `--save` only overwrites `stress-baseline.json` when the run beats it, so the
 baseline ratchets upward. Without `--save` a run just prints the delta.
 
+## The gate
+
+`STRESS_REQUIRE_FUNCTIONAL=1` makes the run exit 1 when any of the four
+functional dimensions is below 100%. CI runs it that way on every pull request
+with an eighth of the default load; throughput never fails the gate because it
+measures the machine, not the client.
+
 ## Tuning the load
 
 Every knob is an env var; the defaults are in `Config::from_env`.
