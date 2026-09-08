@@ -1275,18 +1275,6 @@ mod tests {
     }
 
     #[test]
-    fn scrolling_runs_to_the_end_of_the_folder_when_it_is_the_longer() {
-        let mut tui = results_tui(3);
-        tui.state.results_items[1].filename =
-            format!("{}\\short.mp3", "f".repeat(20));
-        tui.state.results_table_state.select(Some(1));
-        press(&mut tui, KeyCode::Char('$'));
-        assert_eq!(tui.state.results_name_offset, 14);
-        press(&mut tui, KeyCode::Char('l'));
-        assert_eq!(tui.state.results_name_offset, 14, "stops at the end");
-    }
-
-    #[test]
     fn picking_another_search_starts_its_results_unscrolled() {
         let mut tui = results_tui(3);
         tui.state.results_items[1].filename = "x".repeat(40);

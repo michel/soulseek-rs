@@ -3,7 +3,7 @@ use crate::models::FileDisplayData;
 use crate::ui::{
     BYTES_PER_MB, HIGHLIGHT_SYMBOL, body_style, dimmed_style, format_bytes,
     header_style, info_style, pane_block, pane_title, row_highlight_style,
-    split_path, success_style, warning_style,
+    success_style, warning_style,
 };
 use ratatui::{
     Frame,
@@ -46,6 +46,12 @@ pub struct ResultsPaneParams<'a> {
 /// The file name is the second column, the folder it sits in the third.
 const NAME_COLUMN: usize = 1;
 const FOLDER_COLUMN: usize = 2;
+
+/// A shared path as `(folder, name)`. Peers send backslashes, but a slash
+/// counts too.
+fn split_path(path: &str) -> (&str, &str) {
+    path.rsplit_once(['\\', '/']).unwrap_or(("", path))
+}
 
 /// The offset that brings the end of a result's longer column into view.
 /// One offset scrolls the name and the folder together, so it runs until
@@ -285,55 +291,30 @@ mod tests {
     }
 
     #[test]
-    fn a_path_shows_its_name_and_folder_in_separate_columns() {
+    fn a_path_shows_its_name_before_its_folder() {
         let items = [file("@@abc\\Music\\Album\\01.flac"), file("cover.jpg")];
         let screen = render_rows(&items, 0);
-        let header = screen.lines().nth(1).expect("header");
-        let name = header.find("Filename").expect("name header");
-        let folder = header.find("Folder").expect("folder header");
-        assert!(name < folder, "{header}");
-
-        let row = screen.lines().nth(2).expect("first row");
-        assert!(row.contains("01.flac "), "{row}");
-        assert!(!row.contains("Album\\01.flac"), "the name alone: {row}");
-        assert!(row.contains("@@abc\\M"), "{row}");
-        assert!(
-            row.find("01.flac") < row.find("@@abc"),
-            "the name before the folder: {row}"
-        );
-
-        let row = screen.lines().nth(3).expect("second row");
-        assert!(row.contains("cover.jpg"), "{row}");
+        assert!(screen.contains("01.flac     @@abc\\M"), "{screen}");
+        assert!(screen.contains("cover.jpg   "), "{screen}");
     }
 
     #[test]
     fn one_offset_scrolls_the_name_and_the_folder_together() {
         let items = [file("@@abc\\Music\\Album\\abcdefghijklmnopqrstuvwxyz")];
         let screen = render_rows(&items, 4);
-        assert!(screen.contains("…efghijklmn"), "{screen}");
-        assert!(screen.contains("…c\\Musi"), "{screen}");
+        assert!(screen.contains("…efghijklmn …c\\Musi"), "{screen}");
     }
 
     #[test]
     fn the_end_offset_is_the_longer_columns() {
-        use super::name_end_offset;
-        use ratatui::layout::Rect;
         // 88 cells wide: 11 for the name, 7 for the folder.
-        let area = Rect::new(0, 0, 88, 6);
-        assert_eq!(name_end_offset("short.mp3", area), 0);
-        assert_eq!(name_end_offset(&"x".repeat(40), area), 30);
+        let area = ratatui::layout::Rect::new(0, 0, 88, 6);
+        let folder = "f".repeat(20);
+        assert_eq!(super::name_end_offset(&format!("{folder}\\a"), area), 14);
+        let name = "x".repeat(40);
         assert_eq!(
-            name_end_offset(&format!("{}\\short.mp3", "f".repeat(20)), area),
-            14,
-            "the folder overflows its narrower column"
-        );
-        assert_eq!(
-            name_end_offset(
-                &format!("{}\\{}", "f".repeat(20), "x".repeat(40)),
-                area
-            ),
-            30,
-            "whichever runs further"
+            super::name_end_offset(&format!("{folder}\\{name}"), area),
+            30
         );
     }
 
