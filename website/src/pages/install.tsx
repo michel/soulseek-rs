@@ -6,7 +6,14 @@ import { Cols, PageHead, Prose, Section, SectionHead } from '@/components/ui/lay
 import { OsIcon, type OsName } from '@/components/ui/os-icon'
 import { Callout } from '@/components/ui/panel'
 import { Terminal, type TermLine } from '@/components/ui/terminal'
-import { INSTALL_CMD, LINKS, SITE_URL } from '@/lib/links'
+import { INSTALL_CMD, LINKS, NIGHTLY_INSTALL_CMD, SITE_URL } from '@/lib/links'
+
+const INSTALL_SCRIPT_LINES: readonly TermLine[] = [
+  { t: 'cm', text: '# latest stable release' },
+  { t: 'cmd', text: INSTALL_CMD },
+  { t: 'cm', text: '# latest successful build from develop' },
+  { t: 'cmd', text: NIGHTLY_INSTALL_CMD },
+]
 
 const LIB_SRC = `use soulseek_rs::Client;
 use std::time::Duration;
@@ -266,15 +273,22 @@ const Steps = () => (
     <div className="flex flex-col gap-9">
       <Step n={1} title="Install the client">
         <p className="text-secondary">
-          One command on macOS and Linux. The script installs through Homebrew when you
-          have it; otherwise it downloads the latest release binary for your platform,
-          checks its sha256, and puts it on your PATH.
+          One command on macOS and Linux. The script installs the latest stable release
+          through Homebrew when you have it, or downloads the prebuilt binary, checks its
+          sha256, and puts it on your PATH. Pass <Code>--nightly</Code> for the current
+          successful build from <Code>develop</Code>; nightly always downloads directly.
         </p>
-        <Terminal lines={[{ t: 'cmd', text: INSTALL_CMD }]} wrap />
+        <Terminal lines={INSTALL_SCRIPT_LINES} wrap />
         <p className="text-[13px] text-muted">
           No curl? <Code>{`wget -qO- ${SITE_URL}install.sh | sh`}</Code> does the same.
           Piping to a shell asks for trust; read the script first at{' '}
           <ExtLink href={`${SITE_URL}install.sh`}>{`${SITE_URL}install.sh`}</ExtLink>.
+        </p>
+        <p className="text-[13px] text-muted">
+          Nightly is rebuilt every day and can be replaced by a manual build. It may be
+          less stable than a numbered release. The installer stages and runs the verified
+          download before replacing an existing copy, so a bad build leaves that copy in
+          place.
         </p>
         <p className="text-secondary">
           Or pick a route per platform. Cargo needs a Rust toolchain from{' '}
@@ -316,6 +330,7 @@ const Steps = () => (
         </p>
         <div className="flex flex-wrap gap-2 sm:gap-3">
           <Button href={LINKS.releases}>Prebuilt binaries</Button>
+          <Button href={LINKS.nightlyRelease}>Nightly binaries</Button>
         </div>
       </Step>
 
