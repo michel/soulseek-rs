@@ -6,14 +6,6 @@ import { TuiPane } from './chrome'
 import type { ResultRow, SearchRow, TransferRow, TransferStatus } from './data'
 
 const RESULT_COLS = '30px 3fr 2fr 74px 92px 78px 74px 42px'
-
-/** A shared path split at its last separator, as the TUI's two columns show it. */
-const splitPath = (path: string): { folder: string; name: string } => {
-  const at = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
-  return at < 0
-    ? { folder: '', name: path }
-    : { folder: path.slice(0, at), name: path.slice(at + 1) }
-}
 const TRANSFER_COLS = '48px 1fr 96px 168px 74px'
 
 interface SearchesPaneProps {
@@ -152,7 +144,7 @@ export const ResultsPane = ({
     <div className="flex-1 overflow-y-auto">
       {rows.map((row, i) => {
         const { glyph, tone } = resultGlyph(row)
-        const { folder, name } = splitPath(row.name)
+        const parts = row.name.split('\\')
         const isSelected = selected === i
         return (
           <button
@@ -177,10 +169,10 @@ export const ResultsPane = ({
                 isSelected ? 'text-[var(--color-paper)]' : 'text-[var(--color-paper-dim)]',
               )}
             >
-              {name}
+              {parts.at(-1)}
             </span>
             <span className="overflow-hidden text-ellipsis whitespace-nowrap text-[var(--color-dust)]">
-              {folder}
+              {parts.slice(0, -1).join('\\')}
             </span>
             <span className="text-right text-[var(--color-tape)]">{row.size}</span>
             <span className="text-[var(--color-signal)]">{row.user}</span>

@@ -98,8 +98,8 @@ underneath. `Tab`/`Shift-Tab` or `1`–`3` move the focus between panes, `z`
 zooms the focused pane to the whole window, and `w` hides it so the others
 widen (its number brings it back). Every list takes `↑`/`↓`, `Home`/`End`,
 `PgUp`/`PgDn` and the vim keys, and `h`/`l` or `←`/`→` scroll a long file name,
-folder or query sideways, `0` and `$` to either end. `PgUp`/`PgDn` scroll a chat log back through its history, and `?`
-shows every key for where you are.
+folder or query sideways, `0` and `$` to either end. `PgUp`/`PgDn` scroll a
+chat log back through its history, and `?` shows every key for where you are.
 
 ### Daemon mode
 
