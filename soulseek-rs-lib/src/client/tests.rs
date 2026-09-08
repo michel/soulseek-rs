@@ -821,3 +821,18 @@ fn watched_users_are_listed_in_a_stable_order() {
     context.add_watched_user("bob");
     assert_eq!(context.watched_users(), vec!["alice", "bob", "carol"]);
 }
+
+// A reply queued for a searcher the server cannot place waits a minute,
+// not forever: every such search would otherwise pin a map entry and a
+// protected slot in the peer registry.
+#[test]
+fn a_peer_message_nobody_could_deliver_expires() {
+    let mut ctx = ClientContext::for_user("me");
+    ctx.queue_peer_message("ghost", crate::message::Message::new());
+    ctx.expire_pending_peer_messages(Instant::now());
+    assert_eq!(ctx.take_peer_messages("ghost").len(), 1, "still fresh");
+
+    ctx.queue_peer_message("ghost", crate::message::Message::new());
+    ctx.expire_pending_peer_messages(Instant::now() + PENDING_PEER_TTL);
+    assert!(ctx.take_peer_messages("ghost").is_empty(), "expired");
+}

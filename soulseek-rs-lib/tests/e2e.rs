@@ -23,6 +23,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use soulseek_rs::message::Message;
+use soulseek_rs::message::distributed;
 use soulseek_rs::message::server::MessageFactory;
 use soulseek_rs::{
     Client, ClientSettings, ClientVersion, ConnectionType, DownloadStatus,
@@ -3613,6 +3614,157 @@ fn a_browse_listing_carries_the_files_attributes() {
         "{:?}",
         listed.attributes
     );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+/// The next inbound connection, or a timeout error: a mock that never gets
+/// dialled must fail its test rather than hang it.
+fn accept_within(
+    listener: &std::net::TcpListener,
+    timeout: Duration,
+) -> std::io::Result<TcpStream> {
+    listener.set_nonblocking(true)?;
+    let deadline = Instant::now() + timeout;
+    let stream = loop {
+        match listener.accept() {
+            Ok((stream, _)) => break stream,
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "no inbound connection",
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(e),
+        }
+    };
+    stream.set_nonblocking(false)?;
+    stream.set_read_timeout(Some(Duration::from_secs(15)))?;
+    Ok(stream)
+}
+
+/// The PeerInit that opens an inbound connection: who dialled, and as what.
+fn peer_init_of(stream: &mut TcpStream) -> std::io::Result<(String, String)> {
+    let mut init = read_framed(stream)?;
+    assert_eq!(init.get_init_code(), 1, "expected a PeerInit");
+    init.set_pointer(5);
+    Ok((init.read_string(), init.read_string()))
+}
+
+// Searches also travel peer to peer, down a tree of parents and children the
+// server assembles from PossibleParents. A leaf dials the candidates with a D
+// connection, adopts the first that passes it a search after stating its
+// branch, and answers those searches exactly like ones from the server.
+// soulfind never hands out parents, so the parent here is a mock: a logged-in
+// user the leaf is pointed at directly.
+#[test]
+fn a_leaf_adopts_a_parent_and_answers_the_searches_it_passes_down() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    std::fs::create_dir_all(share_dir.join("album")).unwrap();
+    std::fs::write(share_dir.join("album").join("treesearch.mp3"), b"xxxx")
+        .unwrap();
+
+    // The parent and the searcher are two logged-in users with a listener
+    // each. Bind all interfaces: soulfind reports the LAN address.
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let raw_user = |name: &str| {
+        let port = free_port().expect("a port for the raw user");
+        let listener = std::net::TcpListener::bind(("0.0.0.0", port)).unwrap();
+        let mut srv = login_raw(&server_addr, name, "pw").expect("raw login");
+        srv.write_all(
+            &MessageFactory::build_set_wait_port_message(port).get_buffer(),
+        )
+        .unwrap();
+        (listener, port, srv)
+    };
+    let (listener, parent_port, _parent_srv) = raw_user("e2e_parent");
+    let (searcher, _, _searcher_srv) = raw_user("e2e_searcher");
+
+    let mut leaf = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.listening_settings(
+            "e2e_leaf",
+            "pw",
+            free_port().expect("leaf port"),
+        )
+    });
+    leaf.connect().expect("leaf connect");
+    assert!(leaf.login().expect("leaf login"));
+    assert_eq!(
+        leaf.distributed_branch(),
+        ("e2e_leaf".to_string(), 0),
+        "a leaf without a parent is its own branch root"
+    );
+
+    leaf.consider_parents(vec![(
+        "e2e_parent".to_string(),
+        "127.0.0.1".to_string(),
+        parent_port,
+    )])
+    .expect("consider parents");
+
+    let mut link = accept_within(&listener, Duration::from_secs(15))
+        .expect("the leaf dials the candidate parent");
+    assert_eq!(
+        peer_init_of(&mut link).unwrap(),
+        ("e2e_leaf".to_string(), "D".to_string()),
+        "a parent link opens with a distributed PeerInit"
+    );
+
+    // We are a branch root at level 0; the leaf hangs one level below us.
+    link.write_all(&distributed::build_branch_level(0).get_buffer())
+        .unwrap();
+    link.write_all(&distributed::build_branch_root("e2e_parent").get_buffer())
+        .unwrap();
+    link.write_all(
+        &distributed::build_search("e2e_searcher", 4242, "treesearch")
+            .get_buffer(),
+    )
+    .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while leaf.distributed_branch().1 == 0 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(
+        leaf.distributed_branch(),
+        ("e2e_parent".to_string(), 1),
+        "the first search from a candidate with a branch adopts it"
+    );
+
+    // The answer goes to whoever asked, not to the parent that relayed it:
+    // a P connection to the searcher carrying a FileSearchResponse for the
+    // token.
+    let mut p = accept_within(&searcher, Duration::from_secs(20))
+        .expect("the leaf dials the searcher to answer");
+    assert_eq!(
+        peer_init_of(&mut p).unwrap(),
+        ("e2e_leaf".to_string(), "P".to_string())
+    );
+    let response = expect_code(&mut p, 9, Duration::from_secs(15))
+        .expect("a FileSearchResponse for the search from the tree");
+    let body = soulseek_rs::utils::zlib::inflate(&response.get_data()[8..])
+        .expect("the response body inflates");
+    let name_len = u32::from_le_bytes(body[..4].try_into().unwrap()) as usize;
+    let token_at = 4 + name_len;
+    assert_eq!(&body[4..token_at], b"e2e_leaf");
+    assert_eq!(
+        u32::from_le_bytes(body[token_at..token_at + 4].try_into().unwrap()),
+        4242
+    );
+
+    // Losing the parent puts the leaf back on its own.
+    drop(link);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while leaf.distributed_branch().1 != 0 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(leaf.distributed_branch(), ("e2e_leaf".to_string(), 0));
 
     let _ = std::fs::remove_dir_all(share_dir);
 }
