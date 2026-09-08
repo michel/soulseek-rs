@@ -98,6 +98,18 @@ const HELP_RIGHT: &[(&str, &[(&str, &str)])] = &[
             ("Tab / Shift-Tab", "next room, chat or user"),
         ],
     ),
+    (
+        "Browse popup",
+        &[
+            ("← → / h l", "close / open a folder, or step out / in"),
+            ("J K", "next / previous folder"),
+            ("H L", "close / open every folder"),
+            ("/", "filter by path, Enter keeps it, Esc clears"),
+            ("Enter", "open a folder, or download a file"),
+            ("d", "download a file, or a folder's files"),
+            ("r", "ask again after a timeout"),
+        ],
+    ),
 ];
 
 impl MainTui {
@@ -551,17 +563,30 @@ impl MainTui {
         } else if self.state.show_rooms {
             self.rooms_shortcuts()
         } else if self.state.show_browse {
-            vec![
-                ("↑↓", "move"),
-                ("PgUp/PgDn", "page"),
-                ("→←", "expand/collapse"),
-                ("Enter", "open/download"),
-                ("d", "download folder"),
-                ("Tab", "switch user"),
-                ("r", "retry"),
-                ("w", "close tab"),
-                ("Esc", "hide"),
-            ]
+            if self.state.browse.active_tab().is_some_and(|b| b.filtering) {
+                // Typing goes to the filter, so no letter keys are on offer.
+                vec![
+                    ("Type", "filter"),
+                    ("↑/↓", "navigate"),
+                    ("PgUp/PgDn", "page"),
+                    ("Enter", "keep filter"),
+                    ("Esc", "clear filter"),
+                ]
+            } else {
+                vec![
+                    ("↑↓", "move"),
+                    ("J/K", "next/prev folder"),
+                    ("→←", "expand/collapse"),
+                    ("H/L", "collapse/expand all"),
+                    ("/", "filter"),
+                    ("Enter", "open/download"),
+                    ("d", "download folder"),
+                    ("Tab", "switch user"),
+                    ("r", "retry"),
+                    ("w", "close tab"),
+                    ("Esc", "hide"),
+                ]
+            }
         } else if self.state.command_bar_active {
             match self.state.command_bar_mode {
                 CommandBarMode::Search => vec![

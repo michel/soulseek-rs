@@ -1676,6 +1676,77 @@ mod tests {
         assert!(tui.state.show_browse, "still open");
     }
 
+    #[test]
+    fn folder_keys_and_the_filter_move_through_a_browsed_tree() {
+        let mut tui = attach(Arc::new(TalkativeSession::default()));
+        tui.state.browse.open("bob");
+        let listing = vec![
+            soulseek_rs::SharedDirectory {
+                name: "music\\alpha".to_string(),
+                files: vec![
+                    soulseek_rs::SharedFileEntry {
+                        name: "a1.mp3".to_string(),
+                        size: 1,
+                        attributes: Vec::new(),
+                    },
+                    soulseek_rs::SharedFileEntry {
+                        name: "a2.flac".to_string(),
+                        size: 2,
+                        attributes: Vec::new(),
+                    },
+                ],
+            },
+            soulseek_rs::SharedDirectory {
+                name: "music\\beta".to_string(),
+                files: vec![soulseek_rs::SharedFileEntry {
+                    name: "b1.mp3".to_string(),
+                    size: 3,
+                    attributes: Vec::new(),
+                }],
+            },
+        ];
+        tui.state
+            .browse
+            .active_tab_mut()
+            .expect("tab")
+            .load(&listing);
+        tui.state.show_browse = true;
+        let _ = screen_of(&mut tui);
+        let selected = |tui: &MainTui| {
+            tui.state.browse.active_tab().expect("tab").selected_row
+        };
+        let rows = |tui: &MainTui| {
+            tui.state.browse.active_tab().expect("tab").rows().len()
+        };
+
+        press(&mut tui, KeyCode::Char('L'));
+        assert_eq!(rows(&tui), 6, "every folder open");
+        press(&mut tui, KeyCode::Char('J'));
+        press(&mut tui, KeyCode::Char('J'));
+        assert_eq!(selected(&tui), 4, "beta, skipping alpha's files");
+        press(&mut tui, KeyCode::Char('K'));
+        assert_eq!(selected(&tui), 1, "back to alpha");
+        press(&mut tui, KeyCode::Char('H'));
+        assert_eq!(rows(&tui), 1, "just music");
+
+        press(&mut tui, KeyCode::Char('/'));
+        for c in "flac".chars() {
+            press(&mut tui, KeyCode::Char(c));
+        }
+        assert_eq!(rows(&tui), 3, "music, alpha, a2.flac");
+        let screen = screen_of(&mut tui);
+        assert!(screen.contains("filter: flac_"), "{screen}");
+        press(&mut tui, KeyCode::Enter);
+        press(&mut tui, KeyCode::Char('j'));
+        press(&mut tui, KeyCode::Char('j'));
+        assert_eq!(selected(&tui), 2, "j moves again once the filter is kept");
+        press(&mut tui, KeyCode::Esc);
+        assert_eq!(rows(&tui), 1, "Esc clears the filter first");
+        assert!(tui.state.show_browse);
+        press(&mut tui, KeyCode::Esc);
+        assert!(!tui.state.show_browse, "then hides the popup");
+    }
+
     fn in_a_room(tui: &mut MainTui, messages: usize) {
         tui.state.rooms.apply_event(
             soulseek_rs::RoomEvent::Joined {

@@ -1,6 +1,6 @@
 use super::MainTui;
 use super::input::{jumped, list_jump};
-use crate::models::{BrowseStatus, files_under, find_node};
+use crate::models::BrowseStatus;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::{thread, time::Duration};
 
@@ -9,6 +9,20 @@ const BROWSE_TIMEOUT: Duration = Duration::from_secs(20);
 
 impl MainTui {
     pub(super) fn handle_browse_input(&mut self, key: KeyEvent) {
+        // Typing goes to the filter; the other keys still move around.
+        if self.state.browse.active_tab().is_some_and(|b| b.filtering)
+            && self.handle_browse_filter_input(key)
+        {
+            return;
+        }
+        // Esc peels back one level: a filter first, then the popup.
+        if key.code == KeyCode::Esc
+            && let Some(browse) = self.state.browse.active_tab_mut()
+            && !browse.filter().is_empty()
+        {
+            browse.set_filter(String::new());
+            return;
+        }
         if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
             self.state.show_browse = false;
             return;
@@ -84,7 +98,11 @@ impl MainTui {
             }
             KeyCode::Char('d') => {
                 let files = if row.is_folder {
-                    self.browse_folder_files(&row.path)
+                    self.state
+                        .browse
+                        .active_tab()
+                        .map(|b| b.folder_files(&row.path))
+                        .unwrap_or_default()
                 } else {
                     vec![(row.path.clone(), row.size.unwrap_or(0))]
                 };
@@ -103,6 +121,24 @@ impl MainTui {
                 KeyCode::Down | KeyCode::Char('j') => {
                     browse.selected_row = (sel + 1).min(len - 1);
                 }
+                // The folder-sized steps: the next or previous folder row.
+                KeyCode::Char('J') => {
+                    if let Some(next) =
+                        (sel + 1..len).find(|&i| browse.rows()[i].is_folder)
+                    {
+                        browse.selected_row = next;
+                    }
+                }
+                KeyCode::Char('K') => {
+                    if let Some(previous) =
+                        (0..sel).rev().find(|&i| browse.rows()[i].is_folder)
+                    {
+                        browse.selected_row = previous;
+                    }
+                }
+                KeyCode::Char('H') => browse.collapse_all(),
+                KeyCode::Char('L') => browse.expand_all(),
+                KeyCode::Char('/') => browse.filtering = true,
                 KeyCode::Right | KeyCode::Char('l') => {
                     if row.is_folder && !row.expanded {
                         browse.set_expanded(&row.path, true);
@@ -131,20 +167,38 @@ impl MainTui {
         self.sync_browse_selection();
     }
 
+    /// The keys that edit the filter while it is being typed. Says whether
+    /// `key` was one of them; the rest move around the narrowed rows.
+    fn handle_browse_filter_input(&mut self, key: KeyEvent) -> bool {
+        let Some(browse) = self.state.browse.active_tab_mut() else {
+            return false;
+        };
+        match key.code {
+            KeyCode::Esc => {
+                browse.filtering = false;
+                browse.set_filter(String::new());
+            }
+            KeyCode::Enter => browse.filtering = false,
+            KeyCode::Char(c) => {
+                let mut filter = browse.filter().to_string();
+                filter.push(c);
+                browse.set_filter(filter);
+            }
+            KeyCode::Backspace => {
+                let mut filter = browse.filter().to_string();
+                filter.pop();
+                browse.set_filter(filter);
+            }
+            _ => return false,
+        }
+        self.sync_browse_selection();
+        true
+    }
+
     /// Point the browse table cursor at the active tab's selected row.
     fn sync_browse_selection(&mut self) {
         let selected = self.state.browse.active_tab().map(|b| b.selected_row);
         self.state.browse_table_state.select(selected);
-    }
-
-    /// Files (`path`, `size`) under the active browse tab's folder at `path`.
-    fn browse_folder_files(&self, path: &str) -> Vec<(String, u64)> {
-        self.state
-            .browse
-            .active_tab()
-            .and_then(|b| find_node(&b.tree, path))
-            .map(files_under)
-            .unwrap_or_default()
     }
 
     /// Queue downloads of `files` (path, size) from the active browse tab's user.
