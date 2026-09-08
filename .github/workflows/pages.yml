@@ -30,6 +30,9 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
+      - name: Test installer
+        run: bun run test:install
+
       - name: Typecheck
         run: bun run typecheck
 

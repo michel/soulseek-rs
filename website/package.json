@@ -9,6 +9,7 @@
     "build:ssr": "vite build --ssr src/entry-server.tsx --outDir dist-ssr",
     "prerender": "bun scripts/prerender.ts",
     "preview": "vite preview",
+    "test:install": "sh scripts/test-install.sh",
     "typecheck": "tsc -b",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"

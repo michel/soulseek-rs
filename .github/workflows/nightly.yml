@@ -1,0 +1,231 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A manual run queued behind the scheduled run must still execute: it is the
+# recovery path when a runner or GitHub Releases had a transient failure.
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  source:
+    name: Resolve develop
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      # workflow_dispatch has a branch selector, but a Nightly run always means
+      # develop. Resolve it once so every target builds the identical commit
+      # even if develop moves while the matrix is starting.
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          persist-credentials: false
+
+      - name: Record source commit
+        id: commit
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  binaries:
+    name: ${{ matrix.target }}
+    needs: source
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-${{ matrix.target }}
+
+      - name: Install musl toolchain
+        if: endsWith(matrix.target, '-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      # Dry-run produces the same archives and checksums as the stable release
+      # workflow without publishing them one matrix job at a time. The publish
+      # job exposes the complete, verified set together.
+      - name: Build archive and checksum
+        id: package
+        uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: soulseek-rs
+          target: ${{ matrix.target }}
+          build-tool: cargo
+          locked: true
+          archive: soulseek-rs-nightly-$target
+          include: README.md,LICENSE
+          checksum: sha256
+          ref: refs/tags/nightly
+          dry-run: true
+          dry-run-intended: true
+
+      - name: Store packaged binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-${{ matrix.target }}
+          path: |
+            ${{ steps.package.outputs.tar || steps.package.outputs.zip }}
+            ${{ steps.package.outputs.sha256 }}
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish prerelease
+    needs: [source, binaries]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Collect packaged binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nightly-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify the complete asset set
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=(
+            soulseek-rs-nightly-x86_64-unknown-linux-musl.tar.gz
+            soulseek-rs-nightly-aarch64-unknown-linux-musl.tar.gz
+            soulseek-rs-nightly-x86_64-apple-darwin.tar.gz
+            soulseek-rs-nightly-aarch64-apple-darwin.tar.gz
+            soulseek-rs-nightly-x86_64-pc-windows-msvc.zip
+            soulseek-rs-nightly-aarch64-pc-windows-msvc.zip
+            soulseek-rs-nightly-x86_64-unknown-linux-musl.sha256
+            soulseek-rs-nightly-aarch64-unknown-linux-musl.sha256
+            soulseek-rs-nightly-x86_64-apple-darwin.sha256
+            soulseek-rs-nightly-aarch64-apple-darwin.sha256
+            soulseek-rs-nightly-x86_64-pc-windows-msvc.sha256
+            soulseek-rs-nightly-aarch64-pc-windows-msvc.sha256
+          )
+          printf '%s\n' "${expected[@]}" | sort > "$RUNNER_TEMP/expected-assets"
+          find dist -maxdepth 1 -type f -exec basename {} \; | sort > "$RUNNER_TEMP/actual-assets"
+          diff -u "$RUNNER_TEMP/expected-assets" "$RUNNER_TEMP/actual-assets"
+          (cd dist && sha256sum --check ./*.sha256)
+
+      - name: Publish the nightly release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ needs.source.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/nightly-notes.md"
+          short_sha=${SOURCE_SHA:0:12}
+          {
+            printf 'Automated development build from the develop branch.\n\n'
+            printf 'Source: [%s](https://github.com/%s/commit/%s)\n\n' "$short_sha" "$GITHUB_REPOSITORY" "$SOURCE_SHA"
+            printf 'This prerelease and its nightly tag are replaced by each successful scheduled or manual run. It may be less stable than a numbered release.\n'
+          } > "$notes"
+
+          release_exists=false
+          if gh release view nightly >/dev/null 2>&1; then
+            release_exists=true
+            # Hide the old set while assets and the mutable tag are replaced;
+            # installers either see a complete release or fail before changing
+            # their existing binary.
+            gh release edit nightly --draft --prerelease --latest=false
+          fi
+
+          current_tag=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/nightly" --jq .object.sha 2>/dev/null || true)
+          if [ -n "$current_tag" ]; then
+            gh api --silent --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly" \
+              -f sha="$SOURCE_SHA" -F force=true
+          else
+            gh api --silent --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref=refs/tags/nightly -f sha="$SOURCE_SHA"
+          fi
+
+          if [ "$release_exists" = false ]; then
+            gh release create nightly --verify-tag --draft --prerelease --latest=false \
+              --title 'Nightly (develop)' --notes-file "$notes"
+          else
+            gh release edit nightly --draft --prerelease --latest=false \
+              --target "$SOURCE_SHA" --title 'Nightly (develop)' --notes-file "$notes"
+          fi
+
+          gh release view nightly --json assets --jq '.assets[].name' > "$RUNNER_TEMP/old-assets"
+          while IFS= read -r asset; do
+            [ -z "$asset" ] || gh release delete-asset nightly "$asset" --yes
+          done < "$RUNNER_TEMP/old-assets"
+          gh release upload nightly dist/*
+
+          gh release view nightly --json assets --jq '.assets[].name' | sort > "$RUNNER_TEMP/published-assets"
+          diff -u "$RUNNER_TEMP/expected-assets" "$RUNNER_TEMP/published-assets"
+          empty_assets=$(gh release view nightly --json assets --jq '[.assets[] | select(.size == 0)] | length')
+          [ "$empty_assets" -eq 0 ]
+
+          gh release edit nightly --draft=false --prerelease --latest=false \
+            --target "$SOURCE_SHA" --title 'Nightly (develop)' --notes-file "$notes"
+
+  smoke-test:
+    name: Install published nightly
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: nightly
+          persist-credentials: false
+
+      - name: Install with curl
+        env:
+          SOULSEEK_RS_INSTALL_DIR: ${{ runner.temp }}/curl-install
+        run: |
+          sh website/public/install.sh --nightly
+          "$SOULSEEK_RS_INSTALL_DIR/soulseek-rs" --version
+
+      - name: Install with wget and no curl on PATH
+        env:
+          SOULSEEK_RS_INSTALL_DIR: ${{ runner.temp }}/wget-install
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/wget-path"
+          for tool in basename cat chmod cp gzip mkdir mktemp mv rm sha256sum tar uname wget; do
+            ln -s "$(command -v "$tool")" "$RUNNER_TEMP/wget-path/$tool"
+          done
+          PATH="$RUNNER_TEMP/wget-path" /bin/sh website/public/install.sh --nightly
+          "$SOULSEEK_RS_INSTALL_DIR/soulseek-rs" --version
