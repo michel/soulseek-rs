@@ -63,6 +63,7 @@ const HELP_RIGHT: &[(&str, &[(&str, &str)])] = &[
         "Searches",
         &[
             ("Enter", "show its results"),
+            ("S", "run the search again"),
             ("d", "remove the search"),
             ("C", "clear every search"),
             ("c", "chat rooms"),
@@ -126,7 +127,8 @@ fn filter_keys(
 }
 
 impl MainTui {
-    pub(super) fn render(&mut self, frame: &mut Frame) {
+    /// Draw the whole window.
+    pub fn render(&mut self, frame: &mut Frame) {
         let shortcuts = self.shortcut_rows(frame.area().width);
         let mut constraints = vec![
             Constraint::Length(3), // Status bar
@@ -631,6 +633,7 @@ impl MainTui {
             let mut keys = match self.state.focused_pane {
                 FocusedPane::Searches => vec![
                     ("s", "search"),
+                    ("S", "search again"),
                     ("Enter", "results"),
                     ("d", "remove"),
                     ("C", "clear all"),
