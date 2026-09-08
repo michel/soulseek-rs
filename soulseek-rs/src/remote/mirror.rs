@@ -227,14 +227,18 @@ mod tests {
             Event::Browse,
             json!({
                 "username": "bob",
-                "directories": [{ "name": "@@x", "files": [["a.mp3", 42]] }],
+                "directories": [{
+                    "name": "@@x",
+                    "files": [{ "name": "a.mp3", "size": 42, "attributes": [[0, 320]] }],
+                }],
             }),
         );
 
         assert!(mirror.take_browse("sue").is_none());
         let listing = mirror.take_browse("bob").expect("bob answered");
         assert_eq!(listing[0].name, "@@x");
-        assert_eq!(listing[0].files, [("a.mp3".to_string(), 42)]);
+        assert_eq!(listing[0].files[0].name, "a.mp3");
+        assert_eq!(listing[0].files[0].attribute(0), Some(320));
         assert!(mirror.take_browse("bob").is_none(), "taken means taken");
     }
 

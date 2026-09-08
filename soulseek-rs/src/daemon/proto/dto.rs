@@ -12,7 +12,8 @@ use soulseek_rs::types::{
 };
 use soulseek_rs::{
     DownloadStatus, File, RoomEvent, RoomInfo, SearchResult, SessionLoss,
-    SharedDirectory, UploadInfo, UploadStatus, UserInfo, UserMessage,
+    SharedDirectory, SharedFileEntry, UploadInfo, UploadStatus, UserInfo,
+    UserMessage,
 };
 use std::collections::HashMap;
 
@@ -553,15 +554,32 @@ impl From<UserInfoDto> for UserInfo {
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct SharedDirectoryDto {
     pub name: String,
-    /// Basename and size; join with the directory to get a downloadable path.
-    pub files: Vec<(String, u64)>,
+    pub files: Vec<SharedFileEntryDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct SharedFileEntryDto {
+    /// Basename; join with the directory to get a downloadable path.
+    pub name: String,
+    pub size: u64,
+    /// `(code, value)` audio attributes the owner advertises.
+    pub attributes: Vec<(u32, u32)>,
 }
 
 impl From<&SharedDirectory> for SharedDirectoryDto {
     fn from(directory: &SharedDirectory) -> Self {
         Self {
             name: directory.name.clone(),
-            files: directory.files.clone(),
+            files: directory
+                .files
+                .iter()
+                .map(|file| SharedFileEntryDto {
+                    name: file.name.clone(),
+                    size: file.size,
+                    attributes: file.attributes.clone(),
+                })
+                .collect(),
         }
     }
 }
@@ -570,7 +588,15 @@ impl From<SharedDirectoryDto> for SharedDirectory {
     fn from(dto: SharedDirectoryDto) -> Self {
         Self {
             name: dto.name,
-            files: dto.files,
+            files: dto
+                .files
+                .into_iter()
+                .map(|file| SharedFileEntry {
+                    name: file.name,
+                    size: file.size,
+                    attributes: file.attributes,
+                })
+                .collect(),
         }
     }
 }

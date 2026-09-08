@@ -30,11 +30,23 @@ use std::time::{Duration, Instant};
 
 use soulseek_rs::message::Message;
 use soulseek_rs::message::peer::{
-    FileEntry, SharedDirectory, build_file_search_response,
+    FileEntry, SharedDirectory, SharedFileEntry, build_file_search_response,
     build_shared_file_list,
 };
 use soulseek_rs::message::server::MessageFactory;
 use soulseek_rs::{Client, ClientSettings, ClientVersion, PeerAddress};
+
+/// A mock's `(name, size)` files in listing form; mocks advertise no attributes.
+fn entries(files: &[(String, u64)]) -> Vec<SharedFileEntry> {
+    files
+        .iter()
+        .map(|(name, size)| SharedFileEntry {
+            name: name.clone(),
+            size: *size,
+            attributes: Vec::new(),
+        })
+        .collect()
+}
 
 /// Files matching this tag are what every mock seeder answers searches for.
 const TAG: &str = "zqxstress";
@@ -536,7 +548,7 @@ impl SeederState {
     fn send_listing(&self, p: &mut TcpStream, shared: bool) -> bool {
         let dir = SharedDirectory {
             name: format!("stress\\{}", self.name),
-            files: self.files.clone(),
+            files: entries(&self.files),
         };
         let list = build_shared_file_list(std::slice::from_ref(&dir));
         self.reply(p, shared, &list.get_buffer())

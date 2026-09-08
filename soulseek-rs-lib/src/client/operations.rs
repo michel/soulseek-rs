@@ -763,7 +763,7 @@ impl Client {
                             &requester_key,
                             |ctx| {
                                 crate::message::peer::build_shared_file_list(
-                                    &shared_directories(ctx),
+                                    &ctx.shares.directories(),
                                 )
                             },
                         );
@@ -792,7 +792,9 @@ impl Client {
                             &client_context,
                             &requester_key,
                             |ctx| {
-                                let dirs: Vec<_> = shared_directories(ctx)
+                                let dirs: Vec<_> = ctx
+                                    .shares
+                                    .directories()
                                     .into_iter()
                                     .filter(|dir| dir.name == folder)
                                     .collect();
@@ -895,18 +897,4 @@ impl Client {
             Self::fail_queued_downloads(client_context, &username);
         }
     }
-}
-
-/// Our shares in the wire form a browse or folder reply carries.
-fn shared_directories(
-    ctx: &ClientContext,
-) -> Vec<crate::message::peer::SharedDirectory> {
-    ctx.shares
-        .directories()
-        .into_iter()
-        .map(|(name, files)| crate::message::peer::SharedDirectory {
-            name,
-            files,
-        })
-        .collect()
 }

@@ -7,11 +7,32 @@ use crate::peer::PeerMessage;
 use crate::utils::zlib::{deflate, inflate};
 use std::sync::mpsc::Sender;
 
-/// One shared directory and the files directly in it (basename + size).
+/// One file in a shared directory: its basename, size and the `(code, value)`
+/// audio attributes the owner advertises for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedFileEntry {
+    pub name: String,
+    pub size: u64,
+    pub attributes: Vec<(u32, u32)>,
+}
+
+impl SharedFileEntry {
+    /// The value of attribute `code` (0 bitrate, 1 duration, 2 VBR, 4 sample
+    /// rate, 5 bit depth), if the owner advertised it.
+    #[must_use]
+    pub fn attribute(&self, code: u32) -> Option<u32> {
+        self.attributes
+            .iter()
+            .find(|&&(c, _)| c == code)
+            .map(|&(_, v)| v)
+    }
+}
+
+/// One shared directory and the files directly in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SharedDirectory {
     pub name: String,
-    pub files: Vec<(String, u64)>,
+    pub files: Vec<SharedFileEntry>,
 }
 
 /// Receives a peer's `SharedFileListResponse` (peer code 5) when browsing them.
@@ -58,13 +79,16 @@ pub fn write_directories(payload: &mut Message, dirs: &[SharedDirectory]) {
         payload
             .write_string(&dir.name)
             .write_int32(dir.files.len() as u32);
-        for (name, size) in &dir.files {
+        for file in &dir.files {
             payload
                 .write_int8(1)
-                .write_string(name)
-                .write_int64(*size)
+                .write_string(&file.name)
+                .write_int64(file.size)
                 .write_string("") // extension
-                .write_int32(0); // attribute count
+                .write_int32(file.attributes.len() as u32);
+            for &(code, value) in &file.attributes {
+                payload.write_int32(code).write_int32(value);
+            }
         }
     }
 }
@@ -87,20 +111,24 @@ pub fn read_directories(body: &mut Message) -> Vec<SharedDirectory> {
                 break;
             }
             body.read_int8(); // code
-            let filename = body.read_string();
-            let file_size = body.read_int64();
+            let name = body.read_string();
+            let size = body.read_int64();
             body.read_string(); // extension
             let attr_count = body.read_int32();
+            let mut attributes = Vec::new();
             for _ in 0..attr_count {
                 // Each attribute is two int32s (8 bytes); read_int32 does not
                 // advance past the end, so bound the loop explicitly.
                 if body.get_pointer() + 8 > body.get_size() {
                     break;
                 }
-                body.read_int32();
-                body.read_int32();
+                attributes.push((body.read_int32(), body.read_int32()));
             }
-            files.push((filename, file_size));
+            files.push(SharedFileEntry {
+                name,
+                size,
+                attributes,
+            });
         }
         dirs.push(SharedDirectory { name, files });
     }
@@ -128,18 +156,55 @@ fn hostile_dir_count_does_not_hang() {
 }
 
 #[test]
+fn a_listing_carries_each_files_attributes() {
+    let dirs = vec![SharedDirectory {
+        name: "music\\album".to_string(),
+        files: vec![
+            SharedFileEntry {
+                name: "one.mp3".to_string(),
+                size: 40,
+                attributes: vec![(0, 320), (1, 187)],
+            },
+            SharedFileEntry {
+                name: "two.flac".to_string(),
+                size: 50,
+                attributes: Vec::new(),
+            },
+        ],
+    }];
+    let mut message = crate::message::framed(|m| {
+        m.write_raw_bytes(
+            build_shared_file_list(&dirs).get_data()[4..].to_vec(),
+        );
+    });
+    assert_eq!(parse_shared_file_list(&mut message), dirs);
+}
+
+#[test]
 fn shared_file_list_roundtrips() {
     let dirs = vec![
         SharedDirectory {
             name: "music\\album".to_string(),
             files: vec![
-                ("song one.flac".to_string(), 123),
-                ("song two.flac".to_string(), 456),
+                SharedFileEntry {
+                    name: "song one.flac".to_string(),
+                    size: 123,
+                    attributes: vec![(1, 300), (4, 44_100), (5, 16)],
+                },
+                SharedFileEntry {
+                    name: "song two.flac".to_string(),
+                    size: 456,
+                    attributes: Vec::new(),
+                },
             ],
         },
         SharedDirectory {
             name: "music".to_string(),
-            files: vec![("top.mp3".to_string(), 789)],
+            files: vec![SharedFileEntry {
+                name: "top.mp3".to_string(),
+                size: 789,
+                attributes: Vec::new(),
+            }],
         },
     ];
     let message = build_shared_file_list(&dirs);
