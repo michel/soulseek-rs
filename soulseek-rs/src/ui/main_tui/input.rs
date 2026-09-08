@@ -1,5 +1,5 @@
 use super::MainTui;
-use crate::models::{CommandBarMode, FocusedPane, LogView};
+use crate::models::{CommandBarMode, FocusedPane, LogView, PaneLayout};
 use crate::ui::page_of;
 use crate::ui::panes::{
     InfoSubject, name_end_offset, query_end_offset, selected_transfer,
@@ -98,6 +98,10 @@ impl MainTui {
             }
             KeyCode::Char('w') => {
                 self.state.hide_focused_pane();
+                return;
+            }
+            KeyCode::Char('W') => {
+                self.state.layout = PaneLayout::default();
                 return;
             }
             KeyCode::Esc if self.state.layout.zoomed => {
