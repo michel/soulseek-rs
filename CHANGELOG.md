@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [18.0.0](https://github.com/michel/soulseek-rs/compare/v17.0.0...v18.0.0) - 2026-09-08
+
+### Added
+
+- *(lib)* carry audio attributes in browse and folder listings
+- *(lib)* read audio attributes from shared files at scan time
+- *(lib)* join the distributed search network as a leaf
+- *(lib)* decode distributed frames and announce a parentless stance
+
+### Fixed
+
+- *(lib)* free a silent parent's slot and pace the moves we report
+- *(lib)* harden the distributed leaf against hostile and slow parents
+- *(lib)* count the ID3 tag once and honour CRC frames when probing an MP3
+- *(lib)* parse what a peer sent before acting on its close
+- *(lib)* retire a dialling actor at once and drain the socket while retired
+- *(stress)* serve a browse that lands while an offer awaits its answer
+- *(lib)* keep a replaced peer connection open for the reply in flight
+- *(lib)* let an unanswered upload offer expire
+
+### Other
+
+- Merge branch 'develop'
+- *(lib)* keep the actors inside the crate and mark the growing enums
+- *(lib)* export the ConnectionType parse error and document what hosts can still match
+- *(lib)* move the peer actor's tests to their own file
+- gate pull requests on the stress benchmark losing no work
+
 ## [17.0.0](https://github.com/michel/soulseek-rs/compare/v16.0.0...v17.0.0) - 2026-09-07
 
 ### Added
