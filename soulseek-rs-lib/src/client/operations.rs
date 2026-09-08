@@ -24,6 +24,18 @@ impl Client {
                     last_sweep = Instant::now();
                     Self::sweep_expired_connects(&client_context);
                     Self::sweep_stale_offers(&client_context);
+                    if let Ok(mut ctx) = client_context.write_safe() {
+                        ctx.expire_pending_peer_messages(Instant::now());
+                        if let Some(branch) =
+                            ctx.leaf.due_announcement(Instant::now())
+                        {
+                            super::distributed::announce(
+                                ctx.server_sender.as_ref(),
+                                &branch,
+                                true,
+                            );
+                        }
+                    }
                 }
                 let operation = match next {
                     Ok(operation) => operation,
@@ -695,6 +707,114 @@ impl Client {
                                 ),
                             );
                         }
+                    }
+                    ClientOperation::PossibleParents(candidates) => {
+                        let (dials, ops) = match client_context.write_safe() {
+                            Ok(mut ctx) => (
+                                ctx.leaf.consider(candidates),
+                                ctx.operations.clone(),
+                            ),
+                            Err(_) => continue,
+                        };
+                        let Some(ops) = ops else { continue };
+                        for dial in dials {
+                            super::distributed::spawn_link(
+                                dial,
+                                own_username.clone(),
+                                ops.clone(),
+                            );
+                        }
+                    }
+                    ClientOperation::ParentBranchLevel {
+                        parent,
+                        link,
+                        level,
+                    } => {
+                        let Ok(mut ctx) = client_context.write_safe() else {
+                            continue;
+                        };
+                        if let Some(branch) =
+                            ctx.leaf.branch_level(&parent, link, level)
+                        {
+                            super::distributed::announce(
+                                ctx.server_sender.as_ref(),
+                                &branch,
+                                true,
+                            );
+                        }
+                    }
+                    ClientOperation::ParentBranchRoot {
+                        parent,
+                        link,
+                        root,
+                    } => {
+                        let Ok(mut ctx) = client_context.write_safe() else {
+                            continue;
+                        };
+                        if let Some(branch) =
+                            ctx.leaf.branch_root(&parent, link, &root)
+                        {
+                            super::distributed::announce(
+                                ctx.server_sender.as_ref(),
+                                &branch,
+                                true,
+                            );
+                        }
+                    }
+                    ClientOperation::ParentSearch {
+                        parent,
+                        link,
+                        username,
+                        token,
+                        query,
+                    } => {
+                        let Ok(mut ctx) = client_context.write_safe() else {
+                            continue;
+                        };
+                        if let Some(branch) =
+                            ctx.leaf.search_from(&parent, link)
+                        {
+                            super::distributed::announce(
+                                ctx.server_sender.as_ref(),
+                                &branch,
+                                true,
+                            );
+                        }
+                        if ctx.leaf.is_parent(&parent, link)
+                            && ctx.leaf.admit_search(Instant::now())
+                            && let Some(ops) = &ctx.operations
+                        {
+                            let _ = ops.send(ClientOperation::IncomingSearch {
+                                username,
+                                token,
+                                query,
+                            });
+                        }
+                    }
+                    ClientOperation::ParentClosed { parent, link } => {
+                        let Ok(mut ctx) = client_context.write_safe() else {
+                            continue;
+                        };
+                        if ctx.leaf.closed(&parent, link) {
+                            super::distributed::announce(
+                                ctx.server_sender.as_ref(),
+                                &ctx.leaf.branch(),
+                                false,
+                            );
+                        }
+                    }
+                    // Also what a fresh login means: whatever tree we hung
+                    // from belongs to the old session.
+                    ClientOperation::ResetDistributed => {
+                        let Ok(mut ctx) = client_context.write_safe() else {
+                            continue;
+                        };
+                        ctx.leaf.reset();
+                        super::distributed::announce(
+                            ctx.server_sender.as_ref(),
+                            &ctx.leaf.branch(),
+                            false,
+                        );
                     }
                     ClientOperation::PrivilegedUsers(users) => {
                         if let Ok(mut ctx) = client_context.write_safe() {

@@ -4,6 +4,7 @@ use crate::dispatcher::MessageDispatcher;
 use crate::message::server::AdminMessageHandler;
 use crate::message::server::CheckPrivilegesHandler;
 use crate::message::server::ConnectToPeerHandler;
+use crate::message::server::EmbeddedMessageHandler;
 use crate::message::server::ExcludedSearchPhrasesHandler;
 use crate::message::server::FileSearchHandler;
 use crate::message::server::GetPeerAddressHandler;
@@ -14,8 +15,10 @@ use crate::message::server::MessageFactory;
 use crate::message::server::MessageUser;
 use crate::message::server::ParentMinSpeedHandler;
 use crate::message::server::ParentSpeedRatioHandler;
+use crate::message::server::PossibleParentsHandler;
 use crate::message::server::PrivilegedUsersHandler;
 use crate::message::server::ReloggedHandler;
+use crate::message::server::ResetDistributedHandler;
 use crate::message::server::SayChatroomHandler;
 use crate::message::server::UserJoinedRoomHandler;
 use crate::message::server::UserLeftRoomHandler;
@@ -156,6 +159,11 @@ pub enum ServerMessage {
         room: String,
         username: String,
     },
+    /// Peers the server suggests as distributed-network parents: username,
+    /// host, port.
+    PossibleParents(Vec<(String, String, u16)>),
+    /// The server asks us to drop our parent and start over.
+    ResetDistributed,
 }
 
 pub struct ServerActor {
@@ -178,9 +186,9 @@ pub struct ServerActor {
 }
 
 /// The messages a client sends right after a successful login: its shared-file
-/// counts, distributed-network opt-out, online status, and (when listening) the
-/// port peers should connect to. Kept as a free function so it can be tested
-/// without a live connection.
+/// counts, online status, and (when listening)
+/// the port peers should connect to. Kept as a free function so it can be
+/// tested without a live connection.
 fn post_login_messages(
     enable_listen: bool,
     listen_port: u16,
@@ -192,7 +200,6 @@ fn post_login_messages(
             shared_folders,
             shared_files,
         ),
-        MessageFactory::build_no_parent_message(),
         MessageFactory::build_set_status_message(2),
     ];
     if enable_listen {
@@ -291,6 +298,9 @@ impl ServerActor {
         handlers.register_handler(LoginHandler);
         handlers.register_handler(ReloggedHandler);
         handlers.register_handler(AdminMessageHandler);
+        handlers.register_handler(PossibleParentsHandler);
+        handlers.register_handler(ResetDistributedHandler);
+        handlers.register_handler(EmbeddedMessageHandler);
         handlers.register_handler(RoomListHandler);
         handlers.register_handler(GetUserStatusHandler);
         handlers.register_handler(WatchUserHandler);
@@ -502,6 +512,14 @@ impl ServerActor {
     /// length; there is no behaviour here beyond dispatch.
     fn handle_standing_message(&mut self, message: ServerMessage) {
         match message {
+            ServerMessage::PossibleParents(candidates) => {
+                self.forward_to_client(ClientOperation::PossibleParents(
+                    candidates,
+                ));
+            }
+            ServerMessage::ResetDistributed => {
+                self.forward_to_client(ClientOperation::ResetDistributed);
+            }
             ServerMessage::WishlistSearch { token, query } => {
                 self.queue_message(MessageFactory::build_wishlist_search(
                     token, &query,
@@ -554,6 +572,9 @@ impl ServerActor {
                 self.send_message(msg);
             }
             self.session.clear();
+            // The distributed stance is the leaf's to announce, and a new
+            // session starts without a parent.
+            self.forward_to_client(ClientOperation::ResetDistributed);
         }
         match self.context.write_safe() {
             Ok(mut ctx) => ctx.logged_in = Some(message),
