@@ -87,7 +87,7 @@ To install the current successful build from `develop` instead, pass the
 installer's `--nightly` option through to `sh`:
 
 ```bash
-curl -fsSL https://re-invention.nl/soulseek-rs/install.sh | sh -s -- --nightly
+curl -fsSL https://raw.githubusercontent.com/michel/soulseek-rs/develop/website/public/install.sh | sh -s -- --nightly
 ```
 
 Nightly is a mutable prerelease rebuilt every day and whenever the **Nightly**

@@ -5,7 +5,7 @@
 #   curl -fsSL https://re-invention.nl/soulseek-rs/install.sh | sh
 #
 # Latest successful build from develop:
-#   curl -fsSL https://re-invention.nl/soulseek-rs/install.sh | sh -s -- --nightly
+#   curl -fsSL https://raw.githubusercontent.com/michel/soulseek-rs/develop/website/public/install.sh | sh -s -- --nightly
 #
 # Stable installs use Homebrew when it is on PATH (macOS and Linux). Nightly
 # installs always download the prebuilt binary for this platform. Direct
@@ -30,7 +30,7 @@ Install the latest stable soulseek-rs release. Options:
   -h, --help Show this help.
 
 When piping the script, pass the option after `sh -s --`:
-  curl -fsSL https://re-invention.nl/soulseek-rs/install.sh | sh -s -- --nightly
+  curl -fsSL https://raw.githubusercontent.com/michel/soulseek-rs/develop/website/public/install.sh | sh -s -- --nightly
 
 SOULSEEK_RS_INSTALL_DIR overrides the destination directory.
 EOF
