@@ -205,6 +205,35 @@ impl MainTui {
     }
 
     pub(super) fn start_search(&mut self, query: String) {
+        let entry = self.launch_search(query);
+        self.state.searches.push(entry);
+        self.show_search(self.state.searches.len() - 1);
+    }
+
+    /// Run the search at `index` again, in its place.
+    ///
+    /// This is what a restored list is for: last session's queries come back
+    /// with nothing under them, and typing one out again to see what the
+    /// network has now is the work the list was meant to save. The entry
+    /// keeps its row rather than moving to the end — the user is looking at
+    /// it — and a run still collecting is stopped first, or two threads would
+    /// be pouring into one result set.
+    pub(super) fn rerun_search_at_index(&mut self, index: usize) {
+        let Some(previous) = self.state.searches.get(index) else {
+            return;
+        };
+        previous
+            .cancel_flag
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let entry = self.launch_search(previous.query.clone());
+        self.state.searches[index] = entry;
+        self.show_search(index);
+    }
+
+    /// Put `query` on the wire and hand back the entry that tracks it. The
+    /// session keys results by query, so a repeat starts its set afresh, and
+    /// the entry's empty results match that.
+    fn launch_search(&self, query: String) -> SearchEntry {
         let cancel_flag = Arc::new(AtomicBool::new(false));
         let search_entry = SearchEntry {
             query: query.clone(),
@@ -215,24 +244,6 @@ impl MainTui {
             start_time: Instant::now(),
             cancel_flag: cancel_flag.clone(),
         };
-
-        self.state.searches.push(search_entry);
-        let search_index = self.state.searches.len() - 1;
-        self.state.searches_table_state.select(Some(search_index));
-
-        // Make this search the active one
-        self.state.selected_search_index = Some(search_index);
-
-        // Initialize results display (empty at first)
-        self.state.results_items.clear();
-        self.state.results_filtered_items.clear();
-        self.state.results_filtered_indices.clear();
-        self.state.results_selected_indices.clear();
-        self.state.results_table_state.select(Some(0));
-        self.state.results_name_offset = 0;
-
-        // Switch focus to Results pane, bringing it back if it was hidden
-        self.state.focus_pane(FocusedPane::Results);
 
         let client = self.client.clone();
         let timeout = self.search_timeout;
@@ -251,6 +262,25 @@ impl MainTui {
                 }
             }
         });
+
+        search_entry
+    }
+
+    /// Make the search at `index` the one the Results pane shows, starting
+    /// from an empty display for what is about to arrive.
+    fn show_search(&mut self, index: usize) {
+        self.state.searches_table_state.select(Some(index));
+        self.state.selected_search_index = Some(index);
+
+        self.state.results_items.clear();
+        self.state.results_filtered_items.clear();
+        self.state.results_filtered_indices.clear();
+        self.state.results_selected_indices.clear();
+        self.state.results_table_state.select(Some(0));
+        self.state.results_name_offset = 0;
+
+        // Switch focus to Results pane, bringing it back if it was hidden
+        self.state.focus_pane(FocusedPane::Results);
     }
 
     /// Show the searches the session knows about, not just this window's.

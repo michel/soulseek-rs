@@ -14,3 +14,7 @@ pub(crate) mod port_mapping;
 pub mod remote;
 pub mod run;
 pub(crate) mod ui;
+
+/// The interactive window, so an integration test can drive it with key
+/// events and read the screen back the way the terminal would show it.
+pub use ui::MainTui;

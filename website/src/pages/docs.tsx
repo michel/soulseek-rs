@@ -17,6 +17,7 @@ import { LINKS } from '@/lib/links'
 
 const GLOBAL_KEYS: readonly (readonly [string, string])[] = [
   ['s', 'search the network'],
+  ['S', 'run the highlighted search again'],
   ['Space', 'select a result'],
   ['Enter', 'download / send'],
   ['b', "browse the owner's files"],
@@ -59,7 +60,7 @@ const PANES: readonly { num?: number; title: string; body: string }[] = [
   {
     num: 1,
     title: 'Searches',
-    body: 'Your queries and how many results each returned. Press s to search the network; each search keeps its own result set.',
+    body: 'Your queries and how many results each returned. Press s to search the network; each search keeps its own result set. The list survives a restart, and S runs the highlighted query again without retyping it.',
   },
   {
     num: 3,

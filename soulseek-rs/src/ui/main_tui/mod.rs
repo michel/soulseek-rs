@@ -196,31 +196,44 @@ impl MainTui {
         result
     }
 
+    /// What the window holds, for a test to read back after driving it.
+    #[must_use]
+    pub const fn state(&self) -> &AppState {
+        &self.state
+    }
+
+    /// One frame's worth of catching up with the session: everything the
+    /// event loop does between drawing and reading the keyboard. Public so a
+    /// test can advance the window without a terminal.
+    pub fn poll_session(&mut self) {
+        // Poll for search results updates
+        self.update_search_results();
+
+        // Poll for download updates
+        self.update_downloads();
+
+        // Poll for incoming private messages
+        self.poll_private_messages();
+
+        // Poll for a browse (shared-file listing) response
+        self.poll_browse_result();
+
+        // Poll for chat-room events
+        self.poll_room_events();
+
+        // Refresh the uploads we are serving to peers
+        self.state.uploads = self.client.uploads();
+
+        self.spinner_state = (self.spinner_state + 1) % 10;
+
+        self.save_persisted_state();
+    }
+
     fn run_event_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         while !self.state.should_exit {
             terminal.draw(|frame| self.render(frame))?;
 
-            // Poll for search results updates
-            self.update_search_results();
-
-            // Poll for download updates
-            self.update_downloads();
-
-            // Poll for incoming private messages
-            self.poll_private_messages();
-
-            // Poll for a browse (shared-file listing) response
-            self.poll_browse_result();
-
-            // Poll for chat-room events
-            self.poll_room_events();
-
-            // Refresh the uploads we are serving to peers
-            self.state.uploads = self.client.uploads();
-
-            self.spinner_state = (self.spinner_state + 1) % 10;
-
-            self.save_persisted_state();
+            self.poll_session();
 
             // Drain every queued input event before the next draw: key
             // autorepeat outpaces the frame time, and handling one event per
@@ -277,6 +290,8 @@ mod tests {
         searches: std::sync::Mutex<Vec<crate::api::SessionSearch>>,
         /// What `try_get_search_results` hands back to the window.
         results: std::sync::Mutex<Vec<soulseek_rs::SearchResult>>,
+        /// Every query a window put on the wire, in order.
+        searched: std::sync::Mutex<Vec<String>>,
         /// How many times a window asked for the search list.
         all_searches_calls: std::sync::atomic::AtomicUsize,
         /// How many times a window pulled a full result set across. Against a
@@ -345,10 +360,14 @@ mod tests {
         }
         fn search_with_cancel(
             &self,
-            _query: &str,
+            query: &str,
             _timeout: Duration,
             _cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
         ) -> soulseek_rs::Result<Vec<soulseek_rs::SearchResult>> {
+            self.searched
+                .lock()
+                .expect("not poisoned")
+                .push(query.to_string());
             Ok(Vec::new())
         }
         fn get_search_results(
@@ -1878,5 +1897,126 @@ mod tests {
         tui.state.focused_pane = FocusedPane::Downloads;
         let screen = screen_of(&mut tui);
         assert!(!screen.contains("@@x/Music/Album"), "{screen}");
+    }
+
+    /// The queries the window has sent so far, once at least `count` of them
+    /// are out: a search goes to the session from a worker thread, so a test
+    /// has to give it a moment.
+    fn searched(session: &TalkativeSession, count: usize) -> Vec<String> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let seen = session.searched.lock().expect("not poisoned").clone();
+            if seen.len() >= count || std::time::Instant::now() > deadline {
+                return seen;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// A window over last session's search list: the queries came back from
+    /// disk, with nothing under them.
+    fn restored(session: Arc<TalkativeSession>, queries: &[&str]) -> MainTui {
+        let mut tui = attach(session);
+        let queries: Vec<String> =
+            queries.iter().map(ToString::to_string).collect();
+        restore_searches(&mut tui.state, &queries);
+        tui.state.focused_pane = FocusedPane::Searches;
+        tui
+    }
+
+    #[test]
+    fn shift_s_runs_the_highlighted_search_again_in_its_place() {
+        // The list survives a restart, but a query on it was only ever a
+        // reminder: seeing what the network has now meant typing it again.
+        let session = Arc::new(TalkativeSession::default());
+        let mut tui =
+            restored(session.clone(), &["boards of canada", "aphex twin"]);
+        tui.state.searches_table_state.select(Some(1));
+
+        press(&mut tui, KeyCode::Char('S'));
+
+        assert_eq!(
+            searched(&session, 1),
+            vec!["aphex twin".to_string()],
+            "the highlighted query went out again, untyped"
+        );
+        let queries: Vec<&str> = tui
+            .state
+            .searches
+            .iter()
+            .map(|s| s.query.as_str())
+            .collect();
+        assert_eq!(
+            queries,
+            ["boards of canada", "aphex twin"],
+            "it keeps its row: no duplicate, nothing moved"
+        );
+        let rerun = &tui.state.searches[1];
+        assert_eq!(rerun.status, SearchStatus::Active);
+        assert!(rerun.owned, "this window is running it now");
+        assert_eq!(tui.state.selected_search_index, Some(1));
+        assert_eq!(
+            tui.state.focused_pane,
+            FocusedPane::Results,
+            "and the window turns to where the results will land"
+        );
+        assert!(tui.state.results_items.is_empty());
+    }
+
+    #[test]
+    fn shift_s_stops_a_run_still_collecting_before_starting_over() {
+        let mut tui = furnished_tui();
+        tui.state.searches[0].status = SearchStatus::Active;
+        let previous = tui.state.searches[0].cancel_flag.clone();
+        tui.state.focused_pane = FocusedPane::Searches;
+        tui.state.searches_table_state.select(Some(0));
+
+        press(&mut tui, KeyCode::Char('S'));
+
+        assert!(
+            previous.load(std::sync::atomic::Ordering::Relaxed),
+            "the worker that was collecting is told to stop"
+        );
+        let fresh = &tui.state.searches[0];
+        assert!(!fresh.cancel_flag.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(fresh.results.is_empty(), "stale rows do not linger");
+        assert_eq!(tui.state.searches.len(), 1);
+    }
+
+    #[test]
+    fn shift_s_is_only_a_key_over_the_searches_list() {
+        let session = Arc::new(TalkativeSession::default());
+        let mut tui = restored(session.clone(), &["aphex twin"]);
+
+        // Over Results the same key means nothing, so a stray shift does not
+        // throw a finished search away.
+        tui.state.focused_pane = FocusedPane::Results;
+        press(&mut tui, KeyCode::Char('S'));
+        assert_eq!(tui.state.searches[0].status, SearchStatus::Completed);
+
+        // And with no searches at all there is nothing to run.
+        tui.state.searches.clear();
+        tui.state.focused_pane = FocusedPane::Searches;
+        press(&mut tui, KeyCode::Char('S'));
+        assert!(tui.state.searches.is_empty());
+
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(searched(&session, 0).is_empty(), "nothing went out");
+    }
+
+    #[test]
+    fn the_rerun_key_is_offered_where_it_applies() {
+        let mut tui = furnished_tui();
+        tui.state.focused_pane = FocusedPane::Searches;
+        let screen = screen_of(&mut tui);
+        assert!(screen.contains("[S → search again]"), "{screen}");
+
+        tui.state.focused_pane = FocusedPane::Results;
+        let screen = screen_of(&mut tui);
+        assert!(!screen.contains("search again"), "{screen}");
+
+        press(&mut tui, KeyCode::Char('?'));
+        let screen = screen_of(&mut tui);
+        assert!(screen.contains("run the search again"), "{screen}");
     }
 }
