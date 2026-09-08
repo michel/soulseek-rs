@@ -123,13 +123,13 @@ pub fn build_browse_tree(directories: &[SharedDirectory]) -> BuiltTree {
 
         // File paths come from the original name so downloads match exactly.
         let dir_path = dir.name.trim_end_matches('\\');
-        for (basename, size) in &dir.files {
+        for file in &dir.files {
             let file_path = if dir_path.is_empty() {
-                basename.clone()
+                file.name.clone()
             } else {
-                format!("{dir_path}\\{basename}")
+                format!("{dir_path}\\{}", file.name)
             };
-            node.files.push((basename.clone(), *size, file_path));
+            node.files.push((file.name.clone(), file.size, file_path));
         }
     }
 
@@ -416,7 +416,14 @@ mod tests {
     fn dir(name: &str, files: &[(&str, u64)]) -> SharedDirectory {
         SharedDirectory {
             name: name.to_string(),
-            files: files.iter().map(|(n, s)| ((*n).to_string(), *s)).collect(),
+            files: files
+                .iter()
+                .map(|(n, s)| soulseek_rs::SharedFileEntry {
+                    name: (*n).to_string(),
+                    size: *s,
+                    attributes: Vec::new(),
+                })
+                .collect(),
         }
     }
 

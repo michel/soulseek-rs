@@ -131,7 +131,8 @@ something that is not on the network right now: add it as a wish, then run the
 wishlist later rather than repeating the same search.
 
 **`browse <user>`** — one object per file the peer shares: `user`, `directory`,
-`path`, `size`.
+`path`, `size`, `bitrate`, `duration`. The last two are `null` when the peer
+advertises no audio attributes for the file.
 
 **`user <name>`** — one object: `user`, `status` (`online`/`away`/`offline`),
 `privileged`, `average_speed`, `shared_files`, `shared_folders`. Any field may

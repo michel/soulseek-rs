@@ -207,6 +207,8 @@ pub struct BrowseRecord {
     pub directory: String,
     pub path: String,
     pub size: u64,
+    pub bitrate: Option<u32>,
+    pub duration: Option<u32>,
 }
 
 impl Record for BrowseRecord {
@@ -667,6 +669,8 @@ mod tests {
             directory: "@@music".into(),
             path: "@@music\\a.flac".into(),
             size: 12,
+            bitrate: Some(320),
+            duration: None,
         };
         assert_eq!(record.text(), "bob\t12\t@@music\\a.flac");
     }

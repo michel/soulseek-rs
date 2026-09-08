@@ -13,7 +13,7 @@
 /// Bumped when a change would break a client written against the old shape.
 /// Sent in the `auth` reply so a mismatch is caught at connect time rather
 /// than as a confusing failure three calls later.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// The OpenRPC document, served by `rpc.discover` so a generator can point at
 /// a running daemon instead of needing this repository.
@@ -322,7 +322,11 @@ mod tests {
     fn a_shared_listing_survives_the_round_trip() {
         let directory = SharedDirectory {
             name: "@@x\\Music".into(),
-            files: vec![("a.mp3".into(), 4096)],
+            files: vec![soulseek_rs::SharedFileEntry {
+                name: "a.mp3".into(),
+                size: 4096,
+                attributes: vec![(0, 320)],
+            }],
         };
         let json = serde_json::to_string(&SharedDirectoryDto::from(&directory))
             .unwrap();

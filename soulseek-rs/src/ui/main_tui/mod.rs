@@ -1628,7 +1628,13 @@ mod tests {
         tui.state.browse.open("bob");
         let listing = vec![soulseek_rs::SharedDirectory {
             name: "Music".to_string(),
-            files: (0..files).map(|i| (format!("{i:02}.mp3"), 1)).collect(),
+            files: (0..files)
+                .map(|i| soulseek_rs::SharedFileEntry {
+                    name: format!("{i:02}.mp3"),
+                    size: 1,
+                    attributes: Vec::new(),
+                })
+                .collect(),
         }];
         tui.state
             .browse
