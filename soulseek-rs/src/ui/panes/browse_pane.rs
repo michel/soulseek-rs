@@ -62,8 +62,20 @@ fn render_browse_one(
     spinner_state: usize,
 ) {
     let title = match browse.status {
+        BrowseStatus::Loaded
+            if browse.filtering || !browse.filter().is_empty() =>
+        {
+            format!(
+                " Browse {} — {} files, {} folders · filter: {}{}  (Enter: keep, Esc: clear) ",
+                browse.username,
+                browse.file_count,
+                browse.folder_count,
+                browse.filter(),
+                if browse.filtering { "_" } else { "" }
+            )
+        }
         BrowseStatus::Loaded => format!(
-            " Browse {} — {} files, {} folders  (Enter/d: download, Tab: user, w: close, Esc: hide) ",
+            " Browse {} — {} files, {} folders  (Enter/d: download, /: filter, Tab: user, w: close, Esc: hide) ",
             browse.username, browse.file_count, browse.folder_count
         ),
         _ => format!(" Browse {} ", browse.username),
@@ -104,6 +116,15 @@ fn render_browse_one(
                 Line::styled("Press r to try again.", dimmed_style()),
             ];
             frame.render_widget(Paragraph::new(text).block(block), area);
+        }
+        BrowseStatus::Loaded
+            if browse.rows().is_empty() && !browse.filter().is_empty() =>
+        {
+            let text = format!("Nothing here matches '{}'.", browse.filter());
+            frame.render_widget(
+                Paragraph::new(text).style(dimmed_style()).block(block),
+                area,
+            );
         }
         BrowseStatus::Loaded => {
             let all = browse.rows();

@@ -568,6 +568,11 @@ busiest first, `Enter` to join, several rooms open at once as tabs
 through the member list with `b` to browse someone or `m` to message them.
 Unread counts appear on the tabs and on the `c chat (n)` shortcut.
 
+`b` browses a user's shared files as a tree: `←`/`→` close and open a folder,
+`J`/`K` jump between folders, `H`/`L` close or open every folder, `/` filters
+the whole tree by path, and `Enter` or `d` downloads a file or a folder's
+files (under a filter, only the ones it shows).
+
 ### Connectivity
 
 Browsing and downloading are peer-to-peer, so one side has to accept an incoming
