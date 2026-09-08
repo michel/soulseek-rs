@@ -48,8 +48,8 @@ impl MainTui {
             _ => {}
         }
 
-        // Snapshot the flattened rows + current selection, then drop the borrow.
-        let (rows, sel, row) = {
+        // The highlighted row and where it sits, then drop the borrow.
+        let (len, sel, row) = {
             let Some(browse) = self.state.browse.active_tab() else {
                 self.state.show_browse = false;
                 return;
@@ -62,13 +62,12 @@ impl MainTui {
                 return;
             }
             let sel = browse.selected_row.min(rows.len() - 1);
-            let row = rows[sel].clone();
-            (rows, sel, row)
+            (rows.len(), sel, rows[sel].clone())
         };
 
         if let Some(jump) = jump {
             if let Some(browse) = self.state.browse.active_tab_mut() {
-                browse.selected_row = jumped(sel, rows.len(), jump);
+                browse.selected_row = jumped(sel, len, jump);
             }
             self.sync_browse_selection();
             return;
@@ -102,38 +101,31 @@ impl MainTui {
                     browse.selected_row = sel.saturating_sub(1);
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    browse.selected_row = (sel + 1).min(rows.len() - 1);
+                    browse.selected_row = (sel + 1).min(len - 1);
                 }
                 KeyCode::Right | KeyCode::Char('l') => {
                     if row.is_folder && !row.expanded {
-                        browse.expanded.insert(row.path.clone());
+                        browse.set_expanded(&row.path, true);
                     } else if row.is_folder {
-                        browse.selected_row = (sel + 1).min(rows.len() - 1);
+                        browse.selected_row = (sel + 1).min(len - 1);
                     }
                 }
                 KeyCode::Left | KeyCode::Char('h') => {
                     if row.is_folder && row.expanded {
-                        browse.expanded.remove(&row.path);
-                    } else if let Some(parent) =
-                        (0..sel).rev().find(|&i| rows[i].depth < row.depth)
+                        browse.set_expanded(&row.path, false);
+                    } else if let Some(parent) = (0..sel)
+                        .rev()
+                        .find(|&i| browse.rows()[i].depth < row.depth)
                     {
                         browse.selected_row = parent;
                     }
                 }
                 KeyCode::Enter => {
                     // Folder toggle (files handled above).
-                    if row.expanded {
-                        browse.expanded.remove(&row.path);
-                    } else {
-                        browse.expanded.insert(row.path.clone());
-                    }
+                    browse.set_expanded(&row.path, !row.expanded);
                 }
                 _ => {}
             }
-            // Re-clamp against the new flattened length.
-            let new_len = browse.rows().len();
-            browse.selected_row =
-                browse.selected_row.min(new_len.saturating_sub(1));
         }
 
         self.sync_browse_selection();

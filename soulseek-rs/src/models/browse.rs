@@ -267,7 +267,10 @@ pub struct BrowseState {
     pub username: String,
     pub status: BrowseStatus,
     pub tree: Vec<BrowseNode>,
-    pub expanded: HashSet<String>,
+    expanded: HashSet<String>,
+    /// The tree flattened for the current expansion, kept between frames:
+    /// a heavy sharer's tree runs to tens of thousands of rows.
+    rows: Vec<BrowseRow>,
     pub selected_row: usize,
     pub file_count: usize,
     pub folder_count: usize,
@@ -282,6 +285,7 @@ impl BrowseState {
             status: BrowseStatus::Loading,
             tree: Vec::new(),
             expanded: HashSet::new(),
+            rows: Vec::new(),
             selected_row: 0,
             file_count: 0,
             folder_count: 0,
@@ -310,12 +314,30 @@ impl BrowseState {
         self.file_count = built.file_count;
         self.folder_count = built.folder_count;
         self.selected_row = 0;
+        self.refresh();
     }
 
     /// The flattened visible rows for the current expansion state.
     #[must_use]
-    pub fn rows(&self) -> Vec<BrowseRow> {
-        flatten_browse(&self.tree, &self.expanded)
+    pub fn rows(&self) -> &[BrowseRow] {
+        &self.rows
+    }
+
+    /// Open or close the folder at `path`.
+    pub fn set_expanded(&mut self, path: &str, expanded: bool) {
+        if expanded {
+            self.expanded.insert(path.to_string());
+        } else {
+            self.expanded.remove(path);
+        }
+        self.refresh();
+    }
+
+    /// Re-flatten after the tree or the expansion changed under `rows`.
+    pub fn refresh(&mut self) {
+        self.rows = flatten_browse(&self.tree, &self.expanded);
+        self.selected_row =
+            self.selected_row.min(self.rows.len().saturating_sub(1));
     }
 }
 
@@ -577,6 +599,19 @@ mod tests {
         assert_eq!(tabs.active_tab().unwrap().status, BrowseStatus::Loading);
         // Now loading again, no further retry.
         assert_eq!(tabs.retry_active(), None);
+    }
+
+    #[test]
+    fn expanding_and_collapsing_refresh_the_rows_and_keep_the_selection() {
+        let mut state = BrowseState::loading("bob".to_string());
+        state.load(&[dir("music\\album", &[("a.mp3", 1), ("b.mp3", 2)])]);
+        assert_eq!(state.rows().len(), 2, "music open, album closed");
+        state.set_expanded("music\\album", true);
+        assert_eq!(state.rows().len(), 4);
+        state.selected_row = 3;
+        state.set_expanded("music\\album", false);
+        assert_eq!(state.rows().len(), 2);
+        assert_eq!(state.selected_row, 1, "pulled back onto the last row");
     }
 
     #[test]

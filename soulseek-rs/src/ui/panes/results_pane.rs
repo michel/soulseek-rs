@@ -3,7 +3,7 @@ use crate::models::FileDisplayData;
 use crate::ui::{
     BYTES_PER_MB, HIGHLIGHT_SYMBOL, body_style, dimmed_style, format_bytes,
     header_style, info_style, page_of, pane_block, pane_title,
-    row_highlight_style, success_style, warning_style,
+    row_highlight_style, success_style, visible_range, warning_style,
 };
 use ratatui::{
     Frame,
@@ -11,7 +11,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Cell, HighlightSpacing, Paragraph, Row, Table, TableState},
 };
-use std::{collections::HashSet, ops::Range};
+use std::collections::HashSet;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -83,26 +83,6 @@ fn row_is_selected(
         None => display_idx,
     };
     selected_indices.contains(&original)
-}
-
-/// The page a `height`-tall table shows, by ratatui's rule (its
-/// `visible_rows` is private): the offset, moved only as far as keeps the
-/// selection in view. A selection past the end counts as the last row.
-fn visible_range(
-    offset: usize,
-    selected: Option<usize>,
-    len: usize,
-    height: usize,
-) -> Range<usize> {
-    let height = height.max(1);
-    let last = len.saturating_sub(1);
-    let start = match selected.map(|selected| selected.min(last)) {
-        Some(selected) => {
-            offset.clamp((selected + 1).saturating_sub(height), selected)
-        }
-        None => offset.min(last),
-    };
-    start..(start + height).min(len)
 }
 
 pub fn render_results_pane(
@@ -250,9 +230,7 @@ pub fn render_results_pane(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ResultsPaneParams, render_results_pane, row_is_selected, visible_range,
-    };
+    use super::{ResultsPaneParams, render_results_pane, row_is_selected};
     use crate::models::FileDisplayData;
     use ratatui::{Terminal, backend::TestBackend, widgets::TableState};
     use std::collections::HashSet;
@@ -369,15 +347,6 @@ mod tests {
         let screen = render_rows(&items, 0);
         assert!(screen.contains("abcdefghijk"), "{screen}");
         assert!(!screen.contains("…"), "{screen}");
-    }
-
-    #[test]
-    fn the_page_follows_the_selection_and_is_never_longer_than_the_pane() {
-        assert_eq!(visible_range(500, Some(505), 10_000, 10), 500..510);
-        assert_eq!(visible_range(0, Some(9_999), 10_000, 10), 9_990..10_000);
-        assert_eq!(visible_range(500, Some(499), 10_000, 10), 499..509);
-        assert_eq!(visible_range(9_995, None, 10_000, 10), 9_995..10_000);
-        assert_eq!(visible_range(0, Some(9), 3, 2), 1..3);
     }
 
     #[test]
