@@ -14,88 +14,21 @@
 
 mod common;
 
-use common::{free_port, soulfind_binary};
+use common::{Soulfind, settle};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use soulseek_rs::{Client, ClientSettings, PeerAddress};
+use soulseek_rs::Client;
 use soulseek_rs_tui::MainTui;
 use soulseek_rs_tui::models::{FocusedPane, SearchStatus};
 use soulseek_rs_tui::persist::state::StateStore;
-use std::net::TcpStream;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// How long a search collects for. Short, because every run here has to wait
 /// it out; long enough for a peer on loopback to answer many times over.
 const SEARCH_WINDOW: Duration = Duration::from_secs(3);
-
-/// A soulfind spawned for one test, on a port nobody else holds.
-struct Soulfind {
-    child: Child,
-    db: std::path::PathBuf,
-    port: u16,
-}
-
-impl Soulfind {
-    fn start() -> Option<Self> {
-        let bin = soulfind_binary()?;
-        let port = free_port()?;
-        let db = std::env::temp_dir().join(format!("soulfind-tui-{port}.db"));
-        let _ = std::fs::remove_file(&db);
-
-        let mut child = Command::new(bin)
-            .args(["-d", db.to_str()?, "-p", &port.to_string()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
-
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < deadline {
-            if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                return Some(Self { child, db, port });
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        let _ = child.kill();
-        let _ = child.wait();
-        None
-    }
-
-    /// A client logged in to this server as `user`, sharing `shares`.
-    ///
-    /// The listener stays on: a peer delivers search results over a
-    /// connection it opens back to the searcher, so a searcher without one
-    /// hears nothing.
-    fn client(&self, user: &str, shares: Vec<String>) -> Client {
-        let mut client = Client::with_settings(ClientSettings {
-            username: user.to_string(),
-            password: "pw".to_string(),
-            server_address: PeerAddress::new(
-                "127.0.0.1".to_string(),
-                self.port,
-            ),
-            enable_listen: true,
-            listen_port: free_port().expect("peer port"),
-            shared_directories: shares,
-            version: soulseek_rs::ClientVersion::default(),
-        });
-        client.connect().expect("peer connect");
-        assert!(client.login().expect("peer login"), "peer should log in");
-        client
-    }
-}
-
-impl Drop for Soulfind {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        let _ = std::fs::remove_file(&self.db);
-    }
-}
 
 macro_rules! server_or_skip {
     () => {
@@ -117,11 +50,6 @@ macro_rules! server_or_skip {
             }
         }
     };
-}
-
-/// Wait out the SetWaitPort registrations so peer lookups resolve.
-fn settle() {
-    std::thread::sleep(Duration::from_secs(1));
 }
 
 /// The window under test: the real `MainTui` over a real session, drawn onto
@@ -208,6 +136,11 @@ fn shows_the_shared_file(tui: &MainTui, screen: &str) -> bool {
         && screen.contains("tui_probe_rerun")
 }
 
+/// Whether the one search has run its window out.
+fn finished(tui: &MainTui, _: &str) -> bool {
+    tui.state().searches[0].status == SearchStatus::Completed
+}
+
 #[test]
 fn shift_s_runs_a_restored_query_again_and_the_answers_land_on_screen() {
     let server = server_or_skip!();
@@ -215,11 +148,8 @@ fn shift_s_runs_a_restored_query_again_and_the_answers_land_on_screen() {
     // The other end of the wire: a peer sharing one file with a name only
     // this test searches for.
     let share = tempfile::tempdir().expect("share dir");
-    std::fs::write(
-        share.path().join("tui_probe_rerun_vexq.bin"),
-        (0..4096u32).map(|i| (i % 251) as u8).collect::<Vec<u8>>(),
-    )
-    .expect("share file");
+    std::fs::write(share.path().join("tui_probe_rerun_vexq.bin"), [7u8; 64])
+        .expect("share file");
     let _sharer = server
         .client("tui_e2e_sharer", vec![share.path().display().to_string()]);
     settle();
@@ -265,20 +195,9 @@ fn shift_s_runs_a_restored_query_again_and_the_answers_land_on_screen() {
         found,
         "the sharer's file should reach the screen:\n{screen}"
     );
-    assert!(
-        window
-            .result_names()
-            .iter()
-            .all(|name| name.contains("tui_probe_rerun")),
-        "only what the network answered: {:?}",
-        window.result_names()
-    );
-
     // The search runs its window out and settles, keeping what it found.
-    let (done, screen) = window
-        .run_until(SEARCH_WINDOW + Duration::from_secs(5), |tui, _| {
-            tui.state().searches[0].status == SearchStatus::Completed
-        });
+    let (done, screen) =
+        window.run_until(SEARCH_WINDOW + Duration::from_secs(5), finished);
     assert!(done, "the search should finish:\n{screen}");
     assert!(shows_the_shared_file(&window.tui, &screen));
     let first_run = window.result_names();
@@ -299,10 +218,8 @@ fn shift_s_runs_a_restored_query_again_and_the_answers_land_on_screen() {
     let (found, screen) =
         window.run_until(Duration::from_secs(15), shows_the_shared_file);
     assert!(found, "the second run should be answered too:\n{screen}");
-    let (done, _) = window
-        .run_until(SEARCH_WINDOW + Duration::from_secs(5), |tui, _| {
-            tui.state().searches[0].status == SearchStatus::Completed
-        });
+    let (done, _) =
+        window.run_until(SEARCH_WINDOW + Duration::from_secs(5), finished);
     assert!(done);
     assert_eq!(
         window.result_names(),

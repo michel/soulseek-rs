@@ -111,8 +111,7 @@ jobs:
         run: cargo test -p soulseek-rs --test cli_e2e -- --nocapture
 
       # The window over a real session: keys in, a screen out, a peer on the
-      # other end. The unit tests drive it against a stand-in session and the
-      # CLI suite never opens it, so this is the only place the two meet.
+      # other end. Nothing else opens the TUI against a server.
       - name: Run TUI e2e tests (required against soulfind)
         env:
           SOULSEEK_E2E_REQUIRED: "1"

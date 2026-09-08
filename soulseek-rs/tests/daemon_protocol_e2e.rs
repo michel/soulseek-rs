@@ -13,7 +13,7 @@
 
 mod common;
 
-use common::{CLI_ENV_VARS, free_port, soulfind_binary};
+use common::{CLI_ENV_VARS, Soulfind, free_port};
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -430,66 +430,6 @@ fn discover_serves_a_contract_whose_parameters_match_what_is_accepted() {
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
-
-struct Soulfind {
-    child: Child,
-    db: PathBuf,
-    port: u16,
-}
-
-impl Soulfind {
-    fn start() -> Option<Self> {
-        let port = free_port()?;
-        let db = std::env::temp_dir().join(format!("soulfind-proto-{port}.db"));
-        let _ = std::fs::remove_file(&db);
-        let child = Self::spawn(port, &db)?;
-        Some(Self { child, db, port })
-    }
-
-    fn spawn(port: u16, db: &Path) -> Option<Child> {
-        let bin = soulfind_binary()?;
-
-        let mut child = Command::new(bin)
-            .args(["-d", db.to_str()?, "-p", &port.to_string()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
-
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < deadline {
-            if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                return Some(child);
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        let _ = child.kill();
-        let _ = child.wait();
-        None
-    }
-
-    fn address(&self) -> String {
-        format!("127.0.0.1:{}", self.port)
-    }
-
-    fn stop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-
-    fn restart(&mut self) -> Option<()> {
-        self.stop();
-        self.child = Self::spawn(self.port, &self.db)?;
-        Some(())
-    }
-}
-
-impl Drop for Soulfind {
-    fn drop(&mut self) {
-        self.stop();
-        let _ = std::fs::remove_file(&self.db);
-    }
-}
 
 fn wait_until(timeout: Duration, mut f: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + timeout;
