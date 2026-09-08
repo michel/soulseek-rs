@@ -47,6 +47,8 @@ const ROOM_KEYS: readonly (readonly [string, string])[] = [
   ['x', 'leave the active room'],
   ['l', 'back to the room list'],
   ['↑ ↓', 'select a member'],
+  ['/', 'search the chat log; in the inbox, the conversation'],
+  ['u', 'filter the member list'],
   ['b', "browse the member's files"],
   ['m', 'message the member'],
 ]

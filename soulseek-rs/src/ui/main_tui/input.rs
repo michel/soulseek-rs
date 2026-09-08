@@ -190,6 +190,34 @@ impl MainTui {
             return;
         }
 
+        // Typing a filter captures the keys that edit it; the rest still
+        // move around.
+        if self.state.chat_filtering {
+            match key.code {
+                KeyCode::Esc => {
+                    self.state.chat_filtering = false;
+                    self.state.chat_filter.clear();
+                    self.state.chat_view.to_newest();
+                    return;
+                }
+                KeyCode::Enter => {
+                    self.state.chat_filtering = false;
+                    return;
+                }
+                KeyCode::Char(c) => {
+                    self.state.chat_filter.push(c);
+                    self.state.chat_view.to_newest();
+                    return;
+                }
+                KeyCode::Backspace => {
+                    self.state.chat_filter.pop();
+                    self.state.chat_view.to_newest();
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         // Paging keys move through the conversation's history.
         if scroll_log(&mut self.state.chat_view, key) {
             return;
@@ -199,9 +227,15 @@ impl MainTui {
         }
 
         match key.code {
+            // Esc peels back one level: a filter first, then the popup.
+            KeyCode::Esc if !self.state.chat_filter.is_empty() => {
+                self.state.chat_filter.clear();
+                self.state.chat_view.to_newest();
+            }
             KeyCode::Char('i' | 'q') | KeyCode::Esc => {
                 self.state.show_messages = false;
             }
+            KeyCode::Char('/') => self.state.chat_filtering = true,
             // Move through the conversation list on the right.
             KeyCode::Tab | KeyCode::Down | KeyCode::Char('j') => {
                 self.state.cycle_chat_peer(true);

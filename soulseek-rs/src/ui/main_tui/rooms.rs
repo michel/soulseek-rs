@@ -1,6 +1,6 @@
 use super::MainTui;
 use super::input::{jumped, list_jump, scroll_log};
-use crate::models::RoomsView;
+use crate::models::{ChatFilter, RoomsView};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl MainTui {
@@ -28,6 +28,14 @@ impl MainTui {
             && self.state.rooms.list_is_filtering
         {
             self.handle_room_filter_input(key);
+            return;
+        }
+        // So does typing a filter over the log or the member list; the
+        // other keys still move around.
+        if self.state.rooms.view == RoomsView::Chat
+            && self.state.rooms.filtering.is_some()
+            && self.handle_chat_filter_input(key)
+        {
             return;
         }
 
@@ -113,10 +121,23 @@ impl MainTui {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             return;
         }
+        let filtered = !self.state.rooms.log_filter.is_empty()
+            || !self.state.rooms.user_filter.is_empty();
         match key.code {
             KeyCode::Char('q') => self.state.show_rooms = false,
+            // Esc peels back one level: the filters first, then the list.
+            KeyCode::Esc if filtered => {
+                self.state.rooms.set_log_filter(String::new());
+                self.state.rooms.set_user_filter(String::new());
+            }
             KeyCode::Esc | KeyCode::Char('l') => {
                 self.state.rooms.view = RoomsView::List;
+            }
+            KeyCode::Char('/') => {
+                self.state.rooms.filtering = Some(ChatFilter::Log);
+            }
+            KeyCode::Char('u') => {
+                self.state.rooms.filtering = Some(ChatFilter::Users);
             }
             KeyCode::Tab => self.state.rooms.next_tab(),
             KeyCode::BackTab => self.state.rooms.prev_tab(),
@@ -135,6 +156,42 @@ impl MainTui {
             }
             _ => {}
         }
+    }
+
+    /// The keys that edit whichever filter is being typed, the log's or the
+    /// member list's. Says whether `key` was one of them.
+    fn handle_chat_filter_input(&mut self, key: KeyEvent) -> bool {
+        let rooms = &mut self.state.rooms;
+        let over_log = rooms.filtering == Some(ChatFilter::Log);
+        let current = if over_log {
+            rooms.log_filter.clone()
+        } else {
+            rooms.user_filter.clone()
+        };
+        let next = match key.code {
+            KeyCode::Esc => String::new(),
+            KeyCode::Enter => current,
+            KeyCode::Char(c) => {
+                let mut next = current;
+                next.push(c);
+                next
+            }
+            KeyCode::Backspace => {
+                let mut next = current;
+                next.pop();
+                next
+            }
+            _ => return false,
+        };
+        if matches!(key.code, KeyCode::Esc | KeyCode::Enter) {
+            rooms.filtering = None;
+        }
+        if over_log {
+            rooms.set_log_filter(next);
+        } else {
+            rooms.set_user_filter(next);
+        }
+        true
     }
 
     /// Browse the shares of the member highlighted in the active room. Closes

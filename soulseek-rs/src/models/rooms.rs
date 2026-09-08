@@ -79,8 +79,22 @@ pub struct RoomsState {
     pub view: RoomsView,
     /// Whether the compose input for the active room is capturing keys.
     pub composing: bool,
-    /// Selected index into the active room's member list (for browse/PM).
+    /// Selected index into the active room's member list (for browse/PM),
+    /// as narrowed by `user_filter`.
     pub user_selected: usize,
+    /// Narrows the active room's log to lines mentioning it.
+    pub log_filter: String,
+    /// Narrows the active room's member list to names containing it.
+    pub user_filter: String,
+    /// Which of the two, if either, typing goes to.
+    pub filtering: Option<ChatFilter>,
+}
+
+/// A room's two filterable lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatFilter {
+    Log,
+    Users,
 }
 
 impl Default for RoomsState {
@@ -102,6 +116,31 @@ impl RoomsState {
             view: RoomsView::List,
             composing: false,
             user_selected: 0,
+            log_filter: String::new(),
+            user_filter: String::new(),
+            filtering: None,
+        }
+    }
+
+    /// The active room's members the filter lets through.
+    #[must_use]
+    pub fn visible_users(&self) -> Vec<&str> {
+        self.active_room().map_or_else(Vec::new, |room| {
+            matching_users(&room.users, &self.user_filter)
+        })
+    }
+
+    /// Narrow the member list, starting over from its top.
+    pub fn set_user_filter(&mut self, filter: String) {
+        self.user_filter = filter;
+        self.user_selected = 0;
+    }
+
+    /// Narrow the log, back at its newest matching line.
+    pub fn set_log_filter(&mut self, filter: String) {
+        self.log_filter = filter;
+        if let Some(view) = self.active_view_mut() {
+            view.to_newest();
         }
     }
 
@@ -161,8 +200,9 @@ impl RoomsState {
     /// The username highlighted in the active room's member list, if any.
     #[must_use]
     pub fn selected_user(&self) -> Option<String> {
-        self.active_room()
-            .and_then(|r| r.users.get(self.user_selected).cloned())
+        self.visible_users()
+            .get(self.user_selected)
+            .map(|user| (*user).to_string())
     }
 
     /// Where the active room's log is being read, to move it.
@@ -175,11 +215,9 @@ impl RoomsState {
     }
 
     pub fn select_user_down(&mut self) {
-        if let Some(room) = self.active_room()
-            && !room.users.is_empty()
-        {
-            self.user_selected =
-                (self.user_selected + 1).min(room.users.len() - 1);
+        let len = self.visible_users().len();
+        if len > 0 {
+            self.user_selected = (self.user_selected + 1).min(len - 1);
         }
     }
 
@@ -307,7 +345,7 @@ impl RoomsState {
 
     /// Keep `user_selected` within the active room's member list.
     fn clamp_user_selected(&mut self) {
-        let len = self.active_room().map_or(0, |r| r.users.len());
+        let len = self.visible_users().len();
         self.user_selected = self.user_selected.min(len.saturating_sub(1));
     }
 
@@ -320,6 +358,25 @@ impl RoomsState {
             self.open.len() - 1
         }
     }
+}
+
+/// Whether `text` contains `filter`, ignoring case; an empty filter matches.
+#[must_use]
+pub fn contains_filter(text: &str, filter: &str) -> bool {
+    filter.is_empty() || text.to_lowercase().contains(&filter.to_lowercase())
+}
+
+/// The names in `users` that contain `filter`, in their own order.
+#[must_use]
+pub fn matching_users<'a>(users: &'a [String], filter: &str) -> Vec<&'a str> {
+    let needle = filter.to_lowercase();
+    users
+        .iter()
+        .filter(|user| {
+            needle.is_empty() || user.to_lowercase().contains(&needle)
+        })
+        .map(String::as_str)
+        .collect()
 }
 
 #[cfg(test)]

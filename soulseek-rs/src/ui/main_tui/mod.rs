@@ -265,7 +265,9 @@ pub fn launch_main_tui(
 mod tests {
     use super::*;
     use crate::daemon::proto::ChatMessageDto;
-    use crate::models::{FocusedPane, MessageDirection, SearchStatus};
+    use crate::models::{
+        FocusedPane, MessageDirection, RoomsView, SearchStatus,
+    };
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     /// A stand-in for a daemon: it already holds a conversation, a transfer
@@ -1745,6 +1747,68 @@ mod tests {
         assert!(tui.state.show_browse);
         press(&mut tui, KeyCode::Esc);
         assert!(!tui.state.show_browse, "then hides the popup");
+    }
+
+    #[test]
+    fn slash_and_u_filter_a_rooms_log_and_its_members() {
+        let mut tui = attach(Arc::new(TalkativeSession::default()));
+        in_a_room(&mut tui, 30);
+        press(&mut tui, KeyCode::Char('u'));
+        for c in "user2".chars() {
+            press(&mut tui, KeyCode::Char(c));
+        }
+        press(&mut tui, KeyCode::Enter);
+        press(&mut tui, KeyCode::Char('j'));
+        assert_eq!(
+            tui.state.rooms.selected_user().as_deref(),
+            Some("user21"),
+            "j moves within the matching members"
+        );
+        let screen = screen_of(&mut tui);
+        assert!(screen.contains("Users 10/30"), "{screen}");
+
+        press(&mut tui, KeyCode::Char('/'));
+        for c in "line 01".chars() {
+            press(&mut tui, KeyCode::Char(c));
+        }
+        let screen = screen_of(&mut tui);
+        assert!(screen.contains("line 010"), "{screen}");
+        assert!(!screen.contains("line 029"), "{screen}");
+        assert!(screen.contains("filter: line 01_"), "{screen}");
+        press(&mut tui, KeyCode::Enter);
+        press(&mut tui, KeyCode::Esc);
+        assert!(tui.state.rooms.log_filter.is_empty());
+        assert!(tui.state.rooms.user_filter.is_empty());
+        assert_eq!(tui.state.rooms.view, RoomsView::Chat, "still in the room");
+        press(&mut tui, KeyCode::Esc);
+        assert_eq!(tui.state.rooms.view, RoomsView::List, "then the list");
+    }
+
+    #[test]
+    fn slash_filters_the_open_conversation() {
+        let mut tui = attach(Arc::new(TalkativeSession::default()));
+        for text in ["hello there", "see you", "hello again"] {
+            tui.state.messages.push(crate::models::ChatMessage {
+                direction: MessageDirection::Incoming,
+                peer: "bob".to_string(),
+                text: text.to_string(),
+                at: chrono::Local::now(),
+            });
+        }
+        tui.state.chat_peer = Some("bob".to_string());
+        tui.state.show_messages = true;
+        press(&mut tui, KeyCode::Char('/'));
+        for c in "hello".chars() {
+            press(&mut tui, KeyCode::Char(c));
+        }
+        let screen = screen_of(&mut tui);
+        assert!(screen.contains("hello again"), "{screen}");
+        assert!(!screen.contains("see you"), "{screen}");
+        press(&mut tui, KeyCode::Enter);
+        press(&mut tui, KeyCode::Esc);
+        assert!(tui.state.chat_filter.is_empty() && tui.state.show_messages);
+        press(&mut tui, KeyCode::Esc);
+        assert!(!tui.state.show_messages);
     }
 
     fn in_a_room(tui: &mut MainTui, messages: usize) {
