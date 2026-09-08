@@ -1,11 +1,9 @@
 // Reusable styles and colors for consistent UI appearance
 
-use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Padding};
 use soulseek_rs::DownloadStatus;
-use std::ops::Range;
 
 /// One column of breathing room on each side, so content never touches the
 /// border. Vertical rows stay unpadded — they are too scarce in a terminal.
@@ -140,6 +138,23 @@ pub fn plain_title(title: impl Into<String>, focused: bool) -> Line<'static> {
     ))
 }
 
+/// A popup's title: `idle` until its list is filtered, then what it is
+/// filtered by, a caret after it while that is still being typed, and how
+/// the filter ends.
+#[must_use]
+pub fn filter_title(
+    head: &str,
+    filter: &str,
+    typing: bool,
+    idle: &str,
+) -> String {
+    if !typing && filter.is_empty() {
+        return idle.to_string();
+    }
+    let caret = if typing { "_" } else { "" };
+    format!(" {head} · filter: {filter}{caret}  (Enter: keep, Esc: clear) ")
+}
+
 /// The standard bordered pane. Chain `.title(..)` for a legend.
 pub fn pane_block(focused: bool) -> Block<'static> {
     Block::default()
@@ -147,41 +162,6 @@ pub fn pane_block(focused: bool) -> Block<'static> {
         .border_style(border_style(focused))
         .border_type(BorderType::Rounded)
         .padding(PANE_PADDING)
-}
-
-/// Rows a list in `area` shows at once, less the `chrome` rows above it: a
-/// table header, a popup's tab bar and compose line. At least one, so a page
-/// key always moves, even before the first draw. Paging and drawing both
-/// count rows with this, so they agree on what a page is.
-#[must_use]
-pub fn page_of(area: Option<Rect>, chrome: u16) -> usize {
-    area.map_or(0, |area| {
-        usize::from(pane_block(false).inner(area).height.saturating_sub(chrome))
-    })
-    .max(1)
-}
-
-/// The page a `height`-tall table shows, by ratatui's rule (its
-/// `visible_rows` is private): the offset, moved only as far as keeps the
-/// selection in view. A selection past the end counts as the last row.
-/// Building rows for this page alone keeps a frame's cost flat however long
-/// the list is.
-#[must_use]
-pub fn visible_range(
-    offset: usize,
-    selected: Option<usize>,
-    len: usize,
-    height: usize,
-) -> Range<usize> {
-    let height = height.max(1);
-    let last = len.saturating_sub(1);
-    let start = match selected.map(|selected| selected.min(last)) {
-        Some(selected) => {
-            offset.clamp((selected + 1).saturating_sub(height), selected)
-        }
-        None => offset.min(last),
-    };
-    start..(start + height).min(len)
 }
 
 pub fn download_status_glyph(status: &DownloadStatus) -> (&'static str, Style) {
@@ -372,14 +352,5 @@ mod tests {
         assert_eq!(bar.spans[1].content.chars().count(), 5);
         assert_eq!(bar.spans[1].style.fg, Some(SIGNAL));
         assert_eq!(bar.spans[2].content.chars().count(), 15);
-    }
-
-    #[test]
-    fn the_page_follows_the_selection_and_is_never_longer_than_the_pane() {
-        assert_eq!(visible_range(500, Some(505), 10_000, 10), 500..510);
-        assert_eq!(visible_range(0, Some(9_999), 10_000, 10), 9_990..10_000);
-        assert_eq!(visible_range(500, Some(499), 10_000, 10), 499..509);
-        assert_eq!(visible_range(9_995, None, 10_000, 10), 9_995..10_000);
-        assert_eq!(visible_range(0, Some(9), 3, 2), 1..3);
     }
 }

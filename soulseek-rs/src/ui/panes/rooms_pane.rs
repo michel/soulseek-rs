@@ -3,9 +3,9 @@ use crate::models::{
     contains_filter, matching_users,
 };
 use crate::ui::{
-    HIGHLIGHT_SYMBOL, PANE_PADDING, accent_style, dimmed_style,
-    highlight_style, info_style, page_of, pane_block, plain_title,
-    primary_style, row_highlight_style, visible_range, wrap_chat_line,
+    HIGHLIGHT_SYMBOL, PANE_PADDING, accent_style, dimmed_style, filter_title,
+    highlight_style, info_style, page_window, pane_block, plain_title,
+    primary_style, render_page, row_highlight_style, wrap_chat_line,
 };
 use ratatui::{
     Frame,
@@ -64,12 +64,8 @@ fn render_list(
         Cell::from("room").style(dimmed_style()),
         Cell::from("users").style(dimmed_style()),
     ]);
-    let window = visible_range(
-        table_state.offset(),
-        Some(rooms.list_selected),
-        filtered.len(),
-        page_of(Some(area), 1),
-    );
+    table_state.select(Some(rooms.list_selected));
+    let window = page_window(table_state, filtered.len(), area, 1);
     let start = window.start;
     let table_rows: Vec<Row> = filtered[window]
         .iter()
@@ -100,26 +96,17 @@ fn render_list(
             .highlight_spacing(HighlightSpacing::Always)
             .block(block);
 
-    // The table holds one page, so the state it gets is shifted onto it.
-    let mut page_state = TableState::default().with_selected(Some(
-        rooms.list_selected.min(filtered.len() - 1) - start,
-    ));
-    frame.render_stateful_widget(table, area, &mut page_state);
-    *table_state.offset_mut() = start;
+    render_page(frame, table, area, table_state, start);
 }
 
 fn render_chat(frame: &mut Frame, area: Rect, rooms: &mut RoomsState) {
     let typing_log = rooms.filtering == Some(ChatFilter::Log);
-    let title = if typing_log || !rooms.log_filter.is_empty() {
-        format!(
-            " Chat rooms · filter: {}{}  (Enter: keep, Esc: clear) ",
-            rooms.log_filter,
-            if typing_log { "_" } else { "" }
-        )
-    } else {
-        " Chat rooms  (Tab: switch, /: find, u: find user, l: room list, x: leave, Esc: back) "
-            .to_string()
-    };
+    let title = filter_title(
+        "Chat rooms",
+        &rooms.log_filter,
+        typing_log,
+        " Chat rooms  (Tab: switch, /: find, u: find user, l: room list, x: leave, Esc: back) ",
+    );
     let block = pane_block(true).title(title);
     let inner = block.inner(area);
     frame.render_widget(block, area);

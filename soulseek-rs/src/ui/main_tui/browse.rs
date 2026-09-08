@@ -1,5 +1,5 @@
 use super::MainTui;
-use super::input::{jumped, list_jump};
+use super::input::{FilterEdit, edit_filter, jumped, list_jump};
 use crate::models::BrowseStatus;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::{thread, time::Duration};
@@ -27,7 +27,9 @@ impl MainTui {
             self.state.show_browse = false;
             return;
         }
-        let jump = list_jump(key, self.popup_page());
+        // The tab bar takes a row once more than one user is open.
+        let chrome = u16::from(self.state.browse.tabs.len() > 1);
+        let jump = list_jump(key, self.popup_page(chrome));
         // Control combinations are only ever jumps: ctrl-d pages, d downloads.
         if jump.is_none() && key.modifiers.contains(KeyModifiers::CONTROL) {
             return;
@@ -173,24 +175,12 @@ impl MainTui {
         let Some(browse) = self.state.browse.active_tab_mut() else {
             return false;
         };
-        match key.code {
-            KeyCode::Esc => {
-                browse.filtering = false;
-                browse.set_filter(String::new());
-            }
-            KeyCode::Enter => browse.filtering = false,
-            KeyCode::Char(c) => {
-                let mut filter = browse.filter().to_string();
-                filter.push(c);
-                browse.set_filter(filter);
-            }
-            KeyCode::Backspace => {
-                let mut filter = browse.filter().to_string();
-                filter.pop();
-                browse.set_filter(filter);
-            }
-            _ => return false,
-        }
+        let mut filter = browse.filter().to_string();
+        let Some(edit) = edit_filter(&mut filter, key) else {
+            return false;
+        };
+        browse.filtering = edit == FilterEdit::Changed;
+        browse.set_filter(filter);
         self.sync_browse_selection();
         true
     }

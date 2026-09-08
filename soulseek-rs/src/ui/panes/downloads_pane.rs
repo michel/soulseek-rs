@@ -4,8 +4,8 @@ use crate::ui::{
     GLYPH_ACTIVE, GLYPH_DONE, GLYPH_FAILED, GLYPH_QUEUED, HIGHLIGHT_SYMBOL,
     accent_style, body_style, dimmed_style, download_status_glyph, error_style,
     format_bytes, format_speed, header_style, inactive_style, info_style,
-    page_of, pane_block, pane_title, primary_style, row_highlight_style,
-    success_style, visible_range, warning_style,
+    page_window, pane_block, pane_title, primary_style, render_page,
+    row_highlight_style, success_style, warning_style,
 };
 use ratatui::{
     Frame,
@@ -83,15 +83,7 @@ pub fn render_downloads_pane(
     let name_width = column_width(area, &WIDTHS, NAME_COLUMN);
     // Downloads come first, uploads after; one page of the two together.
     let total = downloads.len() + uploads.len();
-    if let Some(selected) = table_state.selected_mut() {
-        *selected = (*selected).min(total - 1);
-    }
-    let window = visible_range(
-        table_state.offset(),
-        table_state.selected(),
-        total,
-        page_of(Some(area), 1),
-    );
+    let window = page_window(table_state, total, area, 1);
     let start = window.start;
     let split = downloads.len();
     let shown_downloads = &downloads[start.min(split)..window.end.min(split)];
@@ -229,9 +221,5 @@ pub fn render_downloads_pane(
             focused,
         )));
 
-    // The table holds one page, so the state it gets is shifted onto it.
-    let mut page_state = TableState::default()
-        .with_selected(table_state.selected().map(|selected| selected - start));
-    frame.render_stateful_widget(table, area, &mut page_state);
-    *table_state.offset_mut() = start;
+    render_page(frame, table, area, table_state, start);
 }

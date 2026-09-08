@@ -1,8 +1,8 @@
 use crate::models::{BrowseState, BrowseStatus, BrowseTabs};
 use crate::ui::{
-    HIGHLIGHT_SYMBOL, body_style, dimmed_style, error_style, format_bytes,
-    get_spinner_char, highlight_style, page_of, pane_block, primary_style,
-    row_highlight_style, visible_range, warning_style,
+    HIGHLIGHT_SYMBOL, body_style, dimmed_style, error_style, filter_title,
+    format_bytes, get_spinner_char, highlight_style, page_window, pane_block,
+    primary_style, render_page, row_highlight_style, warning_style,
 };
 use ratatui::{
     Frame,
@@ -62,22 +62,22 @@ fn render_browse_one(
     spinner_state: usize,
 ) {
     let title = match browse.status {
-        BrowseStatus::Loaded
-            if browse.filtering || !browse.filter().is_empty() =>
-        {
-            format!(
-                " Browse {} — {} files, {} folders · filter: {}{}  (Enter: keep, Esc: clear) ",
-                browse.username,
-                browse.file_count,
-                browse.folder_count,
+        BrowseStatus::Loaded => {
+            let shown =
+                browse.rows().iter().filter(|row| !row.is_folder).count();
+            filter_title(
+                &format!(
+                    "Browse {} — {shown}/{} files",
+                    browse.username, browse.file_count
+                ),
                 browse.filter(),
-                if browse.filtering { "_" } else { "" }
+                browse.filtering,
+                &format!(
+                    " Browse {} — {} files, {} folders  (Enter/d: download, /: filter, Tab: user, w: close, Esc: hide) ",
+                    browse.username, browse.file_count, browse.folder_count
+                ),
             )
         }
-        BrowseStatus::Loaded => format!(
-            " Browse {} — {} files, {} folders  (Enter/d: download, /: filter, Tab: user, w: close, Esc: hide) ",
-            browse.username, browse.file_count, browse.folder_count
-        ),
         _ => format!(" Browse {} ", browse.username),
     };
     let block = pane_block(true).title(title);
@@ -128,12 +128,8 @@ fn render_browse_one(
         }
         BrowseStatus::Loaded => {
             let all = browse.rows();
-            let window = visible_range(
-                table_state.offset(),
-                Some(browse.selected_row),
-                all.len(),
-                page_of(Some(area), 0),
-            );
+            table_state.select(Some(browse.selected_row));
+            let window = page_window(table_state, all.len(), area, 0);
             let start = window.start;
             let rows: Vec<Row> = all[window]
                 .iter()
@@ -170,13 +166,7 @@ fn render_browse_one(
                     .highlight_spacing(HighlightSpacing::Always)
                     .block(block);
 
-            // The table holds one page, so the state it gets is shifted
-            // onto it.
-            let mut page_state = TableState::default().with_selected(Some(
-                browse.selected_row.min(all.len().saturating_sub(1)) - start,
-            ));
-            frame.render_stateful_widget(table, area, &mut page_state);
-            *table_state.offset_mut() = start;
+            render_page(frame, table, area, table_state, start);
         }
     }
 }
