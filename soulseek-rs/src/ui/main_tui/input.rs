@@ -1,6 +1,6 @@
 use super::MainTui;
 use crate::models::{CommandBarMode, FocusedPane, LogView};
-use crate::ui::pane_block;
+use crate::ui::page_of;
 use crate::ui::panes::{
     InfoSubject, name_end_offset, query_end_offset, selected_transfer,
     transfer_name_end_offset, upload_display_name,
@@ -8,7 +8,7 @@ use crate::ui::panes::{
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Position;
 use ratatui::widgets::TableState;
 
 const NAME_SCROLL_STEP: isize = 8;
@@ -573,16 +573,6 @@ impl MainTui {
             self.state.focused_pane = pane;
         }
     }
-}
-
-/// Rows a list in `area` shows at once, less the `chrome` rows above it: a
-/// table header, a popup's tab bar and compose line. At least one, so a page
-/// key always moves, even before the first draw.
-fn page_of(area: Option<Rect>, chrome: u16) -> usize {
-    area.map_or(0, |area| {
-        usize::from(pane_block(false).inner(area).height.saturating_sub(chrome))
-    })
-    .max(1)
 }
 
 /// A move over a whole list at once: to either end, or by a number of rows

@@ -2,8 +2,8 @@ use super::name_scroll::{column_width, end_offset, scroll_text};
 use crate::models::FileDisplayData;
 use crate::ui::{
     BYTES_PER_MB, HIGHLIGHT_SYMBOL, body_style, dimmed_style, format_bytes,
-    header_style, info_style, pane_block, pane_title, row_highlight_style,
-    success_style, warning_style,
+    header_style, info_style, page_of, pane_block, pane_title,
+    row_highlight_style, success_style, warning_style,
 };
 use ratatui::{
     Frame,
@@ -11,7 +11,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Cell, HighlightSpacing, Paragraph, Row, Table, TableState},
 };
-use std::collections::HashSet;
+use std::{collections::HashSet, ops::Range};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -85,6 +85,26 @@ fn row_is_selected(
     selected_indices.contains(&original)
 }
 
+/// The page a `height`-tall table shows, by ratatui's rule (its
+/// `visible_rows` is private): the offset, moved only as far as keeps the
+/// selection in view. A selection past the end counts as the last row.
+fn visible_range(
+    offset: usize,
+    selected: Option<usize>,
+    len: usize,
+    height: usize,
+) -> Range<usize> {
+    let height = height.max(1);
+    let last = len.saturating_sub(1);
+    let start = match selected.map(|selected| selected.min(last)) {
+        Some(selected) => {
+            offset.clamp((selected + 1).saturating_sub(height), selected)
+        }
+        None => offset.min(last),
+    };
+    start..(start + height).min(len)
+}
+
 pub fn render_results_pane(
     frame: &mut Frame,
     area: Rect,
@@ -149,9 +169,20 @@ pub fn render_results_pane(
 
     let name_width = column_width(area, &WIDTHS, NAME_COLUMN);
     let folder_width = column_width(area, &WIDTHS, FOLDER_COLUMN);
-    let rows: Vec<Row> = items
-        .iter()
-        .enumerate()
+    // A selection past the end, after a filter shrank the list, lands on the
+    // last row, as the table would have put it.
+    if let Some(selected) = table_state.selected_mut() {
+        *selected = (*selected).min(items.len() - 1);
+    }
+    let window = visible_range(
+        table_state.offset(),
+        table_state.selected(),
+        items.len(),
+        page_of(Some(area), 1),
+    );
+    let start = window.start;
+    let rows: Vec<Row> = (start..)
+        .zip(&items[window])
         .map(|(idx, file)| {
             let (folder, name) = split_path(&file.filename);
             let checkbox =
@@ -210,12 +241,18 @@ pub fn render_results_pane(
         .highlight_spacing(HighlightSpacing::Always)
         .block(pane_block(focused).title(pane_title("2", &title, focused)));
 
-    frame.render_stateful_widget(table, area, table_state);
+    // The table holds one page, so the state it gets is shifted onto it.
+    let mut page_state = TableState::default()
+        .with_selected(table_state.selected().map(|selected| selected - start));
+    frame.render_stateful_widget(table, area, &mut page_state);
+    *table_state.offset_mut() = start;
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ResultsPaneParams, render_results_pane, row_is_selected};
+    use super::{
+        ResultsPaneParams, render_results_pane, row_is_selected, visible_range,
+    };
     use crate::models::FileDisplayData;
     use ratatui::{Terminal, backend::TestBackend, widgets::TableState};
     use std::collections::HashSet;
@@ -223,8 +260,16 @@ mod tests {
     fn render_rows(items: &[FileDisplayData], name_offset: usize) -> String {
         let mut state = TableState::default();
         state.select(Some(0));
+        render_with(items, &mut state, name_offset)
+    }
+
+    fn render_with(
+        items: &[FileDisplayData],
+        state: &mut TableState,
+        name_offset: usize,
+    ) -> String {
         // Wide enough for the name column to hold 11 cells, with 7 for the
-        // folder beside it.
+        // folder beside it, and tall enough for three rows.
         let mut terminal =
             Terminal::new(TestBackend::new(88, 6)).expect("backend");
         terminal
@@ -234,7 +279,7 @@ mod tests {
                     frame.area(),
                     ResultsPaneParams {
                         items,
-                        table_state: &mut state,
+                        table_state: state,
                         selected_indices: &HashSet::new(),
                         original_indices: None,
                         filter_query: "",
@@ -324,6 +369,39 @@ mod tests {
         let screen = render_rows(&items, 0);
         assert!(screen.contains("abcdefghijk"), "{screen}");
         assert!(!screen.contains("…"), "{screen}");
+    }
+
+    #[test]
+    fn the_page_follows_the_selection_and_is_never_longer_than_the_pane() {
+        assert_eq!(visible_range(500, Some(505), 10_000, 10), 500..510);
+        assert_eq!(visible_range(0, Some(9_999), 10_000, 10), 9_990..10_000);
+        assert_eq!(visible_range(500, Some(499), 10_000, 10), 499..509);
+        assert_eq!(visible_range(9_995, None, 10_000, 10), 9_995..10_000);
+        assert_eq!(visible_range(0, Some(9), 3, 2), 1..3);
+    }
+
+    #[test]
+    fn a_far_selection_is_drawn_from_its_own_page() {
+        let items: Vec<FileDisplayData> =
+            (0..10_000).map(|i| file(&format!("{i}.mp3"))).collect();
+        let mut state = TableState::default();
+        state.select(Some(9_999));
+        let screen = render_with(&items, &mut state, 0);
+        assert!(screen.contains("›[ ] 9999.mp3"), "{screen}");
+        assert!(screen.contains(" [ ] 9997.mp3"), "{screen}");
+        assert!(!screen.contains(" [ ] 0.mp3"), "{screen}");
+        assert_eq!(state.offset(), 9_997, "the next frame starts here");
+        assert_eq!(state.selected(), Some(9_999));
+    }
+
+    #[test]
+    fn a_selection_off_the_end_lands_on_the_last_row() {
+        let items = [file("a.mp3"), file("b.mp3")];
+        let mut state = TableState::default();
+        state.select(Some(7));
+        let screen = render_with(&items, &mut state, 0);
+        assert!(screen.contains("›[ ] b.mp3"), "{screen}");
+        assert_eq!(state.selected(), Some(1));
     }
 
     #[test]
