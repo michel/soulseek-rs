@@ -17,6 +17,7 @@ import { LINKS } from '@/lib/links'
 
 const GLOBAL_KEYS: readonly (readonly [string, string])[] = [
   ['s', 'search the network'],
+  ['S', 'run the highlighted search again'],
   ['Space', 'select a result'],
   ['Enter', 'download / send'],
   ['b', "browse the owner's files"],
