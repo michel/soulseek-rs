@@ -1811,6 +1811,14 @@ mod tests {
     }
 
     #[test]
+    fn the_searches_pane_lists_its_clear_all_key() {
+        let mut tui = furnished_tui();
+        tui.state.focused_pane = FocusedPane::Searches;
+        let screen = screen_sized(&mut tui, 300, 40);
+        assert!(screen.contains("[C → clear all]"), "{screen}");
+    }
+
+    #[test]
     fn page_keys_work_in_the_transfers_and_searches_lists_too() {
         let mut tui = furnished_tui();
         for i in 0..30 {

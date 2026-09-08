@@ -594,6 +594,7 @@ impl MainTui {
                     ("s", "search"),
                     ("Enter", "results"),
                     ("d", "remove"),
+                    ("C", "clear all"),
                     ("m", "message"),
                     ("i", "inbox"),
                     ("c", "chat"),
