@@ -1,4 +1,4 @@
-use crate::models::LogView;
+use crate::models::{LogView, WrappedLog};
 use chrono::{DateTime, Local};
 use soulseek_rs::types::{RoomEvent, RoomInfo};
 
@@ -41,6 +41,8 @@ pub struct OpenRoom {
     pub input: String,
     /// Where the log is being read.
     pub view: LogView,
+    /// The log wrapped for drawing.
+    pub wrapped: WrappedLog,
 }
 
 impl OpenRoom {

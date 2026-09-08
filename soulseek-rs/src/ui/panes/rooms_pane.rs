@@ -1,8 +1,10 @@
-use crate::models::{LogView, RoomsState, RoomsView};
+use crate::models::{
+    LogView, OpenRoom, RoomLine, RoomsState, RoomsView, WrappedLog,
+};
 use crate::ui::{
     HIGHLIGHT_SYMBOL, PANE_PADDING, accent_style, dimmed_style,
-    highlight_style, info_style, pane_block, plain_title, primary_style,
-    row_highlight_style, wrap_chat_line,
+    highlight_style, info_style, page_of, pane_block, plain_title,
+    primary_style, row_highlight_style, visible_range, wrap_chat_line,
 };
 use ratatui::{
     Frame,
@@ -61,7 +63,14 @@ fn render_list(
         Cell::from("room").style(dimmed_style()),
         Cell::from("users").style(dimmed_style()),
     ]);
-    let table_rows: Vec<Row> = filtered
+    let window = visible_range(
+        table_state.offset(),
+        Some(rooms.list_selected),
+        filtered.len(),
+        page_of(Some(area), 1),
+    );
+    let start = window.start;
+    let table_rows: Vec<Row> = filtered[window]
         .iter()
         .map(|r| {
             let open = rooms.open_index(&r.name).is_some();
@@ -90,8 +99,12 @@ fn render_list(
             .highlight_spacing(HighlightSpacing::Always)
             .block(block);
 
-    table_state.select(Some(rooms.list_selected.min(filtered.len() - 1)));
-    frame.render_stateful_widget(table, area, table_state);
+    // The table holds one page, so the state it gets is shifted onto it.
+    let mut page_state = TableState::default().with_selected(Some(
+        rooms.list_selected.min(filtered.len() - 1) - start,
+    ));
+    frame.render_stateful_widget(table, area, &mut page_state);
+    *table_state.offset_mut() = start;
 }
 
 fn render_chat(frame: &mut Frame, area: Rect, rooms: &mut RoomsState) {
@@ -131,8 +144,15 @@ fn render_chat(frame: &mut Frame, area: Rect, rooms: &mut RoomsState) {
         Layout::horizontal([Constraint::Fill(1), Constraint::Length(22)])
             .split(chunks[1]);
 
-    render_messages(frame, body[0], active.lines.as_slice(), &mut active.view);
-    render_users(frame, body[1], &active.users, *user_selected);
+    let OpenRoom {
+        lines,
+        view,
+        wrapped,
+        users,
+        ..
+    } = active;
+    render_messages(frame, body[0], lines, view, wrapped);
+    render_users(frame, body[1], users, *user_selected);
 
     // Compose line or hint.
     if *composing {
@@ -179,33 +199,26 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, rooms: &RoomsState) {
 fn render_messages(
     frame: &mut Frame,
     area: Rect,
-    lines: &[crate::models::RoomLine],
+    lines: &[RoomLine],
     view: &mut LogView,
+    wrapped: &mut WrappedLog,
 ) {
-    // Wrap each message to the pane width, then show the rows the reader is
+    // Each message wrapped to the pane width, then the rows the reader is
     // at: the newest ones, unless they are holding a place in the history.
     let width = area.width as usize;
-    let rendered: Vec<Line> = lines
-        .iter()
-        .flat_map(|l| {
-            let time =
-                Span::styled(l.at.format("%H:%M ").to_string(), dimmed_style());
-            match &l.username {
-                Some(user) => wrap_chat_line(
-                    vec![
-                        time,
-                        Span::styled(format!("<{user}> "), info_style()),
-                    ],
-                    &l.text,
-                    primary_style(),
-                    width,
-                ),
-                None => {
-                    wrap_chat_line(vec![time], &l.text, dimmed_style(), width)
-                }
-            }
-        })
-        .collect();
+    let rendered = wrapped.rows(width, "", lines, |l| {
+        let time =
+            Span::styled(l.at.format("%H:%M ").to_string(), dimmed_style());
+        match &l.username {
+            Some(user) => wrap_chat_line(
+                vec![time, Span::styled(format!("<{user}> "), info_style())],
+                &l.text,
+                primary_style(),
+                width,
+            ),
+            None => wrap_chat_line(vec![time], &l.text, dimmed_style(), width),
+        }
+    });
     let window = view.window(rendered.len(), usize::from(area.height));
     frame.render_widget(Paragraph::new(rendered[window].to_vec()), area);
 }
