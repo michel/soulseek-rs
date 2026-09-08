@@ -5,7 +5,10 @@ use crate::models::{
 };
 use chrono::Local;
 use std::{
-    sync::{Arc, atomic::AtomicBool},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::Instant,
 };
@@ -210,23 +213,15 @@ impl MainTui {
         self.show_search(self.state.searches.len() - 1);
     }
 
-    /// Run the search at `index` again, in its place.
-    ///
-    /// This is what a restored list is for: last session's queries come back
-    /// with nothing under them, and typing one out again to see what the
-    /// network has now is the work the list was meant to save. The entry
-    /// keeps its row rather than moving to the end — the user is looking at
-    /// it — and a run still collecting is stopped first, or two threads would
-    /// be pouring into one result set.
+    /// Run the search at `index` again, in its row: a restored query comes
+    /// back with nothing under it, and this saves typing it out. A run still
+    /// collecting is stopped first, or two threads would fill one set.
     pub(super) fn rerun_search_at_index(&mut self, index: usize) {
         let Some(previous) = self.state.searches.get(index) else {
             return;
         };
-        previous
-            .cancel_flag
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-        let entry = self.launch_search(previous.query.clone());
-        self.state.searches[index] = entry;
+        previous.cancel_flag.store(true, Ordering::Relaxed);
+        self.state.searches[index] = self.launch_search(previous.query.clone());
         self.show_search(index);
     }
 
@@ -248,18 +243,12 @@ impl MainTui {
         let client = self.client.clone();
         let timeout = self.search_timeout;
 
+        // Results are polled in update_search_results, not returned here.
         thread::spawn(move || {
-            match client.search_with_cancel(
-                &query,
-                timeout,
-                Some(cancel_flag.clone()),
-            ) {
-                Ok(_results) => {
-                    // Results will be polled in update_search_results
-                }
-                Err(e) => {
-                    soulseek_rs::warn!("Search failed: {e}");
-                }
+            if let Err(e) =
+                client.search_with_cancel(&query, timeout, Some(cancel_flag))
+            {
+                soulseek_rs::warn!("Search failed: {e}");
             }
         });
 

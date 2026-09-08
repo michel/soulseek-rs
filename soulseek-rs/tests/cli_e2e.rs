@@ -11,8 +11,8 @@
 
 mod common;
 
-use common::{CLI_ENV_VARS, free_port, soulfind_binary};
-use soulseek_rs::{Client, ClientSettings, PeerAddress};
+use common::{CLI_ENV_VARS, free_port, login, settle, soulfind_binary};
+use soulseek_rs::Client;
 use std::io::Write;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
@@ -777,19 +777,7 @@ impl TestServer {
 
     /// An in-process client, used to stand up the other end of a test.
     fn client(&self, user: &str, shares: Vec<String>) -> Client {
-        let port = free_port().expect("peer port");
-        let mut client = Client::with_settings(ClientSettings {
-            username: user.to_string(),
-            password: "pw".to_string(),
-            server_address: PeerAddress::new(self.host.clone(), self.port),
-            enable_listen: true,
-            listen_port: port,
-            shared_directories: shares,
-            version: soulseek_rs::ClientVersion::default(),
-        });
-        client.connect().expect("peer connect");
-        assert!(client.login().expect("peer login"), "peer should log in");
-        client
+        login(&self.host, self.port, user, shares)
     }
 }
 
@@ -934,11 +922,6 @@ fn split_session_flags(args: &[&str]) -> (Vec<String>, Vec<String>) {
         }
     }
     (session, command)
-}
-
-/// Wait out the SetWaitPort registrations so peer lookups resolve.
-fn settle() {
-    std::thread::sleep(Duration::from_secs(1));
 }
 
 /// Like [`cli`], but keeping a config file so a command that reads or writes
