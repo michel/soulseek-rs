@@ -566,7 +566,8 @@ unread counter. `c` opens the chat-rooms popup: a `/`-filterable room list
 busiest first, `Enter` to join, several rooms open at once as tabs
 (`Tab`/`Shift-Tab` to switch, `x` to leave, `l` back to the list), and `↑`/`↓`
 through the member list with `b` to browse someone or `m` to message them.
-Unread counts appear on the tabs and on the `c chat (n)` shortcut.
+`/` searches the open room's log and `u` its member list; the inbox takes `/`
+too. Unread counts appear on the tabs and on the `c chat (n)` shortcut.
 
 `b` browses a user's shared files as a tree: `←`/`→` close and open a folder,
 `J`/`K` jump between folders, `H`/`L` close or open every folder, `/` filters

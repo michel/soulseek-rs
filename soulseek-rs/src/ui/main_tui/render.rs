@@ -96,6 +96,8 @@ const HELP_RIGHT: &[(&str, &[(&str, &str)])] = &[
             ("^u ^d", "half a page of them"),
             ("Home End / g G", "oldest / newest, or first / last row"),
             ("Tab / Shift-Tab", "next room, chat or user"),
+            ("/", "filter the messages, the room list or the tree"),
+            ("u", "filter a room's member list"),
         ],
     ),
     (
@@ -494,10 +496,21 @@ impl MainTui {
                     ]
                 }
             }
+            RoomsView::Chat if self.state.rooms.filtering.is_some() => {
+                vec![
+                    ("Type", "filter"),
+                    ("PgUp/PgDn", "scroll"),
+                    ("↑↓", "pick user"),
+                    ("Enter", "keep filter"),
+                    ("Esc", "clear filter"),
+                ]
+            }
             RoomsView::Chat => vec![
                 ("Enter", "say"),
                 ("PgUp/PgDn", "scroll"),
                 ("↑↓", "pick user"),
+                ("/", "find in chat"),
+                ("u", "find user"),
                 ("b", "browse user"),
                 ("m", "message user"),
                 ("Tab", "switch room"),
@@ -551,11 +564,19 @@ impl MainTui {
                     ("Enter", "send"),
                     ("Esc", "stop typing"),
                 ]
+            } else if self.state.chat_filtering {
+                vec![
+                    ("Type", "filter"),
+                    ("PgUp/PgDn", "scroll"),
+                    ("Enter", "keep filter"),
+                    ("Esc", "clear filter"),
+                ]
             } else {
                 vec![
                     ("Enter", "type"),
                     ("PgUp/PgDn", "scroll"),
                     ("↑↓/Tab", "switch chat"),
+                    ("/", "find"),
                     ("m", "new chat"),
                     ("i/Esc", "close"),
                 ]

@@ -10,5 +10,8 @@ pub use app_state::{
 };
 pub use browse::{BrowseState, BrowseStatus, BrowseTabs};
 pub use file_display_data::FileDisplayData;
-pub use rooms::{OpenRoom, RoomLine, RoomsState, RoomsView};
+pub use rooms::{
+    ChatFilter, OpenRoom, RoomLine, RoomsState, RoomsView, contains_filter,
+    matching_users,
+};
 pub use settings::{SettingsAction, SettingsMode, SettingsState};

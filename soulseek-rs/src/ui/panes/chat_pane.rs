@@ -1,6 +1,4 @@
-use crate::models::{
-    AppState, ChatMessage, LogView, MessageDirection, WrappedLog,
-};
+use crate::models::{AppState, MessageDirection, contains_filter};
 use crate::ui::{
     accent_style, border_style, dimmed_style, highlight_style, info_style,
     primary_style, wrap_chat_line,
@@ -24,10 +22,19 @@ pub fn render_chat_pane(
 ) {
     let peer = state.active_chat_peer().map(str::to_string);
     let peer = peer.as_deref();
-    let title = peer.map_or_else(
-        || " Messages  (m: compose, i/Esc: close) ".to_string(),
-        |peer| format!(" {peer}  (↑↓/Tab: switch, m: to…, i/Esc: close) "),
-    );
+    let title = match peer {
+        None => " Messages  (m: compose, i/Esc: close) ".to_string(),
+        Some(peer) if state.chat_filtering || !state.chat_filter.is_empty() => {
+            format!(
+                " {peer} · filter: {}{}  (Enter: keep, Esc: clear) ",
+                state.chat_filter,
+                if state.chat_filtering { "_" } else { "" }
+            )
+        }
+        Some(peer) => {
+            format!(" {peer}  (↑↓/Tab: switch, /: find, m: to…, i/Esc: close) ")
+        }
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(border_style(true))
@@ -54,15 +61,7 @@ pub fn render_chat_pane(
         return;
     };
 
-    render_messages(
-        frame,
-        body[0],
-        &state.messages,
-        &mut state.chat_view,
-        &mut state.chat_wrapped,
-        peer,
-        own_username,
-    );
+    render_messages(frame, body[0], state, peer, own_username);
     render_compose(frame, chunks[1], state);
 }
 
@@ -105,15 +104,21 @@ fn render_peers(
 fn render_messages(
     frame: &mut Frame,
     area: Rect,
-    messages: &[ChatMessage],
-    view: &mut LogView,
-    wrapped: &mut WrappedLog,
+    state: &mut AppState,
     peer: &str,
     own_username: &str,
 ) {
+    let AppState {
+        messages,
+        chat_view: view,
+        chat_wrapped: wrapped,
+        chat_filter: filter,
+        ..
+    } = state;
     let width = area.width as usize;
-    let lines = wrapped.rows(width, peer, messages, |m| {
-        if m.peer != peer {
+    let key = format!("{peer}\n{filter}");
+    let lines = wrapped.rows(width, &key, messages, |m| {
+        if m.peer != peer || !contains_filter(&m.text, filter) {
             return Vec::new();
         }
         let (sender, sender_style) = match m.direction {

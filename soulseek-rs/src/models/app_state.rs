@@ -296,6 +296,9 @@ pub struct AppState {
     pub chat_composing: bool,
     /// The open conversation wrapped for drawing.
     pub chat_wrapped: WrappedLog,
+    /// Narrows the open conversation to messages mentioning it.
+    pub chat_filter: String,
+    pub chat_filtering: bool,
     /// Where the conversation is being read.
     pub chat_view: LogView,
 
@@ -375,6 +378,8 @@ impl AppState {
             chat_input: String::new(),
             chat_composing: false,
             chat_wrapped: WrappedLog::default(),
+            chat_filter: String::new(),
+            chat_filtering: false,
             chat_view: LogView::default(),
 
             browse: BrowseTabs::new(),
