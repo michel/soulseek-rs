@@ -3532,3 +3532,43 @@ fn an_unanswered_upload_offer_frees_its_slot() {
 
     let _ = std::fs::remove_dir_all(share);
 }
+
+/// A constant-bitrate MP3: `frames` MPEG-1 Layer III frames at 128 kbps,
+/// 44.1 kHz, so every searcher sees a bitrate to filter and sort on.
+fn cbr_mp3(frames: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    for _ in 0..frames {
+        out.extend_from_slice(&[0xFF, 0xFB, 0x90, 0x00]);
+        out.resize(out.len() + 413, 0);
+    }
+    out
+}
+
+// A shared file with no bitrate fails every `--min-bitrate` filter and sorts
+// last in SoulseekQt; the attributes come from the file's own headers.
+#[test]
+fn a_shared_mp3_advertises_its_bitrate_and_duration() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    // 1000 frames is 26 seconds.
+    std::fs::write(share_dir.join("attrprobe song.mp3"), cbr_mp3(1000))
+        .unwrap();
+    let (_sharer, searcher) = sharer_and_searcher(
+        &server,
+        &share_dir,
+        "e2e_attr_sharer",
+        "e2e_attr_searcher",
+    );
+
+    let query = "attrprobe";
+    let _ = searcher.search(query, Duration::from_secs(3));
+    let reply = reply_from(&searcher, query, "e2e_attr_sharer")
+        .expect("the sharer answers");
+    let file = &reply.files[0];
+    assert_eq!(file.attribs.get(&0), Some(&128), "bitrate in kbps");
+    assert_eq!(file.attribs.get(&1), Some(&26), "duration in seconds");
+    assert_eq!(file.attribs.get(&2), Some(&0), "constant bitrate");
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}

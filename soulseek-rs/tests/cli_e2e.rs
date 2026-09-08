@@ -1084,8 +1084,11 @@ impl FilterFixture {
 
     fn new(server: &TestServer, sharer: &str) -> (Self, Client) {
         let share = Scratch::new("filter-share");
+        // The mp3 is a real 128 kbps stream so the bitrate filter has
+        // something to read; the others are padding of a known size.
+        std::fs::write(share.path().join("flt_alpha_keepme.mp3"), cbr_mp3(10))
+            .expect("share file");
         for (name, size) in [
-            ("flt_alpha_keepme.mp3", Self::MEDIUM),
             ("flt_beta_skipme.flac", Self::SMALL),
             ("flt_gamma_keepme.ogg", Self::LARGE),
         ] {
@@ -1096,6 +1099,18 @@ impl FilterFixture {
         settle();
         (Self { _share: share }, client)
     }
+}
+
+/// A constant-bitrate MP3: `frames` MPEG-1 Layer III frames at 128 kbps and
+/// 44.1 kHz, 417 bytes each; ten of them land between the fixture's SMALL
+/// and LARGE sizes.
+fn cbr_mp3(frames: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    for _ in 0..frames {
+        out.extend_from_slice(&[0xFF, 0xFB, 0x90, 0x00]);
+        out.resize(out.len() + 413, 0);
+    }
+    out
 }
 
 /// Search for the fixture as a fresh user and return the matching file names,
@@ -1153,6 +1168,30 @@ fn extension_keeps_one_type_and_repeats_into_a_union() {
     );
     assert_eq!(exit, EXIT_OK);
     assert_eq!(several, ["flt_beta_skipme.flac", "flt_gamma_keepme.ogg"]);
+}
+
+#[test]
+fn a_bitrate_floor_keeps_only_files_that_advertise_at_least_that_much() {
+    let server = server_or_skip!();
+    let (_fixture, _sharer) = FilterFixture::new(&server, "cli_e2e_flt_kbps");
+
+    // Only the mp3 carries a bitrate; the padding files have none and an
+    // unknown bitrate cannot satisfy a floor.
+    let (exit, enough) = filtered_names(
+        &server,
+        "cli_e2e_seek_kbps_128",
+        &["--min-bitrate", "128"],
+    );
+    assert_eq!(exit, EXIT_OK);
+    assert_eq!(enough, ["flt_alpha_keepme.mp3"]);
+
+    let (exit, none) = filtered_names(
+        &server,
+        "cli_e2e_seek_kbps_320",
+        &["--min-bitrate", "320"],
+    );
+    assert_eq!(exit, EXIT_NO_RESULTS);
+    assert!(none.is_empty());
 }
 
 #[test]
