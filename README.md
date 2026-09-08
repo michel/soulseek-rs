@@ -76,7 +76,27 @@ project is identifiable on the network.
 
 ## Installation
 
-Homebrew ships a prebuilt binary, so no Rust toolchain:
+The installer picks the right macOS or Linux binary, verifies its sha256, and
+installs the latest stable release (through Homebrew when it is available):
+
+```bash
+curl -fsSL https://re-invention.nl/soulseek-rs/install.sh | sh
+```
+
+To install the current successful build from `develop` instead, pass the
+installer's `--nightly` option through to `sh`:
+
+```bash
+curl -fsSL https://re-invention.nl/soulseek-rs/install.sh | sh -s -- --nightly
+```
+
+Nightly is a mutable prerelease rebuilt every day and whenever the **Nightly**
+workflow is run by hand. It bypasses Homebrew, and may be less stable than a
+numbered release. A failed download, checksum, or startup check leaves an
+existing binary untouched. Windows archives for both channels are on the
+[releases page](https://github.com/michel/soulseek-rs/releases).
+
+The other stable routes need no installer script:
 
 ```bash
 brew install michel/tap/soulseek-rs   # macOS and Linux

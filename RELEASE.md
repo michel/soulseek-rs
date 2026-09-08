@@ -33,6 +33,25 @@ Releases are automated by [release-plz](https://release-plz.dev). You do not run
 
 Both crates always share one version, one tag, and one changelog — see `release-plz.toml`.
 
+## Nightly builds
+
+`.github/workflows/nightly.yml` builds the tip of `develop` at 02:17 UTC every
+day. It resolves the commit once, builds the same six targets as a numbered
+release, verifies all twelve archives and checksum files as one set, then
+replaces the mutable `nightly` prerelease and tag. The published release is
+smoke-tested through both the curl and wget installer paths.
+
+Use **Actions → Nightly → Run workflow** to force a build. The workflow always
+checks out `develop`, regardless of the ref selected in the dispatch form. The
+equivalent command is:
+
+```bash
+gh workflow run nightly.yml --ref develop
+```
+
+Nightly does not publish crates or update Homebrew. If a target fails, the
+previous nightly release stays available; use a manual run to retry.
+
 ## One-time repository setup
 
 - **Settings → Actions → General → Workflow permissions**: enable *Allow GitHub Actions to
