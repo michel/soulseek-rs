@@ -37,7 +37,7 @@ const PANE_KEYS: readonly (readonly [string, string])[] = [
   ['↑ ↓ · j k', 'move a row in any list'],
   ['Home End · g G', 'first / last row'],
   ['PgUp PgDn · ^u ^d', 'a page, or half a page; in a chat, back through the log'],
-  ['h l · ← →', 'scroll a long name or query sideways, 0 and $ to either end'],
+  ['h l · ← →', 'scroll a long name, folder or query sideways, 0 and $ to either end'],
 ]
 
 const ROOM_KEYS: readonly (readonly [string, string])[] = [
@@ -54,7 +54,7 @@ const PANES: readonly { num?: number; title: string; body: string }[] = [
   {
     num: 2,
     title: 'Results',
-    body: 'Files from the network across the whole width: size, user, bitrate, speed, free slots. Space selects, Enter queues a download. h/l or ←/→ scroll a long name, 0 and $ jump to either end.',
+    body: 'Files from the network across the whole width, each name in a column of its own with its folder beside it, then size, user, bitrate, speed, free slots. Space selects, Enter queues a download. h/l or ←/→ scroll a long name and folder, 0 and $ jump to either end.',
   },
   {
     num: 1,
