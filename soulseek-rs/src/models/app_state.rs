@@ -1,6 +1,6 @@
 use crate::models::{BrowseTabs, FileDisplayData, RoomsState, SettingsState};
 use chrono::{DateTime, Local};
-use ratatui::{layout::Rect, widgets::TableState};
+use ratatui::{layout::Rect, text::Line, widgets::TableState};
 use soulseek_rs::{DownloadStatus, types::Download};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, mpsc::Receiver, mpsc::Sender};
@@ -174,6 +174,46 @@ impl LogView {
     }
 }
 
+/// A log wrapped to a width, kept between frames.
+///
+/// Wrapping every line of a long log on every draw is what made a busy room
+/// lag. Lines only ever arrive at the end, so a draw wraps the new ones and
+/// starts over only when the width or `key` (what is being shown, a filter
+/// say) changes.
+#[derive(Debug, Clone, Default)]
+pub struct WrappedLog {
+    width: usize,
+    key: String,
+    /// How many source lines the rows cover.
+    wrapped: usize,
+    rows: Vec<Line<'static>>,
+}
+
+impl WrappedLog {
+    /// The rows for `lines`, `wrap` turning one line into its rows (none,
+    /// for a line a filter drops).
+    pub fn rows<T>(
+        &mut self,
+        width: usize,
+        key: &str,
+        lines: &[T],
+        wrap: impl Fn(&T) -> Vec<Line<'static>>,
+    ) -> &[Line<'static>] {
+        if width != self.width || key != self.key || lines.len() < self.wrapped
+        {
+            self.rows.clear();
+            self.wrapped = 0;
+            self.width = width;
+            self.key = key.to_string();
+        }
+        for line in &lines[self.wrapped..] {
+            self.rows.extend(wrap(line));
+        }
+        self.wrapped = lines.len();
+        &self.rows
+    }
+}
+
 /// What the shared command bar is currently capturing input for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandBarMode {
@@ -254,6 +294,11 @@ pub struct AppState {
     /// Compose buffer for the active conversation.
     pub chat_input: String,
     pub chat_composing: bool,
+    /// The open conversation wrapped for drawing.
+    pub chat_wrapped: WrappedLog,
+    /// Narrows the open conversation to messages mentioning it.
+    pub chat_filter: String,
+    pub chat_filtering: bool,
     /// Where the conversation is being read.
     pub chat_view: LogView,
 
@@ -332,6 +377,9 @@ impl AppState {
             chat_peer: None,
             chat_input: String::new(),
             chat_composing: false,
+            chat_wrapped: WrappedLog::default(),
+            chat_filter: String::new(),
+            chat_filtering: false,
             chat_view: LogView::default(),
 
             browse: BrowseTabs::new(),
@@ -499,6 +547,27 @@ mod tests {
 
     fn visible(layout: &PaneLayout) -> Vec<FocusedPane> {
         layout.visible().collect()
+    }
+
+    #[test]
+    fn a_wrapped_log_only_wraps_what_arrived_and_starts_over_on_a_change() {
+        let wrap = |line: &String| vec![Line::raw(line.clone())];
+        let mut log = WrappedLog::default();
+        let mut lines = vec!["a".to_string(), "b".to_string()];
+        assert_eq!(log.rows(40, "", &lines, wrap).len(), 2);
+        lines.push("c".to_string());
+        assert_eq!(log.rows(40, "", &lines, wrap).len(), 3);
+        // A narrower pane or another filter rebuilds; fewer lines do too.
+        let only_c = |line: &String| {
+            (line == "c")
+                .then(|| Line::raw(line.clone()))
+                .into_iter()
+                .collect()
+        };
+        assert_eq!(log.rows(40, "c", &lines, only_c).len(), 1);
+        assert_eq!(log.rows(30, "c", &lines, wrap).len(), 3);
+        lines.truncate(1);
+        assert_eq!(log.rows(30, "c", &lines, wrap).len(), 1);
     }
 
     #[test]

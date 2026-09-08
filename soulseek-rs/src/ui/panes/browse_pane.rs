@@ -1,8 +1,8 @@
 use crate::models::{BrowseState, BrowseStatus, BrowseTabs};
 use crate::ui::{
-    HIGHLIGHT_SYMBOL, body_style, dimmed_style, error_style, format_bytes,
-    get_spinner_char, highlight_style, pane_block, primary_style,
-    row_highlight_style, warning_style,
+    HIGHLIGHT_SYMBOL, body_style, dimmed_style, error_style, filter_title,
+    format_bytes, get_spinner_char, highlight_style, page_window, pane_block,
+    primary_style, render_page, row_highlight_style, warning_style,
 };
 use ratatui::{
     Frame,
@@ -62,10 +62,22 @@ fn render_browse_one(
     spinner_state: usize,
 ) {
     let title = match browse.status {
-        BrowseStatus::Loaded => format!(
-            " Browse {} — {} files, {} folders  (Enter/d: download, Tab: user, w: close, Esc: hide) ",
-            browse.username, browse.file_count, browse.folder_count
-        ),
+        BrowseStatus::Loaded => {
+            let shown =
+                browse.rows().iter().filter(|row| !row.is_folder).count();
+            filter_title(
+                &format!(
+                    "Browse {} — {shown}/{} files",
+                    browse.username, browse.file_count
+                ),
+                browse.filter(),
+                browse.filtering,
+                &format!(
+                    " Browse {} — {} files, {} folders  (Enter/d: download, /: filter, Tab: user, w: close, Esc: hide) ",
+                    browse.username, browse.file_count, browse.folder_count
+                ),
+            )
+        }
         _ => format!(" Browse {} ", browse.username),
     };
     let block = pane_block(true).title(title);
@@ -105,9 +117,21 @@ fn render_browse_one(
             ];
             frame.render_widget(Paragraph::new(text).block(block), area);
         }
+        BrowseStatus::Loaded
+            if browse.rows().is_empty() && !browse.filter().is_empty() =>
+        {
+            let text = format!("Nothing here matches '{}'.", browse.filter());
+            frame.render_widget(
+                Paragraph::new(text).style(dimmed_style()).block(block),
+                area,
+            );
+        }
         BrowseStatus::Loaded => {
-            let rows: Vec<Row> = browse
-                .rows()
+            let all = browse.rows();
+            table_state.select(Some(browse.selected_row));
+            let window = page_window(table_state, all.len(), area, 0);
+            let start = window.start;
+            let rows: Vec<Row> = all[window]
                 .iter()
                 .map(|row| {
                     let indent = "  ".repeat(row.depth);
@@ -142,8 +166,7 @@ fn render_browse_one(
                     .highlight_spacing(HighlightSpacing::Always)
                     .block(block);
 
-            table_state.select(Some(browse.selected_row));
-            frame.render_stateful_widget(table, area, table_state);
+            render_page(frame, table, area, table_state, start);
         }
     }
 }

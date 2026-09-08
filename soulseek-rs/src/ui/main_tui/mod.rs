@@ -265,7 +265,9 @@ pub fn launch_main_tui(
 mod tests {
     use super::*;
     use crate::daemon::proto::ChatMessageDto;
-    use crate::models::{FocusedPane, MessageDirection, SearchStatus};
+    use crate::models::{
+        FocusedPane, MessageDirection, RoomsView, SearchStatus,
+    };
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     /// A stand-in for a daemon: it already holds a conversation, a transfer
@@ -1158,8 +1160,9 @@ mod tests {
         let mut tui = with_session(TalkativeSession::default());
         tui.state.results_items = results(n);
         tui.state.focused_pane = FocusedPane::Results;
+        // 88 cells wide gives the name column 11 cells and the folder 7.
         tui.state.results_pane_area =
-            Some(ratatui::layout::Rect::new(0, 0, 80, 13));
+            Some(ratatui::layout::Rect::new(0, 0, 88, 13));
         tui
     }
 
@@ -1675,6 +1678,147 @@ mod tests {
         assert!(tui.state.show_browse, "still open");
     }
 
+    #[test]
+    fn folder_keys_and_the_filter_move_through_a_browsed_tree() {
+        let mut tui = attach(Arc::new(TalkativeSession::default()));
+        tui.state.browse.open("bob");
+        let listing = vec![
+            soulseek_rs::SharedDirectory {
+                name: "music\\alpha".to_string(),
+                files: vec![
+                    soulseek_rs::SharedFileEntry {
+                        name: "a1.mp3".to_string(),
+                        size: 1,
+                        attributes: Vec::new(),
+                    },
+                    soulseek_rs::SharedFileEntry {
+                        name: "a2.flac".to_string(),
+                        size: 2,
+                        attributes: Vec::new(),
+                    },
+                ],
+            },
+            soulseek_rs::SharedDirectory {
+                name: "music\\beta".to_string(),
+                files: vec![soulseek_rs::SharedFileEntry {
+                    name: "b1.mp3".to_string(),
+                    size: 3,
+                    attributes: Vec::new(),
+                }],
+            },
+        ];
+        tui.state
+            .browse
+            .active_tab_mut()
+            .expect("tab")
+            .load(&listing);
+        tui.state.show_browse = true;
+        let _ = screen_of(&mut tui);
+        let selected = |tui: &MainTui| {
+            tui.state.browse.active_tab().expect("tab").selected_row
+        };
+        let rows = |tui: &MainTui| {
+            tui.state.browse.active_tab().expect("tab").rows().len()
+        };
+
+        press(&mut tui, KeyCode::Char('L'));
+        assert_eq!(rows(&tui), 6, "every folder open");
+        press(&mut tui, KeyCode::Char('J'));
+        press(&mut tui, KeyCode::Char('J'));
+        assert_eq!(selected(&tui), 4, "beta, skipping alpha's files");
+        press(&mut tui, KeyCode::Char('K'));
+        assert_eq!(selected(&tui), 1, "back to alpha");
+        press(&mut tui, KeyCode::Char('H'));
+        assert_eq!(rows(&tui), 1, "just music");
+
+        press(&mut tui, KeyCode::Char('/'));
+        for c in "flac".chars() {
+            press(&mut tui, KeyCode::Char(c));
+        }
+        assert_eq!(rows(&tui), 3, "music, alpha, a2.flac");
+        let screen = screen_of(&mut tui);
+        assert!(screen.contains("filter: flac_"), "{screen}");
+        ctrl(&mut tui, 'd');
+        assert_eq!(
+            tui.state.browse.active_tab().expect("tab").filter(),
+            "flac",
+            "a control chord pages, it does not type"
+        );
+        press(&mut tui, KeyCode::Enter);
+        press(&mut tui, KeyCode::Char('j'));
+        press(&mut tui, KeyCode::Char('j'));
+        assert_eq!(selected(&tui), 2, "j moves again once the filter is kept");
+        press(&mut tui, KeyCode::Esc);
+        assert_eq!(rows(&tui), 1, "Esc clears the filter first");
+        assert!(tui.state.show_browse);
+        press(&mut tui, KeyCode::Esc);
+        assert!(!tui.state.show_browse, "then hides the popup");
+    }
+
+    #[test]
+    fn slash_and_u_filter_a_rooms_log_and_its_members() {
+        let mut tui = attach(Arc::new(TalkativeSession::default()));
+        in_a_room(&mut tui, 30);
+        press(&mut tui, KeyCode::Char('u'));
+        for c in "user2".chars() {
+            press(&mut tui, KeyCode::Char(c));
+        }
+        press(&mut tui, KeyCode::Enter);
+        press(&mut tui, KeyCode::Char('j'));
+        assert_eq!(
+            tui.state.rooms.selected_user().as_deref(),
+            Some("user21"),
+            "j moves within the matching members"
+        );
+        let screen = screen_of(&mut tui);
+        assert!(screen.contains("Users 10/30"), "{screen}");
+
+        press(&mut tui, KeyCode::Char('/'));
+        for c in "line 01".chars() {
+            press(&mut tui, KeyCode::Char(c));
+        }
+        let screen = screen_of(&mut tui);
+        assert!(screen.contains("line 010"), "{screen}");
+        assert!(!screen.contains("line 029"), "{screen}");
+        assert!(screen.contains("filter: line 01_"), "{screen}");
+        ctrl(&mut tui, 'u');
+        assert_eq!(tui.state.rooms.log_filter, "line 01", "^u scrolls");
+        press(&mut tui, KeyCode::Enter);
+        press(&mut tui, KeyCode::Esc);
+        assert!(tui.state.rooms.log_filter.is_empty());
+        assert!(tui.state.rooms.user_filter.is_empty());
+        assert_eq!(tui.state.rooms.view, RoomsView::Chat, "still in the room");
+        press(&mut tui, KeyCode::Esc);
+        assert_eq!(tui.state.rooms.view, RoomsView::List, "then the list");
+    }
+
+    #[test]
+    fn slash_filters_the_open_conversation() {
+        let mut tui = attach(Arc::new(TalkativeSession::default()));
+        for text in ["hello there", "see you", "hello again"] {
+            tui.state.messages.push(crate::models::ChatMessage {
+                direction: MessageDirection::Incoming,
+                peer: "bob".to_string(),
+                text: text.to_string(),
+                at: chrono::Local::now(),
+            });
+        }
+        tui.state.chat_peer = Some("bob".to_string());
+        tui.state.show_messages = true;
+        press(&mut tui, KeyCode::Char('/'));
+        for c in "hello".chars() {
+            press(&mut tui, KeyCode::Char(c));
+        }
+        let screen = screen_of(&mut tui);
+        assert!(screen.contains("hello again"), "{screen}");
+        assert!(!screen.contains("see you"), "{screen}");
+        press(&mut tui, KeyCode::Enter);
+        press(&mut tui, KeyCode::Esc);
+        assert!(tui.state.chat_filter.is_empty() && tui.state.show_messages);
+        press(&mut tui, KeyCode::Esc);
+        assert!(!tui.state.show_messages);
+    }
+
     fn in_a_room(tui: &mut MainTui, messages: usize) {
         tui.state.rooms.apply_event(
             soulseek_rs::RoomEvent::Joined {
@@ -1807,6 +1951,34 @@ mod tests {
         let wide = screen_sized(&mut tui, 300, 40);
         let bar_rows = wide.lines().filter(|line| line.contains(" → ")).count();
         assert_eq!(bar_rows, 1, "{wide}");
+    }
+
+    #[test]
+    fn the_searches_pane_lists_its_clear_all_key() {
+        let mut tui = furnished_tui();
+        tui.state.focused_pane = FocusedPane::Searches;
+        let screen = screen_sized(&mut tui, 300, 40);
+        assert!(screen.contains("[C → clear all]"), "{screen}");
+    }
+
+    #[test]
+    fn shift_w_brings_every_pane_back_and_leaves_zoom() {
+        let mut tui = furnished_tui();
+        tui.state.focused_pane = FocusedPane::Searches;
+        assert!(!screen_sized(&mut tui, 300, 40).contains("[W → "));
+        press(&mut tui, KeyCode::Char('w'));
+        press(&mut tui, KeyCode::Char('z'));
+        assert!(tui.state.layout.zoomed);
+        assert!(!tui.state.layout.is_visible(FocusedPane::Searches));
+        let screen = screen_sized(&mut tui, 300, 40);
+        assert!(screen.contains("[W → reset layout]"), "{screen}");
+        press(&mut tui, KeyCode::Char('W'));
+        assert!(!tui.state.layout.zoomed);
+        assert!(
+            FocusedPane::ALL
+                .iter()
+                .all(|p| tui.state.layout.is_visible(*p))
+        );
     }
 
     #[test]

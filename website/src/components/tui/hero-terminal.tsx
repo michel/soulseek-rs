@@ -37,8 +37,9 @@ export const HeroTerminal = () => {
             >
               <StatusLine counts={demo.counts} pct={demo.pct} />
 
-              {/* Results across the top with the whole width for long names;
-                  Searches, Transfers and Info share the row underneath. */}
+              {/* Results across the top, file names in a column of their own
+                  with the folder beside them; Searches, Transfers and Info
+                  share the row underneath. */}
               <div className="mt-3 grid gap-2.5" style={{ gridTemplateRows: '330px 300px' }}>
                 <div className="relative min-h-0 overflow-hidden">
                   <ResultsPane

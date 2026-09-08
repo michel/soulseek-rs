@@ -2,8 +2,8 @@ use super::name_scroll::{column_width, end_offset, scroll_text};
 use crate::models::FileDisplayData;
 use crate::ui::{
     BYTES_PER_MB, HIGHLIGHT_SYMBOL, body_style, dimmed_style, format_bytes,
-    header_style, info_style, pane_block, pane_title, row_highlight_style,
-    success_style, warning_style,
+    header_style, info_style, page_window, pane_block, pane_title, render_page,
+    row_highlight_style, success_style, warning_style,
 };
 use ratatui::{
     Frame,
@@ -15,9 +15,13 @@ use std::collections::HashSet;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const WIDTHS: [Constraint; 7] = [
+// The file name and its folder share whatever width the fixed columns leave,
+// the name getting the larger part: it is what a search is after, and a
+// folder's tail is a scroll away.
+const WIDTHS: [Constraint; 8] = [
     Constraint::Length(3),
     Constraint::Fill(3),
+    Constraint::Fill(2),
     Constraint::Length(12),
     Constraint::Length(15),
     Constraint::Length(10),
@@ -39,12 +43,28 @@ pub struct ResultsPaneParams<'a> {
     pub name_offset: usize,
 }
 
-/// Filename is the second column.
+/// The file name is the second column, the folder it sits in the third.
 const NAME_COLUMN: usize = 1;
+const FOLDER_COLUMN: usize = 2;
 
+/// A shared path as `(folder, name)`. Peers send backslashes, but a slash
+/// counts too.
+fn split_path(path: &str) -> (&str, &str) {
+    path.rsplit_once(['\\', '/']).unwrap_or(("", path))
+}
+
+/// The offset that brings the end of a result's longer column into view.
+/// One offset scrolls the name and the folder together, so it runs until
+/// both tails are showing.
 #[must_use]
-pub fn name_end_offset(name: &str, area: Rect) -> usize {
-    end_offset(name, area, &WIDTHS, NAME_COLUMN)
+pub fn name_end_offset(path: &str, area: Rect) -> usize {
+    let (folder, name) = split_path(path);
+    end_offset(name, area, &WIDTHS, NAME_COLUMN).max(end_offset(
+        folder,
+        area,
+        &WIDTHS,
+        FOLDER_COLUMN,
+    ))
 }
 
 /// Whether the rendered row `display_idx` is selected. `selected_indices` holds
@@ -118,6 +138,7 @@ pub fn render_results_pane(
     let header = Row::new(vec![
         Cell::from("✓").style(header_style()),
         Cell::from("Filename").style(header_style()),
+        Cell::from("Folder").style(header_style()),
         Cell::from("Size").style(header_style()),
         Cell::from("User").style(header_style()),
         Cell::from("Bitrate").style(header_style()),
@@ -127,10 +148,13 @@ pub fn render_results_pane(
     .height(1);
 
     let name_width = column_width(area, &WIDTHS, NAME_COLUMN);
-    let rows: Vec<Row> = items
-        .iter()
-        .enumerate()
+    let folder_width = column_width(area, &WIDTHS, FOLDER_COLUMN);
+    let window = page_window(table_state, items.len(), area, 1);
+    let start = window.start;
+    let rows: Vec<Row> = (start..)
+        .zip(&items[window])
         .map(|(idx, file)| {
+            let (folder, name) = split_path(&file.filename);
             let checkbox =
                 if row_is_selected(idx, original_indices, selected_indices) {
                     "[✓]"
@@ -159,12 +183,10 @@ pub fn render_results_pane(
 
             Row::new(vec![
                 Cell::from(checkbox).style(checkbox_style),
-                Cell::from(scroll_text(
-                    &file.filename,
-                    name_offset,
-                    name_width,
-                ))
-                .style(body_style()),
+                Cell::from(scroll_text(name, name_offset, name_width))
+                    .style(body_style()),
+                Cell::from(scroll_text(folder, name_offset, folder_width))
+                    .style(dimmed_style()),
                 Cell::from(format_bytes(file.size)).style(warning_style()),
                 Cell::from(file.username.clone()).style(info_style()),
                 Cell::from(bitrate_str).style(dimmed_style()),
@@ -189,7 +211,7 @@ pub fn render_results_pane(
         .highlight_spacing(HighlightSpacing::Always)
         .block(pane_block(focused).title(pane_title("2", &title, focused)));
 
-    frame.render_stateful_widget(table, area, table_state);
+    render_page(frame, table, area, table_state, start);
 }
 
 #[cfg(test)]
@@ -202,8 +224,18 @@ mod tests {
     fn render_rows(items: &[FileDisplayData], name_offset: usize) -> String {
         let mut state = TableState::default();
         state.select(Some(0));
+        render_with(items, &mut state, name_offset)
+    }
+
+    fn render_with(
+        items: &[FileDisplayData],
+        state: &mut TableState,
+        name_offset: usize,
+    ) -> String {
+        // Wide enough for the name column to hold 11 cells, with 7 for the
+        // folder beside it, and tall enough for three rows.
         let mut terminal =
-            Terminal::new(TestBackend::new(80, 6)).expect("backend");
+            Terminal::new(TestBackend::new(88, 6)).expect("backend");
         terminal
             .draw(|frame| {
                 render_results_pane(
@@ -211,7 +243,7 @@ mod tests {
                     frame.area(),
                     ResultsPaneParams {
                         items,
-                        table_state: &mut state,
+                        table_state: state,
                         selected_indices: &HashSet::new(),
                         original_indices: None,
                         filter_query: "",
@@ -268,11 +300,53 @@ mod tests {
     }
 
     #[test]
+    fn a_path_shows_its_name_before_its_folder() {
+        let items = [file("@@abc\\Music\\Album\\01.flac"), file("cover.jpg")];
+        let screen = render_rows(&items, 0);
+        assert!(screen.contains("01.flac     @@abc\\M"), "{screen}");
+        assert!(screen.contains("cover.jpg   "), "{screen}");
+    }
+
+    #[test]
+    fn one_offset_scrolls_the_name_and_the_folder_together() {
+        let items = [file("@@abc\\Music\\Album\\abcdefghijklmnopqrstuvwxyz")];
+        let screen = render_rows(&items, 4);
+        assert!(screen.contains("…efghijklmn …c\\Musi"), "{screen}");
+    }
+
+    #[test]
+    fn the_end_offset_is_the_longer_columns() {
+        // 88 cells wide: 11 for the name, 7 for the folder.
+        let area = ratatui::layout::Rect::new(0, 0, 88, 6);
+        let folder = "f".repeat(20);
+        assert_eq!(super::name_end_offset(&format!("{folder}\\a"), area), 14);
+        let name = "x".repeat(40);
+        assert_eq!(
+            super::name_end_offset(&format!("{folder}\\{name}"), area),
+            30
+        );
+    }
+
+    #[test]
     fn an_unscrolled_name_starts_at_its_beginning() {
         let items = [file("abcdefghijklmnopqrstuvwxyz0123456789ABCD")];
         let screen = render_rows(&items, 0);
         assert!(screen.contains("abcdefghijk"), "{screen}");
         assert!(!screen.contains("…"), "{screen}");
+    }
+
+    #[test]
+    fn a_far_selection_is_drawn_from_its_own_page() {
+        let items: Vec<FileDisplayData> =
+            (0..10_000).map(|i| file(&format!("{i}.mp3"))).collect();
+        let mut state = TableState::default();
+        state.select(Some(9_999));
+        let screen = render_with(&items, &mut state, 0);
+        assert!(screen.contains("›[ ] 9999.mp3"), "{screen}");
+        assert!(screen.contains(" [ ] 9997.mp3"), "{screen}");
+        assert!(!screen.contains(" [ ] 0.mp3"), "{screen}");
+        assert_eq!(state.offset(), 9_997, "the next frame starts here");
+        assert_eq!(state.selected(), Some(9_999));
     }
 
     #[test]

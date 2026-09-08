@@ -1,5 +1,5 @@
 use super::MainTui;
-use crate::models::{CommandBarMode, FocusedPane, RoomsView};
+use crate::models::{CommandBarMode, FocusedPane, PaneLayout, RoomsView};
 use crate::ui::panes::{
     InfoSubject, ResultsPaneParams, render_browse_pane, render_chat_pane,
     render_download_info_pane, render_downloads_pane, render_results_pane,
@@ -29,6 +29,7 @@ const HELP_LEFT: &[(&str, &[(&str, &str)])] = &[
             ("z", "zoom the focused pane"),
             ("w", "hide the focused pane"),
             ("Esc", "leave zoom"),
+            ("W", "every pane back, zoom off"),
             ("click", "focus a pane"),
         ],
     ),
@@ -95,9 +96,34 @@ const HELP_RIGHT: &[(&str, &[(&str, &str)])] = &[
             ("^u ^d", "half a page of them"),
             ("Home End / g G", "oldest / newest, or first / last row"),
             ("Tab / Shift-Tab", "next room, chat or user"),
+            ("/", "filter the messages, the room list or the tree"),
+            ("u", "filter a room's member list"),
+        ],
+    ),
+    (
+        "Browse popup",
+        &[
+            ("← → / h l", "close / open a folder, or step out / in"),
+            ("J K", "next / previous folder"),
+            ("H L", "close / open every folder"),
+            ("/", "filter by path, Enter keeps it, Esc clears"),
+            ("Enter", "open a folder, or download a file"),
+            ("d", "download a file, or a folder's files"),
+            ("r", "ask again after a timeout"),
         ],
     ),
 ];
+
+/// What the bar offers while a filter is being typed, wherever that is,
+/// with the keys that still move around there.
+fn filter_keys(
+    moves: &[(&'static str, &'static str)],
+) -> Vec<(&'static str, &'static str)> {
+    let mut keys = vec![("Type", "filter")];
+    keys.extend_from_slice(moves);
+    keys.extend([("Enter", "keep filter"), ("Esc", "clear filter")]);
+    keys
+}
 
 impl MainTui {
     pub(super) fn render(&mut self, frame: &mut Frame) {
@@ -481,10 +507,15 @@ impl MainTui {
                     ]
                 }
             }
+            RoomsView::Chat if self.state.rooms.filtering.is_some() => {
+                filter_keys(&[("PgUp/PgDn", "scroll"), ("↑↓", "pick user")])
+            }
             RoomsView::Chat => vec![
                 ("Enter", "say"),
                 ("PgUp/PgDn", "scroll"),
                 ("↑↓", "pick user"),
+                ("/", "find in chat"),
+                ("u", "find user"),
                 ("b", "browse user"),
                 ("m", "message user"),
                 ("Tab", "switch room"),
@@ -497,7 +528,7 @@ impl MainTui {
     /// The keys every pane shares for moving between and resizing panes,
     /// ending the bar the same way wherever the focus sits.
     fn pane_shortcuts(&self) -> Vec<(&'static str, &'static str)> {
-        vec![
+        let mut keys = vec![
             ("Tab/1-3", "pane"),
             (
                 "z",
@@ -508,9 +539,13 @@ impl MainTui {
                 },
             ),
             ("w", "hide"),
-            ("?", "keys"),
-            ("q", "quit"),
-        ]
+        ];
+        // Only once a pane is hidden or zoomed is there a layout to reset.
+        if self.state.layout != PaneLayout::default() {
+            keys.push(("W", "reset layout"));
+        }
+        keys.extend([("?", "keys"), ("q", "quit")]);
+        keys
     }
 
     /// Which shortcuts the bar offers, which is purely a question of what is
@@ -534,11 +569,14 @@ impl MainTui {
                     ("Enter", "send"),
                     ("Esc", "stop typing"),
                 ]
+            } else if self.state.chat_filtering {
+                filter_keys(&[("PgUp/PgDn", "scroll")])
             } else {
                 vec![
                     ("Enter", "type"),
                     ("PgUp/PgDn", "scroll"),
                     ("↑↓/Tab", "switch chat"),
+                    ("/", "find"),
                     ("m", "new chat"),
                     ("i/Esc", "close"),
                 ]
@@ -546,17 +584,24 @@ impl MainTui {
         } else if self.state.show_rooms {
             self.rooms_shortcuts()
         } else if self.state.show_browse {
-            vec![
-                ("↑↓", "move"),
-                ("PgUp/PgDn", "page"),
-                ("→←", "expand/collapse"),
-                ("Enter", "open/download"),
-                ("d", "download folder"),
-                ("Tab", "switch user"),
-                ("r", "retry"),
-                ("w", "close tab"),
-                ("Esc", "hide"),
-            ]
+            if self.state.browse.active_tab().is_some_and(|b| b.filtering) {
+                // Typing goes to the filter, so no letter keys are on offer.
+                filter_keys(&[("↑/↓", "navigate"), ("PgUp/PgDn", "page")])
+            } else {
+                vec![
+                    ("↑↓", "move"),
+                    ("J/K", "next/prev folder"),
+                    ("→←", "expand/collapse"),
+                    ("H/L", "collapse/expand all"),
+                    ("/", "filter"),
+                    ("Enter", "open/download"),
+                    ("d", "download folder"),
+                    ("Tab", "switch user"),
+                    ("r", "retry"),
+                    ("w", "close tab"),
+                    ("Esc", "hide"),
+                ]
+            }
         } else if self.state.command_bar_active {
             match self.state.command_bar_mode {
                 CommandBarMode::Search => vec![
@@ -581,19 +626,14 @@ impl MainTui {
             && self.state.focused_pane == FocusedPane::Results
         {
             // Typing goes to the filter, so no letter keys are on offer here.
-            vec![
-                ("Type", "filter"),
-                ("↑/↓", "navigate"),
-                ("PgUp/PgDn", "page"),
-                ("Enter", "keep filter"),
-                ("Esc", "clear filter"),
-            ]
+            filter_keys(&[("↑/↓", "navigate"), ("PgUp/PgDn", "page")])
         } else {
             let mut keys = match self.state.focused_pane {
                 FocusedPane::Searches => vec![
                     ("s", "search"),
                     ("Enter", "results"),
                     ("d", "remove"),
+                    ("C", "clear all"),
                     ("m", "message"),
                     ("i", "inbox"),
                     ("c", "chat"),
