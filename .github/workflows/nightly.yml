@@ -168,13 +168,12 @@ jobs:
             gh release edit nightly --draft --prerelease --latest=false
           fi
 
-          # The Git refs API can briefly lag a just-merged commit. Retry both
-          # the create and update paths, re-reading the ref each time so a
-          # successful-but-disconnected response is harmless and idempotent.
+          # gh writes the REST error body to stdout on a missing ref, so use
+          # its exit status—not captured output—to choose create vs update.
+          # Retry both paths and re-read the ref to keep retries idempotent.
           tag_ready=false
           for attempt in 1 2 3 4 5; do
-            current_tag=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/nightly" --jq .object.sha 2>/dev/null || true)
-            if [ -n "$current_tag" ]; then
+            if gh api --silent "repos/$GITHUB_REPOSITORY/git/ref/tags/nightly" >/dev/null 2>&1; then
               if gh api --silent --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly" \
                 -f sha="$SOURCE_SHA" -F force=true; then
                 tag_ready=true
