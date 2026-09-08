@@ -107,7 +107,8 @@ zooms the focused pane to the whole window, `w` hides it so the others widen
 takes `↑`/`↓`, `Home`/`End`, `PgUp`/`PgDn` and the vim keys, and `h`/`l` or
 `←`/`→` scroll a long file name, folder or query sideways, `0` and `$` to
 either end. `PgUp`/`PgDn` scroll a chat log back through its history, and `?`
-shows every key for where you are.
+shows every key for where you are. `s` starts a search, and `S` runs the
+highlighted one again.
 
 ### Daemon mode
 
@@ -620,18 +621,19 @@ cargo fmt
 
 ### End-to-end tests
 
-Two suites run against [soulfind](https://github.com/soulfind-dev/soulfind), a
-local Soulseek server: `soulseek-rs-lib/tests/e2e.rs` covers the protocol
-library, and `soulseek-rs/tests/cli_e2e.rs` drives the binary the way a script
-would. Both are **server-optional**, running when a server is available and
-skipping otherwise, so `cargo test` stays green everywhere.
+Four suites run against [soulfind](https://github.com/soulfind-dev/soulfind),
+a local Soulseek server: `soulseek-rs-lib/tests/e2e.rs` covers the protocol
+library, `soulseek-rs/tests/cli_e2e.rs` drives the binary the way a script
+would, `soulseek-rs/tests/daemon_protocol_e2e.rs` meets the daemon's control
+protocol as a third party would, and `soulseek-rs/tests/tui_e2e.rs` drives the
+window with key presses and reads the screen back. All are
+**server-optional**, running when a server is available and skipping
+otherwise, so `cargo test` stays green everywhere.
 
-They locate a server in this order:
-
-1. `SOULSEEK_TEST_SERVER=host:port`: connect to an already-running server, or
-2. `SOULFIND_BIN=/path/to/soulfind` (or a `soulfind/bin/soulfind` checkout in a
-   parent directory), which spawns soulfind on an ephemeral port with a
-   throwaway database.
+Every suite spawns soulfind from `SOULFIND_BIN=/path/to/soulfind` (or a
+`soulfind/bin/soulfind` checkout in a parent directory) on an ephemeral port
+with a throwaway database. The library and CLI suites take
+`SOULSEEK_TEST_SERVER=host:port` first, to run against a server already up.
 
 ```bash
 # Build soulfind once (see its BUILDING.md), then:
@@ -657,8 +659,8 @@ soulfind instead of skipping.
   `cargo clippy --workspace --all-targets -- -D warnings`.
 - **Test**: `cargo test --verbose` on Linux, macOS, and Windows.
 - **End-to-end**: builds soulfind from source (LDC + `dub build :server`),
-  points `SOULFIND_BIN` at it, and runs both the library and CLI e2e suites
-  with `SOULSEEK_E2E_REQUIRED=1`, so a missing server fails instead of skipping.
+  points `SOULFIND_BIN` at it, and runs all four e2e suites with
+  `SOULSEEK_E2E_REQUIRED=1`, so a missing server fails instead of skipping.
 
 ## Contributing
 

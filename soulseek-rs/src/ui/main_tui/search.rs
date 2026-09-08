@@ -5,10 +5,17 @@ use crate::models::{
 };
 use chrono::Local;
 use std::{
-    sync::{Arc, atomic::AtomicBool},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::Instant,
 };
+
+/// How long after a search went out a repeat of `S` counts as the same
+/// press: key autorepeat is faster than anyone means to search.
+const RERUN_HOLD: std::time::Duration = std::time::Duration::from_secs(1);
 
 impl MainTui {
     pub(super) fn remove_search_at_index(&mut self, index: usize) {
@@ -18,9 +25,7 @@ impl MainTui {
 
         // Cancel the search if it's active
         if let Some(search) = self.state.searches.get(index) {
-            search
-                .cancel_flag
-                .store(true, std::sync::atomic::Ordering::Relaxed);
+            search.cancel_flag.store(true, Ordering::Relaxed);
         }
 
         // Check if we're removing the currently active search
@@ -66,9 +71,7 @@ impl MainTui {
     pub(super) fn clear_all_searches(&mut self) {
         // Cancel all active searches
         for search in &self.state.searches {
-            search
-                .cancel_flag
-                .store(true, std::sync::atomic::Ordering::Relaxed);
+            search.cancel_flag.store(true, Ordering::Relaxed);
         }
 
         // And drop them from the session, or the next sync brings every one
@@ -205,6 +208,34 @@ impl MainTui {
     }
 
     pub(super) fn start_search(&mut self, query: String) {
+        let entry = self.launch_search(query);
+        self.state.searches.push(entry);
+        self.show_search(self.state.searches.len() - 1);
+    }
+
+    /// Run the search at `index` again, in its row: a restored query comes
+    /// back with nothing under it, and this saves typing it out. A run still
+    /// collecting is stopped first, or two threads would fill one set.
+    pub(super) fn rerun_search_at_index(&mut self, index: usize) {
+        let Some(previous) = self.state.searches.get(index) else {
+            return;
+        };
+        // A held key repeats, and every repeat would put another search on
+        // the wire: a run that only just went out is left to run.
+        if previous.status == SearchStatus::Active
+            && previous.start_time.elapsed() < RERUN_HOLD
+        {
+            return;
+        }
+        previous.cancel_flag.store(true, Ordering::Relaxed);
+        self.state.searches[index] = self.launch_search(previous.query.clone());
+        self.show_search(index);
+    }
+
+    /// Put `query` on the wire and hand back the entry that tracks it. The
+    /// session keys results by query, so a repeat starts its set afresh, and
+    /// the entry's empty results match that.
+    fn launch_search(&self, query: String) -> SearchEntry {
         let cancel_flag = Arc::new(AtomicBool::new(false));
         let search_entry = SearchEntry {
             query: query.clone(),
@@ -216,41 +247,29 @@ impl MainTui {
             cancel_flag: cancel_flag.clone(),
         };
 
-        self.state.searches.push(search_entry);
-        let search_index = self.state.searches.len() - 1;
-        self.state.searches_table_state.select(Some(search_index));
-
-        // Make this search the active one
-        self.state.selected_search_index = Some(search_index);
-
-        // Initialize results display (empty at first)
-        self.state.results_items.clear();
-        self.state.results_filtered_items.clear();
-        self.state.results_filtered_indices.clear();
-        self.state.results_selected_indices.clear();
-        self.state.results_table_state.select(Some(0));
-        self.state.results_name_offset = 0;
-
-        // Switch focus to Results pane, bringing it back if it was hidden
-        self.state.focus_pane(FocusedPane::Results);
-
         let client = self.client.clone();
         let timeout = self.search_timeout;
 
+        // Results are polled in update_search_results, not returned here.
         thread::spawn(move || {
-            match client.search_with_cancel(
-                &query,
-                timeout,
-                Some(cancel_flag.clone()),
-            ) {
-                Ok(_results) => {
-                    // Results will be polled in update_search_results
-                }
-                Err(e) => {
-                    soulseek_rs::warn!("Search failed: {e}");
-                }
+            if let Err(e) =
+                client.search_with_cancel(&query, timeout, Some(cancel_flag))
+            {
+                soulseek_rs::warn!("Search failed: {e}");
             }
         });
+
+        search_entry
+    }
+
+    /// Make the search at `index` the one the Results pane shows, starting
+    /// from an empty display, filter and all, for what is about to arrive.
+    fn show_search(&mut self, index: usize) {
+        self.clear_results_pane();
+        self.state.searches_table_state.select(Some(index));
+        self.state.selected_search_index = Some(index);
+        self.state.results_table_state.select(Some(0));
+        self.state.focus_pane(FocusedPane::Results);
     }
 
     /// Show the searches the session knows about, not just this window's.
