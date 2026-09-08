@@ -1,5 +1,5 @@
 use super::MainTui;
-use crate::models::{CommandBarMode, FocusedPane, RoomsView};
+use crate::models::{CommandBarMode, FocusedPane, PaneLayout, RoomsView};
 use crate::ui::panes::{
     InfoSubject, ResultsPaneParams, render_browse_pane, render_chat_pane,
     render_download_info_pane, render_downloads_pane, render_results_pane,
@@ -29,6 +29,7 @@ const HELP_LEFT: &[(&str, &[(&str, &str)])] = &[
             ("z", "zoom the focused pane"),
             ("w", "hide the focused pane"),
             ("Esc", "leave zoom"),
+            ("W", "every pane back, zoom off"),
             ("click", "focus a pane"),
         ],
     ),
@@ -497,7 +498,7 @@ impl MainTui {
     /// The keys every pane shares for moving between and resizing panes,
     /// ending the bar the same way wherever the focus sits.
     fn pane_shortcuts(&self) -> Vec<(&'static str, &'static str)> {
-        vec![
+        let mut keys = vec![
             ("Tab/1-3", "pane"),
             (
                 "z",
@@ -508,9 +509,13 @@ impl MainTui {
                 },
             ),
             ("w", "hide"),
-            ("?", "keys"),
-            ("q", "quit"),
-        ]
+        ];
+        // Only once a pane is hidden or zoomed is there a layout to reset.
+        if self.state.layout != PaneLayout::default() {
+            keys.push(("W", "reset layout"));
+        }
+        keys.extend([("?", "keys"), ("q", "quit")]);
+        keys
     }
 
     /// Which shortcuts the bar offers, which is purely a question of what is

@@ -1819,6 +1819,26 @@ mod tests {
     }
 
     #[test]
+    fn shift_w_brings_every_pane_back_and_leaves_zoom() {
+        let mut tui = furnished_tui();
+        tui.state.focused_pane = FocusedPane::Searches;
+        assert!(!screen_sized(&mut tui, 300, 40).contains("[W → "));
+        press(&mut tui, KeyCode::Char('w'));
+        press(&mut tui, KeyCode::Char('z'));
+        assert!(tui.state.layout.zoomed);
+        assert!(!tui.state.layout.is_visible(FocusedPane::Searches));
+        let screen = screen_sized(&mut tui, 300, 40);
+        assert!(screen.contains("[W → reset layout]"), "{screen}");
+        press(&mut tui, KeyCode::Char('W'));
+        assert!(!tui.state.layout.zoomed);
+        assert!(
+            FocusedPane::ALL
+                .iter()
+                .all(|p| tui.state.layout.is_visible(*p))
+        );
+    }
+
+    #[test]
     fn page_keys_work_in_the_transfers_and_searches_lists_too() {
         let mut tui = furnished_tui();
         for i in 0..30 {

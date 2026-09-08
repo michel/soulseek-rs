@@ -34,6 +34,7 @@ const PANE_KEYS: readonly (readonly [string, string])[] = [
   ['1–3', 'focus a pane, and bring it back if hidden'],
   ['z', 'zoom the focused pane to the whole window'],
   ['w', 'hide the focused pane; the others widen'],
+  ['W', 'every pane back on screen, zoom off'],
   ['↑ ↓ · j k', 'move a row in any list'],
   ['Home End · g G', 'first / last row'],
   ['PgUp PgDn · ^u ^d', 'a page, or half a page; in a chat, back through the log'],
