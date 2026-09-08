@@ -27,4 +27,5 @@ export const SITE_URL = 'https://re-invention.nl/soulseek-rs/'
 
 export const INSTALL_CMD = `curl -fsSL ${SITE_URL}install.sh | sh`
 
-export const NIGHTLY_INSTALL_CMD = `${INSTALL_CMD} -s -- --nightly`
+export const NIGHTLY_INSTALL_CMD =
+  'curl -fsSL https://raw.githubusercontent.com/michel/soulseek-rs/develop/website/public/install.sh | sh -s -- --nightly'
