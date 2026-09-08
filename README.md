@@ -107,7 +107,8 @@ zooms the focused pane to the whole window, `w` hides it so the others widen
 takes `↑`/`↓`, `Home`/`End`, `PgUp`/`PgDn` and the vim keys, and `h`/`l` or
 `←`/`→` scroll a long file name, folder or query sideways, `0` and `$` to
 either end. `PgUp`/`PgDn` scroll a chat log back through its history, and `?`
-shows every key for where you are.
+shows every key for where you are. `s` starts a search, and `S` runs the
+highlighted one again.
 
 ### Daemon mode
 
@@ -620,11 +621,12 @@ cargo fmt
 
 ### End-to-end tests
 
-Two suites run against [soulfind](https://github.com/soulfind-dev/soulfind), a
-local Soulseek server: `soulseek-rs-lib/tests/e2e.rs` covers the protocol
-library, and `soulseek-rs/tests/cli_e2e.rs` drives the binary the way a script
-would. Both are **server-optional**, running when a server is available and
-skipping otherwise, so `cargo test` stays green everywhere.
+Three suites run against [soulfind](https://github.com/soulfind-dev/soulfind),
+a local Soulseek server: `soulseek-rs-lib/tests/e2e.rs` covers the protocol
+library, `soulseek-rs/tests/cli_e2e.rs` drives the binary the way a script
+would, and `soulseek-rs/tests/tui_e2e.rs` drives the window with key presses
+and reads the screen back. All are **server-optional**, running when a server
+is available and skipping otherwise, so `cargo test` stays green everywhere.
 
 They locate a server in this order:
 

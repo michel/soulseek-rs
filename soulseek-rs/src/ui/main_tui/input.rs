@@ -14,7 +14,8 @@ use ratatui::widgets::TableState;
 const NAME_SCROLL_STEP: isize = 8;
 
 impl MainTui {
-    pub(super) fn handle_key_event(&mut self, key: KeyEvent) {
+    /// One key press, routed to whatever owns the keyboard right now.
+    pub fn handle_key_event(&mut self, key: KeyEvent) {
         // Command bar takes priority
         if self.state.command_bar_active {
             return self.handle_command_bar_input(key);
@@ -400,11 +401,10 @@ impl MainTui {
         if self.navigate_focused_list(key) || self.scroll_focused_name(key) {
             return;
         }
+        let selected = self.state.searches_table_state.selected();
         match key.code {
             KeyCode::Enter => {
-                if let Some(selected) =
-                    self.state.searches_table_state.selected()
-                {
+                if let Some(selected) = selected {
                     self.state.selected_search_index = Some(selected);
                     if let Some(search) = self.state.searches.get(selected) {
                         self.state.results_items = search.results.clone();
@@ -420,10 +420,14 @@ impl MainTui {
                 }
             }
             KeyCode::Char('d') => {
-                if let Some(selected) =
-                    self.state.searches_table_state.selected()
-                {
+                if let Some(selected) = selected {
                     self.remove_search_at_index(selected);
+                }
+            }
+            // `s` asks for a query; `S` reuses the highlighted one.
+            KeyCode::Char('S') => {
+                if let Some(selected) = selected {
+                    self.rerun_search_at_index(selected);
                 }
             }
             KeyCode::Char('C') => {
