@@ -1,4 +1,6 @@
-use crate::models::{AppState, ChatMessage, LogView, MessageDirection};
+use crate::models::{
+    AppState, ChatMessage, LogView, MessageDirection, WrappedLog,
+};
 use crate::ui::{
     accent_style, border_style, dimmed_style, highlight_style, info_style,
     primary_style, wrap_chat_line,
@@ -57,6 +59,7 @@ pub fn render_chat_pane(
         body[0],
         &state.messages,
         &mut state.chat_view,
+        &mut state.chat_wrapped,
         peer,
         own_username,
     );
@@ -104,32 +107,29 @@ fn render_messages(
     area: Rect,
     messages: &[ChatMessage],
     view: &mut LogView,
+    wrapped: &mut WrappedLog,
     peer: &str,
     own_username: &str,
 ) {
     let width = area.width as usize;
-    let lines: Vec<Line> = messages
-        .iter()
-        .filter(|m| m.peer == peer)
-        .flat_map(|m| {
-            let (sender, sender_style) = match m.direction {
-                MessageDirection::Incoming => (peer, info_style()),
-                MessageDirection::Outgoing => (own_username, accent_style()),
-            };
-            wrap_chat_line(
-                vec![
-                    Span::styled(
-                        m.at.format("%H:%M ").to_string(),
-                        dimmed_style(),
-                    ),
-                    Span::styled(format!("<{sender}> "), sender_style),
-                ],
-                &m.text,
-                primary_style(),
-                width,
-            )
-        })
-        .collect();
+    let lines = wrapped.rows(width, peer, messages, |m| {
+        if m.peer != peer {
+            return Vec::new();
+        }
+        let (sender, sender_style) = match m.direction {
+            MessageDirection::Incoming => (peer, info_style()),
+            MessageDirection::Outgoing => (own_username, accent_style()),
+        };
+        wrap_chat_line(
+            vec![
+                Span::styled(m.at.format("%H:%M ").to_string(), dimmed_style()),
+                Span::styled(format!("<{sender}> "), sender_style),
+            ],
+            &m.text,
+            primary_style(),
+            width,
+        )
+    });
 
     // The newest rows, unless the reader is holding a place in the history.
     let window = view.window(lines.len(), usize::from(area.height));
