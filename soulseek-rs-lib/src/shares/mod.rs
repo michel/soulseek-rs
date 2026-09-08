@@ -12,7 +12,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 /// One shared file: its peer-facing virtual path and where it lives on disk.
+///
+/// Built by the scan, never by a host, so fields can be added without a
+/// breaking release.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SharedFile {
     /// Backslash-separated path exposed to peers, e.g. `music\album\song.mp3`.
     pub virtual_path: String,
