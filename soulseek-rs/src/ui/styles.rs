@@ -1,5 +1,6 @@
 // Reusable styles and colors for consistent UI appearance
 
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Padding};
@@ -145,6 +146,18 @@ pub fn pane_block(focused: bool) -> Block<'static> {
         .border_style(border_style(focused))
         .border_type(BorderType::Rounded)
         .padding(PANE_PADDING)
+}
+
+/// Rows a list in `area` shows at once, less the `chrome` rows above it: a
+/// table header, a popup's tab bar and compose line. At least one, so a page
+/// key always moves, even before the first draw. Paging and drawing both
+/// count rows with this, so they agree on what a page is.
+#[must_use]
+pub fn page_of(area: Option<Rect>, chrome: u16) -> usize {
+    area.map_or(0, |area| {
+        usize::from(pane_block(false).inner(area).height.saturating_sub(chrome))
+    })
+    .max(1)
 }
 
 pub fn download_status_glyph(status: &DownloadStatus) -> (&'static str, Style) {
