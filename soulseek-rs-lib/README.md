@@ -115,6 +115,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-`ServerMessage` and `ClientOperation` are `#[non_exhaustive]`: every protocol
-message the client learns to handle adds a variant, so match them with a
-wildcard arm.
+`ClientOperation` is `#[non_exhaustive]`: every protocol message the client
+learns to handle adds a variant, so match it with a wildcard arm. `SharedFile`
+is too, so build it with the `..` syntax rather than listing every field.

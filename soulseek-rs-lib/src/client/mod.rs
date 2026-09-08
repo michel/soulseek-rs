@@ -60,6 +60,8 @@ pub const DEFAULT_UPLOAD_SLOTS: usize = 10;
 const BROKER_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 
 const DEFAULT_MAX_PEERS: usize = 512;
+/// How long a message waits for a control connection to its peer.
+const PENDING_PEER_TTL: Duration = Duration::from_mins(1);
 
 const BROWSE_PROTECT_WINDOW: Duration = Duration::from_mins(5);
 
@@ -107,6 +109,8 @@ struct UploadJob {
     real_path: std::path::PathBuf,
     virtual_path: String,
     size: u64,
+    /// When the offer went out; `None` once the peer has answered it.
+    offered: Option<Instant>,
 }
 
 /// Live bookkeeping for an upload being served (or recently finished).
@@ -332,11 +336,45 @@ pub enum ClientOperation {
         requester_key: String,
         filename: String,
     },
+    /// Distributed-network parent candidates, from the server or a host.
+    PossibleParents(Vec<(String, String, u16)>),
+    /// The server told us to drop our parent.
+    ResetDistributed,
+    /// A parent candidate told us how deep it sits. `link` says which dial
+    /// to that user is talking.
+    ParentBranchLevel {
+        parent: String,
+        link: u64,
+        level: i32,
+    },
+    /// A parent candidate told us whose branch it is on.
+    ParentBranchRoot {
+        parent: String,
+        link: u64,
+        root: String,
+    },
+    /// A search came down the tree from `parent`.
+    ParentSearch {
+        parent: String,
+        link: u64,
+        username: String,
+        token: u32,
+        query: String,
+    },
+    /// The link to a parent or candidate is gone.
+    ParentClosed {
+        parent: String,
+        link: u64,
+    },
 }
 pub struct ClientContext {
     pub peer_registry: Option<PeerRegistry>,
     pub downloads: DownloadStore,
     server_sender: Option<Sender<ServerMessage>>,
+    /// Where anything outside the operations loop posts operations.
+    operations: Option<Sender<ClientOperation>>,
+    /// Our place in the distributed search network.
+    leaf: distributed::Leaf,
     searches: HashMap<String, Search>,
     private_messages: Vec<UserMessage>,
     /// Correlation tokens for server-brokered (firewalled) connections, mapping
@@ -349,8 +387,11 @@ pub struct ClientContext {
     pub shared_directories: Vec<String>,
     /// Peer listen addresses learned from GetPeerAddress responses.
     peer_addresses: HashMap<String, (String, u32)>,
-    /// Peer messages waiting for a control connection to that peer.
-    pending_peer_messages: HashMap<String, Vec<crate::message::Message>>,
+    /// Peer messages waiting for a control connection to that peer, and
+    /// when the last was queued: a peer that never answers must not keep
+    /// them forever.
+    pending_peer_messages:
+        HashMap<String, (Instant, Vec<crate::message::Message>)>,
     /// Uploads we have offered, keyed by our transfer token.
     uploads: HashMap<u32, UploadJob>,
     active_uploads: HashMap<u32, ActiveUpload>,
@@ -443,6 +484,15 @@ impl ClientContext {
 }
 
 impl ClientContext {
+    /// A context for the client that logs in as `username`.
+    #[must_use]
+    pub fn for_user(username: &str) -> Self {
+        Self {
+            leaf: distributed::Leaf::new(username),
+            ..Self::new()
+        }
+    }
+
     #[must_use]
     pub fn new() -> Self {
         let actor_system = Arc::new(ActorSystem::new());
@@ -450,6 +500,8 @@ impl ClientContext {
         Self {
             peer_registry: None,
             server_sender: None,
+            operations: None,
+            leaf: distributed::Leaf::new(""),
             searches: HashMap::new(),
             private_messages: Vec::new(),
             pending_connect_tokens: HashMap::new(),
@@ -690,10 +742,12 @@ impl ClientContext {
         username: &str,
         message: crate::message::Message,
     ) {
-        self.pending_peer_messages
+        let entry = self
+            .pending_peer_messages
             .entry(username.to_string())
-            .or_default()
-            .push(message);
+            .or_insert_with(|| (Instant::now(), Vec::new()));
+        entry.0 = Instant::now();
+        entry.1.push(message);
     }
 
     /// Remove and return the messages queued for `username`.
@@ -703,7 +757,16 @@ impl ClientContext {
     ) -> Vec<crate::message::Message> {
         self.pending_peer_messages
             .remove(username)
+            .map(|(_, messages)| messages)
             .unwrap_or_default()
+    }
+
+    /// Drop peer messages nobody could deliver within
+    /// [`PENDING_PEER_TTL`]: the searcher went offline, or never existed.
+    pub(crate) fn expire_pending_peer_messages(&mut self, now: Instant) {
+        self.pending_peer_messages.retain(|_, (since, _)| {
+            now.duration_since(*since) < PENDING_PEER_TTL
+        });
     }
 
     /// Store a shared-file listing received from browsing `username`.
@@ -832,11 +895,13 @@ impl Client {
             listen_port: settings.listen_port,
             bound_port: None,
             address: settings.server_address,
+            context: Arc::new(RwLock::new(ClientContext::for_user(
+                &settings.username,
+            ))),
             username: settings.username,
             password: settings.password,
             version: settings.version,
             shared_directories: settings.shared_directories,
-            context: Arc::new(RwLock::new(ClientContext::new())),
             server_handle: None,
             session: SessionWatch::default(),
         }
@@ -980,6 +1045,7 @@ impl Client {
 }
 
 mod connection;
+mod distributed;
 mod downloads;
 mod operations;
 mod rooms;

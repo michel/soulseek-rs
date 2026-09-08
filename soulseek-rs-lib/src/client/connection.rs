@@ -57,6 +57,7 @@ impl Client {
             ctx.max_peers.clone(),
         );
         ctx.peer_registry = Some(peer_registry);
+        ctx.operations = Some(sender.clone());
 
         let listen_sender = sender.clone();
 

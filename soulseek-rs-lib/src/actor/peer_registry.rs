@@ -126,14 +126,14 @@ impl PeerRegistry {
                 actor.set_self_handle(handle);
             })
             .map_err(|e| format!("failed to spawn peer actor thread: {e}"))?;
-        // Stop any actor already registered under this username so it does not
-        // become an orphan pinning a pool worker forever. Eviction on the
-        // replaced actor's later shutdown is identity-aware (keyed on its id),
-        // so stopping it here cannot evict this new connection.
+        // Retire any actor already registered under this username rather than
+        // stop it: a reply to a request we sent on it may still be on the
+        // wire. It stops itself once that grace is over, and the eviction its
+        // shutdown triggers is keyed on its id, so it cannot evict this one.
         if let Some((_, old_handle)) =
             peers.insert(username.clone(), (id, handle.clone()))
         {
-            let _ = old_handle.stop();
+            let _ = old_handle.send(PeerMessage::Retire);
             debug!(
                 "[peer_registry] Replaced existing peer actor for {}",
                 username

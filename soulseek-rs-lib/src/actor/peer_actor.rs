@@ -61,6 +61,9 @@ pub enum PeerMessage {
         size: u64,
     },
     ProcessRead,
+    /// A newer connection to this peer took over. Deliver what is already
+    /// on the wire, then close.
+    Retire,
 }
 
 pub struct PeerActor {
@@ -101,6 +104,10 @@ pub struct PeerActor {
     /// control connection, and each one holds a descriptor and a thread for
     /// the life of the process.
     last_activity: Instant,
+    /// Set once a newer connection to the same peer replaced this one. The
+    /// stream stays open until then so a reply already in flight, a browse
+    /// listing say, still arrives; past it the actor closes and stops.
+    retire_deadline: Option<Instant>,
 }
 
 /// Cap on queued outbound bytes. A peer that stops reading must not be able to
@@ -112,6 +119,10 @@ const MAX_PENDING_WRITE: usize = 32 * 1024 * 1024;
 /// simply reconnects — every serious client reaps idle peers this way. Five
 /// minutes comfortably outlives a search's chatter and queue updates.
 const IDLE_DISCONNECT: Duration = Duration::from_mins(5);
+/// How long a replaced connection keeps listening for replies in flight.
+const RETIRE_GRACE: Duration = Duration::from_secs(30);
+/// Socket buffers read per tick: 64 KiB, against a 100 ms tick.
+const READS_PER_TICK: usize = 64;
 
 impl PeerActor {
     #[must_use]
@@ -148,6 +159,7 @@ impl PeerActor {
             serving_tokens: std::collections::HashSet::new(),
             pending_write: Vec::new(),
             last_activity: Instant::now(),
+            retire_deadline: None,
         }
     }
 
@@ -218,6 +230,13 @@ impl PeerActor {
         if matches!(self.connection_state, ConnectionState::Connecting { .. }) {
             match &msg {
                 PeerMessage::SetUsername(_) | PeerMessage::ProcessRead => {}
+                // Nothing has gone out on a dial still in progress, so there
+                // is nothing to wait for.
+                PeerMessage::Retire => {
+                    self.retire_deadline = Some(Instant::now());
+                    self.disconnect();
+                    return;
+                }
                 _ => {
                     self.queued_messages.push(msg);
                     return;
@@ -228,6 +247,9 @@ impl PeerActor {
         match msg {
             PeerMessage::SendMessage(message) => {
                 self.send_message(message);
+            }
+            PeerMessage::Retire => {
+                self.retire_deadline = Some(Instant::now() + RETIRE_GRACE);
             }
             PeerMessage::FileSearchResult(file_search) => {
                 self.handle_file_search_result(file_search);
@@ -484,7 +506,7 @@ impl PeerActor {
                 return;
             };
 
-            match self.reader.read_from_socket(stream) {
+            match Self::drain(&mut self.reader, stream) {
                 Ok(()) => {
                     self.last_activity = Instant::now();
                 }
@@ -530,6 +552,25 @@ impl PeerActor {
             }
         }
         self.extract_and_process_messages();
+    }
+
+    /// Read what the socket holds, up to `READS_PER_TICK` buffers, so a big
+    /// listing lands in a few ticks rather than a few minutes; the cap keeps
+    /// a peer that never stops sending from starving the mailbox. Only the
+    /// first read reports an error: a peer that sends its reply and hangs up
+    /// has still sent the reply, which must be parsed before the close is
+    /// acted on, and the socket says so again on the next call.
+    fn drain(
+        reader: &mut MessageReader,
+        stream: &mut TcpStream,
+    ) -> io::Result<()> {
+        reader.read_from_socket(stream)?;
+        for _ in 1..READS_PER_TICK {
+            if reader.read_from_socket(stream).is_err() {
+                break;
+            }
+        }
+        Ok(())
     }
 
     fn extract_and_process_messages(&mut self) {
@@ -664,6 +705,12 @@ impl PeerActor {
     }
 
     fn disconnect_with_error(&mut self, error: Error) {
+        // A retired connection is expected to go: the peer closing it is not
+        // evidence the peer is gone, and must not fail its transfers on the
+        // connection that replaced this one.
+        if self.retire_deadline.is_some() {
+            return self.disconnect();
+        }
         let username = self.peer_username();
         // Include the cause: a failed outbound dial reports nothing else, so
         // without it an unreachable peer is indistinguishable from a clean
@@ -919,109 +966,27 @@ impl Actor for PeerActor {
                         );
                         self.disconnect();
                     }
+                    if self.stream.is_some()
+                        && self
+                            .retire_deadline
+                            .is_some_and(|d| d <= Instant::now())
+                    {
+                        self.disconnect();
+                    }
                 }
             }
-            ConnectionState::Disconnected => {}
+            // Nothing in the registry points at a retired actor any more, so
+            // it is the one to stop itself.
+            ConnectionState::Disconnected => {
+                if self.retire_deadline.is_some()
+                    && let Some(handle) = &self.self_handle
+                {
+                    let _ = handle.stop();
+                }
+            }
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::peer::{ConnectionType, Peer};
-    use std::net::{TcpListener, TcpStream};
-    use std::sync::mpsc::Receiver;
-
-    /// A connected inbound actor over a real loopback socket, plus the far
-    /// end (kept alive so reads see silence, not EOF).
-    fn connected_actor() -> (PeerActor, Receiver<ClientOperation>, TcpStream) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let stream = TcpStream::connect(addr).unwrap();
-        stream.set_nonblocking(true).unwrap();
-        let (far_end, _) = listener.accept().unwrap();
-
-        let (mut actor, rx) = make_actor(Some(stream));
-        actor.on_start();
-        (actor, rx, far_end)
-    }
-
-    fn make_actor(
-        stream: Option<TcpStream>,
-    ) -> (PeerActor, Receiver<ClientOperation>) {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let peer = Peer::new(
-            "bob".to_string(),
-            ConnectionType::P,
-            "127.0.0.1".to_string(),
-            0,
-            None,
-            0,
-            0,
-            0,
-        );
-        let actor = PeerActor::new(peer, stream, None, tx, "me".to_string(), 7);
-        (actor, rx)
-    }
-
-    #[test]
-    fn a_timed_out_connect_parks_the_actor_in_disconnected() {
-        let (mut actor, rx) = make_actor(None);
-        actor.connection_state = ConnectionState::Connecting {
-            since: Instant::now().checked_sub(Duration::from_secs(21)).unwrap(),
-        };
-
-        actor.tick();
-
-        assert!(
-            matches!(actor.connection_state, ConnectionState::Disconnected),
-            "a timed-out connect must leave Connecting"
-        );
-        match rx.try_recv() {
-            Ok(ClientOperation::PeerConnectFailed(7, username)) => {
-                assert_eq!(username, "bob");
-            }
-            other => panic!("expected PeerConnectFailed, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn an_upload_failed_message_reaches_the_client_as_this_peer() {
-        let (mut actor, rx, _far_end) = connected_actor();
-
-        actor.handle_message(PeerMessage::UploadFailed(
-            String::new(),
-            "song.mp3".to_string(),
-        ));
-
-        match rx.try_recv() {
-            Ok(ClientOperation::UploadFailed(username, filename)) => {
-                assert_eq!(username, "bob");
-                assert_eq!(filename, "song.mp3");
-            }
-            other => panic!("expected UploadFailed, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn tick_reaps_a_peer_idle_past_the_deadline() {
-        let (mut actor, rx, _far_end) = connected_actor();
-
-        actor.tick();
-        assert!(actor.stream.is_some(), "a fresh connection stays open");
-
-        actor.last_activity = Instant::now()
-            .checked_sub(IDLE_DISCONNECT + Duration::from_secs(1))
-            .unwrap();
-        actor.tick();
-
-        assert!(actor.stream.is_none(), "an idle stream must be closed");
-        match rx.try_recv() {
-            Ok(ClientOperation::PeerDisconnected(7, username, None)) => {
-                assert_eq!(username, "bob");
-            }
-            other => panic!("expected a clean PeerDisconnected, got {other:?}"),
-        }
-    }
-}
+mod tests;

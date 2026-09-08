@@ -52,7 +52,7 @@ impl<M: Send> ActorHandle<M> {
 }
 
 /// Internal actor message wrapper
-pub(crate) enum ActorMessage<M> {
+pub enum ActorMessage<M> {
     UserMessage(M),
     Stop,
 }

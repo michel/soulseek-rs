@@ -23,11 +23,11 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use soulseek_rs::message::Message;
+use soulseek_rs::message::distributed;
 use soulseek_rs::message::server::MessageFactory;
-use soulseek_rs::peer::ConnectionType;
 use soulseek_rs::{
-    Client, ClientSettings, ClientVersion, DownloadStatus, PeerAddress,
-    SessionLoss, UploadStatus,
+    Client, ClientSettings, ClientVersion, ConnectionType, DownloadStatus,
+    PeerAddress, SessionLoss, UploadStatus,
 };
 
 /// Only one test at a time may drive a server.
@@ -1838,7 +1838,7 @@ fn a_runtime_share_update_is_visible_to_browsers() {
     assert!(
         directories
             .iter()
-            .any(|d| d.files.iter().any(|(name, _)| name == "late.mp3")),
+            .any(|d| d.files.iter().any(|f| f.name == "late.mp3")),
         "the listing should include the file shared at runtime"
     );
 
@@ -1888,7 +1888,7 @@ fn browse_a_peers_shared_files() {
     assert!(
         directories
             .iter()
-            .any(|d| { d.files.iter().any(|(name, _)| name == "track.flac") }),
+            .any(|d| { d.files.iter().any(|f| f.name == "track.flac") }),
         "the listing should include the shared file"
     );
 
@@ -1949,7 +1949,7 @@ fn browse_a_firewalled_peer_via_broker() {
     assert!(
         directories
             .iter()
-            .any(|d| d.files.iter().any(|(name, _)| name == "hidden.flac")),
+            .any(|d| d.files.iter().any(|f| f.name == "hidden.flac")),
         "the brokered listing should include the shared file"
     );
 
@@ -2019,7 +2019,7 @@ fn a_third_party_client_browses_our_shares_directly() {
     assert!(
         directories
             .iter()
-            .any(|d| d.files.iter().any(|(name, _)| name == "track.flac")),
+            .any(|d| d.files.iter().any(|f| f.name == "track.flac")),
         "the listing should include the shared file, got {directories:?}"
     );
 
@@ -2127,7 +2127,7 @@ fn a_third_party_client_browses_our_shares_via_the_server_broker() {
     assert!(
         directories
             .iter()
-            .any(|d| d.files.iter().any(|(name, _)| name == "brokered.flac")),
+            .any(|d| d.files.iter().any(|f| f.name == "brokered.flac")),
         "the brokered listing should include the shared file, got {directories:?}"
     );
 
@@ -2180,7 +2180,7 @@ fn a_stalled_peer_connection_does_not_wedge_the_listener() {
     assert!(
         directories
             .iter()
-            .any(|d| d.files.iter().any(|(name, _)| name == "still.flac")),
+            .any(|d| d.files.iter().any(|f| f.name == "still.flac")),
         "the listing should include the shared file, got {directories:?}"
     );
 
@@ -2312,7 +2312,12 @@ impl QueueingPeer {
     /// place in the queue" is also true of a peer that never asked, so polling
     /// for that would pass against a completely broken pump.
     fn takes_a_slot(&mut self) -> bool {
-        read_until_code(&mut self.peer, 40, Duration::from_secs(10)).is_some()
+        self.takes_a_slot_within(Duration::from_secs(10))
+    }
+
+    fn takes_a_slot_within(&mut self, timeout: Duration) -> bool {
+        let _ = self.peer.set_read_timeout(Some(timeout));
+        read_until_code(&mut self.peer, 40, timeout).is_some()
     }
 }
 
@@ -3250,7 +3255,7 @@ fn a_third_party_client_fetches_one_folder_of_our_shares() {
     assert_eq!(echoed, folder);
     let mut names: Vec<(String, Vec<String>)> = directories
         .into_iter()
-        .map(|d| (d.name, d.files.into_iter().map(|(name, _)| name).collect()))
+        .map(|d| (d.name, d.files.into_iter().map(|f| f.name).collect()))
         .collect();
     for (_, files) in &mut names {
         files.sort();
@@ -3477,4 +3482,289 @@ fn a_server_announcement_arrives_as_a_message_from_the_server() {
         .find(|m| m.username() == "server")
         .expect("bob should hear the announcement");
     assert_eq!(announcement.message(), "going down at nine");
+}
+
+// A peer that is offered a slot and never answers must not keep it: with
+// two slots by default, two such peers shut uploads down for the session.
+#[test]
+fn an_unanswered_upload_offer_frees_its_slot() {
+    let server = server_or_skip!();
+    let (share, folder) = queue_share("expiry", &["silent.mp3", "patient.mp3"]);
+    let server_addr = format!("{}:{}", server.host, server.port);
+
+    let sharer_port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share.display().to_string()],
+        ..server.listening_settings("e2e_expiry_sharer", "pw", sharer_port)
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+    sharer.set_upload_slots(1);
+    let listen_addr = format!("127.0.0.1:{sharer_port}");
+
+    let mut silent = queue_as(
+        &server_addr,
+        &listen_addr,
+        "e2e_expiry_silent",
+        &format!("{folder}\\silent.mp3"),
+    )
+    .expect("silent peer queues");
+    assert!(silent.takes_a_slot(), "the silent peer is offered the slot");
+
+    let mut patient = queue_as(
+        &server_addr,
+        &listen_addr,
+        "e2e_expiry_patient",
+        &format!("{folder}\\patient.mp3"),
+    )
+    .expect("patient peer queues");
+    assert!(
+        patient.takes_a_slot_within(Duration::from_mins(1)),
+        "the slot must come free once the silent peer's offer expires"
+    );
+    assert!(
+        sharer.take_upload_events().iter().any(|event| {
+            event.username == "e2e_expiry_silent"
+                && matches!(event.status, UploadStatus::Failed(_))
+        }),
+        "the operator sees the unanswered offer fail"
+    );
+
+    let _ = std::fs::remove_dir_all(share);
+}
+
+/// A constant-bitrate MP3: `frames` MPEG-1 Layer III frames at 128 kbps,
+/// 44.1 kHz, so every searcher sees a bitrate to filter and sort on.
+fn cbr_mp3(frames: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    for _ in 0..frames {
+        out.extend_from_slice(&[0xFF, 0xFB, 0x90, 0x00]);
+        out.resize(out.len() + 413, 0);
+    }
+    out
+}
+
+// A shared file with no bitrate fails every `--min-bitrate` filter and sorts
+// last in SoulseekQt; the attributes come from the file's own headers.
+#[test]
+fn a_shared_mp3_advertises_its_bitrate_and_duration() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    // 1000 frames is 26 seconds.
+    std::fs::write(share_dir.join("attrprobe song.mp3"), cbr_mp3(1000))
+        .unwrap();
+    let (_sharer, searcher) = sharer_and_searcher(
+        &server,
+        &share_dir,
+        "e2e_attr_sharer",
+        "e2e_attr_searcher",
+    );
+
+    let query = "attrprobe";
+    let _ = searcher.search(query, Duration::from_secs(3));
+    let reply = reply_from(&searcher, query, "e2e_attr_sharer")
+        .expect("the sharer answers");
+    let file = &reply.files[0];
+    assert_eq!(file.attribs.get(&0), Some(&128), "bitrate in kbps");
+    assert_eq!(file.attribs.get(&1), Some(&26), "duration in seconds");
+    assert_eq!(file.attribs.get(&2), Some(&0), "constant bitrate");
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+// A browse shows what a search shows: the bitrate and duration a searcher
+// filters on are in the listing too, as Nicotine+ sends them.
+#[test]
+fn a_browse_listing_carries_the_files_attributes() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    std::fs::write(share_dir.join("listed.mp3"), cbr_mp3(1000)).unwrap();
+    let sharer_port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.listening_settings("e2e_lattr_sharer", "pw", sharer_port)
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let _qt = login_raw(&server_addr, "e2e_lattr_browser", "pw")
+        .expect("third-party client logs in");
+
+    let directories = third_party_browse(
+        &format!("127.0.0.1:{sharer_port}"),
+        "e2e_lattr_browser",
+        Duration::ZERO,
+        Duration::from_secs(15),
+    )
+    .expect("a listing");
+    let listed = directories
+        .iter()
+        .flat_map(|d| d.files.iter())
+        .find(|f| f.name == "listed.mp3")
+        .expect("the mp3 is listed");
+    assert!(
+        listed.attributes.contains(&(0, 128)),
+        "{:?}",
+        listed.attributes
+    );
+    assert!(
+        listed.attributes.contains(&(1, 26)),
+        "{:?}",
+        listed.attributes
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+/// The next inbound connection, or a timeout error: a mock that never gets
+/// dialled must fail its test rather than hang it.
+fn accept_within(
+    listener: &std::net::TcpListener,
+    timeout: Duration,
+) -> std::io::Result<TcpStream> {
+    listener.set_nonblocking(true)?;
+    let deadline = Instant::now() + timeout;
+    let stream = loop {
+        match listener.accept() {
+            Ok((stream, _)) => break stream,
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "no inbound connection",
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(e),
+        }
+    };
+    stream.set_nonblocking(false)?;
+    stream.set_read_timeout(Some(Duration::from_secs(15)))?;
+    Ok(stream)
+}
+
+/// The PeerInit that opens an inbound connection: who dialled, and as what.
+fn peer_init_of(stream: &mut TcpStream) -> std::io::Result<(String, String)> {
+    let mut init = read_framed(stream)?;
+    assert_eq!(init.get_init_code(), 1, "expected a PeerInit");
+    init.set_pointer(5);
+    Ok((init.read_string(), init.read_string()))
+}
+
+// Searches also travel peer to peer, down a tree of parents and children the
+// server assembles from PossibleParents. A leaf dials the candidates with a D
+// connection, adopts the first that passes it a search after stating its
+// branch, and answers those searches exactly like ones from the server.
+// soulfind never hands out parents, so the parent here is a mock: a logged-in
+// user the leaf is pointed at directly.
+#[test]
+fn a_leaf_adopts_a_parent_and_answers_the_searches_it_passes_down() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    std::fs::create_dir_all(share_dir.join("album")).unwrap();
+    std::fs::write(share_dir.join("album").join("treesearch.mp3"), b"xxxx")
+        .unwrap();
+
+    // The parent and the searcher are two logged-in users with a listener
+    // each. Bind all interfaces: soulfind reports the LAN address.
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let raw_user = |name: &str| {
+        let port = free_port().expect("a port for the raw user");
+        let listener = std::net::TcpListener::bind(("0.0.0.0", port)).unwrap();
+        let mut srv = login_raw(&server_addr, name, "pw").expect("raw login");
+        srv.write_all(
+            &MessageFactory::build_set_wait_port_message(port).get_buffer(),
+        )
+        .unwrap();
+        (listener, port, srv)
+    };
+    let (listener, parent_port, _parent_srv) = raw_user("e2e_parent");
+    let (searcher, _, _searcher_srv) = raw_user("e2e_searcher");
+
+    let mut leaf = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.listening_settings(
+            "e2e_leaf",
+            "pw",
+            free_port().expect("leaf port"),
+        )
+    });
+    leaf.connect().expect("leaf connect");
+    assert!(leaf.login().expect("leaf login"));
+    assert_eq!(
+        leaf.distributed_branch(),
+        ("e2e_leaf".to_string(), 0),
+        "a leaf without a parent is its own branch root"
+    );
+
+    leaf.consider_parents(vec![(
+        "e2e_parent".to_string(),
+        "127.0.0.1".to_string(),
+        parent_port,
+    )])
+    .expect("consider parents");
+
+    let mut link = accept_within(&listener, Duration::from_secs(15))
+        .expect("the leaf dials the candidate parent");
+    assert_eq!(
+        peer_init_of(&mut link).unwrap(),
+        ("e2e_leaf".to_string(), "D".to_string()),
+        "a parent link opens with a distributed PeerInit"
+    );
+
+    // We are a branch root at level 0; the leaf hangs one level below us.
+    link.write_all(&distributed::build_branch_level(0).get_buffer())
+        .unwrap();
+    link.write_all(&distributed::build_branch_root("e2e_parent").get_buffer())
+        .unwrap();
+    link.write_all(
+        &distributed::build_search("e2e_searcher", 4242, "treesearch")
+            .get_buffer(),
+    )
+    .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while leaf.distributed_branch().1 == 0 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(
+        leaf.distributed_branch(),
+        ("e2e_parent".to_string(), 1),
+        "the first search from a candidate with a branch adopts it"
+    );
+
+    // The answer goes to whoever asked, not to the parent that relayed it:
+    // a P connection to the searcher carrying a FileSearchResponse for the
+    // token.
+    let mut p = accept_within(&searcher, Duration::from_secs(20))
+        .expect("the leaf dials the searcher to answer");
+    assert_eq!(
+        peer_init_of(&mut p).unwrap(),
+        ("e2e_leaf".to_string(), "P".to_string())
+    );
+    let response = expect_code(&mut p, 9, Duration::from_secs(15))
+        .expect("a FileSearchResponse for the search from the tree");
+    let body = soulseek_rs::utils::zlib::inflate(&response.get_data()[8..])
+        .expect("the response body inflates");
+    let name_len = u32::from_le_bytes(body[..4].try_into().unwrap()) as usize;
+    let token_at = 4 + name_len;
+    assert_eq!(&body[4..token_at], b"e2e_leaf");
+    assert_eq!(
+        u32::from_le_bytes(body[token_at..token_at + 4].try_into().unwrap()),
+        4242
+    );
+
+    // Losing the parent puts the leaf back on its own.
+    drop(link);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while leaf.distributed_branch().1 != 0 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(leaf.distributed_branch(), ("e2e_leaf".to_string(), 0));
+
+    let _ = std::fs::remove_dir_all(share_dir);
 }

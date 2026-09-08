@@ -127,8 +127,32 @@ impl MessageFactory {
             .clone()
     }
     #[must_use]
-    pub fn build_no_parent_message() -> Message {
-        Message::new().write_int32(71).write_bool(true).clone()
+    /// Whether we lack a parent in the distributed network (code 71); the
+    /// server offers PossibleParents while we say so.
+    pub fn build_have_no_parent(no_parent: bool) -> Message {
+        Message::new().write_int32(71).write_bool(no_parent).clone()
+    }
+
+    /// The root of the branch we hang from (code 127): ourselves while we
+    /// have no parent.
+    #[must_use]
+    pub fn build_branch_root(username: &str) -> Message {
+        Message::new()
+            .write_int32(127)
+            .write_string(username)
+            .clone()
+    }
+
+    /// How deep in the tree we sit (code 126): 0 without a parent.
+    #[must_use]
+    pub fn build_branch_level(level: u32) -> Message {
+        Message::new().write_int32(126).write_int32(level).clone()
+    }
+
+    /// Whether we take children in the distributed network (code 100).
+    #[must_use]
+    pub fn build_accept_children(accept: bool) -> Message {
+        Message::new().write_int32(100).write_bool(accept).clone()
     }
     #[must_use]
     pub fn build_set_wait_port_message(port: u16) -> Message {
