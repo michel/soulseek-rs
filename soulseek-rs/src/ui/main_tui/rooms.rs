@@ -1,6 +1,6 @@
 use super::MainTui;
-use super::input::{jumped, list_jump, scroll_log};
-use crate::models::RoomsView;
+use super::input::{FilterEdit, edit_filter, jumped, list_jump, scroll_log};
+use crate::models::{ChatFilter, RoomsView};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl MainTui {
@@ -30,6 +30,14 @@ impl MainTui {
             self.handle_room_filter_input(key);
             return;
         }
+        // So does typing a filter over the log or the member list; the
+        // other keys still move around.
+        if self.state.rooms.view == RoomsView::Chat
+            && self.state.rooms.filtering.is_some()
+            && self.handle_chat_filter_input(key)
+        {
+            return;
+        }
 
         match self.state.rooms.view {
             RoomsView::List => self.handle_rooms_list_input(key),
@@ -39,7 +47,7 @@ impl MainTui {
 
     fn handle_rooms_list_input(&mut self, key: KeyEvent) {
         let len = self.state.rooms.filtered_rooms().len();
-        if let Some(jump) = list_jump(key, self.popup_page()) {
+        if let Some(jump) = list_jump(key, self.popup_page(1)) {
             self.state.rooms.list_selected =
                 jumped(self.state.rooms.list_selected, len, jump);
             return;
@@ -80,25 +88,18 @@ impl MainTui {
     }
 
     fn handle_room_filter_input(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Esc => {
-                self.state.rooms.list_is_filtering = false;
-                self.state.rooms.list_filter.clear();
+        let Some(edit) = edit_filter(&mut self.state.rooms.list_filter, key)
+        else {
+            return self.handle_rooms_list_input(key);
+        };
+        match edit {
+            FilterEdit::Changed | FilterEdit::Cleared => {
                 self.state.rooms.list_selected = 0;
             }
-            KeyCode::Enter => {
-                self.state.rooms.list_is_filtering = false;
-                self.join_selected_room();
-            }
-            KeyCode::Char(c) => {
-                self.state.rooms.list_filter.push(c);
-                self.state.rooms.list_selected = 0;
-            }
-            KeyCode::Backspace => {
-                self.state.rooms.list_filter.pop();
-                self.state.rooms.list_selected = 0;
-            }
-            _ => {}
+            FilterEdit::Kept => self.join_selected_room(),
+        }
+        if edit != FilterEdit::Changed {
+            self.state.rooms.list_is_filtering = false;
         }
     }
 
@@ -113,10 +114,23 @@ impl MainTui {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             return;
         }
+        let filtered = !self.state.rooms.log_filter.is_empty()
+            || !self.state.rooms.user_filter.is_empty();
         match key.code {
             KeyCode::Char('q') => self.state.show_rooms = false,
+            // Esc peels back one level: the filters first, then the list.
+            KeyCode::Esc if filtered => {
+                self.state.rooms.set_log_filter(String::new());
+                self.state.rooms.set_user_filter(String::new());
+            }
             KeyCode::Esc | KeyCode::Char('l') => {
                 self.state.rooms.view = RoomsView::List;
+            }
+            KeyCode::Char('/') => {
+                self.state.rooms.filtering = Some(ChatFilter::Log);
+            }
+            KeyCode::Char('u') => {
+                self.state.rooms.filtering = Some(ChatFilter::Users);
             }
             KeyCode::Tab => self.state.rooms.next_tab(),
             KeyCode::BackTab => self.state.rooms.prev_tab(),
@@ -135,6 +149,33 @@ impl MainTui {
             }
             _ => {}
         }
+    }
+
+    /// The keys that edit whichever filter is being typed, the log's or the
+    /// member list's. Says whether `key` was one of them.
+    fn handle_chat_filter_input(&mut self, key: KeyEvent) -> bool {
+        let rooms = &mut self.state.rooms;
+        let over_log = rooms.filtering == Some(ChatFilter::Log);
+        let mut filter = if over_log {
+            rooms.log_filter.clone()
+        } else {
+            rooms.user_filter.clone()
+        };
+        let Some(edit) = edit_filter(&mut filter, key) else {
+            return false;
+        };
+        if edit != FilterEdit::Changed {
+            rooms.filtering = None;
+        }
+        // Keeping a filter leaves the view where it is.
+        if edit != FilterEdit::Kept {
+            if over_log {
+                rooms.set_log_filter(filter);
+            } else {
+                rooms.set_user_filter(filter);
+            }
+        }
+        true
     }
 
     /// Browse the shares of the member highlighted in the active room. Closes

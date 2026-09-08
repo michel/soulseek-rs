@@ -1,6 +1,6 @@
 use super::MainTui;
-use crate::models::{CommandBarMode, FocusedPane, LogView};
-use crate::ui::pane_block;
+use crate::models::{CommandBarMode, FocusedPane, LogView, PaneLayout};
+use crate::ui::page_of;
 use crate::ui::panes::{
     InfoSubject, name_end_offset, query_end_offset, selected_transfer,
     transfer_name_end_offset, upload_display_name,
@@ -8,7 +8,7 @@ use crate::ui::panes::{
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Position;
 use ratatui::widgets::TableState;
 
 const NAME_SCROLL_STEP: isize = 8;
@@ -100,6 +100,10 @@ impl MainTui {
                 self.state.hide_focused_pane();
                 return;
             }
+            KeyCode::Char('W') => {
+                self.state.layout = PaneLayout::default();
+                return;
+            }
             KeyCode::Esc if self.state.layout.zoomed => {
                 self.state.layout.zoomed = false;
                 return;
@@ -186,6 +190,20 @@ impl MainTui {
             return;
         }
 
+        // Typing a filter captures the keys that edit it; the rest still
+        // move around.
+        if self.state.chat_filtering
+            && let Some(edit) = edit_filter(&mut self.state.chat_filter, key)
+        {
+            if edit != FilterEdit::Changed {
+                self.state.chat_filtering = false;
+            }
+            if edit != FilterEdit::Kept {
+                self.state.chat_view.to_newest();
+            }
+            return;
+        }
+
         // Paging keys move through the conversation's history.
         if scroll_log(&mut self.state.chat_view, key) {
             return;
@@ -195,9 +213,15 @@ impl MainTui {
         }
 
         match key.code {
+            // Esc peels back one level: a filter first, then the popup.
+            KeyCode::Esc if !self.state.chat_filter.is_empty() => {
+                self.state.chat_filter.clear();
+                self.state.chat_view.to_newest();
+            }
             KeyCode::Char('i' | 'q') | KeyCode::Esc => {
                 self.state.show_messages = false;
             }
+            KeyCode::Char('/') => self.state.chat_filtering = true,
             // Move through the conversation list on the right.
             KeyCode::Tab | KeyCode::Down | KeyCode::Char('j') => {
                 self.state.cycle_chat_peer(true);
@@ -326,30 +350,16 @@ impl MainTui {
     }
 
     fn handle_filter_input(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Esc => {
-                self.state.results_is_filtering = false;
-                self.state.results_filter_query.clear();
-                self.state.results_filtered_items =
-                    self.state.results_items.clone();
-                self.state.results_filtered_indices =
-                    (0..self.state.results_items.len()).collect();
-            }
-            KeyCode::Char(c) => {
-                self.state.results_filter_query.push(c);
-                self.apply_filter();
-            }
-            KeyCode::Backspace => {
-                self.state.results_filter_query.pop();
-                self.apply_filter();
-            }
-            // Confirm the filter: leave typing mode but keep the query, so
-            // the normal Results keys (j/k, space, enter) act on the
-            // filtered list.
-            KeyCode::Enter => {
-                self.state.results_is_filtering = false;
-            }
-            _ => self.handle_results_input(key),
+        let Some(edit) = edit_filter(&mut self.state.results_filter_query, key)
+        else {
+            return self.handle_results_input(key);
+        };
+        // A kept query stays: the normal Results keys act on the filtered
+        // list. An empty one shows everything without a rebuild.
+        if edit == FilterEdit::Changed {
+            self.apply_filter();
+        } else {
+            self.state.results_is_filtering = false;
         }
     }
 
@@ -374,10 +384,10 @@ impl MainTui {
         navigate_list(key, table, len, page)
     }
 
-    /// Rows a popup shows at once: its inner height less a tab bar and a
-    /// compose line, which is what its list or log has left.
-    pub(super) fn popup_page(&self) -> usize {
-        page_of(self.state.popup_area, 2)
+    /// Rows a popup's list shows at once: its inner height less the `chrome`
+    /// rows above the list, a tab bar or a header.
+    pub(super) fn popup_page(&self, chrome: u16) -> usize {
+        page_of(self.state.popup_area, chrome)
     }
 
     /// Rows the focused pane shows at once: its inner height less the table
@@ -440,10 +450,7 @@ impl MainTui {
                     self.state.results_selected_indices.insert(index);
                 }
             }
-            KeyCode::Char('/') => {
-                self.state.results_is_filtering = true;
-                self.state.results_filter_query.clear();
-            }
+            KeyCode::Char('/') => self.state.results_is_filtering = true,
             KeyCode::Char('a') => {
                 let indices: Vec<usize> =
                     if self.state.results_filter_query.is_empty() {
@@ -575,14 +582,41 @@ impl MainTui {
     }
 }
 
-/// Rows a list in `area` shows at once, less the `chrome` rows above it: a
-/// table header, a popup's tab bar and compose line. At least one, so a page
-/// key always moves, even before the first draw.
-fn page_of(area: Option<Rect>, chrome: u16) -> usize {
-    area.map_or(0, |area| {
-        usize::from(pane_block(false).inner(area).height.saturating_sub(chrome))
-    })
-    .max(1)
+/// What a key did to a filter being typed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FilterEdit {
+    Changed,
+    Kept,
+    Cleared,
+}
+
+/// Apply `key` to `filter` the way every typed filter takes it: characters
+/// and Backspace edit it, Enter keeps it, Esc clears it. A control or alt
+/// chord is not typing. `None` when the key was none of those.
+pub(super) fn edit_filter(
+    filter: &mut String,
+    key: KeyEvent,
+) -> Option<FilterEdit> {
+    match key.code {
+        KeyCode::Esc => {
+            filter.clear();
+            Some(FilterEdit::Cleared)
+        }
+        KeyCode::Enter => Some(FilterEdit::Kept),
+        KeyCode::Backspace => {
+            filter.pop();
+            Some(FilterEdit::Changed)
+        }
+        KeyCode::Char(c)
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            filter.push(c);
+            Some(FilterEdit::Changed)
+        }
+        _ => None,
+    }
 }
 
 /// A move over a whole list at once: to either end, or by a number of rows

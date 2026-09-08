@@ -99,12 +99,13 @@ Everything else is a one-shot command that runs headless.
 
 ### The TUI
 
-Results run across the top, with the whole width for long file names;
-Searches, Downloads and Info share the row underneath. `Tab`/`Shift-Tab` or
-`1`–`3` move the focus between panes, `z` zooms the focused pane to the whole
-window, and `w` hides it so the others widen (its number brings it back).
-Every list takes `↑`/`↓`, `Home`/`End`, `PgUp`/`PgDn` and the vim keys, and
-`h`/`l` or `←`/`→` scroll a long file name or query sideways, `0` and `$` to
+Results run across the top, each file name in a column of its own with the
+folder it came from beside it; Searches, Downloads and Info share the row
+underneath. `Tab`/`Shift-Tab` or `1`–`3` move the focus between panes, `z`
+zooms the focused pane to the whole window, `w` hides it so the others widen
+(its number brings it back), and `W` puts the whole layout back. Every list
+takes `↑`/`↓`, `Home`/`End`, `PgUp`/`PgDn` and the vim keys, and `h`/`l` or
+`←`/`→` scroll a long file name, folder or query sideways, `0` and `$` to
 either end. `PgUp`/`PgDn` scroll a chat log back through its history, and `?`
 shows every key for where you are.
 
@@ -572,7 +573,13 @@ unread counter. `c` opens the chat-rooms popup: a `/`-filterable room list
 busiest first, `Enter` to join, several rooms open at once as tabs
 (`Tab`/`Shift-Tab` to switch, `x` to leave, `l` back to the list), and `↑`/`↓`
 through the member list with `b` to browse someone or `m` to message them.
-Unread counts appear on the tabs and on the `c chat (n)` shortcut.
+`/` searches the open room's log and `u` its member list; the inbox takes `/`
+too. Unread counts appear on the tabs and on the `c chat (n)` shortcut.
+
+`b` browses a user's shared files as a tree: `←`/`→` close and open a folder,
+`J`/`K` jump between folders, `H`/`L` close or open every folder, `/` filters
+the whole tree by path, and `Enter` or `d` downloads a file or a folder's
+files (under a filter, only the ones it shows).
 
 ### Connectivity
 

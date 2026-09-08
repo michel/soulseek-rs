@@ -154,23 +154,20 @@ pub struct BrowseRow {
     pub size: Option<u64>,
 }
 
-/// Flatten the tree into visible rows, descending only into expanded folders.
-#[must_use]
-pub fn flatten_browse(
-    nodes: &[BrowseNode],
-    expanded: &HashSet<String>,
-) -> Vec<BrowseRow> {
-    let mut rows = Vec::new();
-    flatten_into(nodes, 0, expanded, &mut rows);
-    rows
-}
-
+/// Emit `nodes` as rows. Without a `needle`, every folder and file, a
+/// folder's contents only while it is open. With one, only the paths that
+/// contain it and the folders on the way there, open ones still deciding
+/// whether their contents show. `emit` false only counts. Says whether
+/// anything under `nodes` was kept.
 fn flatten_into(
     nodes: &[BrowseNode],
     depth: usize,
     expanded: &HashSet<String>,
+    needle: Option<&str>,
     rows: &mut Vec<BrowseRow>,
-) {
+    emit: bool,
+) -> bool {
+    let mut kept = false;
     for node in nodes {
         match node {
             BrowseNode::Folder {
@@ -178,36 +175,107 @@ fn flatten_into(
                 path,
                 children,
             } => {
-                let is_expanded = expanded.contains(path);
-                rows.push(BrowseRow {
-                    depth,
-                    is_folder: true,
-                    expanded: is_expanded,
-                    name: name.clone(),
-                    path: path.clone(),
-                    size: None,
-                });
-                if is_expanded {
-                    flatten_into(children, depth + 1, expanded, rows);
+                let open = expanded.contains(path);
+                let mark = rows.len();
+                if emit {
+                    rows.push(BrowseRow {
+                        depth,
+                        is_folder: true,
+                        expanded: open,
+                        name: name.clone(),
+                        path: path.clone(),
+                        size: None,
+                    });
+                }
+                let below = match needle {
+                    None => {
+                        if open {
+                            flatten_into(
+                                children,
+                                depth + 1,
+                                expanded,
+                                None,
+                                rows,
+                                emit,
+                            );
+                        }
+                        true
+                    }
+                    Some(needle) => {
+                        flatten_into(
+                            children,
+                            depth + 1,
+                            expanded,
+                            Some(needle),
+                            rows,
+                            emit && open,
+                        ) || path_has(path, needle)
+                    }
+                };
+                if below {
+                    kept = true;
+                } else {
+                    rows.truncate(mark);
                 }
             }
             BrowseNode::File { name, path, size } => {
-                rows.push(BrowseRow {
-                    depth,
-                    is_folder: false,
-                    expanded: false,
-                    name: name.clone(),
-                    path: path.clone(),
-                    size: Some(*size),
-                });
+                if needle.is_none_or(|needle| path_has(path, needle)) {
+                    kept = true;
+                    if emit {
+                        rows.push(BrowseRow {
+                            depth,
+                            is_folder: false,
+                            expanded: false,
+                            name: name.clone(),
+                            path: path.clone(),
+                            size: Some(*size),
+                        });
+                    }
+                }
             }
         }
     }
+    kept
+}
+
+/// Whether `path` contains `needle`, which is already ASCII-lowercase. Case
+/// is folded for ASCII only, without allocating: a filter keystroke runs
+/// this over every path in a share. A letter beyond ASCII matches as typed.
+fn path_has(path: &str, needle: &str) -> bool {
+    needle.is_empty()
+        || path
+            .as_bytes()
+            .windows(needle.len())
+            .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
+/// Open every folder with a path containing `needle` somewhere under it,
+/// so a filter shows all it matched. Says whether anything under `nodes`
+/// matched.
+fn open_matching(
+    nodes: &[BrowseNode],
+    needle: &str,
+    expanded: &mut HashSet<String>,
+) -> bool {
+    let mut any = false;
+    for node in nodes {
+        match node {
+            BrowseNode::Folder { path, children, .. } => {
+                if open_matching(children, needle, expanded)
+                    || path_has(path, needle)
+                {
+                    expanded.insert(path.clone());
+                    any = true;
+                }
+            }
+            BrowseNode::File { path, .. } => any |= path_has(path, needle),
+        }
+    }
+    any
 }
 
 /// Find a node by its full path.
-#[must_use]
-pub fn find_node<'a>(
+fn find_node<'a>(
     nodes: &'a [BrowseNode],
     path: &str,
 ) -> Option<&'a BrowseNode> {
@@ -235,8 +303,7 @@ pub fn find_node<'a>(
 
 /// All file leaves under `node` as `(full_path, size)`, descending the tree
 /// structurally (never string-prefix matching).
-#[must_use]
-pub fn files_under(node: &BrowseNode) -> Vec<(String, u64)> {
+fn files_under(node: &BrowseNode) -> Vec<(String, u64)> {
     let mut out = Vec::new();
     collect_files(node, &mut out);
     out
@@ -267,7 +334,17 @@ pub struct BrowseState {
     pub username: String,
     pub status: BrowseStatus,
     pub tree: Vec<BrowseNode>,
-    pub expanded: HashSet<String>,
+    expanded: HashSet<String>,
+    /// The tree flattened for the current expansion, kept between frames:
+    /// a heavy sharer's tree runs to tens of thousands of rows.
+    rows: Vec<BrowseRow>,
+    /// Narrows the rows to paths containing it, case-insensitively. Setting
+    /// it opens every folder with a match; clearing it puts the folders back
+    /// the way they were, kept in `kept_expanded` meanwhile.
+    filter: String,
+    kept_expanded: Option<HashSet<String>>,
+    /// Whether typing goes to the filter.
+    pub filtering: bool,
     pub selected_row: usize,
     pub file_count: usize,
     pub folder_count: usize,
@@ -282,6 +359,10 @@ impl BrowseState {
             status: BrowseStatus::Loading,
             tree: Vec::new(),
             expanded: HashSet::new(),
+            rows: Vec::new(),
+            filter: String::new(),
+            kept_expanded: None,
+            filtering: false,
             selected_row: 0,
             file_count: 0,
             folder_count: 0,
@@ -310,12 +391,105 @@ impl BrowseState {
         self.file_count = built.file_count;
         self.folder_count = built.folder_count;
         self.selected_row = 0;
+        self.refresh();
     }
 
     /// The flattened visible rows for the current expansion state.
     #[must_use]
-    pub fn rows(&self) -> Vec<BrowseRow> {
-        flatten_browse(&self.tree, &self.expanded)
+    pub fn rows(&self) -> &[BrowseRow] {
+        &self.rows
+    }
+
+    /// Open or close the folder at `path`.
+    pub fn set_expanded(&mut self, path: &str, expanded: bool) {
+        if expanded {
+            self.expanded.insert(path.to_string());
+        } else {
+            self.expanded.remove(path);
+        }
+        self.refresh();
+    }
+
+    pub fn expand_all(&mut self) {
+        folder_paths(&self.tree, &mut self.expanded);
+        self.refresh();
+    }
+
+    pub fn collapse_all(&mut self) {
+        self.expanded.clear();
+        self.refresh();
+    }
+
+    #[must_use]
+    pub fn filter(&self) -> &str {
+        &self.filter
+    }
+
+    /// Narrow the rows to `filter`, starting over from the top, with every
+    /// folder holding a match open. An emptied filter puts the folders back
+    /// as they were before it.
+    pub fn set_filter(&mut self, filter: String) {
+        if filter == self.filter {
+            return;
+        }
+        if filter.is_empty() {
+            if let Some(kept) = self.kept_expanded.take() {
+                self.expanded = kept;
+            }
+        } else {
+            if self.kept_expanded.is_none() {
+                self.kept_expanded = Some(self.expanded.clone());
+            }
+            self.expanded.clear();
+            open_matching(
+                &self.tree,
+                &filter.to_ascii_lowercase(),
+                &mut self.expanded,
+            );
+        }
+        self.filter = filter;
+        self.selected_row = 0;
+        self.refresh();
+    }
+
+    /// The files under the folder at `path`, only those the filter lets
+    /// through: what `d` on a filtered folder downloads is what it shows.
+    #[must_use]
+    pub fn folder_files(&self, path: &str) -> Vec<(String, u64)> {
+        let needle = self.filter.to_ascii_lowercase();
+        find_node(&self.tree, path)
+            .map(files_under)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(path, _)| path_has(path, &needle))
+            .collect()
+    }
+
+    /// Re-flatten after the tree, the expansion or the filter changed under
+    /// `rows`.
+    fn refresh(&mut self) {
+        let needle =
+            (!self.filter.is_empty()).then(|| self.filter.to_ascii_lowercase());
+        self.rows.clear();
+        flatten_into(
+            &self.tree,
+            0,
+            &self.expanded,
+            needle.as_deref(),
+            &mut self.rows,
+            true,
+        );
+        self.selected_row =
+            self.selected_row.min(self.rows.len().saturating_sub(1));
+    }
+}
+
+fn folder_paths(nodes: &[BrowseNode], out: &mut HashSet<String>) {
+    for node in nodes {
+        if let BrowseNode::Folder { path, children, .. } = node {
+            out.insert(path.clone());
+            folder_paths(children, out);
+        }
     }
 }
 
@@ -412,6 +586,16 @@ impl BrowseTabs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The tree flattened for `expanded`, unfiltered.
+    fn flatten_browse(
+        nodes: &[BrowseNode],
+        expanded: &HashSet<String>,
+    ) -> Vec<BrowseRow> {
+        let mut rows = Vec::new();
+        flatten_into(nodes, 0, expanded, None, &mut rows, true);
+        rows
+    }
 
     fn dir(name: &str, files: &[(&str, u64)]) -> SharedDirectory {
         SharedDirectory {
@@ -577,6 +761,48 @@ mod tests {
         assert_eq!(tabs.active_tab().unwrap().status, BrowseStatus::Loading);
         // Now loading again, no further retry.
         assert_eq!(tabs.retry_active(), None);
+    }
+
+    #[test]
+    fn expanding_and_collapsing_refresh_the_rows_and_keep_the_selection() {
+        let mut state = BrowseState::loading("bob".to_string());
+        state.load(&[dir("music\\album", &[("a.mp3", 1), ("b.mp3", 2)])]);
+        assert_eq!(state.rows().len(), 2, "music open, album closed");
+        state.set_expanded("music\\album", true);
+        assert_eq!(state.rows().len(), 4);
+        state.selected_row = 3;
+        state.set_expanded("music\\album", false);
+        assert_eq!(state.rows().len(), 2);
+        assert_eq!(state.selected_row, 1, "pulled back onto the last row");
+    }
+
+    #[test]
+    fn a_filter_opens_every_folder_with_a_match_and_folds_still_work() {
+        let mut state = BrowseState::loading("bob".to_string());
+        state.load(&[
+            dir("music\\alpha", &[("a1.mp3", 1), ("a2.flac", 2)]),
+            dir("music\\beta", &[("b1.mp3", 3)]),
+        ]);
+        let names = |state: &BrowseState| -> Vec<String> {
+            state.rows().iter().map(|row| row.name.clone()).collect()
+        };
+        state.set_filter("beta".to_string());
+        assert_eq!(names(&state), ["music", "beta", "b1.mp3"]);
+        state.set_filter("FLAC".to_string());
+        assert_eq!(names(&state), ["music", "alpha", "a2.flac"], "any case");
+        assert_eq!(
+            state.folder_files("music"),
+            [("music\\alpha\\a2.flac".to_string(), 2)],
+            "a folder downloads what it shows"
+        );
+        state.set_expanded("music\\alpha", false);
+        assert_eq!(names(&state), ["music", "alpha"], "folded under a filter");
+        state.set_filter(String::new());
+        assert_eq!(state.rows().len(), 3, "the folders as they were before");
+        state.expand_all();
+        assert_eq!(state.rows().len(), 6);
+        state.collapse_all();
+        assert_eq!(state.rows().len(), 1);
     }
 
     #[test]
