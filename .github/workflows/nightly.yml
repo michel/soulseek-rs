@@ -168,14 +168,33 @@ jobs:
             gh release edit nightly --draft --prerelease --latest=false
           fi
 
-          current_tag=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/nightly" --jq .object.sha 2>/dev/null || true)
-          if [ -n "$current_tag" ]; then
-            gh api --silent --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly" \
-              -f sha="$SOURCE_SHA" -F force=true
-          else
-            gh api --silent --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
-              -f ref=refs/tags/nightly -f sha="$SOURCE_SHA"
-          fi
+          # The Git refs API can briefly lag a just-merged commit. Retry both
+          # the create and update paths, re-reading the ref each time so a
+          # successful-but-disconnected response is harmless and idempotent.
+          tag_ready=false
+          for attempt in 1 2 3 4 5; do
+            current_tag=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/nightly" --jq .object.sha 2>/dev/null || true)
+            if [ -n "$current_tag" ]; then
+              if gh api --silent --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly" \
+                -f sha="$SOURCE_SHA" -F force=true; then
+                tag_ready=true
+                break
+              fi
+            elif gh api --silent --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref=refs/tags/nightly -f sha="$SOURCE_SHA"; then
+              tag_ready=true
+              break
+            fi
+
+            [ "$attempt" -eq 5 ] || {
+              echo "::warning::Git refs API attempt $attempt failed; retrying"
+              sleep $((attempt * 2))
+            }
+          done
+          [ "$tag_ready" = true ] || {
+            echo "::error::could not point the nightly tag at $SOURCE_SHA"
+            exit 1
+          }
 
           if [ "$release_exists" = false ]; then
             gh release create nightly --verify-tag --draft --prerelease --latest=false \
