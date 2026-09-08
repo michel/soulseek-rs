@@ -1,8 +1,8 @@
 use crate::models::{BrowseState, BrowseStatus, BrowseTabs};
 use crate::ui::{
     HIGHLIGHT_SYMBOL, body_style, dimmed_style, error_style, format_bytes,
-    get_spinner_char, highlight_style, pane_block, primary_style,
-    row_highlight_style, warning_style,
+    get_spinner_char, highlight_style, page_of, pane_block, primary_style,
+    row_highlight_style, visible_range, warning_style,
 };
 use ratatui::{
     Frame,
@@ -106,8 +106,15 @@ fn render_browse_one(
             frame.render_widget(Paragraph::new(text).block(block), area);
         }
         BrowseStatus::Loaded => {
-            let rows: Vec<Row> = browse
-                .rows()
+            let all = browse.rows();
+            let window = visible_range(
+                table_state.offset(),
+                Some(browse.selected_row),
+                all.len(),
+                page_of(Some(area), 0),
+            );
+            let start = window.start;
+            let rows: Vec<Row> = all[window]
                 .iter()
                 .map(|row| {
                     let indent = "  ".repeat(row.depth);
@@ -142,8 +149,13 @@ fn render_browse_one(
                     .highlight_spacing(HighlightSpacing::Always)
                     .block(block);
 
-            table_state.select(Some(browse.selected_row));
-            frame.render_stateful_widget(table, area, table_state);
+            // The table holds one page, so the state it gets is shifted
+            // onto it.
+            let mut page_state = TableState::default().with_selected(Some(
+                browse.selected_row.min(all.len().saturating_sub(1)) - start,
+            ));
+            frame.render_stateful_widget(table, area, &mut page_state);
+            *table_state.offset_mut() = start;
         }
     }
 }

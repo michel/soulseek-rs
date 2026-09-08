@@ -4,8 +4,8 @@ use crate::ui::{
     GLYPH_ACTIVE, GLYPH_DONE, GLYPH_FAILED, GLYPH_QUEUED, HIGHLIGHT_SYMBOL,
     accent_style, body_style, dimmed_style, download_status_glyph, error_style,
     format_bytes, format_speed, header_style, inactive_style, info_style,
-    pane_block, pane_title, primary_style, row_highlight_style, success_style,
-    warning_style,
+    page_of, pane_block, pane_title, primary_style, row_highlight_style,
+    success_style, visible_range, warning_style,
 };
 use ratatui::{
     Frame,
@@ -81,7 +81,23 @@ pub fn render_downloads_pane(
     .height(1);
 
     let name_width = column_width(area, &WIDTHS, NAME_COLUMN);
-    let mut rows: Vec<Row> = downloads
+    // Downloads come first, uploads after; one page of the two together.
+    let total = downloads.len() + uploads.len();
+    if let Some(selected) = table_state.selected_mut() {
+        *selected = (*selected).min(total - 1);
+    }
+    let window = visible_range(
+        table_state.offset(),
+        table_state.selected(),
+        total,
+        page_of(Some(area), 1),
+    );
+    let start = window.start;
+    let split = downloads.len();
+    let shown_downloads = &downloads[start.min(split)..window.end.min(split)];
+    let shown_uploads =
+        &uploads[start.saturating_sub(split)..window.end.saturating_sub(split)];
+    let mut rows: Vec<Row> = shown_downloads
         .iter()
         .map(|download_entry| {
             let download = &download_entry.download;
@@ -153,7 +169,7 @@ pub fn render_downloads_pane(
         })
         .collect();
 
-    rows.extend(uploads.iter().map(|upload| {
+    rows.extend(shown_uploads.iter().map(|upload| {
         let (status_icon, status_style) = match &upload.status {
             UploadStatus::Queued(_) => (GLYPH_QUEUED, warning_style()),
             UploadStatus::InProgress => (GLYPH_ACTIVE, accent_style()),
@@ -213,5 +229,9 @@ pub fn render_downloads_pane(
             focused,
         )));
 
-    frame.render_stateful_widget(table, area, table_state);
+    // The table holds one page, so the state it gets is shifted onto it.
+    let mut page_state = TableState::default()
+        .with_selected(table_state.selected().map(|selected| selected - start));
+    frame.render_stateful_widget(table, area, &mut page_state);
+    *table_state.offset_mut() = start;
 }
