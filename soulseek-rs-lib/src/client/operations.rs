@@ -919,6 +919,11 @@ impl Client {
                             }
                         }
                     }
+                    ClientOperation::PeerInfoReceived { username, info } => {
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.store_peer_info(username, info);
+                        }
+                    }
                     ClientOperation::FolderContents {
                         username,
                         token,

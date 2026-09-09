@@ -1,6 +1,7 @@
 use crate::actor::{Actor, ActorHandle, ConnectionState};
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
+use crate::message::peer::UserInfoResponseHandler;
 use crate::message::peer::{
     FileSearchResponse, FolderContentsRequest, FolderContentsResponseHandler,
     GetShareFileList, PeerInit, PlaceInQueueRequest, PlaceInQueueResponse,
@@ -47,6 +48,8 @@ pub enum PeerMessage {
     ShareListRequested,
     /// A peer we are browsing sent us their shared-file listing (code 5).
     ShareListReceived(Vec<SharedDirectory>),
+    /// A peer answered our `UserInfoRequest` with what it says about itself.
+    UserInfoReceived(crate::message::peer::PeerInfo),
     /// A peer answered our `FolderContentsRequest` with one folder's listing.
     FolderContentsReceived {
         token: u32,
@@ -207,6 +210,7 @@ impl PeerActor {
         handlers.register_handler(FolderContentsRequest);
         handlers.register_handler(FolderContentsResponseHandler);
         handlers.register_handler(UserInfoRequest);
+        handlers.register_handler(UserInfoResponseHandler);
         handlers.register_handler(UploadDeniedHandler);
         handlers.register_handler(UploadFailedHandler);
         handlers.register_handler(PlaceInQueueRequest);
@@ -315,6 +319,12 @@ impl PeerActor {
                 self.forward(ClientOperation::BrowseResult {
                     username: self.peer_username(),
                     directories,
+                });
+            }
+            PeerMessage::UserInfoReceived(info) => {
+                self.forward(ClientOperation::PeerInfoReceived {
+                    username: self.peer_username(),
+                    info,
                 });
             }
             PeerMessage::FolderContentsReceived {

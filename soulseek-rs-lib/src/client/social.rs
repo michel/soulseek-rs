@@ -166,6 +166,34 @@ impl Client {
         ))
     }
 
+    /// Ask `username` what it says about itself (peer code 15): its
+    /// description, upload slots and queue length — a user's profile as other
+    /// clients show it.
+    ///
+    /// Any previous answer is dropped first, so [`Client::peer_info`] reports
+    /// the reply to this request rather than a stale one.
+    ///
+    /// # Errors
+    /// [`crate::SoulseekRs::NotConnected`] when there is no server connection,
+    /// or [`crate::SoulseekRs::LockPoisoned`] if the client state is poisoned.
+    pub fn request_peer_info(&self, username: &str) -> Result<()> {
+        self.context.write_safe()?.invalidate_peer_info(username);
+        let request = crate::message::peer::build_user_info_request();
+        self.send_to_peer_or_queue(username, request)
+    }
+
+    /// What `username` last said about itself.
+    #[must_use]
+    pub fn peer_info(
+        &self,
+        username: &str,
+    ) -> Option<crate::message::peer::PeerInfo> {
+        self.context
+            .read_safe()
+            .ok()
+            .and_then(|ctx| ctx.peer_info(username))
+    }
+
     /// Ask `username` for the contents of one folder of their shares (peer
     /// code 36) — what "download folder" in other clients asks for, without
     /// pulling their whole listing.

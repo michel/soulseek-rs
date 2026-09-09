@@ -5176,3 +5176,39 @@ fn a_finished_upload_teaches_us_our_own_recorded_speed() {
     let _ = std::fs::remove_dir_all(share_dir);
     let _ = std::fs::remove_dir_all(download_dir);
 }
+
+#[test]
+fn a_peer_tells_us_about_itself_when_asked() {
+    // The profile another client shows for a user: their description, upload
+    // slots and queue length, straight from the peer (code 15 and its reply).
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    std::fs::write(share_dir.join("e2e_peerinfo.bin"), b"data").unwrap();
+    let (_sharer, asker) = sharer_and_searcher(
+        &server,
+        &share_dir,
+        "e2e_peerinfo_sharer",
+        "e2e_peerinfo_asker",
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut info = None;
+    while Instant::now() < deadline && info.is_none() {
+        asker
+            .request_peer_info("e2e_peerinfo_sharer")
+            .expect("ask the peer about itself");
+        std::thread::sleep(Duration::from_millis(500));
+        info = asker.peer_info("e2e_peerinfo_sharer");
+    }
+    let info = info.expect("the peer should answer for itself");
+
+    assert!(
+        info.slots_free,
+        "a peer with nothing queued has a free slot, got {info:?}"
+    );
+    assert_eq!(info.queue_size, 0);
+    assert_eq!(info.picture_bytes, None);
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}

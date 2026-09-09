@@ -340,6 +340,11 @@ pub enum ClientOperation {
         token: u32,
         folder: String,
     },
+    /// A peer answered our request for what it says about itself.
+    PeerInfoReceived {
+        username: String,
+        info: crate::message::peer::PeerInfo,
+    },
     /// A peer answered our request for one folder of their shares.
     FolderContents {
         username: String,
@@ -494,6 +499,8 @@ pub struct ClientContext {
     browse_results: HashMap<String, Vec<SharedDirectory>>,
     /// One-folder listings received from peers, keyed by peer and folder.
     folder_contents: HashMap<(String, String), Vec<SharedDirectory>>,
+    /// What peers said about themselves (peer code 16), keyed by peer.
+    peer_infos: HashMap<String, crate::message::peer::PeerInfo>,
     pending_browses: HashMap<String, Instant>,
     /// Latest snapshot of the public chat-room list (from `RoomList`, code 64).
     room_list: Vec<RoomInfo>,
@@ -651,6 +658,7 @@ impl ClientContext {
             pending_serves: HashMap::new(),
             browse_results: HashMap::new(),
             folder_contents: HashMap::new(),
+            peer_infos: HashMap::new(),
             pending_browses: HashMap::new(),
             room_list: Vec::new(),
             room_events: Vec::new(),
@@ -861,6 +869,30 @@ impl ClientContext {
         if !fed {
             self.children.drop_all();
         }
+    }
+
+    /// Record what `username` says about itself.
+    pub fn store_peer_info(
+        &mut self,
+        username: String,
+        info: crate::message::peer::PeerInfo,
+    ) {
+        self.peer_infos.insert(username, info);
+    }
+
+    /// What `username` last said about itself, if anything.
+    #[must_use]
+    pub fn peer_info(
+        &self,
+        username: &str,
+    ) -> Option<crate::message::peer::PeerInfo> {
+        self.peer_infos.get(username).cloned()
+    }
+
+    /// Drop what we hold about `username`, so a poll after a fresh request
+    /// cannot report the previous answer.
+    pub fn invalidate_peer_info(&mut self, username: &str) {
+        self.peer_infos.remove(username);
     }
 
     /// Record one folder's listing from `username`.

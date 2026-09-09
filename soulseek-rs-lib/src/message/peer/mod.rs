@@ -34,4 +34,7 @@ pub use transfer_request::TransferRequest;
 pub use transfer_response::TransferResponse;
 pub use upload_denied::UploadDeniedHandler;
 pub use upload_failed::UploadFailedHandler;
-pub use user_info::{UserInfoRequest, build_user_info};
+pub use user_info::{
+    PeerInfo, UserInfoRequest, UserInfoResponseHandler, build_user_info,
+    build_user_info_request,
+};
