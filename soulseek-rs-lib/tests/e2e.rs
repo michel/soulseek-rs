@@ -5284,3 +5284,129 @@ fn a_room_reports_members_arriving_and_leaving() {
         alice.room_members(room)
     );
 }
+
+#[test]
+fn a_member_can_give_up_a_private_room_and_an_owner_can_disband_it() {
+    use soulseek_rs::types::RoomEvent;
+    let server = server_or_skip!();
+
+    let room = "e2e_private_leaving";
+    let mut owner =
+        Client::with_settings(server.settings("e2e_leave_owner", "pw"));
+    let mut guest =
+        Client::with_settings(server.settings("e2e_leave_guest", "pw"));
+    owner.connect().expect("owner connect");
+    guest.connect().expect("guest connect");
+    assert!(owner.login().expect("owner login"));
+    assert!(guest.login().expect("guest login"));
+
+    guest
+        .set_room_invitations_enabled(true)
+        .expect("guest accepts invitations");
+    owner
+        .join_private_room(room)
+        .expect("owner creates the room");
+    std::thread::sleep(Duration::from_millis(750));
+    owner
+        .add_room_member(room, "e2e_leave_guest")
+        .expect("owner invites the guest");
+
+    let granted = await_room_event(&guest, Duration::from_secs(5), |event| {
+        matches!(event, RoomEvent::OwnStandingChanged {
+            room: r, members: true, granted: true
+        } if r == room)
+        .then_some(())
+    });
+    assert!(granted.is_some(), "the guest should be a member first");
+
+    // The guest gives up their own membership (code 136): the owner's roster
+    // loses them.
+    guest.leave_private_room(room).expect("guest resigns");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline
+        && owner
+            .private_room_members(room)
+            .iter()
+            .any(|u| u == "e2e_leave_guest")
+    {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert!(
+        !owner
+            .private_room_members(room)
+            .iter()
+            .any(|u| u == "e2e_leave_guest"),
+        "a member who resigned should leave the roster, got {:?}",
+        owner.private_room_members(room)
+    );
+
+    // The owner disbands the room (code 137), which frees the name: someone
+    // else asking for it is not refused as they would be for a room that
+    // still belongs to another user.
+    owner.disband_private_room(room).expect("owner disbands");
+    std::thread::sleep(Duration::from_secs(1));
+
+    let mut newcomer =
+        Client::with_settings(server.settings("e2e_leave_newcomer", "pw"));
+    newcomer.connect().expect("newcomer connect");
+    assert!(newcomer.login().expect("newcomer login"));
+    newcomer
+        .join_private_room(room)
+        .expect("newcomer asks for the name");
+
+    let refused =
+        await_room_event(&newcomer, Duration::from_secs(3), |event| {
+            matches!(event, RoomEvent::CantCreate { room: r } if r == room)
+                .then_some(())
+        });
+    assert!(
+        refused.is_none(),
+        "a disbanded room's name should be free again"
+    );
+}
+
+#[test]
+fn privileges_can_be_handed_to_another_user() {
+    let server = server_or_skip!();
+
+    // Only a privileged account can give privileges away, and privileges
+    // themselves are granted in soulfind's own database.
+    let giver = "e2e_gift_giver";
+    let mut giving = Client::with_settings(server.settings(giver, "pw"));
+    giving.connect().expect("giver connect");
+    assert!(giving.login().expect("giver login"));
+    if !grant(&server, giver, "privileges") {
+        println!("e2e skipped: cannot grant privileges on this server");
+        return;
+    }
+    drop(giving);
+    std::thread::sleep(Duration::from_secs(1));
+
+    let mut giving = Client::with_settings(server.settings(giver, "pw"));
+    giving.connect().expect("giver reconnect");
+    assert!(giving.login().expect("giver re-login"));
+
+    let mut receiver =
+        Client::with_settings(server.settings("e2e_gift_receiver", "pw"));
+    receiver.connect().expect("receiver connect");
+    assert!(receiver.login().expect("receiver login"));
+
+    giving
+        .give_privileges("e2e_gift_receiver", 1)
+        .expect("hand over a day of privileges");
+
+    // The recipient now has privilege time of their own to check (code 92).
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut left = 0;
+    while Instant::now() < deadline && left == 0 {
+        receiver
+            .check_privileges()
+            .expect("ask how much time we have");
+        std::thread::sleep(Duration::from_millis(500));
+        left = receiver.own_privilege_seconds().unwrap_or(0);
+    }
+    assert!(
+        left > 0,
+        "the gifted privileges should show up as time of our own"
+    );
+}

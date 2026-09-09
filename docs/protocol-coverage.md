@@ -58,13 +58,13 @@ Message names and codes follow the Soulseek protocol as implemented by
 | 117 / 118 | AddThingIHate / Remove | yes | e2e — hates come back in UserInterests |
 | 120 | RoomSearch | yes | e2e — a member of the room answers |
 | 121 | SendUploadSpeed | yes | e2e — the server records a finished upload |
-| 123 | GivePrivileges | yes | unit — needs privileges to exercise |
+| 123 | GivePrivileges | yes | e2e — a privileged account hands time over |
 | 126 / 127 | BranchLevel / BranchRoot | yes | e2e — leaf adoption, and children |
 | 130 | ResetDistributed | yes | unit — a new session starts parentless |
 | 133 | RoomMembers | yes | e2e — a private room's roster |
 | 134 / 135 | AddRoomMember / Remove | yes | e2e — granted and revoked |
-| 136 | CancelRoomMembership | yes | unit |
-| 137 | CancelRoomOwnership | yes | unit |
+| 136 | CancelRoomMembership | yes | e2e — a member resigns |
+| 137 | CancelRoomOwnership | yes | e2e — the owner disbands the room |
 | 139 / 140 | RoomMembershipGranted / Revoked | yes | e2e — the guest is told |
 | 141 | EnableRoomInvitations | yes | e2e — set before an invitation |
 | 142 | ChangePassword | yes | e2e — the next login needs the new one |
