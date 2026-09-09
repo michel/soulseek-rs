@@ -1253,8 +1253,16 @@ impl Client {
     /// (`AcceptChildren`, code 100). Sent whenever that answer changes: the
     /// server only offers us to peers while it is true.
     fn announce_child_capacity(client_context: &Arc<RwLock<ClientContext>>) {
-        let (sender, has_room) = match client_context.read_safe() {
-            Ok(ctx) => (ctx.server_sender.clone(), ctx.children.has_room()),
+        let (sender, has_room) = match client_context.write_safe() {
+            Ok(mut ctx) => {
+                // Only on a change: the server holds this as a standing
+                // state, and repeating it on every message we happen to
+                // receive would be noise.
+                let Some(has_room) = ctx.accept_children_change() else {
+                    return;
+                };
+                (ctx.server_sender.clone(), has_room)
+            }
             Err(_) => return,
         };
         let Some(sender) = sender else { return };

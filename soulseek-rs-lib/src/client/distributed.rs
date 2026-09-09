@@ -321,8 +321,11 @@ pub fn announce_move(
 ) {
     let server = ctx.server_sender.clone();
     // What the server needs to know is whether it may offer us to another
-    // peer right now, not whether we serve children in principle.
+    // peer right now, not whether we serve children in principle. The stance
+    // carries it, so record it as told: a separate AcceptChildren right
+    // behind this one would say nothing new.
     let has_room = ctx.children.has_room();
+    let _ = ctx.accept_children_change();
     announce(server.as_ref(), branch, has_parent, has_room);
     ctx.children.broadcast_stance(&branch.root, branch.level);
 }

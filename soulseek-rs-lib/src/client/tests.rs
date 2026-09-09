@@ -1126,3 +1126,15 @@ fn leaving_a_room_drops_its_ticker_board() {
         "a board for a room we left is stale"
     );
 }
+
+#[test]
+fn the_server_is_told_our_child_capacity_only_when_it_changes() {
+    // AcceptChildren is a standing state on the server, not a heartbeat.
+    let mut ctx = ClientContext::new();
+    assert_eq!(
+        ctx.accept_children_change(),
+        Some(false),
+        "the first answer is always worth sending"
+    );
+    assert_eq!(ctx.accept_children_change(), None, "unchanged, so silent");
+}

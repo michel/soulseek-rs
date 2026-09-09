@@ -32,17 +32,24 @@ use crate::{debug, trace};
 pub const MAX_CHILDREN: usize = 10;
 
 /// The child limit the server's figures imply, following Nicotine+:
-/// `speed / ratio / 100`, capped, and none at all below the minimum speed the
-/// server set. `None` when the server has not reported our speed yet, which
-/// leaves the caller's own cap standing.
+/// `speed / ratio / 100`, capped, and none at all when our recorded speed is
+/// below the minimum the server set.
+///
+/// `None` means the server's figures do not decide it — either it has not
+/// reported our speed yet, or it never announced a ratio at all (soulfind
+/// does not) — and the caller's own cap stands, which is how slskd runs the
+/// whole time.
 #[must_use]
 pub fn limit_from_speed(
     own_speed: Option<u32>,
     min_speed: u32,
     ratio: u32,
 ) -> Option<usize> {
+    if ratio == 0 {
+        return None;
+    }
     let speed = own_speed?;
-    if ratio == 0 || speed < min_speed {
+    if speed < min_speed {
         return Some(0);
     }
     Some((speed / ratio / 100) as usize)
@@ -336,8 +343,8 @@ mod tests {
         );
         assert_eq!(
             limit_from_speed(Some(10_000), 1_024, 0),
-            Some(0),
-            "a zero ratio means the server is not allowing children"
+            None,
+            "a server that never announced a ratio does not decide the limit"
         );
         assert_eq!(
             limit_from_speed(None, 1_024, 50),
@@ -364,6 +371,12 @@ mod tests {
 
         children.set_limits(Some(100), 1_024, 50);
         assert!(!children.has_room(), "a slow client carries none");
+
+        children.set_limits(Some(100), 1_024, 0);
+        assert!(
+            children.has_room(),
+            "a server with no figures leaves our own cap standing"
+        );
         assert_eq!(ends.len(), 2);
     }
 

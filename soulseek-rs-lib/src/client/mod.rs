@@ -466,6 +466,9 @@ pub struct ClientContext {
     leaf: distributed::Leaf,
     /// The children hanging from us, when the client serves any.
     pub(crate) children: children::Children,
+    /// The last `AcceptChildren` answer we gave the server, so the same
+    /// answer is not repeated: it is a standing state, not a heartbeat.
+    announced_accept_children: Option<bool>,
     /// The upload speed the server records for us, once it has told us. The
     /// child limit is derived from it.
     own_average_speed: Option<u32>,
@@ -642,6 +645,7 @@ impl ClientContext {
             operations: None,
             leaf: distributed::Leaf::new(""),
             children: children::Children::default(),
+            announced_accept_children: None,
             own_average_speed: None,
             parent_min_speed: 0,
             parent_speed_ratio: 0,
@@ -827,6 +831,16 @@ impl ClientContext {
     #[must_use]
     pub fn own_interests(&self) -> UserInterests {
         self.own_interests.clone()
+    }
+
+    /// Take the `AcceptChildren` answer to send, or `None` when the server
+    /// already has this one.
+    pub fn accept_children_change(&mut self) -> Option<bool> {
+        let has_room = self.children.has_room();
+        (self.announced_accept_children != Some(has_room)).then(|| {
+            self.announced_accept_children = Some(has_room);
+            has_room
+        })
     }
 
     /// The upload speed the server records for us, if it has said.
