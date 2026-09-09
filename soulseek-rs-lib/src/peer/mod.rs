@@ -64,6 +64,10 @@ pub struct Peer {
     pub privileged: Option<u8>,
     pub unknown: Option<u8>,
     pub obfuscated_port: Option<u16>,
+    /// True when the server asked us to make this connection (`ConnectToPeer`,
+    /// code 18). Then `token` is the far peer's correlation token, and a dial
+    /// that fails owes them a `CantConnectToPeer` quoting it.
+    pub brokered: bool,
 }
 impl Peer {
     #[allow(clippy::too_many_arguments)]
@@ -87,6 +91,7 @@ impl Peer {
             privileged: Some(privileged),
             unknown: Some(unknown),
             obfuscated_port: Some(obfuscated_port),
+            brokered: false,
         }
     }
     pub fn new_from_message(message: &mut Message) -> Option<Self> {
@@ -120,6 +125,7 @@ impl Peer {
             privileged: Some(privileged),
             unknown: Some(unknown),
             obfuscated_port: Some(u16::from(obfuscated_port)),
+            brokered: true,
         })
     }
 }

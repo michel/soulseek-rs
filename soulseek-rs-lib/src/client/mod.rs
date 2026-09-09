@@ -4,9 +4,9 @@ use crate::actor::server_actor::{
 };
 use crate::download_store::{DownloadStore, collect_failed_tokens};
 use crate::types::{
-    ClientVersion, DownloadMetadata, DownloadStatus, RoomEvent, RoomInfo,
-    RoomUserStats, SessionLoss, SessionWatch, UserInfo, UserPresence,
-    UserStats, UserStatus,
+    ClientVersion, DownloadMetadata, DownloadStatus, Recommendation, RoomEvent,
+    RoomInfo, RoomTicker, RoomUserStats, SessionLoss, SessionWatch,
+    SimilarUser, UserInfo, UserInterests, UserPresence, UserStats, UserStatus,
 };
 use crate::utils::logger;
 use crate::{
@@ -313,8 +313,11 @@ pub enum ClientOperation {
     },
     /// A direct outbound connection to this peer failed before it was
     /// established — the peer is likely firewalled, so fall back to asking the
-    /// server to broker the connection. Carries the reporting actor's id.
-    PeerConnectFailed(u64, String),
+    /// server to broker the connection. Carries the reporting actor's id and,
+    /// when the dial was one the server asked us to make, the token that peer
+    /// quoted: that dial is answered with a `CantConnectToPeer` instead of a
+    /// broker request, since the peer is already waiting on the server.
+    PeerConnectFailed(u64, String, Option<u32>),
     /// Something happened in the chat-room subsystem (list refreshed, a room
     /// joined/left, a message said, a member joined/left).
     RoomEvent(RoomEvent),
@@ -340,6 +343,31 @@ pub enum ClientOperation {
     PossibleParents(Vec<(String, String, u16)>),
     /// The server told us to drop our parent.
     ResetDistributed,
+    /// Recommendations from the server: either from our own interests
+    /// (`global` false, code 54) or server-wide (`global` true, code 56).
+    Recommendations {
+        global: bool,
+        recommended: Vec<Recommendation>,
+        unrecommended: Vec<Recommendation>,
+    },
+    /// Recommendations for one item (code 111).
+    ItemRecommendations {
+        item: String,
+        recommendations: Vec<Recommendation>,
+    },
+    /// Users the server considers similar to us (code 110).
+    SimilarUsers(Vec<SimilarUser>),
+    /// Users who like one item (code 112).
+    ItemSimilarUsers {
+        item: String,
+        usernames: Vec<String>,
+    },
+    /// What another user likes and hates (code 57).
+    UserInterests(UserInterests),
+    /// A peer we asked the server to broker gave up reaching us (code 1001).
+    CantConnectToPeer {
+        token: u32,
+    },
     /// A parent candidate told us how deep it sits. `link` says which dial
     /// to that user is talking.
     ParentBranchLevel {
@@ -410,6 +438,22 @@ pub struct ClientContext {
     /// Per-member statistics for each joined room, from the stat vectors the
     /// server sends alongside the membership list.
     room_member_stats: HashMap<String, Vec<RoomUserStats>>,
+    /// The ticker board of each joined room, kept current from the board sent
+    /// on join (code 113) and the later add/remove events (114/115).
+    room_tickers: HashMap<String, Vec<RoomTicker>>,
+    /// The latest recommendations from our own interests (code 54), as
+    /// (recommended, recommended-against).
+    recommendations: Option<(Vec<Recommendation>, Vec<Recommendation>)>,
+    /// The latest server-wide recommendations (code 56).
+    global_recommendations: Option<(Vec<Recommendation>, Vec<Recommendation>)>,
+    /// Per-item recommendations (code 111), keyed by the item asked about.
+    item_recommendations: HashMap<String, Vec<Recommendation>>,
+    /// The latest similar-user answer (code 110).
+    similar_users: Vec<SimilarUser>,
+    /// Who likes an item (code 112), keyed by the item asked about.
+    item_similar_users: HashMap<String, Vec<String>>,
+    /// Interests of other users (code 57), keyed by username.
+    user_interests: HashMap<String, UserInterests>,
     /// What the server has told us about other users, merged across the
     /// separate status and statistics replies.
     user_info: HashMap<String, UserInfo>,
@@ -519,6 +563,13 @@ impl ClientContext {
             room_events: Vec::new(),
             room_members: HashMap::new(),
             room_member_stats: HashMap::new(),
+            room_tickers: HashMap::new(),
+            recommendations: None,
+            global_recommendations: None,
+            item_recommendations: HashMap::new(),
+            similar_users: Vec::new(),
+            item_similar_users: HashMap::new(),
+            user_interests: HashMap::new(),
             user_info: HashMap::new(),
             watched_users: HashSet::new(),
             wishlist_interval: None,
@@ -562,9 +613,122 @@ impl ClientContext {
                     members.remove(at);
                 }
             }
-            RoomEvent::Message { .. } => {}
+            RoomEvent::Tickers { room, tickers } => {
+                self.room_tickers.insert(room.clone(), tickers.clone());
+            }
+            RoomEvent::TickerAdded {
+                room,
+                username,
+                ticker,
+            } => {
+                // A user has at most one ticker: an added one replaces theirs
+                // rather than stacking, which is how the server treats it.
+                let board = self.room_tickers.entry(room.clone()).or_default();
+                board.retain(|t| &t.username != username);
+                board.push(RoomTicker {
+                    username: username.clone(),
+                    ticker: ticker.clone(),
+                });
+            }
+            RoomEvent::TickerRemoved { room, username } => {
+                if let Some(board) = self.room_tickers.get_mut(room) {
+                    board.retain(|t| &t.username != username);
+                }
+            }
+            RoomEvent::Message { .. } | RoomEvent::GlobalMessage { .. } => {}
         }
         self.room_events.push(event);
+    }
+
+    /// The ticker board of `room` as last reported by the server.
+    #[must_use]
+    pub fn room_tickers(&self, room: &str) -> Vec<RoomTicker> {
+        self.room_tickers.get(room).cloned().unwrap_or_default()
+    }
+
+    /// Record a recommendations reply; `global` selects the server-wide set.
+    pub fn apply_recommendations(
+        &mut self,
+        global: bool,
+        recommended: Vec<Recommendation>,
+        unrecommended: Vec<Recommendation>,
+    ) {
+        let slot = if global {
+            &mut self.global_recommendations
+        } else {
+            &mut self.recommendations
+        };
+        *slot = Some((recommended, unrecommended));
+    }
+
+    /// The last recommendations reply, or `None` until one arrives.
+    #[must_use]
+    pub fn recommendations(
+        &self,
+        global: bool,
+    ) -> Option<(Vec<Recommendation>, Vec<Recommendation>)> {
+        if global {
+            self.global_recommendations.clone()
+        } else {
+            self.recommendations.clone()
+        }
+    }
+
+    pub fn apply_item_recommendations(
+        &mut self,
+        item: String,
+        recommendations: Vec<Recommendation>,
+    ) {
+        self.item_recommendations.insert(item, recommendations);
+    }
+
+    #[must_use]
+    pub fn item_recommendations(&self, item: &str) -> Vec<Recommendation> {
+        self.item_recommendations
+            .get(item)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn apply_similar_users(&mut self, users: Vec<SimilarUser>) {
+        self.similar_users = users;
+    }
+
+    #[must_use]
+    pub fn similar_users(&self) -> Vec<SimilarUser> {
+        self.similar_users.clone()
+    }
+
+    pub fn apply_item_similar_users(
+        &mut self,
+        item: String,
+        usernames: Vec<String>,
+    ) {
+        self.item_similar_users.insert(item, usernames);
+    }
+
+    #[must_use]
+    pub fn item_similar_users(&self, item: &str) -> Vec<String> {
+        self.item_similar_users
+            .get(item)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn apply_user_interests(&mut self, interests: UserInterests) {
+        self.user_interests
+            .insert(interests.username.clone(), interests);
+    }
+
+    #[must_use]
+    pub fn user_interests(&self, username: &str) -> Option<UserInterests> {
+        self.user_interests.get(username).cloned()
+    }
+
+    /// Forget any interests cached for `username`, so a poll after a fresh
+    /// request cannot mistake the previous answer for this one.
+    pub fn invalidate_user_interests(&mut self, username: &str) {
+        self.user_interests.remove(username);
     }
 
     /// Record a `GetUserStatus` reply, merging it with any statistics already
@@ -1050,6 +1214,7 @@ mod downloads;
 mod operations;
 mod rooms;
 mod search;
+mod social;
 mod upload_queue;
 mod uploads;
 

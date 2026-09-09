@@ -777,6 +777,71 @@ impl Client {
                             ctx.own_privileges = Some(seconds);
                         }
                     }
+                    ClientOperation::Recommendations {
+                        global,
+                        recommended,
+                        unrecommended,
+                    } => {
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.apply_recommendations(
+                                global,
+                                recommended,
+                                unrecommended,
+                            );
+                        }
+                    }
+                    ClientOperation::ItemRecommendations {
+                        item,
+                        recommendations,
+                    } => {
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.apply_item_recommendations(
+                                item,
+                                recommendations,
+                            );
+                        }
+                    }
+                    ClientOperation::SimilarUsers(users) => {
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.apply_similar_users(users);
+                        }
+                    }
+                    ClientOperation::ItemSimilarUsers { item, usernames } => {
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.apply_item_similar_users(item, usernames);
+                        }
+                    }
+                    ClientOperation::UserInterests(interests) => {
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.apply_user_interests(interests);
+                        }
+                    }
+                    ClientOperation::CantConnectToPeer { token } => {
+                        // The peer we asked the server to broker gave up. The
+                        // token is the correlation we sent, so it names the
+                        // peer: end the wait now instead of letting every
+                        // queued download for them sit until the timeout.
+                        let username = match client_context.write_safe() {
+                            Ok(mut ctx) => ctx.take_pending_connect(token),
+                            Err(e) => {
+                                error!(
+                                    "[client] CantConnectToPeer write: {}",
+                                    e
+                                );
+                                None
+                            }
+                        };
+                        if let Some(username) = username {
+                            debug!(
+                                "[client] {} cannot connect back (token {})",
+                                username, token
+                            );
+                            Self::fail_queued_downloads(
+                                &client_context,
+                                &username,
+                            );
+                        }
+                    }
                     ClientOperation::StartUpload { token } => {
                         // The peer accepted our offer: resolve their
                         // address (from the code-9 GetPeerAddress) and
@@ -875,7 +940,58 @@ impl Client {
                             ctx.store_browse_result(username, directories);
                         }
                     }
-                    ClientOperation::PeerConnectFailed(id, username) => {
+                    ClientOperation::PeerConnectFailed(
+                        id,
+                        username,
+                        brokered_token,
+                    ) => {
+                        // Direct connect failed. A dial the server asked
+                        // us to make is answered with CantConnectToPeer
+                        // quoting the peer's own token: that peer is
+                        // already waiting on the server, and asking it to
+                        // broker the same connection back only trades one
+                        // unreachable direction for the other. Every other
+                        // dial falls back to the broker below.
+                        if let Some(peer_token) = brokered_token {
+                            let server_sender = match client_context
+                                .write_safe()
+                            {
+                                Ok(ctx) => {
+                                    if let Some(handle) =
+                                        ctx.peer_registry.as_ref().and_then(
+                                            |r| r.remove_peer_if(&username, id),
+                                        )
+                                    {
+                                        let _ = handle.stop();
+                                    }
+                                    ctx.server_sender.clone()
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "[client] PeerConnectFailed write: {}",
+                                        e
+                                    );
+                                    continue;
+                                }
+                            };
+                            if let Some(sender) = server_sender {
+                                let msg = crate::message::server::MessageFactory::build_cant_connect_to_peer(
+                                    peer_token,
+                                    &username,
+                                );
+                                let _ = sender
+                                    .send(ServerMessage::SendMessage(msg));
+                            }
+                            // Nothing else is coming from this peer, so
+                            // anything queued for it fails now rather than
+                            // waiting out its timeout.
+                            Self::fail_queued_downloads(
+                                &client_context,
+                                &username,
+                            );
+                            continue;
+                        }
+
                         // Direct connect failed: ask the server to
                         // broker it. Register a correlation token, then
                         // send ConnectToPeer so the (firewalled) peer

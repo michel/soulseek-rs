@@ -729,8 +729,20 @@ impl PeerActor {
         // unreachable (likely firewalled): signal a connect failure so the
         // client can fall back to server-brokered connect. Anything else is a
         // normal disconnect.
+        // A dial the server asked for carries the token the far peer quoted;
+        // it is what a CantConnectToPeer must echo back, so the peer stops
+        // waiting for a connection that is never coming.
+        let brokered_token = self
+            .peer
+            .read_safe()
+            .ok()
+            .and_then(|p| if p.brokered { p.token } else { None });
         let op = if self.outbound && !self.established {
-            ClientOperation::PeerConnectFailed(self.id, username)
+            ClientOperation::PeerConnectFailed(
+                self.id,
+                username,
+                brokered_token,
+            )
         } else {
             ClientOperation::PeerDisconnected(
                 self.id,

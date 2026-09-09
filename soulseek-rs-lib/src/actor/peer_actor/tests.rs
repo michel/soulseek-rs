@@ -50,7 +50,7 @@ fn a_timed_out_connect_parks_the_actor_in_disconnected() {
         "a timed-out connect must leave Connecting"
     );
     match rx.try_recv() {
-        Ok(ClientOperation::PeerConnectFailed(7, username)) => {
+        Ok(ClientOperation::PeerConnectFailed(7, username, _)) => {
             assert_eq!(username, "bob");
         }
         other => panic!("expected PeerConnectFailed, got {other:?}"),

@@ -427,7 +427,7 @@ mod tests {
 
         // Play the client ops loop: take the terminal outcome, evict by id.
         match rx.recv_timeout(std::time::Duration::from_secs(10)) {
-            Ok(ClientOperation::PeerConnectFailed(id, username)) => {
+            Ok(ClientOperation::PeerConnectFailed(id, username, _)) => {
                 assert_eq!(username, "ghost");
                 if let Some(handle) = registry.remove_peer_if(&username, id) {
                     let _ = handle.stop();

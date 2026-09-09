@@ -81,6 +81,55 @@ impl Client {
         Ok(())
     }
 
+    /// Search one user's shares (server code 42) and return at once.
+    ///
+    /// Results arrive from that user alone and accumulate under `query`, read
+    /// back with [`Client::get_search_results`] — the same place a plain
+    /// search's results land, since the replies are ordinary
+    /// `FileSearchResponse` frames.
+    ///
+    /// # Errors
+    /// [`SoulseekRs::NotConnected`] when there is no server connection.
+    pub fn search_user(&self, username: &str, query: &str) -> Result<()> {
+        let token = self.register_search(query)?;
+        self.send_server_message(
+            crate::message::server::MessageFactory::build_user_search(
+                username, token, query,
+            ),
+        )
+    }
+
+    /// Search the shares of everyone in `room` (server code 120), returning at
+    /// once. Results accumulate under `query` exactly as above.
+    ///
+    /// # Errors
+    /// [`SoulseekRs::NotConnected`] when there is no server connection.
+    pub fn search_room(&self, room: &str, query: &str) -> Result<()> {
+        let token = self.register_search(query)?;
+        self.send_server_message(
+            crate::message::server::MessageFactory::build_room_search(
+                room, token, query,
+            ),
+        )
+    }
+
+    /// Take a token for `query` and register it, so replies quoting that token
+    /// are filed under `query` when they arrive.
+    fn register_search(&self, query: &str) -> Result<u32> {
+        if self.server_handle.is_none() {
+            return Err(SoulseekRs::NotConnected);
+        }
+        let token = next_search_token();
+        self.context.write_safe()?.searches.insert(
+            query.to_string(),
+            Search {
+                token,
+                results: Vec::new(),
+            },
+        );
+        Ok(token)
+    }
+
     /// Let responses accumulate for `timeout`, or until cancelled.
     ///
     /// Peers answer a search over their own connections whenever they get round

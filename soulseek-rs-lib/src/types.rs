@@ -393,6 +393,58 @@ pub enum RoomEvent {
     UserJoined { room: String, username: String },
     /// `username` left `room`.
     UserLeft { room: String, username: String },
+    /// The full ticker board of `room`, sent when we join it (code 113).
+    Tickers {
+        room: String,
+        tickers: Vec<RoomTicker>,
+    },
+    /// `username` set their ticker in `room` (code 114). It replaces any
+    /// previous ticker of theirs.
+    TickerAdded {
+        room: String,
+        username: String,
+        ticker: String,
+    },
+    /// `username` cleared their ticker in `room` (code 115).
+    TickerRemoved { room: String, username: String },
+    /// A message said in *any* public room, delivered because we joined the
+    /// global room feed (code 152). `room` names where it was said.
+    GlobalMessage {
+        room: String,
+        username: String,
+        message: String,
+    },
+}
+
+/// One user's ticker (the scrolling one-line message) in a room.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoomTicker {
+    pub username: String,
+    pub ticker: String,
+}
+
+/// One recommended item and how strongly the server recommends it. The rating
+/// is signed: a negative rating means the item is recommended *against*.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Recommendation {
+    pub item: String,
+    pub rating: i32,
+}
+
+/// A user the server considers similar to us, with the weight (the number of
+/// interests shared) it scored them by.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SimilarUser {
+    pub username: String,
+    pub weight: u32,
+}
+
+/// What a user likes and hates (`UserInterests`, code 57).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UserInterests {
+    pub username: String,
+    pub likes: Vec<String>,
+    pub hates: Vec<String>,
 }
 
 impl Transfer {
