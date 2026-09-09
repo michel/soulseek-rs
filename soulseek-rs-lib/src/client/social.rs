@@ -301,7 +301,11 @@ impl Client {
     /// # Errors
     /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
     pub fn add_interest(&self, item: &str) -> Result<()> {
-        let item = self.context.write_safe()?.add_own_interest(item, true);
+        let Some(item) =
+            self.context.write_safe()?.add_own_interest(item, true)
+        else {
+            return Ok(()); // nothing to like or unlike
+        };
         self.send_server_message(MessageFactory::build_add_thing_i_like(&item))
     }
 
@@ -310,7 +314,11 @@ impl Client {
     /// # Errors
     /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
     pub fn remove_interest(&self, item: &str) -> Result<()> {
-        let item = self.context.write_safe()?.remove_own_interest(item, true);
+        let Some(item) =
+            self.context.write_safe()?.remove_own_interest(item, true)
+        else {
+            return Ok(()); // nothing to like or unlike
+        };
         self.send_server_message(MessageFactory::build_remove_thing_i_like(
             &item,
         ))
@@ -321,7 +329,11 @@ impl Client {
     /// # Errors
     /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
     pub fn add_dislike(&self, item: &str) -> Result<()> {
-        let item = self.context.write_safe()?.add_own_interest(item, false);
+        let Some(item) =
+            self.context.write_safe()?.add_own_interest(item, false)
+        else {
+            return Ok(()); // nothing to like or unlike
+        };
         self.send_server_message(MessageFactory::build_add_thing_i_hate(&item))
     }
 
@@ -330,7 +342,11 @@ impl Client {
     /// # Errors
     /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
     pub fn remove_dislike(&self, item: &str) -> Result<()> {
-        let item = self.context.write_safe()?.remove_own_interest(item, false);
+        let Some(item) =
+            self.context.write_safe()?.remove_own_interest(item, false)
+        else {
+            return Ok(()); // nothing to like or unlike
+        };
         self.send_server_message(MessageFactory::build_remove_thing_i_hate(
             &item,
         ))

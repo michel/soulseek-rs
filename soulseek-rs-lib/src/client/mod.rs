@@ -315,6 +315,10 @@ pub enum ClientOperation {
         username: String,
         token: u32,
         query: String,
+        /// True when it came down the tree from our parent, which has
+        /// already passed it to our children and is subject to the answer
+        /// budget. A search the server relayed is neither.
+        from_parent: bool,
     },
     /// A peer queued one of our shared files; `requester_key` is the registry
     /// key of the peer actor — the peer's username.
@@ -555,8 +559,8 @@ pub struct ClientContext {
     privileged_users: HashSet<String>,
     /// Seconds of our own privileges left (code 92), once we have asked.
     own_privileges: Option<u32>,
-    /// Phrases the server will not search for (code 160). A query carrying one
-    /// is refused locally rather than spent on the server.
+    /// Phrases the server excludes from the search network (code 160). Files
+    /// whose path carries one are left out of the replies we send.
     excluded_search_phrases: Vec<String>,
     /// Peers waiting for one of our upload slots.
     upload_queue: Vec<QueuedUpload>,
@@ -779,15 +783,12 @@ impl ClientContext {
                 members,
                 granted,
             } => {
-                // Our own standing is rendered from the same rosters, so a
-                // revocation must drop the room rather than leave a roster
-                // we are no longer part of looking current.
-                if !granted {
-                    // Losing membership takes the operator roster with it:
-                    // a room we cannot enter has no roster worth showing.
-                    if *members {
-                        self.private_room_members.remove(room);
-                    }
+                // Losing membership takes both rosters with it: a room we
+                // cannot enter has none worth showing. Losing operatorship
+                // leaves us a member who still sees them, and the server
+                // narrates that roster change separately (code 144).
+                if !granted && *members {
+                    self.private_room_members.remove(room);
                     self.private_room_operators.remove(room);
                 }
             }
@@ -802,29 +803,45 @@ impl ClientContext {
     /// Interests are matched by the server case-insensitively, and Nicotine+
     /// lowercases them before sending; do the same so two spellings of one
     /// interest cannot both be held.
-    pub fn add_own_interest(&mut self, item: &str, liked: bool) -> String {
+    /// Returns the stored spelling, or `None` for an empty item — which is
+    /// no interest, and must not be sent to the server either.
+    pub fn add_own_interest(
+        &mut self,
+        item: &str,
+        liked: bool,
+    ) -> Option<String> {
         let item = item.trim().to_lowercase();
+        if item.is_empty() {
+            return None;
+        }
         let list = if liked {
             &mut self.own_interests.likes
         } else {
             &mut self.own_interests.hates
         };
-        if !item.is_empty() && !list.contains(&item) {
+        if !list.contains(&item) {
             list.push(item.clone());
         }
-        item
+        Some(item)
     }
 
-    /// Forget one of our own interests.
-    pub fn remove_own_interest(&mut self, item: &str, liked: bool) -> String {
+    /// Forget one of our own interests. `None` for an empty item, as above.
+    pub fn remove_own_interest(
+        &mut self,
+        item: &str,
+        liked: bool,
+    ) -> Option<String> {
         let item = item.trim().to_lowercase();
+        if item.is_empty() {
+            return None;
+        }
         let list = if liked {
             &mut self.own_interests.likes
         } else {
             &mut self.own_interests.hates
         };
         list.retain(|held| held != &item);
-        item
+        Some(item)
     }
 
     /// What we like and hate, as last set.
@@ -1042,29 +1059,17 @@ impl ClientContext {
         self.user_interests.get(username).cloned()
     }
 
-    /// Record the phrases the server refuses to search for (code 160).
+    /// Record the phrases the server excludes (code 160), lowercased here so
+    /// the per-file check is a plain `contains` on a lowercased path.
     pub fn set_excluded_search_phrases(&mut self, phrases: Vec<String>) {
-        self.excluded_search_phrases = phrases;
+        self.excluded_search_phrases =
+            phrases.iter().map(|p| p.to_lowercase()).collect();
     }
 
     /// The phrases the server refuses to search for.
     #[must_use]
     pub fn excluded_search_phrases(&self) -> Vec<String> {
         self.excluded_search_phrases.clone()
-    }
-
-    /// The first excluded phrase `query` contains, if any. Matching is
-    /// case-insensitive and on substrings, which is how the server applies its
-    /// own filter.
-    #[must_use]
-    pub fn excluded_phrase_in(&self, query: &str) -> Option<String> {
-        let haystack = query.to_lowercase();
-        self.excluded_search_phrases
-            .iter()
-            .find(|phrase| {
-                !phrase.is_empty() && haystack.contains(&phrase.to_lowercase())
-            })
-            .cloned()
     }
 
     /// Forget any interests cached for `username`, so a poll after a fresh
@@ -1383,6 +1388,9 @@ pub struct Client {
     server_handle: Option<ActorHandle<ServerMessage>>,
     context: Arc<RwLock<ClientContext>>,
     session: SessionWatch,
+    /// Tells the peer listener to stop, so a disconnected client releases the
+    /// port it bound.
+    listener_stopped: Arc<AtomicBool>,
 }
 
 impl Drop for Client {
@@ -1416,6 +1424,7 @@ impl Client {
             shared_directories: settings.shared_directories,
             server_handle: None,
             session: SessionWatch::default(),
+            listener_stopped: Arc::new(AtomicBool::new(false)),
         }
     }
 

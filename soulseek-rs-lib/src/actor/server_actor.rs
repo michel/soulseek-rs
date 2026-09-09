@@ -427,16 +427,14 @@ impl ServerActor {
         handlers.register_handler(CantConnectToPeerHandler);
         handlers.register_handler(RoomMembersHandler);
         handlers.register_handler(RoomOperatorsHandler);
-        handlers.register_handler(RoomRosterChangeHandler::member_added());
-        handlers.register_handler(RoomRosterChangeHandler::member_removed());
-        handlers.register_handler(RoomRosterChangeHandler::operator_added());
-        handlers.register_handler(RoomRosterChangeHandler::operator_removed());
-        handlers.register_handler(OwnRoomStandingHandler::membership_granted());
-        handlers.register_handler(OwnRoomStandingHandler::membership_revoked());
-        handlers
-            .register_handler(OwnRoomStandingHandler::operatorship_granted());
-        handlers
-            .register_handler(OwnRoomStandingHandler::operatorship_revoked());
+        // Members added/removed (134/135), operators added/removed (143/144).
+        for code in [134, 135, 143, 144] {
+            handlers.register_handler(RoomRosterChangeHandler(code));
+        }
+        // Our own membership (139/140) and operatorship (145/146).
+        for code in [139, 140, 145, 146] {
+            handlers.register_handler(OwnRoomStandingHandler(code));
+        }
         handlers.register_handler(CantCreateRoomHandler);
         handlers.register_handler(RoomTickersHandler);
         handlers.register_handler(RoomTickerAddedHandler);
@@ -954,6 +952,7 @@ impl ServerActor {
     ) {
         if let Err(e) =
             self.client_channel.send(ClientOperation::IncomingSearch {
+                from_parent: false,
                 username,
                 token,
                 query,

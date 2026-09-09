@@ -59,19 +59,10 @@ impl Client {
     fn send_search(&self, query: &str, wishlist: bool) -> Result<()> {
         info!("Searching for {}", query);
 
+        let token = self.register_search(query)?;
         let Some(handle) = &self.server_handle else {
             return Err(SoulseekRs::NotConnected);
         };
-        let token = next_search_token();
-
-        self.context.write_safe()?.searches.insert(
-            query.to_string(),
-            Search {
-                token,
-                results: Vec::new(),
-            },
-        );
-
         let query = query.to_string();
         let _ = handle.send(if wishlist {
             ServerMessage::WishlistSearch { token, query }

@@ -1015,7 +1015,10 @@ fn revoked_membership_drops_the_room_we_can_no_longer_see() {
 }
 
 #[test]
-fn losing_operatorship_keeps_the_membership_it_does_not_touch() {
+fn losing_operatorship_keeps_the_roster_we_can_still_see() {
+    // Demotion does not blind us: we are still a member, and the room's other
+    // operators are still ours to show. The server narrates our own removal
+    // from that roster separately (code 144).
     let mut ctx = ClientContext::new();
     ctx.apply_room_event(RoomEvent::PrivateMembers {
         room: "club".into(),
@@ -1023,7 +1026,7 @@ fn losing_operatorship_keeps_the_membership_it_does_not_touch() {
     });
     ctx.apply_room_event(RoomEvent::PrivateOperators {
         room: "club".into(),
-        users: vec!["alice".into()],
+        users: vec!["alice".into(), "bob".into()],
     });
 
     ctx.apply_room_event(RoomEvent::OwnStandingChanged {
@@ -1032,7 +1035,23 @@ fn losing_operatorship_keeps_the_membership_it_does_not_touch() {
         granted: false,
     });
     assert_eq!(ctx.private_room_members("club"), vec!["alice".to_string()]);
-    assert!(ctx.private_room_operators("club").is_empty());
+    assert_eq!(
+        ctx.private_room_operators("club"),
+        vec!["alice".to_string(), "bob".to_string()],
+        "the other operators are still there to show"
+    );
+
+    ctx.apply_room_event(RoomEvent::PrivateRosterChanged {
+        room: "club".into(),
+        username: "alice".into(),
+        members: false,
+        added: false,
+    });
+    assert_eq!(
+        ctx.private_room_operators("club"),
+        vec!["bob".to_string()],
+        "only the demotion the server narrates removes us"
+    );
 }
 
 #[test]
@@ -1082,6 +1101,25 @@ fn a_file_the_server_excludes_is_left_out_of_a_reply() {
         "an exclusion the path does not carry changes nothing"
     );
 
+    // The phrases are lowercased where they arrive, so a server that sends
+    // one capitalised still matches a path.
+    let mut ctx = ClientContext::new();
+    ctx.set_excluded_search_phrases(vec!["SPAM".to_string()]);
+    assert!(
+        build_search_response(
+            &shares,
+            "me",
+            1,
+            "xyzzy",
+            true,
+            0,
+            0,
+            &ctx.excluded_search_phrases(),
+        )
+        .is_none(),
+        "a capitalised phrase from the server still withholds the file"
+    );
+
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1091,7 +1129,15 @@ fn our_own_interests_are_kept_lowercased_and_deduplicated() {
     // the session ends, so they are held here in one spelling to be sent
     // again next login.
     let mut ctx = ClientContext::new();
-    assert_eq!(ctx.add_own_interest("  Krautrock ", true), "krautrock");
+    assert_eq!(
+        ctx.add_own_interest("  Krautrock ", true).as_deref(),
+        Some("krautrock")
+    );
+    assert_eq!(
+        ctx.add_own_interest("   ", true),
+        None,
+        "an empty interest is not stored, and is not sent either"
+    );
     ctx.add_own_interest("KRAUTROCK", true);
     ctx.add_own_interest("Muzak", false);
 

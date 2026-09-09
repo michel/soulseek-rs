@@ -57,55 +57,14 @@ impl MessageHandler<ServerMessage> for RoomOperatorsHandler {
     }
 }
 
-/// One user added to (`added`) or removed from a private room's roster:
-/// members (134/135) or operators (143/144).
-pub struct RoomRosterChangeHandler {
-    code: u32,
-    members: bool,
-    added: bool,
-}
-
-impl RoomRosterChangeHandler {
-    #[must_use]
-    pub const fn member_added() -> Self {
-        Self {
-            code: 134,
-            members: true,
-            added: true,
-        }
-    }
-
-    #[must_use]
-    pub const fn member_removed() -> Self {
-        Self {
-            code: 135,
-            members: true,
-            added: false,
-        }
-    }
-
-    #[must_use]
-    pub const fn operator_added() -> Self {
-        Self {
-            code: 143,
-            members: false,
-            added: true,
-        }
-    }
-
-    #[must_use]
-    pub const fn operator_removed() -> Self {
-        Self {
-            code: 144,
-            members: false,
-            added: false,
-        }
-    }
-}
+/// One user added to or removed from a private room's roster, by the code it
+/// arrived under: members added (134) or removed (135), operators added (143)
+/// or removed (144).
+pub struct RoomRosterChangeHandler(pub u32);
 
 impl MessageHandler<ServerMessage> for RoomRosterChangeHandler {
     fn get_code(&self) -> u32 {
-        self.code
+        self.0
     }
 
     fn handle(&self, message: &mut Message, sender: Sender<ServerMessage>) {
@@ -114,69 +73,27 @@ impl MessageHandler<ServerMessage> for RoomRosterChangeHandler {
         let _ = sender.send(ServerMessage::PrivateRoomRosterChanged {
             room,
             username,
-            members: self.members,
-            added: self.added,
+            members: matches!(self.0, 134 | 135),
+            added: matches!(self.0, 134 | 143),
         });
     }
 }
 
 /// Our own standing in a private room changed: membership granted (139) or
 /// revoked (140), operatorship granted (145) or revoked (146).
-pub struct OwnRoomStandingHandler {
-    code: u32,
-    members: bool,
-    granted: bool,
-}
-
-impl OwnRoomStandingHandler {
-    #[must_use]
-    pub const fn membership_granted() -> Self {
-        Self {
-            code: 139,
-            members: true,
-            granted: true,
-        }
-    }
-
-    #[must_use]
-    pub const fn membership_revoked() -> Self {
-        Self {
-            code: 140,
-            members: true,
-            granted: false,
-        }
-    }
-
-    #[must_use]
-    pub const fn operatorship_granted() -> Self {
-        Self {
-            code: 145,
-            members: false,
-            granted: true,
-        }
-    }
-
-    #[must_use]
-    pub const fn operatorship_revoked() -> Self {
-        Self {
-            code: 146,
-            members: false,
-            granted: false,
-        }
-    }
-}
+pub struct OwnRoomStandingHandler(pub u32);
 
 impl MessageHandler<ServerMessage> for OwnRoomStandingHandler {
     fn get_code(&self) -> u32 {
-        self.code
+        self.0
     }
 
     fn handle(&self, message: &mut Message, sender: Sender<ServerMessage>) {
         let room = message.read_string();
         let _ = sender.send(ServerMessage::OwnRoomStandingChanged {
             room,
-            members: self.members,
-            granted: self.granted,
+            members: matches!(self.0, 139 | 140),
+            granted: matches!(self.0, 139 | 145),
         });
     }
 }
@@ -243,10 +160,10 @@ mod tests {
     #[test]
     fn each_roster_change_reports_which_roster_and_which_way() {
         for (handler, members, added) in [
-            (RoomRosterChangeHandler::member_added(), true, true),
-            (RoomRosterChangeHandler::member_removed(), true, false),
-            (RoomRosterChangeHandler::operator_added(), false, true),
-            (RoomRosterChangeHandler::operator_removed(), false, false),
+            (RoomRosterChangeHandler(134), true, true),
+            (RoomRosterChangeHandler(135), true, false),
+            (RoomRosterChangeHandler(143), false, true),
+            (RoomRosterChangeHandler(144), false, false),
         ] {
             let (tx, rx) = std::sync::mpsc::channel();
             let mut message = framed(|m| {
@@ -274,10 +191,10 @@ mod tests {
     #[test]
     fn our_own_standing_reports_the_room_and_the_change() {
         for (handler, members, granted) in [
-            (OwnRoomStandingHandler::membership_granted(), true, true),
-            (OwnRoomStandingHandler::membership_revoked(), true, false),
-            (OwnRoomStandingHandler::operatorship_granted(), false, true),
-            (OwnRoomStandingHandler::operatorship_revoked(), false, false),
+            (OwnRoomStandingHandler(139), true, true),
+            (OwnRoomStandingHandler(140), true, false),
+            (OwnRoomStandingHandler(145), false, true),
+            (OwnRoomStandingHandler(146), false, false),
         ] {
             let (tx, rx) = std::sync::mpsc::channel();
             let mut message = framed(|m| {

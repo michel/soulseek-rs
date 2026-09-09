@@ -263,13 +263,17 @@ impl Client {
                     .send_to_peer(username, PeerMessage::SendMessage(request));
             }
         } else {
+            // Without a server there is nobody to resolve the peer's address,
+            // so the request would sit in the queue forever: say so instead.
+            let handle = self
+                .server_handle
+                .as_ref()
+                .ok_or(SoulseekRs::NotConnected)?;
             self.context
                 .write_safe()?
                 .queue_peer_message(username, request);
-            if let Some(handle) = &self.server_handle {
-                let _ = handle
-                    .send(ServerMessage::GetPeerAddress(username.to_string()));
-            }
+            let _ = handle
+                .send(ServerMessage::GetPeerAddress(username.to_string()));
         }
         Ok(())
     }

@@ -1,5 +1,6 @@
 use std::io;
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -422,6 +423,7 @@ impl Listen {
         client_sender: Sender<ClientOperation>,
         client_context: Arc<RwLock<ClientContext>>,
         own_username: String,
+        stopped: Arc<AtomicBool>,
     ) {
         info!("[listener] listening on {:?}", listener.local_addr());
 
@@ -433,6 +435,10 @@ impl Listen {
         let handshakes = Arc::new(Semaphore::new(MAX_HANDSHAKES));
 
         for stream in listener.incoming() {
+            if stopped.load(Ordering::Relaxed) {
+                debug!("[listener] stopping, releasing the port");
+                return;
+            }
             let Ok(stream) = stream else {
                 error!(
                     "[listener] Failed to accept connection: {}",

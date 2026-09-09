@@ -1,9 +1,10 @@
 use super::{
-    Arc, Client, ClientContext, ClientOperation, ConnectionType, DownloadPeer,
-    Listen, Peer, PeerRegistry, Receiver, Result, RwLock, RwLockExt, Sender,
-    ServerActor, ServerMessage, Shares, SoulseekRs, TcpStream, error, info,
-    mpsc, thread, trace, warn,
+    Arc, AtomicBool, Client, ClientContext, ClientOperation, ConnectionType,
+    DownloadPeer, Listen, Peer, PeerRegistry, Receiver, Result, RwLock,
+    RwLockExt, Sender, ServerActor, ServerMessage, Shares, SoulseekRs,
+    TcpStream, error, info, mpsc, thread, trace, warn,
 };
+use std::sync::atomic::Ordering;
 
 /// Ceiling on the wait for a login verdict. Generous enough for a slow server
 /// and a retrying connect, short enough that an unattended caller ends.
@@ -96,6 +97,7 @@ impl Client {
         } else {
             None
         };
+        self.listener_stopped = Arc::new(AtomicBool::new(false));
 
         let mut server_actor = ServerActor::new(
             self.address.clone(),
@@ -118,9 +120,16 @@ impl Client {
             let client_sender = listen_sender;
             let context = self.context.clone();
             let own_username = self.username.clone();
+            let stopped = self.listener_stopped.clone();
 
             thread::spawn(move || {
-                Listen::serve(&listener, client_sender, context, own_username);
+                Listen::serve(
+                    &listener,
+                    client_sender,
+                    context,
+                    own_username,
+                    stopped,
+                );
             });
         }
 
@@ -147,13 +156,25 @@ impl Client {
         if let Some(handle) = self.server_handle.take() {
             let _ = handle.stop();
         }
-        let registry = self
-            .context
-            .read_safe()
-            .ok()
-            .and_then(|ctx| ctx.peer_registry.clone());
+        let registry = match self.context.write_safe() {
+            Ok(mut ctx) => {
+                // Dropping our end of the operations channel is what lets its
+                // thread finish once the peers and the listener have gone.
+                ctx.operations = None;
+                ctx.peer_registry.clone()
+            }
+            Err(_) => None,
+        };
         if let Some(registry) = registry {
             registry.stop_all();
+        }
+        // The listener thread is parked in accept(), so it only notices the
+        // flag when a connection arrives: dial it once ourselves. Without
+        // this the port stays bound for the life of the process, and the next
+        // client falls back to an ephemeral port nobody was told about.
+        self.listener_stopped.store(true, Ordering::Relaxed);
+        if let Some(port) = self.bound_port.take() {
+            let _ = TcpStream::connect(("127.0.0.1", port));
         }
     }
 
@@ -355,7 +376,17 @@ impl Client {
                 }
             }
             ConnectionType::D => {
-                error!("ConnectionType::D not implemented");
+                // ponytail: we never dial out to adopt a child — children
+                // reach us through the listener. Tell the peer rather than
+                // leave it waiting; wire the outbound half if firewalled
+                // children turn out to matter.
+                if let (true, Some(token)) = (peer.brokered, peer.token) {
+                    Self::report_cant_connect(
+                        &client_context,
+                        token,
+                        &peer.username,
+                    );
+                }
             }
         }
     }

@@ -16,6 +16,11 @@ const CONNECT_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 /// long queue is not pestered.
 const QUEUE_POSITION_INTERVAL: Duration = Duration::from_secs(300);
 
+/// How long a write to a child may block. The relay runs under the client
+/// context lock, so an unbounded write would freeze every other operation
+/// behind one child that stopped reading.
+const CHILD_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+
 impl Client {
     pub(crate) fn listen_to_client_operations(
         reader: Receiver<ClientOperation>,
@@ -582,29 +587,47 @@ impl Client {
                         username,
                         token,
                         query,
+                        from_parent,
                     } => {
                         // Every search we receive comes from the tree: from
                         // our parent, or from the server acting as one. That
                         // is what qualifies us to carry children at all —
                         // Nicotine+ refuses them until something feeds it —
                         // and passing the search down is the whole duty.
-                        let capacity_changed = match client_context.write_safe()
+                        let (capacity_changed, answer) = match client_context
+                            .write_safe()
                         {
                             Ok(mut ctx) => {
                                 let was_fed = ctx.children.is_fed();
                                 let before = ctx.children.len();
                                 ctx.set_fed_by(true);
-                                ctx.children
-                                    .broadcast_search(&username, token, &query);
+                                if !from_parent {
+                                    // A parent's search was passed down where
+                                    // it arrived; this is the server's.
+                                    ctx.children.broadcast_search(
+                                        &username, token, &query,
+                                    );
+                                }
+                                // Answering costs a scan of everything we
+                                // share, so the budget applies to searches
+                                // from the tree. The server's own are few.
+                                let answer = !from_parent
+                                    || ctx.leaf.admit_search(Instant::now());
                                 // A child whose socket has gone is dropped by
                                 // that write, which frees a slot the server
                                 // should hear about.
-                                !was_fed || ctx.children.len() != before
+                                (
+                                    !was_fed || ctx.children.len() != before,
+                                    answer,
+                                )
                             }
-                            Err(_) => false,
+                            Err(_) => (false, false),
                         };
                         if capacity_changed {
                             Self::announce_child_capacity(&client_context);
+                        }
+                        if !answer {
+                            continue;
                         }
 
                         // Don't answer our own distributed search.
@@ -620,7 +643,7 @@ impl Client {
                                 ctx.has_free_upload_slot(),
                                 ctx.last_upload_speed,
                                 ctx.upload_queue.len() as u32,
-                                &ctx.excluded_search_phrases(),
+                                &ctx.excluded_search_phrases,
                             ),
                             Err(e) => {
                                 error!("[client] IncomingSearch read: {}", e);
@@ -786,15 +809,22 @@ impl Client {
                                 &mut ctx, &branch, true,
                             );
                         }
-                        if ctx.leaf.is_parent(&parent, link)
-                            && ctx.leaf.admit_search(Instant::now())
-                            && let Some(ops) = &ctx.operations
-                        {
-                            let _ = ops.send(ClientOperation::IncomingSearch {
-                                username,
-                                token,
-                                query,
-                            });
+                        if ctx.leaf.is_parent(&parent, link) {
+                            // The tree's stream is not ours to throttle: every
+                            // search goes down to our children. The budget
+                            // below bounds only the share scan we do for our
+                            // own reply.
+                            ctx.children
+                                .broadcast_search(&username, token, &query);
+                            if let Some(ops) = &ctx.operations {
+                                let _ =
+                                    ops.send(ClientOperation::IncomingSearch {
+                                        username,
+                                        token,
+                                        query,
+                                        from_parent: true,
+                                    });
+                            }
                         }
                     }
                     ClientOperation::ParentClosed { parent, link } => {
@@ -893,7 +923,14 @@ impl Client {
                         if !ctx.children.has_room() {
                             continue;
                         }
-                        if stream.set_nodelay(true).is_err() {
+                        // A child that stops reading must not wedge us: the
+                        // relay writes under the context lock, so the write
+                        // is bounded and a child that hits it loses its slot.
+                        if stream.set_nodelay(true).is_err()
+                            || stream
+                                .set_write_timeout(Some(CHILD_WRITE_TIMEOUT))
+                                .is_err()
+                        {
                             continue;
                         }
                         if username == own_username {
