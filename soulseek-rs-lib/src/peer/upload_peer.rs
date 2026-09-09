@@ -5,7 +5,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::message::server::MessageFactory;
 use crate::peer::ConnectionType;
@@ -99,41 +99,11 @@ pub fn serve_file(
     }
     stream.flush()?;
 
-    // Soulseek assigns closing the file-transfer connection to the downloader
-    // after it has read exactly the advertised number of bytes. Poll while
-    // waiting for that EOF so cancelling a finished-but-unacknowledged upload
-    // remains prompt rather than waiting for the full socket timeout.
-    stream.set_read_timeout(Some(Duration::from_millis(200)))?;
-    let close_deadline = Instant::now() + Duration::from_secs(30);
-    let mut unexpected = [0u8; 1];
-    loop {
-        if cancel.load(Ordering::Relaxed) {
-            return Err(io::ErrorKind::Interrupted.into());
-        }
-        match stream.read(&mut unexpected) {
-            Ok(0) => break,
-            Ok(_) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unexpected data after download offset",
-                ));
-            }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                ) =>
-            {
-                if Instant::now() >= close_deadline {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "downloader did not close the file connection",
-                    ));
-                }
-            }
-            Err(error) => return Err(error),
-        }
-    }
+    // The file is delivered. Soulseek leaves closing to the downloader, but
+    // waiting for that costs the upload slot the next peer is queued for —
+    // and a peer that leaves the socket open, or whose FIN a NAT swallows,
+    // would hold it for the whole wait. Nicotine+ finishes the transfer at
+    // delivery for the same reason; the close below is ours to make.
     trace!("[upload] served {} to {}:{}", path.display(), host, port);
     Ok(streamed)
 }
@@ -285,14 +255,16 @@ mod tests {
     }
 
     #[test]
-    fn serve_file_cancels_while_waiting_for_the_downloader_to_close() {
-        let content: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
-        let path = scratch_file("cancel-close-wait", &content);
+    fn a_downloader_that_never_closes_still_leaves_the_upload_delivered() {
+        // The file is on the wire; whether the peer closes, or its FIN is
+        // eaten by a NAT, it has had every byte. Waiting for a close that may
+        // never come used to fail the transfer and hold its upload slot,
+        // which is what starved a queue of everyone behind it.
+        let content: Vec<u8> = (0..2048u32).map(|i| (i % 251) as u8).collect();
+        let path = scratch_file("no-close", &content);
         let dir = path.parent().unwrap().to_path_buf();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = u32::from(listener.local_addr().unwrap().port());
-        let cancel = Arc::new(AtomicBool::new(false));
-        let cancel_flag = cancel.clone();
         let (result_tx, result_rx) = mpsc::channel();
 
         let uploader = std::thread::spawn(move || {
@@ -300,10 +272,10 @@ mod tests {
                 "127.0.0.1",
                 port,
                 "me",
-                782,
+                783,
                 &path,
                 &AtomicU64::new(0),
-                &cancel_flag,
+                &AtomicBool::new(false),
             );
             let _ = result_tx.send(result);
         });
@@ -313,12 +285,12 @@ mod tests {
         stream.read_exact(&mut received).unwrap();
         assert_eq!(received, content);
 
-        cancel.store(true, Ordering::Relaxed);
-        let error = result_rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("cancellation must wake the close wait")
-            .unwrap_err();
-        assert_eq!(error.kind(), std::io::ErrorKind::Interrupted);
+        // Hold the socket open past the grace period and say nothing.
+        let served = result_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("delivery must finish the upload, not a wait for a close")
+            .expect("a delivered file is a finished upload");
+        assert_eq!(served, content.len() as u64);
 
         drop(stream);
         let _ = uploader.join();

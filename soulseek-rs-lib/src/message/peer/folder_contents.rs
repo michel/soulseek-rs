@@ -79,7 +79,7 @@ pub fn build_folder_contents(
 pub fn parse_folder_contents(
     message: &mut Message,
 ) -> Option<(u32, String, Vec<SharedDirectory>)> {
-    let mut body = decompress_body(message)?;
+    let mut body = decompress_body(message, crate::utils::zlib::MAX_INFLATED)?;
     let token = body.read_int32();
     let folder = body.read_string();
     Some((token, folder, read_directories(&mut body)))

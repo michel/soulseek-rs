@@ -4,7 +4,7 @@
 
 use crate::message::{Message, MessageHandler};
 use crate::peer::PeerMessage;
-use crate::utils::zlib::{deflate, inflate};
+use crate::utils::zlib::{MAX_INFLATED_LISTING, deflate, inflate_limited};
 use std::sync::mpsc::Sender;
 
 /// One file in a shared directory: its basename, size and the `(code, value)`
@@ -68,7 +68,8 @@ pub fn build_shared_file_list(dirs: &[SharedDirectory]) -> Message {
 /// Returns an empty listing if the payload is malformed.
 #[must_use]
 pub fn parse_shared_file_list(message: &mut Message) -> Vec<SharedDirectory> {
-    decompress_body(message)
+    // A whole share listing is the one payload that legitimately runs large.
+    decompress_body(message, MAX_INFLATED_LISTING)
         .map_or_else(Vec::new, |mut body| read_directories(&mut body))
 }
 
@@ -135,11 +136,15 @@ pub fn read_directories(body: &mut Message) -> Vec<SharedDirectory> {
     dirs
 }
 
-/// Inflate a compressed peer payload positioned at the blob.
-pub fn decompress_body(message: &mut Message) -> Option<Message> {
+/// Inflate a compressed peer payload positioned at the blob, refusing one
+/// that expands past `max_out` — a peer we have never met chose these bytes.
+pub fn decompress_body(
+    message: &mut Message,
+    max_out: usize,
+) -> Option<Message> {
     let pointer = message.get_pointer();
     let size = message.get_size();
-    inflate(&message.get_slice(pointer, size))
+    inflate_limited(&message.get_slice(pointer, size), max_out)
         .ok()
         .map(Message::new_with_data)
 }
