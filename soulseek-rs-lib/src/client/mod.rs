@@ -821,6 +821,12 @@ impl ClientContext {
         self.own_interests.clone()
     }
 
+    /// The upload speed the server records for us, if it has said.
+    #[must_use]
+    pub const fn own_average_speed(&self) -> Option<u32> {
+        self.own_average_speed
+    }
+
     /// Record what the server says our own upload speed is, and re-derive the
     /// child limit from it.
     pub fn set_own_average_speed(&mut self, speed: u32) {

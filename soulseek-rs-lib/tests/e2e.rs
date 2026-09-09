@@ -5113,3 +5113,66 @@ fn our_interests_are_sent_again_after_a_new_login() {
         "a new session should carry the interests too, got {likes:?}"
     );
 }
+
+#[test]
+fn a_finished_upload_teaches_us_our_own_recorded_speed() {
+    // The server records a client's upload speed and pushes it to whoever
+    // watches that user. We watch ourselves at login, which is how our own
+    // figure — the one the distributed child limit is derived from — reaches
+    // us without anyone asking on our behalf.
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    let content: Vec<u8> = (0..8192u32).map(|i| (i % 251) as u8).collect();
+    let filename = "e2e_ownspeed_probe.bin";
+    std::fs::write(share_dir.join(filename), &content).unwrap();
+
+    let (sharer, leecher) = sharer_and_searcher(
+        &server,
+        &share_dir,
+        "e2e_ownspeed_sharer",
+        "e2e_ownspeed_leecher",
+    );
+    assert_eq!(
+        sharer.own_average_speed(),
+        Some(0),
+        "a client that has never uploaded is recorded at zero"
+    );
+
+    let query = "ownspeed";
+    let _ = leecher.search(query, Duration::from_secs(3));
+    let (path, size) = reply_from(&leecher, query, "e2e_ownspeed_sharer")
+        .and_then(|reply| reply.files.into_iter().next())
+        .map(|file| (file.name, file.size))
+        .expect("the leecher should find the file");
+
+    let download_dir = unique_download_dir();
+    let (_download, status_rx) = leecher
+        .download(
+            path,
+            "e2e_ownspeed_sharer".to_string(),
+            size,
+            download_dir.display().to_string(),
+        )
+        .expect("start download");
+    assert!(
+        wait_for_completion(&leecher, &status_rx, Duration::from_secs(25)),
+        "the download should complete"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline
+        && sharer.own_average_speed().unwrap_or(0) == 0
+    {
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    assert!(
+        sharer.own_average_speed().unwrap_or(0) > 0,
+        "the speed the server recorded for us should reach us unasked, got          {:?} (info: {:?})",
+        sharer.own_average_speed(),
+        sharer.user_info("e2e_ownspeed_sharer"),
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+    let _ = std::fs::remove_dir_all(download_dir);
+}

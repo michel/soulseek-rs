@@ -443,17 +443,35 @@ impl Client {
                         average_speed,
                         shared_files,
                         shared_folders,
-                    } => match client_context.write_safe() {
-                        Ok(mut ctx) => ctx.apply_user_stats(
-                            username,
-                            average_speed,
-                            shared_files,
-                            shared_folders,
-                        ),
-                        Err(e) => {
-                            error!("[client] UserStatsReceived write: {}", e);
+                    } => {
+                        // Stats about ourselves carry the speed the server
+                        // records for us — pushed whenever it changes, since
+                        // we watch ourselves — and the distributed child
+                        // limit is derived from it.
+                        let own = username == own_username;
+                        match client_context.write_safe() {
+                            Ok(mut ctx) => {
+                                ctx.apply_user_stats(
+                                    username,
+                                    average_speed,
+                                    shared_files,
+                                    shared_folders,
+                                );
+                                if own {
+                                    ctx.set_own_average_speed(average_speed);
+                                }
+                            }
+                            Err(e) => {
+                                error!(
+                                    "[client] UserStatsReceived write: {}",
+                                    e
+                                );
+                            }
                         }
-                    },
+                        if own {
+                            Self::announce_child_capacity(&client_context);
+                        }
+                    }
                     ClientOperation::WatchedUserReceived {
                         username,
                         exists,
@@ -461,19 +479,36 @@ impl Client {
                         average_speed,
                         shared_files,
                         shared_folders,
-                    } => match client_context.write_safe() {
-                        Ok(mut ctx) => ctx.apply_watched_user(
-                            username,
-                            exists,
-                            status,
-                            average_speed,
-                            shared_files,
-                            shared_folders,
-                        ),
-                        Err(e) => {
-                            error!("[client] WatchedUserReceived write: {}", e);
+                    } => {
+                        let own = username == own_username;
+                        match client_context.write_safe() {
+                            Ok(mut ctx) => {
+                                ctx.apply_watched_user(
+                                    username,
+                                    exists,
+                                    status,
+                                    average_speed,
+                                    shared_files,
+                                    shared_folders,
+                                );
+                                // Watching ourselves is how our own recorded
+                                // speed reaches us, and the child limit is
+                                // derived from it.
+                                if own && let Some(speed) = average_speed {
+                                    ctx.set_own_average_speed(speed);
+                                }
+                            }
+                            Err(e) => {
+                                error!(
+                                    "[client] WatchedUserReceived write: {}",
+                                    e
+                                );
+                            }
                         }
-                    },
+                        if own {
+                            Self::announce_child_capacity(&client_context);
+                        }
+                    }
                     ClientOperation::RoomEvent(event) => {
                         match client_context.write_safe() {
                             Ok(mut ctx) => ctx.apply_room_event(event),
@@ -930,6 +965,15 @@ impl Client {
                             Err(_) => continue,
                         };
                         let Some(sender) = sender else { continue };
+                        // Watch ourselves: the server pushes a user's stats
+                        // to whoever watches them, and our own recorded
+                        // upload speed is what the distributed child limit is
+                        // derived from. Nicotine+ reads the same figure from
+                        // the stats the server sends about the logged-in
+                        // user.
+                        let _ = sender.send(ServerMessage::SendMessage(
+                            MessageFactory::build_watch_user(&own_username),
+                        ));
                         for item in &interests.likes {
                             let _ = sender.send(ServerMessage::SendMessage(
                                 MessageFactory::build_add_thing_i_like(item),

@@ -327,6 +327,17 @@ impl Client {
         self.send_server_message(MessageFactory::build_global_recommendations())
     }
 
+    /// The upload speed the server records for us, once it has reported it.
+    /// It is what the distributed child limit is derived from, and it only
+    /// becomes known after an upload has finished and been reported.
+    #[must_use]
+    pub fn own_average_speed(&self) -> Option<u32> {
+        self.context
+            .read_safe()
+            .ok()
+            .and_then(|ctx| ctx.own_average_speed())
+    }
+
     /// What we ourselves like and hate, as set through this client. The
     /// server forgets these when the session ends, so they are re-sent after
     /// each login.
