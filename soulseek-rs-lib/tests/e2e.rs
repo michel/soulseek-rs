@@ -118,6 +118,7 @@ impl TestServer {
             enable_listen: false,
             listen_port: 0,
             shared_directories: Vec::new(),
+            accept_children: false,
             version: ClientVersion::default(),
         }
     }
@@ -4450,6 +4451,7 @@ fn an_excluded_phrase_is_refused_before_a_search_is_spent() {
         enable_listen: false,
         listen_port: 0,
         shared_directories: Vec::new(),
+        accept_children: false,
         version: ClientVersion::default(),
     });
     client.connect().expect("connect to stub");
@@ -4807,4 +4809,178 @@ fn a_wishlist_search_is_answered_like_any_other() {
     );
 
     let _ = std::fs::remove_dir_all(share_dir);
+}
+
+// ---------------------------------------------------------------------------
+// The other half of the tree: serving children.
+//
+// A client that accepts children takes `D` connections from peers, tells each
+// where our branch sits, and passes every search it receives down to them.
+// ---------------------------------------------------------------------------
+
+/// Read distributed frames from a child link until `pick` matches or time runs
+/// out.
+fn read_distributed_until<T>(
+    stream: &mut TcpStream,
+    timeout: Duration,
+    mut pick: impl FnMut(&distributed::Distributed) -> Option<T>,
+) -> Option<T> {
+    stream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .ok()?;
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        // read_framed already returns the frame with its length prefix,
+        // which is exactly what the parser expects.
+        let Ok(mut frame) = read_framed(stream) else {
+            continue;
+        };
+        if let Some(parsed) = distributed::parse(&mut frame)
+            && let Some(found) = pick(&parsed)
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Dial `port` as a distributed child called `username`.
+fn dial_as_child(port: u16, username: &str) -> std::io::Result<TcpStream> {
+    let mut child =
+        connect_retry(&format!("127.0.0.1:{port}"), Duration::from_secs(5))?;
+    child.write_all(&peer_init_bytes(username, "D", 0))?;
+    child.flush()?;
+    Ok(child)
+}
+
+#[test]
+fn a_parent_tells_a_child_where_it_sits_and_passes_searches_down() {
+    let server = server_or_skip!();
+
+    let listen_port = free_port().expect("free listen port");
+    let mut parent = Client::with_settings(ClientSettings {
+        accept_children: true,
+        ..server.listening_settings("e2e_par_parent", "pw", listen_port)
+    });
+    parent.connect().expect("parent connect");
+    assert!(parent.login().expect("parent login"));
+
+    let mut child =
+        dial_as_child(listen_port, "e2e_par_child").expect("child dials");
+
+    // The child is told our branch before anything else: without it, it has
+    // nothing to report to the server as its own place.
+    let root = read_distributed_until(
+        &mut child,
+        Duration::from_secs(10),
+        |f| match f {
+            distributed::Distributed::BranchRoot(root) => Some(root.clone()),
+            _ => None,
+        },
+    )
+    .expect("a child should be told our branch root");
+    assert_eq!(
+        root, "e2e_par_parent",
+        "a parentless client is its own root"
+    );
+    let level = read_distributed_until(
+        &mut child,
+        Duration::from_secs(10),
+        |f| match f {
+            distributed::Distributed::BranchLevel(level) => Some(*level),
+            _ => None,
+        },
+    )
+    .expect("a child should be told our branch level");
+    assert_eq!(level, 0);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while parent.children().is_empty() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(parent.children(), vec!["e2e_par_child".to_string()]);
+
+    // A search the server hands us must reach the child, whether or not we
+    // can answer it ourselves — carrying the stream is the parent's duty.
+    let addr = format!("{}:{}", server.host, server.port);
+    let mut searcher =
+        login_raw(&addr, "e2e_par_searcher", "pw").expect("searcher login");
+    let token = 515_151_u32;
+    searcher
+        .write_all(
+            &MessageFactory::build_file_search_message(
+                token,
+                "e2e_child_relay_probe",
+            )
+            .get_buffer(),
+        )
+        .expect("send a search");
+    searcher.flush().expect("flush the search");
+
+    let relayed = read_distributed_until(
+        &mut child,
+        Duration::from_secs(20),
+        |f| match f {
+            distributed::Distributed::Search {
+                username,
+                token: got,
+                query,
+            } if *got == token => Some((username.clone(), query.clone())),
+            _ => None,
+        },
+    )
+    .expect("the search should be passed down to the child");
+    assert_eq!(
+        relayed,
+        (
+            "e2e_par_searcher".to_string(),
+            "e2e_child_relay_probe".to_string()
+        )
+    );
+
+    // A child that hangs up loses its place.
+    drop(child);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !parent.children().is_empty() && Instant::now() < deadline {
+        searcher
+            .write_all(
+                &MessageFactory::build_file_search_message(
+                    token + 1,
+                    "e2e_child_relay_probe",
+                )
+                .get_buffer(),
+            )
+            .expect("send another search");
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    assert!(
+        parent.children().is_empty(),
+        "a child that went away should not keep its slot"
+    );
+}
+
+#[test]
+fn a_client_that_does_not_serve_children_turns_one_away() {
+    let server = server_or_skip!();
+
+    // The default: a leaf. A peer that dials with a D connection is dropped,
+    // and never told a branch it could hang from.
+    let listen_port = free_port().expect("free listen port");
+    let mut leaf = Client::with_settings(server.listening_settings(
+        "e2e_leafonly",
+        "pw",
+        listen_port,
+    ));
+    leaf.connect().expect("leaf connect");
+    assert!(leaf.login().expect("leaf login"));
+
+    let mut child =
+        dial_as_child(listen_port, "e2e_leafonly_child").expect("child dials");
+
+    let told =
+        read_distributed_until(&mut child, Duration::from_secs(3), |f| {
+            matches!(f, distributed::Distributed::BranchRoot(_)).then_some(())
+        });
+    assert!(told.is_none(), "a leaf must not take on a child");
+    assert!(leaf.children().is_empty());
 }

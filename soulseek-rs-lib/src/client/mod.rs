@@ -191,6 +191,11 @@ pub struct ClientSettings {
     /// Directories whose files are shared with (uploaded to) other peers.
     /// Empty means nothing is shared.
     pub shared_directories: Vec<String>,
+    /// Whether to serve children in the distributed search network: peers
+    /// hang from us with a `D` connection and we pass every search we receive
+    /// down to them. Off by default — it costs a socket and the network's
+    /// whole search stream per child.
+    pub accept_children: bool,
     /// The version reported to the server on login. Defaults to the
     /// soulseek-rs major version with minor version 1 ("unidentified");
     /// clients built on this library should reserve their own minor
@@ -223,6 +228,7 @@ impl Default for ClientSettings {
             enable_listen: true,
             listen_port: DEFAULT_LISTEN_PORT,
             shared_directories: Vec::new(),
+            accept_children: false,
             version: ClientVersion::default(),
         }
     }
@@ -343,6 +349,12 @@ pub enum ClientOperation {
     PossibleParents(Vec<(String, String, u16)>),
     /// The server told us to drop our parent.
     ResetDistributed,
+    /// A peer dialled us with a `D` connection, asking to hang from us in the
+    /// distributed search network.
+    ChildConnected {
+        username: String,
+        stream: std::net::TcpStream,
+    },
     /// Recommendations from the server: either from our own interests
     /// (`global` false, code 54) or server-wide (`global` true, code 56).
     Recommendations {
@@ -405,6 +417,8 @@ pub struct ClientContext {
     operations: Option<Sender<ClientOperation>>,
     /// Our place in the distributed search network.
     leaf: distributed::Leaf,
+    /// The children hanging from us, when the client serves any.
+    pub(crate) children: children::Children,
     searches: HashMap<String, Search>,
     private_messages: Vec<UserMessage>,
     /// Correlation tokens for server-brokered (firewalled) connections, mapping
@@ -565,6 +579,7 @@ impl ClientContext {
             server_sender: None,
             operations: None,
             leaf: distributed::Leaf::new(""),
+            children: children::Children::default(),
             searches: HashMap::new(),
             private_messages: Vec::new(),
             pending_connect_tokens: HashMap::new(),
@@ -1180,20 +1195,34 @@ impl Client {
     #[must_use]
     pub fn with_settings(settings: ClientSettings) -> Self {
         logger::init();
+        let mut context = ClientContext::for_user(&settings.username);
+        context.children = children::Children::new(settings.accept_children);
         Self {
             enable_listen: settings.enable_listen,
             listen_port: settings.listen_port,
             bound_port: None,
             address: settings.server_address,
-            context: Arc::new(RwLock::new(ClientContext::for_user(
-                &settings.username,
-            ))),
+            context: Arc::new(RwLock::new(context)),
             username: settings.username,
             password: settings.password,
             version: settings.version,
             shared_directories: settings.shared_directories,
             server_handle: None,
             session: SessionWatch::default(),
+        }
+    }
+
+    /// The children currently hanging from us in the distributed search
+    /// network, by username. Empty unless the client was built with
+    /// [`ClientSettings::accept_children`].
+    #[must_use]
+    pub fn children(&self) -> Vec<String> {
+        match self.context.read_safe() {
+            Ok(ctx) => ctx.children.usernames(),
+            Err(e) => {
+                error!("[client] children: {}", e);
+                Vec::new()
+            }
         }
     }
 
@@ -1334,6 +1363,7 @@ impl Client {
     }
 }
 
+mod children;
 mod connection;
 mod distributed;
 mod downloads;

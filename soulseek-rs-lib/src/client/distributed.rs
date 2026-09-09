@@ -297,13 +297,32 @@ pub fn announce(
     server: Option<&Sender<ServerMessage>>,
     branch: &Branch,
     has_parent: bool,
+    accept_children: bool,
 ) {
     let Some(server) = server else {
         return;
     };
-    for message in distributed::stance(&branch.root, branch.level, has_parent) {
+    for message in distributed::stance(
+        &branch.root,
+        branch.level,
+        has_parent,
+        accept_children,
+    ) {
         let _ = server.send(ServerMessage::SendMessage(message));
     }
+}
+
+/// Tell the server where we sit, and tell our children too: a branch that
+/// moved leaves every child reporting a stale place until they hear it.
+pub fn announce_move(
+    ctx: &mut super::ClientContext,
+    branch: &Branch,
+    has_parent: bool,
+) {
+    let server = ctx.server_sender.clone();
+    let accepting = ctx.children.accepting();
+    announce(server.as_ref(), branch, has_parent, accepting);
+    ctx.children.broadcast_stance(&branch.root, branch.level);
 }
 
 /// Dial a parent candidate on its own thread: a `D` PeerInit, then whatever it
@@ -668,7 +687,7 @@ mod tests {
     fn announcing_tells_the_server_the_root_the_level_and_that_we_have_a_parent()
      {
         let (tx, rx) = std::sync::mpsc::channel();
-        announce(Some(&tx), &Branch::under("rooty", 4), true);
+        announce(Some(&tx), &Branch::under("rooty", 4), true, false);
         let mut sent: Vec<crate::message::Message> = Vec::new();
         while let Ok(ServerMessage::SendMessage(m)) = rx.try_recv() {
             sent.push(m);

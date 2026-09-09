@@ -67,6 +67,7 @@ impl Subject {
             enable_listen: true,
             listen_port: 0,
             shared_directories: Vec::new(),
+            accept_children: false,
             version: ClientVersion::default(),
         });
         client.connect().expect("connect subject");

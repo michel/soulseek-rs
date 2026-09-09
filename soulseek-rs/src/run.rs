@@ -259,6 +259,7 @@ fn context(
             enable_listen: !resolved.disable_listener,
             listen_port: resolved.listener_port,
             shared_directories: shared_directories(resolved, out),
+            accept_children: resolved.accept_children,
             version: ClientVersion::REFERENCE_CLIENT,
         },
         download_dir,
@@ -432,6 +433,7 @@ fn run_default_tui(
 
     let enable_listen = !resolved.disable_listener;
     let listen_port = resolved.listener_port;
+    let accept_children = resolved.accept_children;
     let make_settings =
         move |username: String, password: String| ClientSettings {
             username,
@@ -440,6 +442,7 @@ fn run_default_tui(
             enable_listen,
             listen_port,
             shared_directories: shared_directories.clone(),
+            accept_children,
             version: ClientVersion::REFERENCE_CLIENT,
         };
 

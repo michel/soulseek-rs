@@ -29,10 +29,8 @@ impl Client {
                         if let Some(branch) =
                             ctx.leaf.due_announcement(Instant::now())
                         {
-                            super::distributed::announce(
-                                ctx.server_sender.as_ref(),
-                                &branch,
-                                true,
+                            super::distributed::announce_move(
+                                &mut ctx, &branch, true,
                             );
                         }
                     }
@@ -539,6 +537,16 @@ impl Client {
                         token,
                         query,
                     } => {
+                        // Pass it down the tree first: carrying the search
+                        // stream is a parent's whole duty, and it is owed
+                        // even for a search we ourselves cannot answer.
+                        if let Ok(mut ctx) = client_context.write_safe()
+                            && !ctx.children.is_empty()
+                        {
+                            ctx.children
+                                .broadcast_search(&username, token, &query);
+                        }
+
                         // Don't answer our own distributed search.
                         if username == own_username {
                             continue;
@@ -679,10 +687,8 @@ impl Client {
                         if let Some(branch) =
                             ctx.leaf.branch_level(&parent, link, level)
                         {
-                            super::distributed::announce(
-                                ctx.server_sender.as_ref(),
-                                &branch,
-                                true,
+                            super::distributed::announce_move(
+                                &mut ctx, &branch, true,
                             );
                         }
                     }
@@ -697,10 +703,8 @@ impl Client {
                         if let Some(branch) =
                             ctx.leaf.branch_root(&parent, link, &root)
                         {
-                            super::distributed::announce(
-                                ctx.server_sender.as_ref(),
-                                &branch,
-                                true,
+                            super::distributed::announce_move(
+                                &mut ctx, &branch, true,
                             );
                         }
                     }
@@ -717,10 +721,8 @@ impl Client {
                         if let Some(branch) =
                             ctx.leaf.search_from(&parent, link)
                         {
-                            super::distributed::announce(
-                                ctx.server_sender.as_ref(),
-                                &branch,
-                                true,
+                            super::distributed::announce_move(
+                                &mut ctx, &branch, true,
                             );
                         }
                         if ctx.leaf.is_parent(&parent, link)
@@ -739,10 +741,9 @@ impl Client {
                             continue;
                         };
                         if ctx.leaf.closed(&parent, link) {
-                            super::distributed::announce(
-                                ctx.server_sender.as_ref(),
-                                &ctx.leaf.branch(),
-                                false,
+                            let branch = ctx.leaf.branch();
+                            super::distributed::announce_move(
+                                &mut ctx, &branch, false,
                             );
                         }
                     }
@@ -753,10 +754,9 @@ impl Client {
                             continue;
                         };
                         ctx.leaf.reset();
-                        super::distributed::announce(
-                            ctx.server_sender.as_ref(),
-                            &ctx.leaf.branch(),
-                            false,
+                        let branch = ctx.leaf.branch();
+                        super::distributed::announce_move(
+                            &mut ctx, &branch, false,
                         );
                     }
                     ClientOperation::PrivilegedUsers(users) => {
@@ -814,6 +814,34 @@ impl Client {
                     ClientOperation::UserInterests(interests) => {
                         if let Ok(mut ctx) = client_context.write_safe() {
                             ctx.apply_user_interests(interests);
+                        }
+                    }
+                    ClientOperation::ChildConnected { username, stream } => {
+                        // A peer wants to hang from us. Take it on if this
+                        // client serves children and has room, then tell it
+                        // where our branch sits so it can report its own
+                        // place; otherwise the socket is dropped here and the
+                        // peer looks for another parent.
+                        let Ok(mut ctx) = client_context.write_safe() else {
+                            continue;
+                        };
+                        if !ctx.children.has_room() {
+                            continue;
+                        }
+                        if stream.set_nodelay(true).is_err() {
+                            continue;
+                        }
+                        if ctx.children.accept(&username, stream) {
+                            let branch = ctx.leaf.branch();
+                            ctx.children.send_stance_to(
+                                &username,
+                                &branch.root,
+                                branch.level,
+                            );
+                            debug!(
+                                "[distributed] carrying {} children",
+                                ctx.children.len()
+                            );
                         }
                     }
                     ClientOperation::ExcludedSearchPhrases(phrases) => {

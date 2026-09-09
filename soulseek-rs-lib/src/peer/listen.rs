@@ -378,9 +378,17 @@ fn handle_incoming_connection(
             deadline,
         ),
         ConnectionType::D => {
+            // A child asking to hang from us. The client decides whether it
+            // serves children at all; here we only hand the socket over.
             debug!(
-                "[listener:{peer_ip}:{peer_port}] connection type is D, not supported yet, closing connection. "
+                "[listener:{peer_ip}:{peer_port}] distributed child {} offered",
+                init_data.username
             );
+            let _ =
+                context.client_sender.send(ClientOperation::ChildConnected {
+                    username: init_data.username,
+                    stream,
+                });
         }
     }
 }

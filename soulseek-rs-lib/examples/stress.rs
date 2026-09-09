@@ -1026,6 +1026,7 @@ fn main() {
         enable_listen: true,
         listen_port: client_port,
         shared_directories: vec![share_dir.display().to_string()],
+        accept_children: false,
         version: ClientVersion::default(),
     });
     client.connect().expect("client connect");
