@@ -108,12 +108,17 @@ pub fn build_branch_level(level: i32) -> Message {
 /// What we tell the server about our place in the tree: the four messages
 /// Nicotine+ sends together whenever it changes.
 #[must_use]
-pub fn stance(root: &str, level: u32, has_parent: bool) -> Vec<Message> {
+pub fn stance(
+    root: &str,
+    level: u32,
+    has_parent: bool,
+    accept_children: bool,
+) -> Vec<Message> {
     vec![
         MessageFactory::build_have_no_parent(!has_parent),
         MessageFactory::build_branch_root(root),
         MessageFactory::build_branch_level(level),
-        MessageFactory::build_accept_children(false),
+        MessageFactory::build_accept_children(accept_children),
     ]
 }
 

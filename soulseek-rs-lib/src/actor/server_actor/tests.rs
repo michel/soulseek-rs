@@ -210,6 +210,12 @@ fn a_successful_login_resets_the_distributed_leaf() {
         client.try_recv(),
         Ok(ClientOperation::ResetDistributed)
     ));
+    // A new session also has to be told what only the session held: our
+    // interests, which the server forgets when the old one ended.
+    assert!(matches!(
+        client.try_recv(),
+        Ok(ClientOperation::SessionEstablished)
+    ));
     actor.handle_login_status(false);
     assert!(client.try_recv().is_err(), "a failed login resets nothing");
 }

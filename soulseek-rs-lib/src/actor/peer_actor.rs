@@ -1,12 +1,13 @@
 use crate::actor::{Actor, ActorHandle, ConnectionState};
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
+use crate::message::peer::UserInfoResponseHandler;
 use crate::message::peer::{
-    FileSearchResponse, FolderContentsRequest, GetShareFileList, PeerInit,
-    PlaceInQueueRequest, PlaceInQueueResponse, QueueUploadHandler,
-    SharedDirectory, SharedFileListResponseHandler, TransferRequest,
-    TransferResponse, UploadDeniedHandler, UploadFailedHandler,
-    UserInfoRequest,
+    FileSearchResponse, FolderContentsRequest, FolderContentsResponseHandler,
+    GetShareFileList, PeerInit, PlaceInQueueRequest, PlaceInQueueResponse,
+    QueueUploadHandler, SharedDirectory, SharedFileListResponseHandler,
+    TransferRequest, TransferResponse, UploadDeniedHandler,
+    UploadFailedHandler, UserInfoRequest,
 };
 use crate::message::server::MessageFactory;
 use crate::message::{Handlers, Message, MessageReader, MessageType};
@@ -47,6 +48,14 @@ pub enum PeerMessage {
     ShareListRequested,
     /// A peer we are browsing sent us their shared-file listing (code 5).
     ShareListReceived(Vec<SharedDirectory>),
+    /// A peer answered our `UserInfoRequest` with what it says about itself.
+    UserInfoReceived(crate::message::peer::PeerInfo),
+    /// A peer answered our `FolderContentsRequest` with one folder's listing.
+    FolderContentsReceived {
+        token: u32,
+        folder: String,
+        directories: Vec<SharedDirectory>,
+    },
     /// A peer asked what we say about ourselves (they sent us code 15).
     UserInfoRequested,
     /// A peer asked for one folder of our shares (they sent us code 36).
@@ -199,7 +208,9 @@ impl PeerActor {
         handlers.register_handler(TransferResponse);
         handlers.register_handler(GetShareFileList);
         handlers.register_handler(FolderContentsRequest);
+        handlers.register_handler(FolderContentsResponseHandler);
         handlers.register_handler(UserInfoRequest);
+        handlers.register_handler(UserInfoResponseHandler);
         handlers.register_handler(UploadDeniedHandler);
         handlers.register_handler(UploadFailedHandler);
         handlers.register_handler(PlaceInQueueRequest);
@@ -307,6 +318,24 @@ impl PeerActor {
             PeerMessage::ShareListReceived(directories) => {
                 self.forward(ClientOperation::BrowseResult {
                     username: self.peer_username(),
+                    directories,
+                });
+            }
+            PeerMessage::UserInfoReceived(info) => {
+                self.forward(ClientOperation::PeerInfoReceived {
+                    username: self.peer_username(),
+                    info,
+                });
+            }
+            PeerMessage::FolderContentsReceived {
+                token,
+                folder,
+                directories,
+            } => {
+                self.forward(ClientOperation::FolderContents {
+                    username: self.peer_username(),
+                    token,
+                    folder,
                     directories,
                 });
             }
@@ -729,8 +758,20 @@ impl PeerActor {
         // unreachable (likely firewalled): signal a connect failure so the
         // client can fall back to server-brokered connect. Anything else is a
         // normal disconnect.
+        // A dial the server asked for carries the token the far peer quoted;
+        // it is what a CantConnectToPeer must echo back, so the peer stops
+        // waiting for a connection that is never coming.
+        let brokered_token = self
+            .peer
+            .read_safe()
+            .ok()
+            .and_then(|p| if p.brokered { p.token } else { None });
         let op = if self.outbound && !self.established {
-            ClientOperation::PeerConnectFailed(self.id, username)
+            ClientOperation::PeerConnectFailed(
+                self.id,
+                username,
+                brokered_token,
+            )
         } else {
             ClientOperation::PeerDisconnected(
                 self.id,

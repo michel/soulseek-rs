@@ -17,7 +17,9 @@ pub use file_search_response::{
     FileEntry, FileSearchResponse, build_file_search_response,
 };
 pub use folder_contents::{
-    FolderContentsRequest, build_folder_contents, parse_folder_contents,
+    FolderContentsRequest, FolderContentsResponseHandler,
+    build_folder_contents, build_folder_contents_request,
+    parse_folder_contents,
 };
 pub use get_share_file_list::GetShareFileList;
 pub use peer_init::PeerInit;
@@ -32,4 +34,7 @@ pub use transfer_request::TransferRequest;
 pub use transfer_response::TransferResponse;
 pub use upload_denied::UploadDeniedHandler;
 pub use upload_failed::UploadFailedHandler;
-pub use user_info::{UserInfoRequest, build_user_info};
+pub use user_info::{
+    PeerInfo, UserInfoRequest, UserInfoResponseHandler, build_user_info,
+    build_user_info_request,
+};

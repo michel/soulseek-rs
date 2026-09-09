@@ -2,12 +2,14 @@ use crate::actor::{Actor, ActorHandle, ConnectionState};
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
 use crate::message::server::AdminMessageHandler;
+use crate::message::server::CantConnectToPeerHandler;
 use crate::message::server::CheckPrivilegesHandler;
 use crate::message::server::ConnectToPeerHandler;
 use crate::message::server::EmbeddedMessageHandler;
 use crate::message::server::ExcludedSearchPhrasesHandler;
 use crate::message::server::FileSearchHandler;
 use crate::message::server::GetPeerAddressHandler;
+use crate::message::server::GlobalRoomMessageHandler;
 use crate::message::server::JoinRoomHandler;
 use crate::message::server::LeaveRoomHandler;
 use crate::message::server::LoginHandler;
@@ -25,15 +27,27 @@ use crate::message::server::UserLeftRoomHandler;
 use crate::message::server::WatchUserHandler;
 use crate::message::server::WishListIntervalHandler;
 use crate::message::server::{
+    CantCreateRoomHandler, OwnRoomStandingHandler, RoomMembersHandler,
+    RoomOperatorsHandler, RoomRosterChangeHandler,
+};
+use crate::message::server::{
     GetUserStatsHandler, GetUserStatusHandler, RoomListHandler,
+};
+use crate::message::server::{
+    GlobalRecommendationsHandler, ItemRecommendationsHandler,
+    ItemSimilarUsersHandler, RecommendationsHandler, SimilarUsersHandler,
+    UserInterestsHandler,
+};
+use crate::message::server::{
+    RoomTickerAddedHandler, RoomTickerRemovedHandler, RoomTickersHandler,
 };
 use crate::message::{Handlers, MessageType};
 use crate::message::{Message, MessageReader};
 use crate::peer::ConnectionType;
 use crate::peer::Peer;
 use crate::types::{
-    ClientVersion, RoomEvent, RoomInfo, RoomUserStats, SessionLoss,
-    SessionWatch,
+    ClientVersion, Recommendation, RoomEvent, RoomInfo, RoomUserStats,
+    SessionLoss, SessionWatch, SimilarUser, UserInterests,
 };
 use crate::utils::lock::RwLockExt;
 
@@ -164,6 +178,96 @@ pub enum ServerMessage {
     PossibleParents(Vec<(String, String, u16)>),
     /// The server asks us to drop our parent and start over.
     ResetDistributed,
+    /// The ticker board of a room we just joined (code 113).
+    RoomTickers {
+        room: String,
+        tickers: Vec<crate::types::RoomTicker>,
+    },
+    /// One member set their ticker (code 114).
+    RoomTickerAdded {
+        room: String,
+        username: String,
+        ticker: String,
+    },
+    /// One member cleared their ticker (code 115).
+    RoomTickerRemoved {
+        room: String,
+        username: String,
+    },
+    /// A message from the global room feed (code 152).
+    GlobalRoomMessageReceived {
+        room: String,
+        username: String,
+        message: String,
+    },
+    /// Recommendations from our own interests (code 54).
+    RecommendationsReceived {
+        recommended: Vec<Recommendation>,
+        unrecommended: Vec<Recommendation>,
+    },
+    /// Server-wide recommendations (code 56).
+    GlobalRecommendationsReceived {
+        recommended: Vec<Recommendation>,
+        unrecommended: Vec<Recommendation>,
+    },
+    /// Recommendations for one item (code 111).
+    ItemRecommendationsReceived {
+        item: String,
+        recommendations: Vec<Recommendation>,
+    },
+    /// Users similar to us (code 110).
+    SimilarUsersReceived {
+        users: Vec<SimilarUser>,
+    },
+    /// Users who like one item (code 112).
+    ItemSimilarUsersReceived {
+        item: String,
+        usernames: Vec<String>,
+    },
+    /// What another user likes and hates (code 57).
+    UserInterestsReceived(UserInterests),
+    /// A peer could not connect to us after we asked the server to broker
+    /// (code 1001); the token is the one we quoted.
+    CantConnectToPeer {
+        token: u32,
+    },
+    /// Phrases the server refuses to search for (code 160).
+    ExcludedSearchPhrases(Vec<String>),
+    /// The upload speed a client needs before the server lets it carry
+    /// children (code 83).
+    ParentMinSpeed(u32),
+    /// The divisor turning that speed into a child count (code 84).
+    ParentSpeedRatio(u32),
+    /// Who may enter a private room (code 133).
+    PrivateRoomMembers {
+        room: String,
+        users: Vec<String>,
+    },
+    /// Who runs a private room (code 148).
+    PrivateRoomOperators {
+        room: String,
+        users: Vec<String>,
+    },
+    /// One user joined or left a private room's member or operator roster
+    /// (codes 134/135 and 143/144).
+    PrivateRoomRosterChanged {
+        room: String,
+        username: String,
+        /// True for the member roster, false for the operator roster.
+        members: bool,
+        added: bool,
+    },
+    /// Our own membership (139/140) or operatorship (145/146) of a private
+    /// room was granted or revoked.
+    OwnRoomStandingChanged {
+        room: String,
+        members: bool,
+        granted: bool,
+    },
+    /// The room we asked to join could not be created (code 1003).
+    CantCreateRoom {
+        room: String,
+    },
 }
 
 pub struct ServerActor {
@@ -320,6 +424,28 @@ impl ServerActor {
         handlers.register_handler(FileSearchHandler);
         handlers.register_handler(GetPeerAddressHandler);
         handlers.register_handler(ConnectToPeerHandler);
+        handlers.register_handler(CantConnectToPeerHandler);
+        handlers.register_handler(RoomMembersHandler);
+        handlers.register_handler(RoomOperatorsHandler);
+        // Members added/removed (134/135), operators added/removed (143/144).
+        for code in [134, 135, 143, 144] {
+            handlers.register_handler(RoomRosterChangeHandler(code));
+        }
+        // Our own membership (139/140) and operatorship (145/146).
+        for code in [139, 140, 145, 146] {
+            handlers.register_handler(OwnRoomStandingHandler(code));
+        }
+        handlers.register_handler(CantCreateRoomHandler);
+        handlers.register_handler(RoomTickersHandler);
+        handlers.register_handler(RoomTickerAddedHandler);
+        handlers.register_handler(RoomTickerRemovedHandler);
+        handlers.register_handler(GlobalRoomMessageHandler);
+        handlers.register_handler(RecommendationsHandler);
+        handlers.register_handler(GlobalRecommendationsHandler);
+        handlers.register_handler(ItemRecommendationsHandler);
+        handlers.register_handler(SimilarUsersHandler);
+        handlers.register_handler(ItemSimilarUsersHandler);
+        handlers.register_handler(UserInterestsHandler);
 
         self.dispatcher = Some(MessageDispatcher::new(
             "server".into(),
@@ -501,6 +627,37 @@ impl ServerActor {
             ServerMessage::RoomUserLeft { room, username } => {
                 self.forward_room_event(RoomEvent::UserLeft { room, username });
             }
+            ServerMessage::RoomTickers { room, tickers } => {
+                self.forward_room_event(RoomEvent::Tickers { room, tickers });
+            }
+            ServerMessage::RoomTickerAdded {
+                room,
+                username,
+                ticker,
+            } => {
+                self.forward_room_event(RoomEvent::TickerAdded {
+                    room,
+                    username,
+                    ticker,
+                });
+            }
+            ServerMessage::RoomTickerRemoved { room, username } => {
+                self.forward_room_event(RoomEvent::TickerRemoved {
+                    room,
+                    username,
+                });
+            }
+            ServerMessage::GlobalRoomMessageReceived {
+                room,
+                username,
+                message,
+            } => {
+                self.forward_room_event(RoomEvent::GlobalMessage {
+                    room,
+                    username,
+                    message,
+                });
+            }
             other => self.handle_standing_message(other),
         }
     }
@@ -539,6 +696,106 @@ impl ServerActor {
             ServerMessage::CheckPrivileges => {
                 self.queue_message(MessageFactory::build_check_privileges());
             }
+            ServerMessage::RecommendationsReceived {
+                recommended,
+                unrecommended,
+            } => {
+                self.forward_to_client(ClientOperation::Recommendations {
+                    global: false,
+                    recommended,
+                    unrecommended,
+                });
+            }
+            ServerMessage::GlobalRecommendationsReceived {
+                recommended,
+                unrecommended,
+            } => {
+                self.forward_to_client(ClientOperation::Recommendations {
+                    global: true,
+                    recommended,
+                    unrecommended,
+                });
+            }
+            ServerMessage::ItemRecommendationsReceived {
+                item,
+                recommendations,
+            } => {
+                self.forward_to_client(ClientOperation::ItemRecommendations {
+                    item,
+                    recommendations,
+                });
+            }
+            ServerMessage::SimilarUsersReceived { users } => {
+                self.forward_to_client(ClientOperation::SimilarUsers(users));
+            }
+            ServerMessage::ItemSimilarUsersReceived { item, usernames } => {
+                self.forward_to_client(ClientOperation::ItemSimilarUsers {
+                    item,
+                    usernames,
+                });
+            }
+            ServerMessage::UserInterestsReceived(interests) => {
+                self.forward_to_client(ClientOperation::UserInterests(
+                    interests,
+                ));
+            }
+            ServerMessage::CantConnectToPeer { token } => {
+                self.forward_to_client(ClientOperation::CantConnectToPeer {
+                    token,
+                });
+            }
+            ServerMessage::PrivateRoomMembers { room, users } => {
+                self.forward_room_event(RoomEvent::PrivateMembers {
+                    room,
+                    users,
+                });
+            }
+            ServerMessage::PrivateRoomOperators { room, users } => {
+                self.forward_room_event(RoomEvent::PrivateOperators {
+                    room,
+                    users,
+                });
+            }
+            ServerMessage::PrivateRoomRosterChanged {
+                room,
+                username,
+                members,
+                added,
+            } => {
+                self.forward_room_event(RoomEvent::PrivateRosterChanged {
+                    room,
+                    username,
+                    members,
+                    added,
+                });
+            }
+            ServerMessage::OwnRoomStandingChanged {
+                room,
+                members,
+                granted,
+            } => {
+                self.forward_room_event(RoomEvent::OwnStandingChanged {
+                    room,
+                    members,
+                    granted,
+                });
+            }
+            ServerMessage::CantCreateRoom { room } => {
+                self.forward_room_event(RoomEvent::CantCreate { room });
+            }
+            ServerMessage::ParentMinSpeed(speed) => {
+                self.forward_to_client(ClientOperation::ParentMinSpeed(speed));
+            }
+            ServerMessage::ParentSpeedRatio(ratio) => {
+                self.forward_to_client(ClientOperation::ParentSpeedRatio(
+                    ratio,
+                ));
+            }
+            ServerMessage::ExcludedSearchPhrases(phrases) => {
+                self.forward_to_client(ClientOperation::ExcludedSearchPhrases(
+                    phrases,
+                ));
+            }
             other => {
                 error!("[server] unroutable message: {:?}", other);
             }
@@ -575,6 +832,8 @@ impl ServerActor {
             // The distributed stance is the leaf's to announce, and a new
             // session starts without a parent.
             self.forward_to_client(ClientOperation::ResetDistributed);
+            // The server holds interests only for the life of a session.
+            self.forward_to_client(ClientOperation::SessionEstablished);
         }
         match self.context.write_safe() {
             Ok(mut ctx) => ctx.logged_in = Some(message),
@@ -693,6 +952,7 @@ impl ServerActor {
     ) {
         if let Err(e) =
             self.client_channel.send(ClientOperation::IncomingSearch {
+                from_parent: false,
                 username,
                 token,
                 query,

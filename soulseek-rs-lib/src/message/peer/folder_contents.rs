@@ -26,6 +26,37 @@ impl MessageHandler<PeerMessage> for FolderContentsRequest {
     }
 }
 
+/// `FolderContentsResponse` (peer code 37): the reply to a folder we asked
+/// for. The token is the one we quoted, so a client with two folders in
+/// flight can tell the answers apart.
+pub struct FolderContentsResponseHandler;
+impl MessageHandler<PeerMessage> for FolderContentsResponseHandler {
+    fn get_code(&self) -> u32 {
+        37
+    }
+    fn handle(&self, message: &mut Message, sender: Sender<PeerMessage>) {
+        let Some((token, folder, directories)) = parse_folder_contents(message)
+        else {
+            return;
+        };
+        let _ = sender.send(PeerMessage::FolderContentsReceived {
+            token,
+            folder,
+            directories,
+        });
+    }
+}
+
+/// Build a `FolderContentsRequest` (peer code 36).
+#[must_use]
+pub fn build_folder_contents_request(token: u32, folder: &str) -> Message {
+    Message::new()
+        .write_int32(36)
+        .write_int32(token)
+        .write_string(folder)
+        .clone()
+}
+
 /// Build a `FolderContentsResponse` (peer code 37).
 #[must_use]
 pub fn build_folder_contents(
@@ -48,7 +79,7 @@ pub fn build_folder_contents(
 pub fn parse_folder_contents(
     message: &mut Message,
 ) -> Option<(u32, String, Vec<SharedDirectory>)> {
-    let mut body = decompress_body(message)?;
+    let mut body = decompress_body(message, crate::utils::zlib::MAX_INFLATED)?;
     let token = body.read_int32();
     let folder = body.read_string();
     Some((token, folder, read_directories(&mut body)))

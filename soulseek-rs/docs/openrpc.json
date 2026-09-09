@@ -729,6 +729,218 @@
               "username"
             ],
             "type": "object"
+          },
+          {
+            "description": "The ticker board of a room, sent on join.",
+            "properties": {
+              "event": {
+                "const": "tickers",
+                "type": "string"
+              },
+              "room": {
+                "type": "string"
+              },
+              "tickers": {
+                "items": {
+                  "$ref": "#/components/schemas/RoomTickerDto"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "event",
+              "room",
+              "tickers"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "event": {
+                "const": "ticker_added",
+                "type": "string"
+              },
+              "room": {
+                "type": "string"
+              },
+              "ticker": {
+                "type": "string"
+              },
+              "username": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "room",
+              "username",
+              "ticker"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "event": {
+                "const": "ticker_removed",
+                "type": "string"
+              },
+              "room": {
+                "type": "string"
+              },
+              "username": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "room",
+              "username"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A message from the global room feed; `room` names where it was said.",
+            "properties": {
+              "event": {
+                "const": "global_message",
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "room": {
+                "type": "string"
+              },
+              "username": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "room",
+              "username",
+              "message"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Who may enter a private room.",
+            "properties": {
+              "event": {
+                "const": "private_members",
+                "type": "string"
+              },
+              "room": {
+                "type": "string"
+              },
+              "users": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "event",
+              "room",
+              "users"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Who runs a private room.",
+            "properties": {
+              "event": {
+                "const": "private_operators",
+                "type": "string"
+              },
+              "room": {
+                "type": "string"
+              },
+              "users": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "event",
+              "room",
+              "users"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A private room's member (`members` true) or operator roster changed.",
+            "properties": {
+              "added": {
+                "type": "boolean"
+              },
+              "event": {
+                "const": "private_roster_changed",
+                "type": "string"
+              },
+              "members": {
+                "type": "boolean"
+              },
+              "room": {
+                "type": "string"
+              },
+              "username": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "room",
+              "username",
+              "members",
+              "added"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Our own membership or operatorship of a private room changed.",
+            "properties": {
+              "event": {
+                "const": "own_standing_changed",
+                "type": "string"
+              },
+              "granted": {
+                "type": "boolean"
+              },
+              "members": {
+                "type": "boolean"
+              },
+              "room": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "room",
+              "members",
+              "granted"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The room we asked to join could not be created.",
+            "properties": {
+              "event": {
+                "const": "cant_create",
+                "type": "string"
+              },
+              "room": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "room"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -757,6 +969,22 @@
         },
         "required": [
           "room"
+        ],
+        "type": "object"
+      },
+      "RoomTickerDto": {
+        "description": "One user's ticker in a room.",
+        "properties": {
+          "ticker": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "ticker"
         ],
         "type": "object"
       },

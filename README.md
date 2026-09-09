@@ -30,6 +30,10 @@ enthusiasts to share niche music. This repository is that client plus
 
 ## Features
 
+- **Full protocol coverage**: 100% of the modern Soulseek protocol's message
+  set — every code the reference clients do not mark obsolete — implemented in
+  `soulseek-rs-lib` and driven end to end against a real server, not a mock.
+  See the [coverage table](docs/protocol-coverage.md)
 - **Search & download**: queue from the TUI or fetch in one command with `get`;
   filter by bitrate, size, file type, free slots, or terms to exclude
 - **Wishlist**: `wish add` what nobody has today; `wish run` and
@@ -64,6 +68,13 @@ A Cargo workspace with two crates: **soulseek-rs-lib**, the protocol
 implementation for anyone building their own client, and **soulseek-rs**, the
 client built on it. The library stays lean on dependencies and has none today;
 the client takes them freely.
+
+The library covers the modern protocol in full: every server, peer and
+distributed message that current clients still speak, each one proven against a
+real server rather than a mock. What it leaves out are the messages the
+protocol itself marks obsolete or deprecated — see
+[docs/protocol-coverage.md](docs/protocol-coverage.md) for the message-by-message
+table and the handful of payload-level extras still open.
 
 ### Projects using soulseek-rs-lib
 
@@ -533,6 +544,7 @@ file, in that order of precedence. Flags work before or after the subcommand.
 | `--shared-dir` (repeatable)    | `SOULSEEK_SHARED_DIR`               | `shared_dir` / `shared_dirs` | the download dir          |
 | `--listener-port`              | `SOULSEEK_LISTENER_PORT`            | `listener_port`              | `2234`                    |
 | `--no-listener` / `--listener` | `SOULSEEK_NO_LISTENER`              | `disable_listener`           | listener on               |
+| —                              | —                                   | `accept_children`            | off                       |
 | `--max-concurrent-downloads`   | `SOULSEEK_MAX_CONCURRENT_DOWNLOADS` | `max_concurrent_downloads`   | `20`                      |
 | `--search-timeout`             | `SOULSEEK_SEARCH_TIMEOUT`           | `search_timeout`             | `10`                      |
 | `--daemon ADDR`                | `SOULSEEK_DAEMON`                   | `daemon`                     | local socket if one is up |
@@ -548,10 +560,17 @@ the config and state directories wholesale. The file lives at
 also read from a `.env` in the working directory, usually the tidiest way to
 hand a container its credentials.
 
-`config get` and `config set` cover the eleven settings the file holds
-(`username`, `server`, `listener_port`, `disable_listener`, `download_dir`,
-`shared_dirs`, `max_concurrent_downloads`, `search_timeout`, `password_cmd`,
-`daemon`, `daemon_token`), and list them back at you when you name something
+`accept_children` makes this client carry part of the distributed search
+network: other peers hang from it and every search it receives is passed down
+to them. It is off by default — each child costs a socket and a copy of the
+network's whole search stream — and it needs the listener, since a child has to
+be able to dial in.
+
+`config get` and `config set` cover the twelve settings the file holds
+(`username`, `server`, `listener_port`, `disable_listener`, `accept_children`,
+`download_dir`, `shared_dirs`, `max_concurrent_downloads`, `search_timeout`,
+`password_cmd`, `daemon`, `daemon_token`), and list them back at you when you
+name something
 else. An empty string clears a key, and `shared_dirs` takes a comma-separated
 list. Waits expressed in seconds (`--search-timeout`, `--timeout`,
 `--duration`) are bounded to one day, so a mistyped flag is rejected rather

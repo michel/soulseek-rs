@@ -1,5 +1,6 @@
 use std::io;
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -378,9 +379,17 @@ fn handle_incoming_connection(
             deadline,
         ),
         ConnectionType::D => {
+            // A child asking to hang from us. The client decides whether it
+            // serves children at all; here we only hand the socket over.
             debug!(
-                "[listener:{peer_ip}:{peer_port}] connection type is D, not supported yet, closing connection. "
+                "[listener:{peer_ip}:{peer_port}] distributed child {} offered",
+                init_data.username
             );
+            let _ =
+                context.client_sender.send(ClientOperation::ChildConnected {
+                    username: init_data.username,
+                    stream,
+                });
         }
     }
 }
@@ -414,6 +423,7 @@ impl Listen {
         client_sender: Sender<ClientOperation>,
         client_context: Arc<RwLock<ClientContext>>,
         own_username: String,
+        stopped: Arc<AtomicBool>,
     ) {
         info!("[listener] listening on {:?}", listener.local_addr());
 
@@ -425,6 +435,10 @@ impl Listen {
         let handshakes = Arc::new(Semaphore::new(MAX_HANDSHAKES));
 
         for stream in listener.incoming() {
+            if stopped.load(Ordering::Relaxed) {
+                debug!("[listener] stopping, releasing the port");
+                return;
+            }
             let Ok(stream) = stream else {
                 error!(
                     "[listener] Failed to accept connection: {}",

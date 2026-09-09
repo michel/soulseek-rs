@@ -234,9 +234,22 @@ impl Client {
     pub fn browse_user(&self, username: &str) -> Result<()> {
         let request =
             crate::message::server::MessageFactory::build_get_share_file_list();
+        self.context.write_safe()?.mark_browse_pending(username);
+        self.send_to_peer_or_queue(username, request)
+    }
+
+    /// Send `request` to `username` over their control connection, or hold it
+    /// until one exists — asking the server for their address so it does.
+    ///
+    /// # Errors
+    /// [`SoulseekRs::LockPoisoned`] if the client state is poisoned.
+    pub(super) fn send_to_peer_or_queue(
+        &self,
+        username: &str,
+        request: crate::message::Message,
+    ) -> Result<()> {
         let (connected, registry) = {
-            let mut ctx = self.context.write_safe()?;
-            ctx.mark_browse_pending(username);
+            let ctx = self.context.read_safe()?;
             (
                 ctx.peer_registry
                     .as_ref()
@@ -250,13 +263,17 @@ impl Client {
                     .send_to_peer(username, PeerMessage::SendMessage(request));
             }
         } else {
+            // Without a server there is nobody to resolve the peer's address,
+            // so the request would sit in the queue forever: say so instead.
+            let handle = self
+                .server_handle
+                .as_ref()
+                .ok_or(SoulseekRs::NotConnected)?;
             self.context
                 .write_safe()?
                 .queue_peer_message(username, request);
-            if let Some(handle) = &self.server_handle {
-                let _ = handle
-                    .send(ServerMessage::GetPeerAddress(username.to_string()));
-            }
+            let _ = handle
+                .send(ServerMessage::GetPeerAddress(username.to_string()));
         }
         Ok(())
     }

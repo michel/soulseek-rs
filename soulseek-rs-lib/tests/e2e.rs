@@ -118,6 +118,7 @@ impl TestServer {
             enable_listen: false,
             listen_port: 0,
             shared_directories: Vec::new(),
+            accept_children: false,
             version: ClientVersion::default(),
         }
     }
@@ -3767,4 +3768,1731 @@ fn a_leaf_adopts_a_parent_and_answers_the_searches_it_passes_down() {
     assert_eq!(leaf.distributed_branch(), ("e2e_leaf".to_string(), 0));
 
     let _ = std::fs::remove_dir_all(share_dir);
+}
+
+// ---------------------------------------------------------------------------
+// Room tickers, the global room feed, interests and the targeted searches.
+//
+// Every one of these is a message the client can now speak; the point of
+// driving them through soulfind is that the wire shapes are right in both
+// directions, not just that they parse.
+// ---------------------------------------------------------------------------
+
+/// Poll `client`'s room events until `pick` matches one, or time out.
+fn await_room_event<T>(
+    client: &Client,
+    timeout: Duration,
+    mut pick: impl FnMut(&soulseek_rs::types::RoomEvent) -> Option<T>,
+) -> Option<T> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        for event in client.take_room_events() {
+            if let Some(found) = pick(&event) {
+                return Some(found);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    None
+}
+
+#[test]
+fn a_ticker_set_in_a_room_reaches_the_other_members() {
+    use soulseek_rs::types::RoomEvent;
+    let server = server_or_skip!();
+
+    let room = "e2e_ticker_room";
+    let mut alice =
+        Client::with_settings(server.settings("e2e_tick_alice", "pw"));
+    let mut bob = Client::with_settings(server.settings("e2e_tick_bob", "pw"));
+    alice.connect().expect("alice connect");
+    bob.connect().expect("bob connect");
+    assert!(alice.login().expect("alice login"));
+    assert!(bob.login().expect("bob login"));
+
+    alice.join_room(room).expect("alice joins");
+    bob.join_room(room).expect("bob joins");
+    std::thread::sleep(Duration::from_millis(500));
+    let _ = bob.take_room_events();
+
+    alice
+        .set_room_ticker(room, "alice was here")
+        .expect("set ticker");
+
+    let seen =
+        await_room_event(&bob, Duration::from_secs(5), |event| match event {
+            RoomEvent::TickerAdded {
+                room: r,
+                username,
+                ticker,
+            } if r == room => Some((username.clone(), ticker.clone())),
+            _ => None,
+        })
+        .expect("bob should see alice's ticker");
+    assert_eq!(
+        seen,
+        ("e2e_tick_alice".to_string(), "alice was here".into())
+    );
+
+    // The board is kept, not just the event: a UI reads it back from state.
+    let board = bob.room_tickers(room);
+    assert_eq!(
+        board
+            .iter()
+            .find(|t| t.username == "e2e_tick_alice")
+            .map(|t| t.ticker.as_str()),
+        Some("alice was here")
+    );
+}
+
+#[test]
+fn a_client_joining_later_receives_the_whole_ticker_board() {
+    use soulseek_rs::types::RoomEvent;
+    let server = server_or_skip!();
+
+    let room = "e2e_ticker_board";
+    let mut alice =
+        Client::with_settings(server.settings("e2e_board_alice", "pw"));
+    alice.connect().expect("alice connect");
+    assert!(alice.login().expect("alice login"));
+    alice.join_room(room).expect("alice joins");
+    std::thread::sleep(Duration::from_millis(300));
+    alice
+        .set_room_ticker(room, "standing message")
+        .expect("set ticker");
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Carol joins afterwards and must be handed the board that already exists.
+    let mut carol =
+        Client::with_settings(server.settings("e2e_board_carol", "pw"));
+    carol.connect().expect("carol connect");
+    assert!(carol.login().expect("carol login"));
+    carol.join_room(room).expect("carol joins");
+
+    let tickers =
+        await_room_event(&carol, Duration::from_secs(5), |event| match event {
+            RoomEvent::Tickers { room: r, tickers } if r == room => {
+                Some(tickers.clone())
+            }
+            _ => None,
+        })
+        .expect("carol should receive the ticker board on join");
+    assert!(
+        tickers.iter().any(|t| t.username == "e2e_board_alice"
+            && t.ticker == "standing message"),
+        "the board should carry alice's standing ticker, got {tickers:?}"
+    );
+}
+
+#[test]
+fn the_global_room_feed_carries_a_room_we_never_joined() {
+    use soulseek_rs::types::RoomEvent;
+    let server = server_or_skip!();
+
+    let room = "e2e_global_source";
+    let mut watcher =
+        Client::with_settings(server.settings("e2e_global_watch", "pw"));
+    let mut talker =
+        Client::with_settings(server.settings("e2e_global_talk", "pw"));
+    watcher.connect().expect("watcher connect");
+    talker.connect().expect("talker connect");
+    assert!(watcher.login().expect("watcher login"));
+    assert!(talker.login().expect("talker login"));
+
+    watcher.join_global_room().expect("join global room");
+    talker.join_room(room).expect("talker joins a room");
+    std::thread::sleep(Duration::from_millis(500));
+    let _ = watcher.take_room_events();
+
+    let body = "spoken where nobody is watching";
+    talker.say_in_room(room, body).expect("say in room");
+
+    let got =
+        await_room_event(
+            &watcher,
+            Duration::from_secs(5),
+            |event| match event {
+                RoomEvent::GlobalMessage {
+                    room: r,
+                    username,
+                    message,
+                } if message == body => Some((r.clone(), username.clone())),
+                _ => None,
+            },
+        )
+        .expect("the global feed should carry the message");
+    assert_eq!(got, (room.to_string(), "e2e_global_talk".to_string()));
+
+    // And leaving the feed stops it: the next message must not arrive.
+    watcher.leave_global_room().expect("leave global room");
+    std::thread::sleep(Duration::from_millis(500));
+    let _ = watcher.take_room_events();
+    talker
+        .say_in_room(room, "after leaving")
+        .expect("say again");
+    let after = await_room_event(&watcher, Duration::from_secs(2), |event| {
+        matches!(event, RoomEvent::GlobalMessage { message, .. }
+            if message == "after leaving")
+        .then_some(())
+    });
+    assert!(after.is_none(), "the feed should stop once left");
+}
+
+#[test]
+fn a_user_search_is_answered_by_the_user_it_names() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    let content: Vec<u8> = (0..1024u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(share_dir.join("e2e_usersearch_grail.bin"), &content)
+        .unwrap();
+
+    let (_sharer, searcher) = sharer_and_searcher(
+        &server,
+        &share_dir,
+        "e2e_us_sharer",
+        "e2e_us_seeker",
+    );
+
+    let query = "grail";
+    searcher
+        .search_user("e2e_us_sharer", query)
+        .expect("user search");
+
+    let reply = reply_from(&searcher, query, "e2e_us_sharer")
+        .expect("the named user should answer a user search");
+    assert!(
+        reply
+            .files
+            .iter()
+            .any(|f| f.name.contains("e2e_usersearch_grail")),
+        "the reply should carry the matching file, got {:?}",
+        reply.files
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+#[test]
+fn a_room_search_is_answered_by_the_rooms_members() {
+    let server = server_or_skip!();
+
+    let room = "e2e_search_room";
+    let share_dir = unique_download_dir();
+    let content: Vec<u8> = (0..1024u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(share_dir.join("e2e_roomsearch_relic.bin"), &content)
+        .unwrap();
+
+    let (sharer, searcher) = sharer_and_searcher(
+        &server,
+        &share_dir,
+        "e2e_rs_sharer",
+        "e2e_rs_seeker",
+    );
+    sharer.join_room(room).expect("sharer joins");
+    searcher.join_room(room).expect("searcher joins");
+    std::thread::sleep(Duration::from_millis(750));
+
+    let query = "relic";
+    searcher.search_room(room, query).expect("room search");
+
+    let reply = reply_from(&searcher, query, "e2e_rs_sharer")
+        .expect("a member of the room should answer a room search");
+    assert!(
+        reply
+            .files
+            .iter()
+            .any(|f| f.name.contains("e2e_roomsearch_relic")),
+        "the reply should carry the matching file, got {:?}",
+        reply.files
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+#[test]
+fn shared_interests_make_two_users_similar() {
+    let server = server_or_skip!();
+
+    let mut alice =
+        Client::with_settings(server.settings("e2e_like_alice", "pw"));
+    let mut bob = Client::with_settings(server.settings("e2e_like_bob", "pw"));
+    alice.connect().expect("alice connect");
+    bob.connect().expect("bob connect");
+    assert!(alice.login().expect("alice login"));
+    assert!(bob.login().expect("bob login"));
+
+    let item = "e2e_interest_krautrock";
+    alice.add_interest(item).expect("alice likes it");
+    bob.add_interest(item).expect("bob likes it too");
+    alice
+        .add_dislike("e2e_interest_muzak")
+        .expect("alice dislikes something");
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Who else likes this item (code 112).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut likers = Vec::new();
+    while Instant::now() < deadline
+        && !likers.iter().any(|u| u == "e2e_like_bob")
+    {
+        alice
+            .request_item_similar_users(item)
+            .expect("ask who likes it");
+        std::thread::sleep(Duration::from_millis(250));
+        likers = alice.item_similar_users(item);
+    }
+    assert!(
+        likers.iter().any(|u| u == "e2e_like_bob"),
+        "bob likes the same item, got {likers:?}"
+    );
+
+    // The overlap also makes bob a similar user (code 110).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut similar = Vec::new();
+    while Instant::now() < deadline
+        && !similar
+            .iter()
+            .any(|u: &soulseek_rs::SimilarUser| u.username == "e2e_like_bob")
+    {
+        alice
+            .request_similar_users()
+            .expect("ask for similar users");
+        std::thread::sleep(Duration::from_millis(250));
+        similar = alice.similar_users();
+    }
+    assert!(
+        similar
+            .iter()
+            .any(|u| u.username == "e2e_like_bob" && u.weight > 0),
+        "bob should be similar with a non-zero weight, got {similar:?}"
+    );
+
+    // And alice's own likes and hates read back over code 57.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut interests = None;
+    while Instant::now() < deadline && interests.is_none() {
+        bob.request_user_interests("e2e_like_alice")
+            .expect("ask about alice");
+        std::thread::sleep(Duration::from_millis(250));
+        interests = bob.user_interests("e2e_like_alice");
+    }
+    let interests = interests.expect("bob should learn alice's interests");
+    assert!(interests.likes.iter().any(|i| i == item));
+    assert!(
+        interests.hates.iter().any(|i| i == "e2e_interest_muzak"),
+        "hates should come back too, got {interests:?}"
+    );
+
+    // A dropped interest stops being reported.
+    alice.remove_interest(item).expect("alice drops it");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut still_liked = true;
+    while Instant::now() < deadline && still_liked {
+        bob.request_user_interests("e2e_like_alice")
+            .expect("ask again");
+        std::thread::sleep(Duration::from_millis(250));
+        still_liked = bob
+            .user_interests("e2e_like_alice")
+            .is_none_or(|i| i.likes.iter().any(|l| l == item));
+    }
+    assert!(
+        !still_liked,
+        "a removed interest should stop being reported"
+    );
+}
+
+#[test]
+fn recommendations_are_returned_for_our_interests() {
+    let server = server_or_skip!();
+
+    // Recommendations come from what *other* users who share an interest also
+    // like: bob likes both items, so alice, who likes only the first, should
+    // be recommended the second.
+    let mut alice =
+        Client::with_settings(server.settings("e2e_rec_alice", "pw"));
+    let mut bob = Client::with_settings(server.settings("e2e_rec_bob", "pw"));
+    alice.connect().expect("alice connect");
+    bob.connect().expect("bob connect");
+    assert!(alice.login().expect("alice login"));
+    assert!(bob.login().expect("bob login"));
+
+    let shared = "e2e_rec_shared";
+    let other = "e2e_rec_other";
+    alice.add_interest(shared).expect("alice likes shared");
+    bob.add_interest(shared).expect("bob likes shared");
+    bob.add_interest(other).expect("bob likes other");
+    std::thread::sleep(Duration::from_millis(500));
+
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut recommended = Vec::new();
+    while Instant::now() < deadline
+        && !recommended
+            .iter()
+            .any(|r: &soulseek_rs::Recommendation| r.item == other)
+    {
+        alice
+            .request_recommendations()
+            .expect("ask for recommendations");
+        std::thread::sleep(Duration::from_millis(250));
+        recommended =
+            alice.recommendations().map(|(r, _)| r).unwrap_or_default();
+    }
+    assert!(
+        recommended.iter().any(|r| r.item == other),
+        "the other item bob likes should be recommended, got {recommended:?}"
+    );
+
+    // The server-wide list (code 56) answers too, with the same shape.
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut global = None;
+    while Instant::now() < deadline && global.is_none() {
+        alice
+            .request_global_recommendations()
+            .expect("ask for global recommendations");
+        std::thread::sleep(Duration::from_millis(250));
+        global = alice.global_recommendations();
+    }
+    let (global_items, _) = global.expect("the server should answer code 56");
+    assert!(
+        global_items.iter().any(|r| r.item == shared),
+        "an item two users like should show server-wide, got {global_items:?}"
+    );
+
+    // And per-item recommendations (code 111) answer for a named item.
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut item_recs = Vec::new();
+    while Instant::now() < deadline && item_recs.is_empty() {
+        alice
+            .request_item_recommendations(shared)
+            .expect("ask about one item");
+        std::thread::sleep(Duration::from_millis(250));
+        item_recs = alice.item_recommendations(shared);
+    }
+    assert!(
+        item_recs.iter().any(|r| r.item == other),
+        "people who like {shared} also like {other}, got {item_recs:?}"
+    );
+}
+
+#[test]
+fn a_ping_leaves_the_session_usable() {
+    let server = server_or_skip!();
+
+    // A ping has no reply, so what it must not do is upset the session: the
+    // very next request has to still be answered.
+    let mut client =
+        Client::with_settings(server.settings("e2e_ping_user", "pw"));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login"));
+
+    for _ in 0..3 {
+        client.ping_server().expect("ping");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut listed = false;
+    while Instant::now() < deadline && !listed {
+        client.request_room_list().expect("request room list");
+        std::thread::sleep(Duration::from_millis(250));
+        listed = !client.room_list().is_empty()
+            || client.session_loss().is_none() && Instant::now() > deadline;
+    }
+    assert!(
+        client.session_loss().is_none(),
+        "pings must not cost us the session"
+    );
+}
+
+#[test]
+fn one_message_reaches_several_users_at_once() {
+    let server = server_or_skip!();
+
+    let mut sender =
+        Client::with_settings(server.settings("e2e_many_sender", "pw"));
+    let mut first =
+        Client::with_settings(server.settings("e2e_many_first", "pw"));
+    let mut second =
+        Client::with_settings(server.settings("e2e_many_second", "pw"));
+    for client in [&mut sender, &mut first, &mut second] {
+        client.connect().expect("connect");
+        assert!(client.login().expect("login"));
+    }
+
+    let body = "one message, two recipients";
+    sender
+        .send_private_message_to_many(
+            &["e2e_many_first".to_string(), "e2e_many_second".to_string()],
+            body,
+        )
+        .expect("send to many");
+
+    for client in [&first, &second] {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut got = false;
+        while Instant::now() < deadline && !got {
+            got = client
+                .take_private_messages()
+                .iter()
+                .any(|m| m.message() == body);
+            if !got {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+        assert!(got, "every named recipient should receive the message");
+    }
+}
+
+#[test]
+fn a_changed_password_is_what_the_next_login_needs() {
+    let server = server_or_skip!();
+
+    let user = "e2e_pwchange_user";
+    let mut client = Client::with_settings(server.settings(user, "first-pw"));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login registers the account"));
+
+    client
+        .change_password("second-pw")
+        .expect("change password");
+    std::thread::sleep(Duration::from_millis(500));
+    drop(client);
+
+    let mut stale = Client::with_settings(server.settings(user, "first-pw"));
+    stale.connect().expect("connect with the old password");
+    assert!(
+        !matches!(stale.login(), Ok(true)),
+        "the old password must stop working"
+    );
+    drop(stale);
+
+    let mut fresh = Client::with_settings(server.settings(user, "second-pw"));
+    fresh.connect().expect("connect with the new password");
+    assert!(
+        fresh.login().expect("login with the new password"),
+        "the new password must be accepted"
+    );
+}
+
+#[test]
+fn a_brokered_dial_we_cannot_complete_tells_the_waiting_peer() {
+    // The peer asks the server to broker a connection to us but is itself
+    // unreachable — it advertises a port nothing listens on. Our dial fails,
+    // and the peer must be told (CantConnectToPeer, code 1001) rather than
+    // left waiting for a connection that is never coming.
+    let server = server_or_skip!();
+    let addr = format!("{}:{}", server.host, server.port);
+
+    let mut client =
+        Client::with_settings(server.settings("e2e_cantconn_us", "pw"));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login"));
+
+    let mut peer =
+        login_raw(&addr, "e2e_cantconn_peer", "pw").expect("peer login");
+    // A port that is free is a port nothing answers on: the dial is refused.
+    let dead_port = free_port().expect("free port");
+    peer.write_all(
+        &MessageFactory::build_set_wait_port_message(dead_port).get_buffer(),
+    )
+    .expect("set wait port");
+    peer.flush().expect("flush wait port");
+
+    let token = 424_242_u32;
+    peer.write_all(
+        &MessageFactory::build_connect_to_peer(
+            token,
+            "e2e_cantconn_us",
+            ConnectionType::P,
+        )
+        .get_buffer(),
+    )
+    .expect("ask the server to broker");
+    peer.flush().expect("flush broker request");
+
+    let mut reply = read_until_code(&mut peer, 1001, Duration::from_secs(20))
+        .expect("the peer should be told the connection failed");
+    reply.set_pointer(8);
+    assert_eq!(
+        reply.read_int32(),
+        token,
+        "the reply should quote the token the peer asked with"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Features that were implemented but never driven end to end: the away
+// status, the phrases the server refuses to search for, and asking a peer
+// where our queued file sits.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn going_away_is_visible_to_another_user() {
+    use soulseek_rs::types::UserStatus;
+    let server = server_or_skip!();
+
+    let mut alice =
+        Client::with_settings(server.settings("e2e_away_alice", "pw"));
+    let mut bob = Client::with_settings(server.settings("e2e_away_bob", "pw"));
+    alice.connect().expect("alice connect");
+    bob.connect().expect("bob connect");
+    assert!(alice.login().expect("alice login"));
+    assert!(bob.login().expect("bob login"));
+
+    // Online to begin with, as the post-login handshake announces.
+    let status_of = |client: &Client| -> Option<UserStatus> {
+        client
+            .user_info("e2e_away_alice")
+            .and_then(|info| info.presence)
+            .map(|presence| presence.status)
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline
+        && status_of(&bob) != Some(UserStatus::Online)
+    {
+        bob.request_user_info("e2e_away_alice").expect("ask");
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    assert_eq!(status_of(&bob), Some(UserStatus::Online));
+
+    alice.set_away(true).expect("alice goes away");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline && status_of(&bob) != Some(UserStatus::Away)
+    {
+        bob.request_user_info("e2e_away_alice").expect("ask again");
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    assert_eq!(
+        status_of(&bob),
+        Some(UserStatus::Away),
+        "the away status should reach another user"
+    );
+
+    // And coming back is visible too.
+    alice.set_away(false).expect("alice comes back");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline
+        && status_of(&bob) != Some(UserStatus::Online)
+    {
+        bob.request_user_info("e2e_away_alice")
+            .expect("ask once more");
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    assert_eq!(status_of(&bob), Some(UserStatus::Online));
+}
+
+/// A minimal server that answers a login and then sends `after_login`.
+///
+/// soulfind keeps its search filters in its database, which the suite has no
+/// way to seed, so the excluded-phrase path is driven from a stub that speaks
+/// just enough of the protocol to deliver code 160 on the wire.
+fn stub_server_sending(
+    after_login: Vec<Message>,
+) -> (String, std::thread::JoinHandle<()>) {
+    let listener =
+        std::net::TcpListener::bind("127.0.0.1:0").expect("bind stub server");
+    let addr = listener.local_addr().expect("stub addr");
+    let handle = std::thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("stub read timeout");
+        // Wait for the login (code 1) before answering it.
+        loop {
+            match read_framed(&mut stream) {
+                Ok(msg) if msg.get_message_code() == 1 => break,
+                Ok(_) => {}
+                Err(_) => return,
+            }
+        }
+        let mut ok = Message::new();
+        ok.write_int32(1)
+            .write_int8(1)
+            .write_string("stub greeting")
+            .write_int32(0)
+            .write_string("")
+            .write_int8(0);
+        if stream.write_all(&ok.get_buffer()).is_err() {
+            return;
+        }
+        for message in after_login {
+            if stream.write_all(&message.get_buffer()).is_err() {
+                return;
+            }
+        }
+        let _ = stream.flush();
+        // Hold the connection open so the client stays logged in.
+        std::thread::sleep(Duration::from_secs(10));
+    });
+    (format!("{}:{}", addr.ip(), addr.port()), handle)
+}
+
+#[test]
+fn phrases_the_server_excludes_are_kept_for_our_replies() {
+    // The server tells clients which phrases are excluded from the search
+    // network (code 160). Nicotine+ applies them to the files it offers in a
+    // search reply, not to the searches it sends, and so do we — this pins
+    // that the announced list arrives and is kept for that use.
+    let mut phrases = Message::new();
+    phrases
+        .write_int32(160)
+        .write_int32(2)
+        .write_string("banned-phrase")
+        .write_string("blocked");
+    let (addr, stub) = stub_server_sending(vec![phrases]);
+    let (host, port) = addr.rsplit_once(':').expect("stub addr");
+
+    let mut client = Client::with_settings(ClientSettings {
+        username: "e2e_excluded".to_string(),
+        password: "pw".to_string(),
+        server_address: PeerAddress::new(
+            host.to_string(),
+            port.parse().expect("stub port"),
+        ),
+        enable_listen: false,
+        listen_port: 0,
+        shared_directories: Vec::new(),
+        accept_children: false,
+        version: ClientVersion::default(),
+    });
+    client.connect().expect("connect to stub");
+    assert!(client.login().expect("login to stub"));
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline
+        && client.excluded_search_phrases().is_empty()
+    {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(
+        client.excluded_search_phrases(),
+        ["banned-phrase", "blocked"],
+        "the announced phrases should be kept"
+    );
+
+    // Our own searches are not policed by them: that is the server's job, and
+    // no reference client refuses a query locally.
+    assert!(
+        client
+            .search("a banned-phrase query", Duration::from_millis(100))
+            .is_ok()
+    );
+
+    drop(client);
+    let _ = stub.join();
+}
+
+#[test]
+fn a_queued_download_can_ask_where_it_sits() {
+    // We queue a file with a peer that never starts it, then ask where it
+    // sits (peer code 51). The peer's answer (code 44) must land on the
+    // download as its queue position.
+    let server = server_or_skip!();
+
+    let listen_port = free_port().expect("free listen port");
+    let mut client = Client::with_settings(server.listening_settings(
+        "e2e_place_asker",
+        "pw",
+        listen_port,
+    ));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login"));
+
+    let filename = "waiting_in_line.mp3";
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let (asked_tx, asked_rx) = std::sync::mpsc::channel();
+    let listen_addr = format!("127.0.0.1:{listen_port}");
+    let peer = std::thread::spawn(move || -> std::io::Result<()> {
+        let mut p = connect_retry(&listen_addr, Duration::from_secs(5))?;
+        p.set_read_timeout(Some(Duration::from_secs(15)))?;
+        p.write_all(&peer_init_bytes("e2e_place_peer", "P", 0))?;
+        p.flush()?;
+        let _ = ready_tx.send(());
+
+        // Sit on the queue request, then answer the place request with 7.
+        loop {
+            let mut msg = read_framed(&mut p)?;
+            // A QueueUpload (43) is accepted but never started: the file
+            // stays in line, which is the state being asked about.
+            if msg.get_message_code() == 51 {
+                msg.set_pointer(8);
+                let asked = msg.read_string();
+                let mut reply = Message::new();
+                reply.write_int32(44).write_string(&asked).write_int32(7);
+                p.write_all(&reply.get_buffer())?;
+                p.flush()?;
+                let _ = asked_tx.send(asked);
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_secs(1));
+        Ok(())
+    });
+    ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("mock peer P connection");
+    std::thread::sleep(Duration::from_millis(1000));
+
+    let download_dir = unique_download_dir();
+    let (_download, _status_rx) = client
+        .download(
+            filename.to_string(),
+            "e2e_place_peer".to_string(),
+            10,
+            download_dir.display().to_string(),
+        )
+        .expect("start download");
+
+    // Ask, retrying until the control connection carries it.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut asked = None;
+    while Instant::now() < deadline && asked.is_none() {
+        client
+            .request_place_in_queue("e2e_place_peer", filename)
+            .expect("ask for our place");
+        asked = asked_rx.recv_timeout(Duration::from_millis(500)).ok();
+    }
+    assert_eq!(
+        asked.as_deref(),
+        Some(filename),
+        "the peer should be asked about the file we queued"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut place = None;
+    while Instant::now() < deadline && place.is_none() {
+        place = client
+            .get_all_downloads()
+            .into_iter()
+            .find(|d| d.filename == filename)
+            .and_then(|d| d.queue_position);
+        if place.is_none() {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+    assert_eq!(
+        place,
+        Some(7),
+        "the peer's answer should land on the download"
+    );
+
+    let _ = peer.join();
+    let _ = std::fs::remove_dir_all(download_dir);
+}
+
+#[test]
+fn a_private_room_is_owned_granted_and_revoked() {
+    use soulseek_rs::types::RoomEvent;
+    let server = server_or_skip!();
+
+    let room = "e2e_private_club";
+    let mut owner =
+        Client::with_settings(server.settings("e2e_priv_owner", "pw"));
+    let mut guest =
+        Client::with_settings(server.settings("e2e_priv_guest", "pw"));
+    owner.connect().expect("owner connect");
+    guest.connect().expect("guest connect");
+    assert!(owner.login().expect("owner login"));
+    assert!(guest.login().expect("guest login"));
+
+    guest
+        .set_room_invitations_enabled(true)
+        .expect("guest accepts invitations");
+    owner
+        .join_private_room(room)
+        .expect("owner creates the room");
+    std::thread::sleep(Duration::from_millis(750));
+
+    // The guest is invited, and hears about it (code 139).
+    owner
+        .add_room_member(room, "e2e_priv_guest")
+        .expect("owner invites the guest");
+    let granted = await_room_event(&guest, Duration::from_secs(5), |event| {
+        matches!(event, RoomEvent::OwnStandingChanged {
+            room: r, members: true, granted: true
+        } if r == room)
+        .then_some(())
+    });
+    assert!(
+        granted.is_some(),
+        "the guest should be told they are a member"
+    );
+
+    // The owner's own roster now carries the guest (code 134).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline
+        && !owner
+            .private_room_members(room)
+            .iter()
+            .any(|u| u == "e2e_priv_guest")
+    {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        owner
+            .private_room_members(room)
+            .iter()
+            .any(|u| u == "e2e_priv_guest"),
+        "the member roster should carry the guest, got {:?}",
+        owner.private_room_members(room)
+    );
+
+    // A member can be made an operator (code 145 for them, 143 for the room).
+    owner
+        .add_room_operator(room, "e2e_priv_guest")
+        .expect("owner promotes the guest");
+    let promoted = await_room_event(&guest, Duration::from_secs(5), |event| {
+        matches!(event, RoomEvent::OwnStandingChanged {
+            room: r, members: false, granted: true
+        } if r == room)
+        .then_some(())
+    });
+    assert!(
+        promoted.is_some(),
+        "the guest should be told they run the room"
+    );
+
+    // The owner's operator roster carries them too (code 143).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline
+        && !owner
+            .private_room_operators(room)
+            .iter()
+            .any(|u| u == "e2e_priv_guest")
+    {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        owner
+            .private_room_operators(room)
+            .iter()
+            .any(|u| u == "e2e_priv_guest"),
+        "the operator roster should carry the guest, got {:?}",
+        owner.private_room_operators(room)
+    );
+
+    // And an operator can stand down themselves (code 147), which the
+    // owner's roster reflects.
+    guest
+        .resign_room_operatorship(room)
+        .expect("guest stands down");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline
+        && owner
+            .private_room_operators(room)
+            .iter()
+            .any(|u| u == "e2e_priv_guest")
+    {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert!(
+        !owner
+            .private_room_operators(room)
+            .iter()
+            .any(|u| u == "e2e_priv_guest"),
+        "an operator who stood down should leave the roster, got {:?}",
+        owner.private_room_operators(room)
+    );
+
+    // And membership can be taken away again (code 140).
+    owner
+        .remove_room_member(room, "e2e_priv_guest")
+        .expect("owner removes the guest");
+    let revoked = await_room_event(&guest, Duration::from_secs(5), |event| {
+        matches!(event, RoomEvent::OwnStandingChanged {
+            room: r, members: true, granted: false
+        } if r == room)
+        .then_some(())
+    });
+    assert!(revoked.is_some(), "the guest should be told they are out");
+}
+
+#[test]
+fn a_private_room_someone_else_owns_cannot_be_taken() {
+    use soulseek_rs::types::RoomEvent;
+    let server = server_or_skip!();
+
+    let room = "e2e_private_taken";
+    let mut owner =
+        Client::with_settings(server.settings("e2e_taken_owner", "pw"));
+    owner.connect().expect("owner connect");
+    assert!(owner.login().expect("owner login"));
+    owner
+        .join_private_room(room)
+        .expect("owner creates the room");
+    std::thread::sleep(Duration::from_millis(750));
+
+    // An outsider asking for the same name must be refused (code 1003), not
+    // handed the room.
+    let mut outsider =
+        Client::with_settings(server.settings("e2e_taken_outsider", "pw"));
+    outsider.connect().expect("outsider connect");
+    assert!(outsider.login().expect("outsider login"));
+    outsider
+        .join_private_room(room)
+        .expect("outsider asks for the same room");
+
+    let refused =
+        await_room_event(&outsider, Duration::from_secs(5), |event| {
+            matches!(event, RoomEvent::CantCreate { room: r } if r == room)
+                .then_some(())
+        });
+    assert!(
+        refused.is_some(),
+        "a private room owned by someone else must be refused"
+    );
+    assert!(
+        outsider.private_rooms().is_empty(),
+        "a refused room must not appear as one we belong to"
+    );
+}
+
+#[test]
+fn an_acknowledged_offline_message_is_not_delivered_twice() {
+    // Private messages sent to an offline user are stored by the server and
+    // handed over at the next login; the client acknowledges each one
+    // (MessageAcked, code 23) so the server drops it. Without that ack the
+    // same message arrives again on every login, which is what this pins.
+    let server = server_or_skip!();
+
+    // Register the recipient so the server will hold mail for them.
+    let mut recipient =
+        Client::with_settings(server.settings("e2e_ack_recipient", "pw"));
+    recipient.connect().expect("recipient connect");
+    assert!(recipient.login().expect("recipient login"));
+    drop(recipient);
+    // The dropped session's socket must actually be gone before the mail is
+    // sent, or the server delivers it live to a connection nobody is reading.
+    std::thread::sleep(Duration::from_secs(2));
+
+    let mut sender =
+        Client::with_settings(server.settings("e2e_ack_sender", "pw"));
+    sender.connect().expect("sender connect");
+    assert!(sender.login().expect("sender login"));
+    let body = "left while you were out";
+    sender
+        .send_private_message("e2e_ack_recipient", body)
+        .expect("send to an offline user");
+    std::thread::sleep(Duration::from_millis(500));
+
+    let received_once = |label: &str| -> bool {
+        let mut client =
+            Client::with_settings(server.settings("e2e_ack_recipient", "pw"));
+        client.connect().unwrap_or_else(|e| panic!("{label}: {e}"));
+        assert!(client.login().expect("recipient login"), "{label}");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut got = false;
+        while Instant::now() < deadline && !got {
+            got = client
+                .take_private_messages()
+                .iter()
+                .any(|m| m.message() == body);
+            if !got {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+        std::thread::sleep(Duration::from_millis(500));
+        got
+    };
+
+    assert!(
+        received_once("first login"),
+        "the stored message should arrive at the next login"
+    );
+    assert!(
+        !received_once("second login"),
+        "an acknowledged message must not be delivered again"
+    );
+}
+
+#[test]
+fn a_wishlist_search_is_answered_like_any_other() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    let content: Vec<u8> = (0..1024u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(share_dir.join("e2e_wishlist_talisman.bin"), &content)
+        .unwrap();
+
+    let (_sharer, searcher) = sharer_and_searcher(
+        &server,
+        &share_dir,
+        "e2e_wish_sharer",
+        "e2e_wish_seeker",
+    );
+
+    // A wish returns at once; its results accumulate under the query.
+    let query = "talisman";
+    searcher
+        .start_wishlist_search(query)
+        .expect("start a wishlist search");
+
+    let reply = reply_from(&searcher, query, "e2e_wish_sharer")
+        .expect("a wishlist search should be answered like a plain one");
+    assert!(
+        reply
+            .files
+            .iter()
+            .any(|f| f.name.contains("e2e_wishlist_talisman")),
+        "the reply should carry the matching file, got {:?}",
+        reply.files
+    );
+
+    // The server also announces how often it will accept one.
+    assert!(
+        searcher.wishlist_interval() > Duration::ZERO,
+        "the wishlist interval should be a real wait"
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+// ---------------------------------------------------------------------------
+// The other half of the tree: serving children.
+//
+// A client that accepts children takes `D` connections from peers, tells each
+// where our branch sits, and passes every search it receives down to them.
+// ---------------------------------------------------------------------------
+
+/// Read distributed frames from a child link until `pick` matches or time runs
+/// out.
+fn read_distributed_until<T>(
+    stream: &mut TcpStream,
+    timeout: Duration,
+    mut pick: impl FnMut(&distributed::Distributed) -> Option<T>,
+) -> Option<T> {
+    stream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .ok()?;
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        // read_framed already returns the frame with its length prefix,
+        // which is exactly what the parser expects.
+        let Ok(mut frame) = read_framed(stream) else {
+            continue;
+        };
+        if let Some(parsed) = distributed::parse(&mut frame)
+            && let Some(found) = pick(&parsed)
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Dial `port` as a distributed child called `username`.
+fn dial_as_child(port: u16, username: &str) -> std::io::Result<TcpStream> {
+    let mut child =
+        connect_retry(&format!("127.0.0.1:{port}"), Duration::from_secs(5))?;
+    child.write_all(&peer_init_bytes(username, "D", 0))?;
+    child.flush()?;
+    Ok(child)
+}
+
+#[test]
+fn a_parent_tells_a_child_where_it_sits_and_passes_searches_down() {
+    let server = server_or_skip!();
+
+    let listen_port = free_port().expect("free listen port");
+    let mut parent = Client::with_settings(ClientSettings {
+        accept_children: true,
+        ..server.listening_settings("e2e_par_parent", "pw", listen_port)
+    });
+    parent.connect().expect("parent connect");
+    assert!(parent.login().expect("parent login"));
+
+    // A client takes children only once something feeds it the search
+    // stream — here the server, which relays every search to us. Until then
+    // a child would hang from a branch that receives nothing, which is why
+    // Nicotine+ refuses one too.
+    let addr = format!("{}:{}", server.host, server.port);
+    let mut searcher =
+        login_raw(&addr, "e2e_par_searcher", "pw").expect("searcher login");
+    let search = |searcher: &mut TcpStream, token: u32| {
+        searcher
+            .write_all(
+                &MessageFactory::build_file_search_message(
+                    token,
+                    "e2e_child_relay_probe",
+                )
+                .get_buffer(),
+            )
+            .expect("send a search");
+        searcher.flush().expect("flush the search");
+    };
+    search(&mut searcher, 515_150);
+    std::thread::sleep(Duration::from_secs(2));
+
+    let mut child =
+        dial_as_child(listen_port, "e2e_par_child").expect("child dials");
+
+    // The child is told our branch before anything else: without it, it has
+    // nothing to report to the server as its own place.
+    let root = read_distributed_until(
+        &mut child,
+        Duration::from_secs(10),
+        |f| match f {
+            distributed::Distributed::BranchRoot(root) => Some(root.clone()),
+            _ => None,
+        },
+    )
+    .expect("a child should be told our branch root");
+    assert_eq!(
+        root, "e2e_par_parent",
+        "a parentless client is its own root"
+    );
+    let level = read_distributed_until(
+        &mut child,
+        Duration::from_secs(10),
+        |f| match f {
+            distributed::Distributed::BranchLevel(level) => Some(*level),
+            _ => None,
+        },
+    )
+    .expect("a child should be told our branch level");
+    assert_eq!(level, 0);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while parent.children().is_empty() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(parent.children(), vec!["e2e_par_child".to_string()]);
+
+    // A search the server hands us must reach the child, whether or not we
+    // can answer it ourselves — carrying the stream is the parent's duty.
+    let token = 515_151_u32;
+    search(&mut searcher, token);
+
+    let relayed = read_distributed_until(
+        &mut child,
+        Duration::from_secs(20),
+        |f| match f {
+            distributed::Distributed::Search {
+                username,
+                token: got,
+                query,
+            } if *got == token => Some((username.clone(), query.clone())),
+            _ => None,
+        },
+    )
+    .expect("the search should be passed down to the child");
+    assert_eq!(
+        relayed,
+        (
+            "e2e_par_searcher".to_string(),
+            "e2e_child_relay_probe".to_string()
+        )
+    );
+
+    // A second link from the same child is refused: the one we hold is live.
+    let mut duplicate =
+        dial_as_child(listen_port, "e2e_par_child").expect("child dials again");
+    let told_again =
+        read_distributed_until(&mut duplicate, Duration::from_secs(3), |f| {
+            matches!(f, distributed::Distributed::BranchRoot(_)).then_some(())
+        });
+    assert!(told_again.is_none(), "a child we carry is not taken twice");
+    assert_eq!(parent.children(), vec!["e2e_par_child".to_string()]);
+    drop(duplicate);
+
+    // A child that hangs up loses its place.
+    drop(child);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut next_token = token + 1;
+    while !parent.children().is_empty() && Instant::now() < deadline {
+        search(&mut searcher, next_token);
+        next_token += 1;
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    assert!(
+        parent.children().is_empty(),
+        "a child that went away should not keep its slot"
+    );
+}
+
+#[test]
+fn a_client_that_does_not_serve_children_turns_one_away() {
+    let server = server_or_skip!();
+
+    // The default: a leaf. A peer that dials with a D connection is dropped,
+    // and never told a branch it could hang from.
+    let listen_port = free_port().expect("free listen port");
+    let mut leaf = Client::with_settings(server.listening_settings(
+        "e2e_leafonly",
+        "pw",
+        listen_port,
+    ));
+    leaf.connect().expect("leaf connect");
+    assert!(leaf.login().expect("leaf login"));
+
+    let mut child =
+        dial_as_child(listen_port, "e2e_leafonly_child").expect("child dials");
+
+    let told =
+        read_distributed_until(&mut child, Duration::from_secs(3), |f| {
+            matches!(f, distributed::Distributed::BranchRoot(_)).then_some(())
+        });
+    assert!(told.is_none(), "a leaf must not take on a child");
+    assert!(leaf.children().is_empty());
+}
+
+#[test]
+fn one_folder_of_a_peers_shares_can_be_asked_for_by_itself() {
+    // "Download folder" in other clients asks for one folder (peer code 36)
+    // rather than pulling the peer's whole listing.
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    std::fs::create_dir_all(share_dir.join("wanted")).unwrap();
+    std::fs::create_dir_all(share_dir.join("unwanted")).unwrap();
+    std::fs::write(share_dir.join("wanted").join("keep.bin"), b"abcd").unwrap();
+    std::fs::write(share_dir.join("unwanted").join("skip.bin"), b"efgh")
+        .unwrap();
+
+    let (_sharer, asker) = sharer_and_searcher(
+        &server,
+        &share_dir,
+        "e2e_folder_sharer",
+        "e2e_folder_asker",
+    );
+
+    // The folder is named the way the sharer advertises it: the share root's
+    // basename, then the subfolder, backslash-separated.
+    let root = share_dir.file_name().unwrap().to_string_lossy().to_string();
+    let folder = format!("{root}\\wanted");
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut listing = None;
+    while Instant::now() < deadline && listing.is_none() {
+        asker
+            .request_folder_contents("e2e_folder_sharer", &folder)
+            .expect("ask for one folder");
+        std::thread::sleep(Duration::from_millis(500));
+        listing = asker.take_folder_contents("e2e_folder_sharer", &folder);
+    }
+    let listing = listing.expect("the peer should answer with that folder");
+
+    assert!(
+        listing
+            .iter()
+            .any(|dir| dir.files.iter().any(|f| f.name.contains("keep.bin"))),
+        "the folder we asked for should be in the answer, got {listing:?}"
+    );
+    assert!(
+        !listing
+            .iter()
+            .any(|dir| dir.files.iter().any(|f| f.name.contains("skip.bin"))),
+        "no other folder should come with it, got {listing:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+#[test]
+fn our_interests_are_sent_again_after_a_new_login() {
+    // The server keeps interests only for the session that set them, so a
+    // client that does not send them again comes back with none — which is
+    // why Nicotine+ re-sends its list at every login, from its config. Ours
+    // holds the list itself: an interest set before there is a connection is
+    // still on the server once one is made.
+    let server = server_or_skip!();
+
+    let item = "e2e_relike_shoegaze";
+    let mut alice =
+        Client::with_settings(server.settings("e2e_relike_alice", "pw"));
+    // Set before connecting: there is nothing to send it over yet, and the
+    // login is what puts it on the wire.
+    let _ = alice.add_interest(item);
+    assert_eq!(alice.own_interests().likes, [item]);
+
+    alice.connect().expect("alice connect");
+    assert!(alice.login().expect("alice login"));
+    std::thread::sleep(Duration::from_millis(500));
+
+    let mut watcher =
+        Client::with_settings(server.settings("e2e_relike_watch", "pw"));
+    watcher.connect().expect("watcher connect");
+    assert!(watcher.login().expect("watcher login"));
+
+    let likes_of_alice = |watcher: &Client| -> Vec<String> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut likes = Vec::new();
+        while Instant::now() < deadline && !likes.iter().any(|i| i == item) {
+            watcher
+                .request_user_interests("e2e_relike_alice")
+                .expect("ask about alice");
+            std::thread::sleep(Duration::from_millis(250));
+            likes = watcher
+                .user_interests("e2e_relike_alice")
+                .map(|i| i.likes)
+                .unwrap_or_default();
+        }
+        likes
+    };
+
+    let likes = likes_of_alice(&watcher);
+    assert!(
+        likes.iter().any(|i| i == item),
+        "the login should have carried the interest with it, got {likes:?}"
+    );
+
+    // The same client, in a new session: its list goes back up by itself.
+    drop(alice);
+    std::thread::sleep(Duration::from_secs(1));
+    let mut again =
+        Client::with_settings(server.settings("e2e_relike_alice", "pw"));
+    let _ = again.add_interest(item);
+    again.connect().expect("reconnect");
+    assert!(again.login().expect("re-login"));
+    std::thread::sleep(Duration::from_millis(500));
+
+    let likes = likes_of_alice(&watcher);
+    assert!(
+        likes.iter().any(|i| i == item),
+        "a new session should carry the interests too, got {likes:?}"
+    );
+}
+
+#[test]
+fn a_finished_upload_teaches_us_our_own_recorded_speed() {
+    // The server records a client's upload speed and pushes it to whoever
+    // watches that user. We watch ourselves at login, which is how our own
+    // figure — the one the distributed child limit is derived from — reaches
+    // us without anyone asking on our behalf.
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    let content: Vec<u8> = (0..8192u32).map(|i| (i % 251) as u8).collect();
+    let filename = "e2e_ownspeed_probe.bin";
+    std::fs::write(share_dir.join(filename), &content).unwrap();
+
+    let (sharer, leecher) = sharer_and_searcher(
+        &server,
+        &share_dir,
+        "e2e_ownspeed_sharer",
+        "e2e_ownspeed_leecher",
+    );
+    assert_eq!(
+        sharer.own_average_speed(),
+        Some(0),
+        "a client that has never uploaded is recorded at zero"
+    );
+
+    let query = "ownspeed";
+    let _ = leecher.search(query, Duration::from_secs(3));
+    let (path, size) = reply_from(&leecher, query, "e2e_ownspeed_sharer")
+        .and_then(|reply| reply.files.into_iter().next())
+        .map(|file| (file.name, file.size))
+        .expect("the leecher should find the file");
+
+    let download_dir = unique_download_dir();
+    let (_download, status_rx) = leecher
+        .download(
+            path,
+            "e2e_ownspeed_sharer".to_string(),
+            size,
+            download_dir.display().to_string(),
+        )
+        .expect("start download");
+    assert!(
+        wait_for_completion(&leecher, &status_rx, Duration::from_secs(25)),
+        "the download should complete"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline
+        && sharer.own_average_speed().unwrap_or(0) == 0
+    {
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    assert!(
+        sharer.own_average_speed().unwrap_or(0) > 0,
+        "the speed the server recorded for us should reach us unasked, got          {:?} (info: {:?})",
+        sharer.own_average_speed(),
+        sharer.user_info("e2e_ownspeed_sharer"),
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+    let _ = std::fs::remove_dir_all(download_dir);
+}
+
+#[test]
+fn a_peer_tells_us_about_itself_when_asked() {
+    // The profile another client shows for a user: their description, upload
+    // slots and queue length, straight from the peer (code 15 and its reply).
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    std::fs::write(share_dir.join("e2e_peerinfo.bin"), b"data").unwrap();
+    let (_sharer, asker) = sharer_and_searcher(
+        &server,
+        &share_dir,
+        "e2e_peerinfo_sharer",
+        "e2e_peerinfo_asker",
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut info = None;
+    while Instant::now() < deadline && info.is_none() {
+        asker
+            .request_peer_info("e2e_peerinfo_sharer")
+            .expect("ask the peer about itself");
+        std::thread::sleep(Duration::from_millis(500));
+        info = asker.peer_info("e2e_peerinfo_sharer");
+    }
+    let info = info.expect("the peer should answer for itself");
+
+    assert!(
+        info.slots_free,
+        "a peer with nothing queued has a free slot, got {info:?}"
+    );
+    assert_eq!(info.queue_size, 0);
+    assert_eq!(info.picture_bytes, None);
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+#[test]
+fn a_room_reports_members_arriving_and_leaving() {
+    use soulseek_rs::types::RoomEvent;
+    let server = server_or_skip!();
+
+    let room = "e2e_room_comings";
+    let mut alice =
+        Client::with_settings(server.settings("e2e_comings_alice", "pw"));
+    alice.connect().expect("alice connect");
+    assert!(alice.login().expect("alice login"));
+    alice.join_room(room).expect("alice joins");
+    std::thread::sleep(Duration::from_millis(500));
+    let _ = alice.take_room_events();
+
+    // Bob arrives after her: she is told (code 16), and her roster grows.
+    let mut bob =
+        Client::with_settings(server.settings("e2e_comings_bob", "pw"));
+    bob.connect().expect("bob connect");
+    assert!(bob.login().expect("bob login"));
+    bob.join_room(room).expect("bob joins");
+
+    let joined =
+        await_room_event(&alice, Duration::from_secs(5), |event| match event {
+            RoomEvent::UserJoined { room: r, username }
+                if r == room && username == "e2e_comings_bob" =>
+            {
+                Some(())
+            }
+            _ => None,
+        });
+    assert!(joined.is_some(), "alice should be told bob arrived");
+    assert!(
+        alice
+            .room_members(room)
+            .iter()
+            .any(|u| u == "e2e_comings_bob"),
+        "the roster should carry bob, got {:?}",
+        alice.room_members(room)
+    );
+
+    // And when he leaves (code 17) the roster loses him again.
+    bob.leave_room(room).expect("bob leaves");
+    let left =
+        await_room_event(&alice, Duration::from_secs(5), |event| match event {
+            RoomEvent::UserLeft { room: r, username }
+                if r == room && username == "e2e_comings_bob" =>
+            {
+                Some(())
+            }
+            _ => None,
+        });
+    assert!(left.is_some(), "alice should be told bob left");
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline
+        && alice
+            .room_members(room)
+            .iter()
+            .any(|u| u == "e2e_comings_bob")
+    {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        !alice
+            .room_members(room)
+            .iter()
+            .any(|u| u == "e2e_comings_bob"),
+        "the roster should drop him, got {:?}",
+        alice.room_members(room)
+    );
+}
+
+#[test]
+fn a_member_can_give_up_a_private_room_and_an_owner_can_disband_it() {
+    use soulseek_rs::types::RoomEvent;
+    let server = server_or_skip!();
+
+    let room = "e2e_private_leaving";
+    let mut owner =
+        Client::with_settings(server.settings("e2e_leave_owner", "pw"));
+    let mut guest =
+        Client::with_settings(server.settings("e2e_leave_guest", "pw"));
+    owner.connect().expect("owner connect");
+    guest.connect().expect("guest connect");
+    assert!(owner.login().expect("owner login"));
+    assert!(guest.login().expect("guest login"));
+
+    guest
+        .set_room_invitations_enabled(true)
+        .expect("guest accepts invitations");
+    owner
+        .join_private_room(room)
+        .expect("owner creates the room");
+    std::thread::sleep(Duration::from_millis(750));
+    owner
+        .add_room_member(room, "e2e_leave_guest")
+        .expect("owner invites the guest");
+
+    let granted = await_room_event(&guest, Duration::from_secs(5), |event| {
+        matches!(event, RoomEvent::OwnStandingChanged {
+            room: r, members: true, granted: true
+        } if r == room)
+        .then_some(())
+    });
+    assert!(granted.is_some(), "the guest should be a member first");
+
+    // The guest gives up their own membership (code 136): the owner's roster
+    // loses them.
+    guest.leave_private_room(room).expect("guest resigns");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline
+        && owner
+            .private_room_members(room)
+            .iter()
+            .any(|u| u == "e2e_leave_guest")
+    {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert!(
+        !owner
+            .private_room_members(room)
+            .iter()
+            .any(|u| u == "e2e_leave_guest"),
+        "a member who resigned should leave the roster, got {:?}",
+        owner.private_room_members(room)
+    );
+
+    // The owner disbands the room (code 137), which frees the name: someone
+    // else asking for it is not refused as they would be for a room that
+    // still belongs to another user.
+    owner.disband_private_room(room).expect("owner disbands");
+    std::thread::sleep(Duration::from_secs(1));
+
+    let mut newcomer =
+        Client::with_settings(server.settings("e2e_leave_newcomer", "pw"));
+    newcomer.connect().expect("newcomer connect");
+    assert!(newcomer.login().expect("newcomer login"));
+    newcomer
+        .join_private_room(room)
+        .expect("newcomer asks for the name");
+
+    let refused =
+        await_room_event(&newcomer, Duration::from_secs(3), |event| {
+            matches!(event, RoomEvent::CantCreate { room: r } if r == room)
+                .then_some(())
+        });
+    assert!(
+        refused.is_none(),
+        "a disbanded room's name should be free again"
+    );
+}
+
+#[test]
+fn privileges_can_be_handed_to_another_user() {
+    let server = server_or_skip!();
+
+    // Only a privileged account can give privileges away, and privileges
+    // themselves are granted in soulfind's own database.
+    let giver = "e2e_gift_giver";
+    let mut giving = Client::with_settings(server.settings(giver, "pw"));
+    giving.connect().expect("giver connect");
+    assert!(giving.login().expect("giver login"));
+    if !grant(&server, giver, "privileges") {
+        println!("e2e skipped: cannot grant privileges on this server");
+        return;
+    }
+    drop(giving);
+    std::thread::sleep(Duration::from_secs(1));
+
+    let mut giving = Client::with_settings(server.settings(giver, "pw"));
+    giving.connect().expect("giver reconnect");
+    assert!(giving.login().expect("giver re-login"));
+
+    let mut receiver =
+        Client::with_settings(server.settings("e2e_gift_receiver", "pw"));
+    receiver.connect().expect("receiver connect");
+    assert!(receiver.login().expect("receiver login"));
+
+    giving
+        .give_privileges("e2e_gift_receiver", 1)
+        .expect("hand over a day of privileges");
+
+    // The recipient now has privilege time of their own to check (code 92).
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut left = 0;
+    while Instant::now() < deadline && left == 0 {
+        receiver
+            .check_privileges()
+            .expect("ask how much time we have");
+        std::thread::sleep(Duration::from_millis(500));
+        left = receiver.own_privilege_seconds().unwrap_or(0);
+    }
+    assert!(
+        left > 0,
+        "the gifted privileges should show up as time of our own"
+    );
+}
+
+#[test]
+fn a_disconnected_client_gives_its_listener_port_back() {
+    // A client that goes out of scope must release the port it bound: the
+    // next one has to be able to advertise the port it was configured with,
+    // not fall back to an ephemeral one nobody was told about. No server is
+    // needed — binding the listener happens in connect(), before the dial.
+    let port = free_port().expect("a port to hold");
+    let settings = |port: u16| ClientSettings {
+        username: "e2e_port_release".to_string(),
+        password: "pw".to_string(),
+        server_address: PeerAddress::new("127.0.0.1".to_string(), 1),
+        enable_listen: true,
+        listen_port: port,
+        shared_directories: Vec::new(),
+        accept_children: false,
+        version: ClientVersion::default(),
+    };
+
+    let mut first = Client::with_settings(settings(port));
+    first.connect().expect("bind the listener");
+    assert_eq!(first.listen_port(), Some(port));
+    drop(first);
+
+    // The listener thread notices the stop the moment it is woken, which the
+    // disconnect does by dialling it; give it a beat to unwind.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut second_port = None;
+    while Instant::now() < deadline && second_port != Some(port) {
+        let mut second = Client::with_settings(settings(port));
+        second.connect().expect("bind again");
+        second_port = second.listen_port();
+        if second_port == Some(port) {
+            break;
+        }
+        drop(second);
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert_eq!(
+        second_port,
+        Some(port),
+        "the port should be free again once the first client is dropped"
+    );
 }

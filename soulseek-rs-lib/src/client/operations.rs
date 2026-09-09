@@ -10,6 +10,17 @@ use crate::peer::DownloadError;
 
 const CONNECT_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 
+/// How often to ask the peers holding our queued downloads where they sit
+/// (peer code 51). Five minutes is what Nicotine+ uses: often enough that a
+/// queue position on screen means something, rare enough that a peer with a
+/// long queue is not pestered.
+const QUEUE_POSITION_INTERVAL: Duration = Duration::from_secs(300);
+
+/// How long a write to a child may block. The relay runs under the client
+/// context lock, so an unbounded write would freeze every other operation
+/// behind one child that stopped reading.
+const CHILD_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+
 impl Client {
     pub(crate) fn listen_to_client_operations(
         reader: Receiver<ClientOperation>,
@@ -18,6 +29,7 @@ impl Client {
     ) {
         thread::spawn(move || {
             let mut last_sweep = Instant::now();
+            let mut last_queue_poll = Instant::now();
             loop {
                 let next = reader.recv_timeout(CONNECT_SWEEP_INTERVAL);
                 if last_sweep.elapsed() >= CONNECT_SWEEP_INTERVAL {
@@ -29,13 +41,15 @@ impl Client {
                         if let Some(branch) =
                             ctx.leaf.due_announcement(Instant::now())
                         {
-                            super::distributed::announce(
-                                ctx.server_sender.as_ref(),
-                                &branch,
-                                true,
+                            super::distributed::announce_move(
+                                &mut ctx, &branch, true,
                             );
                         }
                     }
+                }
+                if last_queue_poll.elapsed() >= QUEUE_POSITION_INTERVAL {
+                    last_queue_poll = Instant::now();
+                    Self::poll_queue_positions(&client_context);
                 }
                 let operation = match next {
                     Ok(operation) => operation,
@@ -434,17 +448,35 @@ impl Client {
                         average_speed,
                         shared_files,
                         shared_folders,
-                    } => match client_context.write_safe() {
-                        Ok(mut ctx) => ctx.apply_user_stats(
-                            username,
-                            average_speed,
-                            shared_files,
-                            shared_folders,
-                        ),
-                        Err(e) => {
-                            error!("[client] UserStatsReceived write: {}", e);
+                    } => {
+                        // Stats about ourselves carry the speed the server
+                        // records for us — pushed whenever it changes, since
+                        // we watch ourselves — and the distributed child
+                        // limit is derived from it.
+                        let own = username == own_username;
+                        match client_context.write_safe() {
+                            Ok(mut ctx) => {
+                                ctx.apply_user_stats(
+                                    username,
+                                    average_speed,
+                                    shared_files,
+                                    shared_folders,
+                                );
+                                if own {
+                                    ctx.set_own_average_speed(average_speed);
+                                }
+                            }
+                            Err(e) => {
+                                error!(
+                                    "[client] UserStatsReceived write: {}",
+                                    e
+                                );
+                            }
                         }
-                    },
+                        if own {
+                            Self::announce_child_capacity(&client_context);
+                        }
+                    }
                     ClientOperation::WatchedUserReceived {
                         username,
                         exists,
@@ -452,19 +484,36 @@ impl Client {
                         average_speed,
                         shared_files,
                         shared_folders,
-                    } => match client_context.write_safe() {
-                        Ok(mut ctx) => ctx.apply_watched_user(
-                            username,
-                            exists,
-                            status,
-                            average_speed,
-                            shared_files,
-                            shared_folders,
-                        ),
-                        Err(e) => {
-                            error!("[client] WatchedUserReceived write: {}", e);
+                    } => {
+                        let own = username == own_username;
+                        match client_context.write_safe() {
+                            Ok(mut ctx) => {
+                                ctx.apply_watched_user(
+                                    username,
+                                    exists,
+                                    status,
+                                    average_speed,
+                                    shared_files,
+                                    shared_folders,
+                                );
+                                // Watching ourselves is how our own recorded
+                                // speed reaches us, and the child limit is
+                                // derived from it.
+                                if own && let Some(speed) = average_speed {
+                                    ctx.set_own_average_speed(speed);
+                                }
+                            }
+                            Err(e) => {
+                                error!(
+                                    "[client] WatchedUserReceived write: {}",
+                                    e
+                                );
+                            }
                         }
-                    },
+                        if own {
+                            Self::announce_child_capacity(&client_context);
+                        }
+                    }
                     ClientOperation::RoomEvent(event) => {
                         match client_context.write_safe() {
                             Ok(mut ctx) => ctx.apply_room_event(event),
@@ -538,7 +587,49 @@ impl Client {
                         username,
                         token,
                         query,
+                        from_parent,
                     } => {
+                        // Every search we receive comes from the tree: from
+                        // our parent, or from the server acting as one. That
+                        // is what qualifies us to carry children at all —
+                        // Nicotine+ refuses them until something feeds it —
+                        // and passing the search down is the whole duty.
+                        let (capacity_changed, answer) = match client_context
+                            .write_safe()
+                        {
+                            Ok(mut ctx) => {
+                                let was_fed = ctx.children.is_fed();
+                                let before = ctx.children.len();
+                                ctx.set_fed_by(true);
+                                if !from_parent {
+                                    // A parent's search was passed down where
+                                    // it arrived; this is the server's.
+                                    ctx.children.broadcast_search(
+                                        &username, token, &query,
+                                    );
+                                }
+                                // Answering costs a scan of everything we
+                                // share, so the budget applies to searches
+                                // from the tree. The server's own are few.
+                                let answer = !from_parent
+                                    || ctx.leaf.admit_search(Instant::now());
+                                // A child whose socket has gone is dropped by
+                                // that write, which frees a slot the server
+                                // should hear about.
+                                (
+                                    !was_fed || ctx.children.len() != before,
+                                    answer,
+                                )
+                            }
+                            Err(_) => (false, false),
+                        };
+                        if capacity_changed {
+                            Self::announce_child_capacity(&client_context);
+                        }
+                        if !answer {
+                            continue;
+                        }
+
                         // Don't answer our own distributed search.
                         if username == own_username {
                             continue;
@@ -552,6 +643,7 @@ impl Client {
                                 ctx.has_free_upload_slot(),
                                 ctx.last_upload_speed,
                                 ctx.upload_queue.len() as u32,
+                                &ctx.excluded_search_phrases,
                             ),
                             Err(e) => {
                                 error!("[client] IncomingSearch read: {}", e);
@@ -679,10 +771,8 @@ impl Client {
                         if let Some(branch) =
                             ctx.leaf.branch_level(&parent, link, level)
                         {
-                            super::distributed::announce(
-                                ctx.server_sender.as_ref(),
-                                &branch,
-                                true,
+                            super::distributed::announce_move(
+                                &mut ctx, &branch, true,
                             );
                         }
                     }
@@ -697,10 +787,8 @@ impl Client {
                         if let Some(branch) =
                             ctx.leaf.branch_root(&parent, link, &root)
                         {
-                            super::distributed::announce(
-                                ctx.server_sender.as_ref(),
-                                &branch,
-                                true,
+                            super::distributed::announce_move(
+                                &mut ctx, &branch, true,
                             );
                         }
                     }
@@ -717,21 +805,26 @@ impl Client {
                         if let Some(branch) =
                             ctx.leaf.search_from(&parent, link)
                         {
-                            super::distributed::announce(
-                                ctx.server_sender.as_ref(),
-                                &branch,
-                                true,
+                            super::distributed::announce_move(
+                                &mut ctx, &branch, true,
                             );
                         }
-                        if ctx.leaf.is_parent(&parent, link)
-                            && ctx.leaf.admit_search(Instant::now())
-                            && let Some(ops) = &ctx.operations
-                        {
-                            let _ = ops.send(ClientOperation::IncomingSearch {
-                                username,
-                                token,
-                                query,
-                            });
+                        if ctx.leaf.is_parent(&parent, link) {
+                            // The tree's stream is not ours to throttle: every
+                            // search goes down to our children. The budget
+                            // below bounds only the share scan we do for our
+                            // own reply.
+                            ctx.children
+                                .broadcast_search(&username, token, &query);
+                            if let Some(ops) = &ctx.operations {
+                                let _ =
+                                    ops.send(ClientOperation::IncomingSearch {
+                                        username,
+                                        token,
+                                        query,
+                                        from_parent: true,
+                                    });
+                            }
                         }
                     }
                     ClientOperation::ParentClosed { parent, link } => {
@@ -739,10 +832,9 @@ impl Client {
                             continue;
                         };
                         if ctx.leaf.closed(&parent, link) {
-                            super::distributed::announce(
-                                ctx.server_sender.as_ref(),
-                                &ctx.leaf.branch(),
-                                false,
+                            let branch = ctx.leaf.branch();
+                            super::distributed::announce_move(
+                                &mut ctx, &branch, false,
                             );
                         }
                     }
@@ -753,10 +845,13 @@ impl Client {
                             continue;
                         };
                         ctx.leaf.reset();
-                        super::distributed::announce(
-                            ctx.server_sender.as_ref(),
-                            &ctx.leaf.branch(),
-                            false,
+                        // A fresh session feeds us nothing until the tree (or
+                        // the server) starts again, so the children we were
+                        // carrying are let go rather than left starving.
+                        ctx.set_fed_by(false);
+                        let branch = ctx.leaf.branch();
+                        super::distributed::announce_move(
+                            &mut ctx, &branch, false,
                         );
                     }
                     ClientOperation::PrivilegedUsers(users) => {
@@ -775,6 +870,192 @@ impl Client {
                     ClientOperation::OwnPrivileges(seconds) => {
                         if let Ok(mut ctx) = client_context.write_safe() {
                             ctx.own_privileges = Some(seconds);
+                        }
+                    }
+                    ClientOperation::Recommendations {
+                        global,
+                        recommended,
+                        unrecommended,
+                    } => {
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.apply_recommendations(
+                                global,
+                                recommended,
+                                unrecommended,
+                            );
+                        }
+                    }
+                    ClientOperation::ItemRecommendations {
+                        item,
+                        recommendations,
+                    } => {
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.apply_item_recommendations(
+                                item,
+                                recommendations,
+                            );
+                        }
+                    }
+                    ClientOperation::SimilarUsers(users) => {
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.apply_similar_users(users);
+                        }
+                    }
+                    ClientOperation::ItemSimilarUsers { item, usernames } => {
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.apply_item_similar_users(item, usernames);
+                        }
+                    }
+                    ClientOperation::UserInterests(interests) => {
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.apply_user_interests(interests);
+                        }
+                    }
+                    ClientOperation::ChildConnected { username, stream } => {
+                        // A peer wants to hang from us. Take it on if this
+                        // client serves children and has room, then tell it
+                        // where our branch sits so it can report its own
+                        // place; otherwise the socket is dropped here and the
+                        // peer looks for another parent.
+                        let Ok(mut ctx) = client_context.write_safe() else {
+                            continue;
+                        };
+                        if !ctx.children.has_room() {
+                            continue;
+                        }
+                        // A child that stops reading must not wedge us: the
+                        // relay writes under the context lock, so the write
+                        // is bounded and a child that hits it loses its slot.
+                        if stream.set_nodelay(true).is_err()
+                            || stream
+                                .set_write_timeout(Some(CHILD_WRITE_TIMEOUT))
+                                .is_err()
+                        {
+                            continue;
+                        }
+                        if username == own_username {
+                            continue; // we cannot hang from ourselves
+                        }
+                        if ctx.children.accept(&username, stream) {
+                            let branch = ctx.leaf.branch();
+                            ctx.children.send_stance_to(
+                                &username,
+                                &branch.root,
+                                branch.level,
+                            );
+                            debug!(
+                                "[distributed] carrying {} children",
+                                ctx.children.len()
+                            );
+                            // The server stops offering us to peers once we
+                            // are full, and starts again when one leaves.
+                            let full = !ctx.children.has_room();
+                            drop(ctx);
+                            if full {
+                                Self::announce_child_capacity(&client_context);
+                            }
+                        }
+                    }
+                    ClientOperation::PeerInfoReceived { username, info } => {
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.store_peer_info(username, info);
+                        }
+                    }
+                    ClientOperation::FolderContents {
+                        username,
+                        token,
+                        folder,
+                        directories,
+                    } => {
+                        trace!(
+                            "[client] folder {} from {} (token {}): {} dirs",
+                            folder,
+                            username,
+                            token,
+                            directories.len()
+                        );
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.store_folder_contents(
+                                username,
+                                folder,
+                                directories,
+                            );
+                        }
+                    }
+                    ClientOperation::ParentMinSpeed(speed) => {
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.set_parent_min_speed(speed);
+                        }
+                        Self::announce_child_capacity(&client_context);
+                    }
+                    ClientOperation::ParentSpeedRatio(ratio) => {
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.set_parent_speed_ratio(ratio);
+                        }
+                        Self::announce_child_capacity(&client_context);
+                    }
+                    ClientOperation::SessionEstablished => {
+                        // Interests live in the server only for the session
+                        // that set them, so a new one starts by sending ours
+                        // again — what Nicotine+ does from its config file.
+                        let (sender, interests) = match client_context
+                            .read_safe()
+                        {
+                            Ok(ctx) => {
+                                (ctx.server_sender.clone(), ctx.own_interests())
+                            }
+                            Err(_) => continue,
+                        };
+                        let Some(sender) = sender else { continue };
+                        // Watch ourselves: the server pushes a user's stats
+                        // to whoever watches them, and our own recorded
+                        // upload speed is what the distributed child limit is
+                        // derived from. Nicotine+ reads the same figure from
+                        // the stats the server sends about the logged-in
+                        // user.
+                        let _ = sender.send(ServerMessage::SendMessage(
+                            MessageFactory::build_watch_user(&own_username),
+                        ));
+                        for item in &interests.likes {
+                            let _ = sender.send(ServerMessage::SendMessage(
+                                MessageFactory::build_add_thing_i_like(item),
+                            ));
+                        }
+                        for item in &interests.hates {
+                            let _ = sender.send(ServerMessage::SendMessage(
+                                MessageFactory::build_add_thing_i_hate(item),
+                            ));
+                        }
+                    }
+                    ClientOperation::ExcludedSearchPhrases(phrases) => {
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.set_excluded_search_phrases(phrases);
+                        }
+                    }
+                    ClientOperation::CantConnectToPeer { token } => {
+                        // The peer we asked the server to broker gave up. The
+                        // token is the correlation we sent, so it names the
+                        // peer: end the wait now instead of letting every
+                        // queued download for them sit until the timeout.
+                        let username = match client_context.write_safe() {
+                            Ok(mut ctx) => ctx.take_pending_connect(token),
+                            Err(e) => {
+                                error!(
+                                    "[client] CantConnectToPeer write: {}",
+                                    e
+                                );
+                                None
+                            }
+                        };
+                        if let Some(username) = username {
+                            debug!(
+                                "[client] {} cannot connect back (token {})",
+                                username, token
+                            );
+                            Self::fail_queued_downloads(
+                                &client_context,
+                                &username,
+                            );
                         }
                     }
                     ClientOperation::StartUpload { token } => {
@@ -875,7 +1156,58 @@ impl Client {
                             ctx.store_browse_result(username, directories);
                         }
                     }
-                    ClientOperation::PeerConnectFailed(id, username) => {
+                    ClientOperation::PeerConnectFailed(
+                        id,
+                        username,
+                        brokered_token,
+                    ) => {
+                        // Direct connect failed. A dial the server asked
+                        // us to make is answered with CantConnectToPeer
+                        // quoting the peer's own token: that peer is
+                        // already waiting on the server, and asking it to
+                        // broker the same connection back only trades one
+                        // unreachable direction for the other. Every other
+                        // dial falls back to the broker below.
+                        if let Some(peer_token) = brokered_token {
+                            let server_sender = match client_context
+                                .write_safe()
+                            {
+                                Ok(ctx) => {
+                                    if let Some(handle) =
+                                        ctx.peer_registry.as_ref().and_then(
+                                            |r| r.remove_peer_if(&username, id),
+                                        )
+                                    {
+                                        let _ = handle.stop();
+                                    }
+                                    ctx.server_sender.clone()
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "[client] PeerConnectFailed write: {}",
+                                        e
+                                    );
+                                    continue;
+                                }
+                            };
+                            if let Some(sender) = server_sender {
+                                let msg = crate::message::server::MessageFactory::build_cant_connect_to_peer(
+                                    peer_token,
+                                    &username,
+                                );
+                                let _ = sender
+                                    .send(ServerMessage::SendMessage(msg));
+                            }
+                            // Nothing else is coming from this peer, so
+                            // anything queued for it fails now rather than
+                            // waiting out its timeout.
+                            Self::fail_queued_downloads(
+                                &client_context,
+                                &username,
+                            );
+                            continue;
+                        }
+
                         // Direct connect failed: ask the server to
                         // broker it. Register a correlation token, then
                         // send ConnectToPeer so the (firewalled) peer
@@ -924,6 +1256,58 @@ impl Client {
                 }
             }
         });
+    }
+
+    /// Ask every peer holding a queued download of ours where it sits. The
+    /// answers arrive as `PlaceInQueueResponse` and land on the downloads.
+    fn poll_queue_positions(client_context: &Arc<RwLock<ClientContext>>) {
+        let (registry, queued) = match client_context.read_safe() {
+            Ok(ctx) => (
+                ctx.peer_registry.clone(),
+                ctx.get_downloads()
+                    .iter()
+                    .filter(|d| matches!(d.status, DownloadStatus::Queued))
+                    .map(|d| (d.username.clone(), d.filename.clone()))
+                    .collect::<Vec<_>>(),
+            ),
+            Err(_) => return,
+        };
+        let Some(registry) = registry else { return };
+        for (username, filename) in queued {
+            // Only over a connection we already hold: a peer we cannot reach
+            // is a connection problem, not a queue question.
+            if !registry.contains(&username) {
+                continue;
+            }
+            let request =
+                MessageFactory::build_place_in_queue_request(&filename);
+            let _ = registry
+                .send_to_peer(&username, PeerMessage::SendMessage(request));
+        }
+    }
+
+    /// Tell the server whether we would take another child right now
+    /// (`AcceptChildren`, code 100). Sent whenever that answer changes: the
+    /// server only offers us to peers while it is true.
+    fn announce_child_capacity(client_context: &Arc<RwLock<ClientContext>>) {
+        let (sender, has_room) = match client_context.write_safe() {
+            Ok(mut ctx) => {
+                // Only on a change: the server holds this as a standing
+                // state, and repeating it on every message we happen to
+                // receive would be noise.
+                let Some(has_room) = ctx.accept_children_change() else {
+                    return;
+                };
+                (ctx.server_sender.clone(), has_room)
+            }
+            Err(_) => return,
+        };
+        let Some(sender) = sender else { return };
+        let message =
+            crate::message::server::MessageFactory::build_accept_children(
+                has_room,
+            );
+        let _ = sender.send(ServerMessage::SendMessage(message));
     }
 
     /// Answer a peer with the message `build` derives from the client state.

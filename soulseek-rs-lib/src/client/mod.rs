@@ -4,9 +4,9 @@ use crate::actor::server_actor::{
 };
 use crate::download_store::{DownloadStore, collect_failed_tokens};
 use crate::types::{
-    ClientVersion, DownloadMetadata, DownloadStatus, RoomEvent, RoomInfo,
-    RoomUserStats, SessionLoss, SessionWatch, UserInfo, UserPresence,
-    UserStats, UserStatus,
+    ClientVersion, DownloadMetadata, DownloadStatus, Recommendation, RoomEvent,
+    RoomInfo, RoomTicker, RoomUserStats, SessionLoss, SessionWatch,
+    SimilarUser, UserInfo, UserInterests, UserPresence, UserStats, UserStatus,
 };
 use crate::utils::logger;
 use crate::{
@@ -149,6 +149,11 @@ fn upload_speed(
 
 /// Build a `FileSearchResponse` for `query` against `shares`, or `None` if
 /// nothing matches. `own_username` is the name the searcher will download from.
+// One reply's worth of state: the shares to search, who we are, and the
+// figures the reply advertises. Kept as arguments rather than a struct
+// because every one of them is read straight from the client context at the
+// call site, and a struct would only move the same list one line up.
+#[allow(clippy::too_many_arguments)]
 fn build_search_response(
     shares: &Shares,
     own_username: &str,
@@ -157,13 +162,21 @@ fn build_search_response(
     free_slot: bool,
     speed: u32,
     queue_length: u32,
+    excluded_phrases: &[String],
 ) -> Option<crate::message::Message> {
     let matches = shares.search(query);
     if matches.is_empty() {
         return None;
     }
+    // A file whose path carries a phrase the server excludes (code 160) is
+    // left out of the reply, the way Nicotine+ does it: the exclusion is the
+    // server policing what travels the search network, and answering with one
+    // anyway is what it is asking us not to do.
     let entries: Vec<FileEntry> = matches
         .iter()
+        .filter(|f| {
+            !path_carries_excluded_phrase(&f.virtual_path, excluded_phrases)
+        })
         .take(crate::types::MAX_SEARCH_REPLY_FILES)
         .map(|f| FileEntry {
             name: &f.virtual_path,
@@ -171,6 +184,9 @@ fn build_search_response(
             attribs: &f.attributes,
         })
         .collect();
+    if entries.is_empty() {
+        return None;
+    }
     Some(build_file_search_response(
         own_username,
         token,
@@ -179,6 +195,18 @@ fn build_search_response(
         speed,
         queue_length,
     ))
+}
+
+/// Whether `path` contains any of the phrases the server excludes. Matching
+/// is on the lowercased path, as the phrases themselves are lowercase.
+fn path_carries_excluded_phrase(path: &str, excluded: &[String]) -> bool {
+    if excluded.is_empty() {
+        return false;
+    }
+    let lowered = path.to_lowercase();
+    excluded
+        .iter()
+        .any(|phrase| !phrase.is_empty() && lowered.contains(phrase))
 }
 
 #[derive(Debug, Clone)]
@@ -191,6 +219,11 @@ pub struct ClientSettings {
     /// Directories whose files are shared with (uploaded to) other peers.
     /// Empty means nothing is shared.
     pub shared_directories: Vec<String>,
+    /// Whether to serve children in the distributed search network: peers
+    /// hang from us with a `D` connection and we pass every search we receive
+    /// down to them. Off by default — it costs a socket and the network's
+    /// whole search stream per child.
+    pub accept_children: bool,
     /// The version reported to the server on login. Defaults to the
     /// soulseek-rs major version with minor version 1 ("unidentified");
     /// clients built on this library should reserve their own minor
@@ -223,6 +256,7 @@ impl Default for ClientSettings {
             enable_listen: true,
             listen_port: DEFAULT_LISTEN_PORT,
             shared_directories: Vec::new(),
+            accept_children: false,
             version: ClientVersion::default(),
         }
     }
@@ -281,6 +315,10 @@ pub enum ClientOperation {
         username: String,
         token: u32,
         query: String,
+        /// True when it came down the tree from our parent, which has
+        /// already passed it to our children and is subject to the answer
+        /// budget. A search the server relayed is neither.
+        from_parent: bool,
     },
     /// A peer queued one of our shared files; `requester_key` is the registry
     /// key of the peer actor — the peer's username.
@@ -306,6 +344,18 @@ pub enum ClientOperation {
         token: u32,
         folder: String,
     },
+    /// A peer answered our request for what it says about itself.
+    PeerInfoReceived {
+        username: String,
+        info: crate::message::peer::PeerInfo,
+    },
+    /// A peer answered our request for one folder of their shares.
+    FolderContents {
+        username: String,
+        token: u32,
+        folder: String,
+        directories: Vec<SharedDirectory>,
+    },
     /// A peer we are browsing returned their shared-file listing.
     BrowseResult {
         username: String,
@@ -313,8 +363,11 @@ pub enum ClientOperation {
     },
     /// A direct outbound connection to this peer failed before it was
     /// established — the peer is likely firewalled, so fall back to asking the
-    /// server to broker the connection. Carries the reporting actor's id.
-    PeerConnectFailed(u64, String),
+    /// server to broker the connection. Carries the reporting actor's id and,
+    /// when the dial was one the server asked us to make, the token that peer
+    /// quoted: that dial is answered with a `CantConnectToPeer` instead of a
+    /// broker request, since the peer is already waiting on the server.
+    PeerConnectFailed(u64, String, Option<u32>),
     /// Something happened in the chat-room subsystem (list refreshed, a room
     /// joined/left, a message said, a member joined/left).
     RoomEvent(RoomEvent),
@@ -340,6 +393,46 @@ pub enum ClientOperation {
     PossibleParents(Vec<(String, String, u16)>),
     /// The server told us to drop our parent.
     ResetDistributed,
+    /// A session just started: anything the server keeps only per-session —
+    /// our interests — has to be sent again.
+    SessionEstablished,
+    /// A peer dialled us with a `D` connection, asking to hang from us in the
+    /// distributed search network.
+    ChildConnected {
+        username: String,
+        stream: std::net::TcpStream,
+    },
+    /// Recommendations from the server: either from our own interests
+    /// (`global` false, code 54) or server-wide (`global` true, code 56).
+    Recommendations {
+        global: bool,
+        recommended: Vec<Recommendation>,
+        unrecommended: Vec<Recommendation>,
+    },
+    /// Recommendations for one item (code 111).
+    ItemRecommendations {
+        item: String,
+        recommendations: Vec<Recommendation>,
+    },
+    /// Users the server considers similar to us (code 110).
+    SimilarUsers(Vec<SimilarUser>),
+    /// Users who like one item (code 112).
+    ItemSimilarUsers {
+        item: String,
+        usernames: Vec<String>,
+    },
+    /// What another user likes and hates (code 57).
+    UserInterests(UserInterests),
+    /// A peer we asked the server to broker gave up reaching us (code 1001).
+    CantConnectToPeer {
+        token: u32,
+    },
+    /// Phrases the server refuses to search for (code 160).
+    ExcludedSearchPhrases(Vec<String>),
+    /// The minimum upload speed for carrying children (code 83).
+    ParentMinSpeed(u32),
+    /// The divisor turning that speed into a child count (code 84).
+    ParentSpeedRatio(u32),
     /// A parent candidate told us how deep it sits. `link` says which dial
     /// to that user is talking.
     ParentBranchLevel {
@@ -375,6 +468,18 @@ pub struct ClientContext {
     operations: Option<Sender<ClientOperation>>,
     /// Our place in the distributed search network.
     leaf: distributed::Leaf,
+    /// The children hanging from us, when the client serves any.
+    pub(crate) children: children::Children,
+    /// The last `AcceptChildren` answer we gave the server, so the same
+    /// answer is not repeated: it is a standing state, not a heartbeat.
+    announced_accept_children: Option<bool>,
+    /// The upload speed the server records for us, once it has told us. The
+    /// child limit is derived from it.
+    own_average_speed: Option<u32>,
+    /// The speed a parent needs (code 83) and the divisor turning speed into
+    /// a child count (code 84), as the server announced them.
+    parent_min_speed: u32,
+    parent_speed_ratio: u32,
     searches: HashMap<String, Search>,
     private_messages: Vec<UserMessage>,
     /// Correlation tokens for server-brokered (firewalled) connections, mapping
@@ -399,6 +504,10 @@ pub struct ClientContext {
     pending_serves: HashMap<String, Vec<u32>>,
     /// Shared-file listings received from peers we browsed.
     browse_results: HashMap<String, Vec<SharedDirectory>>,
+    /// One-folder listings received from peers, keyed by peer and folder.
+    folder_contents: HashMap<(String, String), Vec<SharedDirectory>>,
+    /// What peers said about themselves (peer code 16), keyed by peer.
+    peer_infos: HashMap<String, crate::message::peer::PeerInfo>,
     pending_browses: HashMap<String, Instant>,
     /// Latest snapshot of the public chat-room list (from `RoomList`, code 64).
     room_list: Vec<RoomInfo>,
@@ -410,6 +519,31 @@ pub struct ClientContext {
     /// Per-member statistics for each joined room, from the stat vectors the
     /// server sends alongside the membership list.
     room_member_stats: HashMap<String, Vec<RoomUserStats>>,
+    /// Who may enter each private room we belong to (code 133), kept current
+    /// from the later roster changes.
+    private_room_members: HashMap<String, Vec<String>>,
+    /// Who runs each of those rooms (code 148).
+    private_room_operators: HashMap<String, Vec<String>>,
+    /// The ticker board of each joined room, kept current from the board sent
+    /// on join (code 113) and the later add/remove events (114/115).
+    room_tickers: HashMap<String, Vec<RoomTicker>>,
+    /// The latest recommendations from our own interests (code 54), as
+    /// (recommended, recommended-against).
+    recommendations: Option<(Vec<Recommendation>, Vec<Recommendation>)>,
+    /// The latest server-wide recommendations (code 56).
+    global_recommendations: Option<(Vec<Recommendation>, Vec<Recommendation>)>,
+    /// Per-item recommendations (code 111), keyed by the item asked about.
+    item_recommendations: HashMap<String, Vec<Recommendation>>,
+    /// The latest similar-user answer (code 110).
+    similar_users: Vec<SimilarUser>,
+    /// Who likes an item (code 112), keyed by the item asked about.
+    item_similar_users: HashMap<String, Vec<String>>,
+    /// Interests of other users (code 57), keyed by username.
+    user_interests: HashMap<String, UserInterests>,
+    /// What we ourselves like and hate. The server keeps these only for the
+    /// duration of a session, so they are held here and sent again after each
+    /// login — the same thing Nicotine+ does from its config.
+    own_interests: UserInterests,
     /// What the server has told us about other users, merged across the
     /// separate status and statistics replies.
     user_info: HashMap<String, UserInfo>,
@@ -425,6 +559,9 @@ pub struct ClientContext {
     privileged_users: HashSet<String>,
     /// Seconds of our own privileges left (code 92), once we have asked.
     own_privileges: Option<u32>,
+    /// Phrases the server excludes from the search network (code 160). Files
+    /// whose path carries one are left out of the replies we send.
+    excluded_search_phrases: Vec<String>,
     /// Peers waiting for one of our upload slots.
     upload_queue: Vec<QueuedUpload>,
     /// Arrival counter for the queue's first-come tie-break.
@@ -441,6 +578,15 @@ pub struct ClientContext {
     upload_events: Vec<crate::types::UploadInfo>,
     actor_system: Arc<ActorSystem>,
 }
+/// A roster sorted and de-duplicated, so membership lookups can binary-search
+/// it and a repeated name cannot appear twice.
+fn sorted_unique(users: &[String]) -> Vec<String> {
+    let mut users = users.to_vec();
+    users.sort();
+    users.dedup();
+    users
+}
+
 impl Default for ClientContext {
     fn default() -> Self {
         Self::new()
@@ -502,6 +648,11 @@ impl ClientContext {
             server_sender: None,
             operations: None,
             leaf: distributed::Leaf::new(""),
+            children: children::Children::default(),
+            announced_accept_children: None,
+            own_average_speed: None,
+            parent_min_speed: 0,
+            parent_speed_ratio: 0,
             searches: HashMap::new(),
             private_messages: Vec::new(),
             pending_connect_tokens: HashMap::new(),
@@ -514,16 +665,29 @@ impl ClientContext {
             active_uploads: HashMap::new(),
             pending_serves: HashMap::new(),
             browse_results: HashMap::new(),
+            folder_contents: HashMap::new(),
+            peer_infos: HashMap::new(),
             pending_browses: HashMap::new(),
             room_list: Vec::new(),
             room_events: Vec::new(),
             room_members: HashMap::new(),
             room_member_stats: HashMap::new(),
+            room_tickers: HashMap::new(),
+            private_room_members: HashMap::new(),
+            private_room_operators: HashMap::new(),
+            recommendations: None,
+            global_recommendations: None,
+            item_recommendations: HashMap::new(),
+            similar_users: Vec::new(),
+            item_similar_users: HashMap::new(),
+            user_interests: HashMap::new(),
+            own_interests: UserInterests::default(),
             user_info: HashMap::new(),
             watched_users: HashSet::new(),
             wishlist_interval: None,
             privileged_users: HashSet::new(),
             own_privileges: None,
+            excluded_search_phrases: Vec::new(),
             upload_queue: Vec::new(),
             upload_seq: 0,
             upload_slots: DEFAULT_UPLOAD_SLOTS,
@@ -547,6 +711,9 @@ impl ClientContext {
             }
             RoomEvent::Left { room } => {
                 self.room_members.remove(room);
+                // A board for a room we are not in is stale; the server sends
+                // the whole board again on the next join.
+                self.room_tickers.remove(room);
             }
             RoomEvent::UserJoined { room, username } => {
                 let members =
@@ -562,9 +729,353 @@ impl ClientContext {
                     members.remove(at);
                 }
             }
-            RoomEvent::Message { .. } => {}
+            RoomEvent::Tickers { room, tickers } => {
+                self.room_tickers.insert(room.clone(), tickers.clone());
+            }
+            RoomEvent::TickerAdded {
+                room,
+                username,
+                ticker,
+            } => {
+                // A user has at most one ticker: an added one replaces theirs
+                // rather than stacking, which is how the server treats it.
+                let board = self.room_tickers.entry(room.clone()).or_default();
+                board.retain(|t| &t.username != username);
+                board.push(RoomTicker {
+                    username: username.clone(),
+                    ticker: ticker.clone(),
+                });
+            }
+            RoomEvent::TickerRemoved { room, username } => {
+                if let Some(board) = self.room_tickers.get_mut(room) {
+                    board.retain(|t| &t.username != username);
+                }
+            }
+            RoomEvent::PrivateMembers { room, users } => {
+                self.private_room_members
+                    .insert(room.clone(), sorted_unique(users));
+            }
+            RoomEvent::PrivateOperators { room, users } => {
+                self.private_room_operators
+                    .insert(room.clone(), sorted_unique(users));
+            }
+            RoomEvent::PrivateRosterChanged {
+                room,
+                username,
+                members,
+                added,
+            } => {
+                let roster = if *members {
+                    self.private_room_members.entry(room.clone()).or_default()
+                } else {
+                    self.private_room_operators.entry(room.clone()).or_default()
+                };
+                match (added, roster.binary_search(username)) {
+                    (true, Err(at)) => roster.insert(at, username.clone()),
+                    (false, Ok(at)) => {
+                        roster.remove(at);
+                    }
+                    _ => {}
+                }
+            }
+            RoomEvent::OwnStandingChanged {
+                room,
+                members,
+                granted,
+            } => {
+                // Losing membership takes both rosters with it: a room we
+                // cannot enter has none worth showing. Losing operatorship
+                // leaves us a member who still sees them, and the server
+                // narrates that roster change separately (code 144).
+                if !granted && *members {
+                    self.private_room_members.remove(room);
+                    self.private_room_operators.remove(room);
+                }
+            }
+            RoomEvent::Message { .. }
+            | RoomEvent::GlobalMessage { .. }
+            | RoomEvent::CantCreate { .. } => {}
         }
         self.room_events.push(event);
+    }
+
+    /// Remember an interest of our own so it can be sent again next login.
+    /// Interests are matched by the server case-insensitively, and Nicotine+
+    /// lowercases them before sending; do the same so two spellings of one
+    /// interest cannot both be held.
+    /// Returns the stored spelling, or `None` for an empty item — which is
+    /// no interest, and must not be sent to the server either.
+    pub fn add_own_interest(
+        &mut self,
+        item: &str,
+        liked: bool,
+    ) -> Option<String> {
+        let item = item.trim().to_lowercase();
+        if item.is_empty() {
+            return None;
+        }
+        let list = if liked {
+            &mut self.own_interests.likes
+        } else {
+            &mut self.own_interests.hates
+        };
+        if !list.contains(&item) {
+            list.push(item.clone());
+        }
+        Some(item)
+    }
+
+    /// Forget one of our own interests. `None` for an empty item, as above.
+    pub fn remove_own_interest(
+        &mut self,
+        item: &str,
+        liked: bool,
+    ) -> Option<String> {
+        let item = item.trim().to_lowercase();
+        if item.is_empty() {
+            return None;
+        }
+        let list = if liked {
+            &mut self.own_interests.likes
+        } else {
+            &mut self.own_interests.hates
+        };
+        list.retain(|held| held != &item);
+        Some(item)
+    }
+
+    /// What we like and hate, as last set.
+    #[must_use]
+    pub fn own_interests(&self) -> UserInterests {
+        self.own_interests.clone()
+    }
+
+    /// Take the `AcceptChildren` answer to send, or `None` when the server
+    /// already has this one.
+    pub fn accept_children_change(&mut self) -> Option<bool> {
+        let has_room = self.children.has_room();
+        (self.announced_accept_children != Some(has_room)).then(|| {
+            self.announced_accept_children = Some(has_room);
+            has_room
+        })
+    }
+
+    /// The upload speed the server records for us, if it has said.
+    #[must_use]
+    pub const fn own_average_speed(&self) -> Option<u32> {
+        self.own_average_speed
+    }
+
+    /// Record what the server says our own upload speed is, and re-derive the
+    /// child limit from it.
+    pub fn set_own_average_speed(&mut self, speed: u32) {
+        self.own_average_speed = Some(speed);
+        self.apply_child_limits();
+    }
+
+    /// Record the server's parent figures (codes 83 and 84).
+    pub fn set_parent_min_speed(&mut self, speed: u32) {
+        self.parent_min_speed = speed;
+        self.apply_child_limits();
+    }
+
+    pub fn set_parent_speed_ratio(&mut self, ratio: u32) {
+        self.parent_speed_ratio = ratio;
+        self.apply_child_limits();
+    }
+
+    fn apply_child_limits(&mut self) {
+        self.children.set_limits(
+            self.own_average_speed,
+            self.parent_min_speed,
+            self.parent_speed_ratio,
+        );
+    }
+
+    /// Whether something is feeding us the distributed search stream: a
+    /// parent of our own, or the server relaying searches to us. Children may
+    /// only hang from a client that has one.
+    pub fn set_fed_by(&mut self, fed: bool) {
+        self.children.set_fed(fed);
+        if !fed {
+            self.children.drop_all();
+        }
+    }
+
+    /// Record what `username` says about itself.
+    pub fn store_peer_info(
+        &mut self,
+        username: String,
+        info: crate::message::peer::PeerInfo,
+    ) {
+        self.peer_infos.insert(username, info);
+    }
+
+    /// What `username` last said about itself, if anything.
+    #[must_use]
+    pub fn peer_info(
+        &self,
+        username: &str,
+    ) -> Option<crate::message::peer::PeerInfo> {
+        self.peer_infos.get(username).cloned()
+    }
+
+    /// Drop what we hold about `username`, so a poll after a fresh request
+    /// cannot report the previous answer.
+    pub fn invalidate_peer_info(&mut self, username: &str) {
+        self.peer_infos.remove(username);
+    }
+
+    /// Record one folder's listing from `username`.
+    pub fn store_folder_contents(
+        &mut self,
+        username: String,
+        folder: String,
+        directories: Vec<SharedDirectory>,
+    ) {
+        self.folder_contents.insert((username, folder), directories);
+    }
+
+    /// Remove and return the listing of `folder` from `username`, if it has
+    /// arrived.
+    pub fn take_folder_contents(
+        &mut self,
+        username: &str,
+        folder: &str,
+    ) -> Option<Vec<SharedDirectory>> {
+        self.folder_contents
+            .remove(&(username.to_string(), folder.to_string()))
+    }
+
+    /// Who may enter the private room `room`, as last reported.
+    #[must_use]
+    pub fn private_room_members(&self, room: &str) -> Vec<String> {
+        self.private_room_members
+            .get(room)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Who runs the private room `room`, as last reported.
+    #[must_use]
+    pub fn private_room_operators(&self, room: &str) -> Vec<String> {
+        self.private_room_operators
+            .get(room)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The private rooms we belong to, in a stable order.
+    #[must_use]
+    pub fn private_rooms(&self) -> Vec<String> {
+        let mut rooms: Vec<String> =
+            self.private_room_members.keys().cloned().collect();
+        rooms.sort();
+        rooms
+    }
+
+    /// The ticker board of `room` as last reported by the server.
+    #[must_use]
+    pub fn room_tickers(&self, room: &str) -> Vec<RoomTicker> {
+        self.room_tickers.get(room).cloned().unwrap_or_default()
+    }
+
+    /// Record a recommendations reply; `global` selects the server-wide set.
+    pub fn apply_recommendations(
+        &mut self,
+        global: bool,
+        recommended: Vec<Recommendation>,
+        unrecommended: Vec<Recommendation>,
+    ) {
+        let slot = if global {
+            &mut self.global_recommendations
+        } else {
+            &mut self.recommendations
+        };
+        *slot = Some((recommended, unrecommended));
+    }
+
+    /// The last recommendations reply, or `None` until one arrives.
+    #[must_use]
+    pub fn recommendations(
+        &self,
+        global: bool,
+    ) -> Option<(Vec<Recommendation>, Vec<Recommendation>)> {
+        if global {
+            self.global_recommendations.clone()
+        } else {
+            self.recommendations.clone()
+        }
+    }
+
+    pub fn apply_item_recommendations(
+        &mut self,
+        item: String,
+        recommendations: Vec<Recommendation>,
+    ) {
+        self.item_recommendations.insert(item, recommendations);
+    }
+
+    #[must_use]
+    pub fn item_recommendations(&self, item: &str) -> Vec<Recommendation> {
+        self.item_recommendations
+            .get(item)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn apply_similar_users(&mut self, users: Vec<SimilarUser>) {
+        self.similar_users = users;
+    }
+
+    #[must_use]
+    pub fn similar_users(&self) -> Vec<SimilarUser> {
+        self.similar_users.clone()
+    }
+
+    pub fn apply_item_similar_users(
+        &mut self,
+        item: String,
+        usernames: Vec<String>,
+    ) {
+        self.item_similar_users.insert(item, usernames);
+    }
+
+    #[must_use]
+    pub fn item_similar_users(&self, item: &str) -> Vec<String> {
+        self.item_similar_users
+            .get(item)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn apply_user_interests(&mut self, interests: UserInterests) {
+        self.user_interests
+            .insert(interests.username.clone(), interests);
+    }
+
+    #[must_use]
+    pub fn user_interests(&self, username: &str) -> Option<UserInterests> {
+        self.user_interests.get(username).cloned()
+    }
+
+    /// Record the phrases the server excludes (code 160), lowercased here so
+    /// the per-file check is a plain `contains` on a lowercased path.
+    pub fn set_excluded_search_phrases(&mut self, phrases: Vec<String>) {
+        self.excluded_search_phrases =
+            phrases.iter().map(|p| p.to_lowercase()).collect();
+    }
+
+    /// The phrases the server refuses to search for.
+    #[must_use]
+    pub fn excluded_search_phrases(&self) -> Vec<String> {
+        self.excluded_search_phrases.clone()
+    }
+
+    /// Forget any interests cached for `username`, so a poll after a fresh
+    /// request cannot mistake the previous answer for this one.
+    pub fn invalidate_user_interests(&mut self, username: &str) {
+        self.user_interests.remove(username);
     }
 
     /// Record a `GetUserStatus` reply, merging it with any statistics already
@@ -877,6 +1388,15 @@ pub struct Client {
     server_handle: Option<ActorHandle<ServerMessage>>,
     context: Arc<RwLock<ClientContext>>,
     session: SessionWatch,
+    /// Tells the peer listener to stop, so a disconnected client releases the
+    /// port it bound.
+    listener_stopped: Arc<AtomicBool>,
+}
+
+impl Drop for Client {
+    fn drop(&mut self) {
+        self.disconnect();
+    }
 }
 
 impl Client {
@@ -890,20 +1410,35 @@ impl Client {
     #[must_use]
     pub fn with_settings(settings: ClientSettings) -> Self {
         logger::init();
+        let mut context = ClientContext::for_user(&settings.username);
+        context.children = children::Children::new(settings.accept_children);
         Self {
             enable_listen: settings.enable_listen,
             listen_port: settings.listen_port,
             bound_port: None,
             address: settings.server_address,
-            context: Arc::new(RwLock::new(ClientContext::for_user(
-                &settings.username,
-            ))),
+            context: Arc::new(RwLock::new(context)),
             username: settings.username,
             password: settings.password,
             version: settings.version,
             shared_directories: settings.shared_directories,
             server_handle: None,
             session: SessionWatch::default(),
+            listener_stopped: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// The children currently hanging from us in the distributed search
+    /// network, by username. Empty unless the client was built with
+    /// [`ClientSettings::accept_children`].
+    #[must_use]
+    pub fn children(&self) -> Vec<String> {
+        match self.context.read_safe() {
+            Ok(ctx) => ctx.children.usernames(),
+            Err(e) => {
+                error!("[client] children: {}", e);
+                Vec::new()
+            }
         }
     }
 
@@ -1044,12 +1579,14 @@ impl Client {
     }
 }
 
+mod children;
 mod connection;
 mod distributed;
 mod downloads;
 mod operations;
 mod rooms;
 mod search;
+mod social;
 mod upload_queue;
 mod uploads;
 

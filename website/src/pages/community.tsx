@@ -269,8 +269,10 @@ export const Community = () => {
           eyebrow="built on the library"
           title="Projects using soulseek-rs-lib."
         >
-          The protocol crate is there for anyone building their own client or
-          automation on Soulseek. These projects do.
+          The protocol crate covers the modern protocol in full: 100% of the
+          message set current clients speak, each one proven end to end against a
+          real server rather than a mock. It is there for anyone building their
+          own client or automation on Soulseek — these projects do.
         </SectionHead>
         <Cols start>
           <Prose>

@@ -336,6 +336,81 @@ impl RoomsState {
                         .push(RoomLine::system(format!("← {username}")));
                 }
             }
+            // Tickers and private-room standing are narrated into the room's
+            // own transcript: they belong to a room the user has open, and a
+            // system line is where the rest of that room's news already goes.
+            RoomEvent::Tickers { room, tickers } => {
+                if let Some(idx) = self.open_index(&room) {
+                    for ticker in tickers {
+                        self.open[idx].lines.push(RoomLine::system(format!(
+                            "≡ {}: {}",
+                            ticker.username, ticker.ticker
+                        )));
+                    }
+                }
+            }
+            RoomEvent::TickerAdded {
+                room,
+                username,
+                ticker,
+            } => {
+                if let Some(idx) = self.open_index(&room) {
+                    self.open[idx].lines.push(RoomLine::system(format!(
+                        "≡ {username}: {ticker}"
+                    )));
+                }
+            }
+            RoomEvent::TickerRemoved { room, username } => {
+                if let Some(idx) = self.open_index(&room) {
+                    self.open[idx].lines.push(RoomLine::system(format!(
+                        "≡ {username} cleared their ticker"
+                    )));
+                }
+            }
+            RoomEvent::PrivateRosterChanged {
+                room,
+                username,
+                members,
+                added,
+            } => {
+                if let Some(idx) = self.open_index(&room) {
+                    let roster = if members { "member" } else { "operator" };
+                    let verb = if added { "is now" } else { "is no longer" };
+                    self.open[idx].lines.push(RoomLine::system(format!(
+                        "{username} {verb} a {roster}"
+                    )));
+                }
+            }
+            RoomEvent::OwnStandingChanged {
+                room,
+                members,
+                granted,
+            } => {
+                if let Some(idx) = self.open_index(&room) {
+                    let what = if members {
+                        "membership"
+                    } else {
+                        "operator status"
+                    };
+                    let verb = if granted { "granted" } else { "revoked" };
+                    self.open[idx].lines.push(RoomLine::system(format!(
+                        "— your {what} was {verb} —"
+                    )));
+                }
+            }
+            RoomEvent::CantCreate { room } => {
+                if let Some(idx) = self.open_index(&room) {
+                    self.open[idx].lines.push(RoomLine::system(
+                        "— this room cannot be created —".to_string(),
+                    ));
+                }
+            }
+            // The global feed carries rooms the user has not opened, and the
+            // private rosters are read from the client rather than rendered
+            // into a transcript.
+            RoomEvent::GlobalMessage { .. }
+            | RoomEvent::PrivateMembers { .. }
+            | RoomEvent::PrivateOperators { .. } => {}
         }
         // The active room's member list may have grown/shrunk (join/leave or a
         // wholesale replace on Joined); keep the selection highlight in range so

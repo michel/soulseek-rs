@@ -161,7 +161,7 @@ fn build_search_response_matches_shares_and_echoes_token() {
     let shares = Shares::scan(&dir).unwrap();
 
     let response =
-        build_search_response(&shares, "me", 99, "xyzzy", true, 0, 0)
+        build_search_response(&shares, "me", 99, "xyzzy", true, 0, 0, &[])
             .expect("a matching share yields a response");
     let mut decoded =
         crate::message::Message::new_with_data(response.get_buffer());
@@ -172,7 +172,7 @@ fn build_search_response_matches_shares_and_echoes_token() {
     assert!(result.files.iter().any(|f| f.name.contains("probe_xyzzy")));
 
     assert!(
-        build_search_response(&shares, "me", 1, "nomatch", true, 0, 0)
+        build_search_response(&shares, "me", 1, "nomatch", true, 0, 0, &[])
             .is_none()
     );
     let _ = std::fs::remove_dir_all(dir);
@@ -551,7 +551,7 @@ fn an_expired_broker_connect_fails_the_queued_downloads() {
     let (_ops_tx, ops_rx) = mpsc::channel();
     Client::listen_to_client_operations(
         ops_rx,
-        client.context,
+        client.context.clone(),
         "u".to_string(),
     );
 
@@ -582,7 +582,7 @@ fn a_replayed_transfer_response_does_not_start_a_second_transfer() {
     let (ops_tx, ops_rx) = mpsc::channel();
     Client::listen_to_client_operations(
         ops_rx,
-        client.context,
+        client.context.clone(),
         "u".to_string(),
     );
 
@@ -648,7 +648,7 @@ fn a_cancelled_download_is_not_started_when_the_peer_allows_it() {
     let (ops_tx, ops_rx) = mpsc::channel();
     Client::listen_to_client_operations(
         ops_rx,
-        client.context,
+        client.context.clone(),
         "u".to_string(),
     );
     let peer = Peer::new(
@@ -837,4 +837,350 @@ fn a_peer_message_nobody_could_deliver_expires() {
     ctx.queue_peer_message("ghost", crate::message::Message::new());
     ctx.expire_pending_peer_messages(Instant::now() + PENDING_PEER_TTL);
     assert!(ctx.take_peer_messages("ghost").is_empty(), "expired");
+}
+
+#[test]
+fn a_new_ticker_replaces_that_users_previous_one() {
+    // The server treats a user's ticker as singular: a second one from the
+    // same user supersedes the first rather than stacking beside it.
+    let mut ctx = ClientContext::new();
+    ctx.apply_room_event(RoomEvent::Tickers {
+        room: "jazz".into(),
+        tickers: vec![
+            RoomTicker {
+                username: "alice".into(),
+                ticker: "first".into(),
+            },
+            RoomTicker {
+                username: "bob".into(),
+                ticker: "bobs".into(),
+            },
+        ],
+    });
+    ctx.apply_room_event(RoomEvent::TickerAdded {
+        room: "jazz".into(),
+        username: "alice".into(),
+        ticker: "second".into(),
+    });
+
+    let board = ctx.room_tickers("jazz");
+    assert_eq!(board.len(), 2);
+    assert_eq!(
+        board.iter().find(|t| t.username == "alice").unwrap().ticker,
+        "second"
+    );
+}
+
+#[test]
+fn a_removed_ticker_leaves_the_rest_of_the_board() {
+    let mut ctx = ClientContext::new();
+    ctx.apply_room_event(RoomEvent::Tickers {
+        room: "jazz".into(),
+        tickers: vec![
+            RoomTicker {
+                username: "alice".into(),
+                ticker: "a".into(),
+            },
+            RoomTicker {
+                username: "bob".into(),
+                ticker: "b".into(),
+            },
+        ],
+    });
+    ctx.apply_room_event(RoomEvent::TickerRemoved {
+        room: "jazz".into(),
+        username: "alice".into(),
+    });
+
+    let board = ctx.room_tickers("jazz");
+    assert_eq!(board.len(), 1);
+    assert_eq!(board[0].username, "bob");
+}
+
+#[test]
+fn a_global_message_is_queued_without_touching_room_membership() {
+    // The global feed carries messages from rooms we have not joined; they
+    // must not invent a roster for those rooms.
+    let mut ctx = ClientContext::new();
+    ctx.apply_room_event(RoomEvent::GlobalMessage {
+        room: "elsewhere".into(),
+        username: "alice".into(),
+        message: "hi".into(),
+    });
+    assert!(ctx.room_members("elsewhere").is_empty());
+    assert_eq!(ctx.take_room_events().len(), 1);
+}
+
+#[test]
+fn own_and_global_recommendations_are_kept_apart() {
+    let mut ctx = ClientContext::new();
+    ctx.apply_recommendations(
+        false,
+        vec![Recommendation {
+            item: "jazz".into(),
+            rating: 2,
+        }],
+        Vec::new(),
+    );
+    ctx.apply_recommendations(
+        true,
+        vec![Recommendation {
+            item: "pop".into(),
+            rating: 9,
+        }],
+        Vec::new(),
+    );
+
+    assert_eq!(ctx.recommendations(false).unwrap().0[0].item, "jazz");
+    assert_eq!(ctx.recommendations(true).unwrap().0[0].item, "pop");
+}
+
+#[test]
+fn asking_again_about_a_users_interests_drops_the_previous_answer() {
+    let mut ctx = ClientContext::new();
+    ctx.apply_user_interests(UserInterests {
+        username: "alice".into(),
+        likes: vec!["jazz".into()],
+        hates: Vec::new(),
+    });
+    assert!(ctx.user_interests("alice").is_some());
+
+    ctx.invalidate_user_interests("alice");
+    assert!(
+        ctx.user_interests("alice").is_none(),
+        "a stale answer must not be mistaken for the next one"
+    );
+}
+
+#[test]
+fn a_private_room_roster_tracks_who_is_added_and_removed() {
+    let mut ctx = ClientContext::new();
+    ctx.apply_room_event(RoomEvent::PrivateMembers {
+        room: "club".into(),
+        users: vec!["bob".into(), "alice".into(), "bob".into()],
+    });
+    assert_eq!(
+        ctx.private_room_members("club"),
+        vec!["alice".to_string(), "bob".to_string()],
+        "a roster is sorted and free of repeats"
+    );
+
+    ctx.apply_room_event(RoomEvent::PrivateRosterChanged {
+        room: "club".into(),
+        username: "carol".into(),
+        members: true,
+        added: true,
+    });
+    ctx.apply_room_event(RoomEvent::PrivateRosterChanged {
+        room: "club".into(),
+        username: "alice".into(),
+        members: true,
+        added: false,
+    });
+    assert_eq!(
+        ctx.private_room_members("club"),
+        vec!["bob".to_string(), "carol".to_string()]
+    );
+
+    // Operators are a separate roster in the same room.
+    ctx.apply_room_event(RoomEvent::PrivateRosterChanged {
+        room: "club".into(),
+        username: "bob".into(),
+        members: false,
+        added: true,
+    });
+    assert_eq!(ctx.private_room_operators("club"), vec!["bob".to_string()]);
+    assert_eq!(ctx.private_rooms(), vec!["club".to_string()]);
+}
+
+#[test]
+fn revoked_membership_drops_the_room_we_can_no_longer_see() {
+    let mut ctx = ClientContext::new();
+    ctx.apply_room_event(RoomEvent::PrivateMembers {
+        room: "club".into(),
+        users: vec!["alice".into()],
+    });
+    ctx.apply_room_event(RoomEvent::PrivateOperators {
+        room: "club".into(),
+        users: vec!["alice".into()],
+    });
+
+    ctx.apply_room_event(RoomEvent::OwnStandingChanged {
+        room: "club".into(),
+        members: true,
+        granted: false,
+    });
+    assert!(ctx.private_rooms().is_empty());
+    assert!(ctx.private_room_operators("club").is_empty());
+}
+
+#[test]
+fn losing_operatorship_keeps_the_roster_we_can_still_see() {
+    // Demotion does not blind us: we are still a member, and the room's other
+    // operators are still ours to show. The server narrates our own removal
+    // from that roster separately (code 144).
+    let mut ctx = ClientContext::new();
+    ctx.apply_room_event(RoomEvent::PrivateMembers {
+        room: "club".into(),
+        users: vec!["alice".into()],
+    });
+    ctx.apply_room_event(RoomEvent::PrivateOperators {
+        room: "club".into(),
+        users: vec!["alice".into(), "bob".into()],
+    });
+
+    ctx.apply_room_event(RoomEvent::OwnStandingChanged {
+        room: "club".into(),
+        members: false,
+        granted: false,
+    });
+    assert_eq!(ctx.private_room_members("club"), vec!["alice".to_string()]);
+    assert_eq!(
+        ctx.private_room_operators("club"),
+        vec!["alice".to_string(), "bob".to_string()],
+        "the other operators are still there to show"
+    );
+
+    ctx.apply_room_event(RoomEvent::PrivateRosterChanged {
+        room: "club".into(),
+        username: "alice".into(),
+        members: false,
+        added: false,
+    });
+    assert_eq!(
+        ctx.private_room_operators("club"),
+        vec!["bob".to_string()],
+        "only the demotion the server narrates removes us"
+    );
+}
+
+#[test]
+fn a_file_the_server_excludes_is_left_out_of_a_reply() {
+    // The server's excluded phrases (code 160) police what travels the search
+    // network: a matching file whose path carries one must not be offered,
+    // and a reply with nothing left is not sent at all.
+    let dir = std::env::temp_dir()
+        .join(format!("soulseek-excluded-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("Spam_Xyzzy.bin"), b"data").unwrap();
+    let shares = Shares::scan(&dir).unwrap();
+
+    assert!(
+        build_search_response(&shares, "me", 1, "xyzzy", true, 0, 0, &[])
+            .is_some(),
+        "with no exclusions the file is offered"
+    );
+    assert!(
+        build_search_response(
+            &shares,
+            "me",
+            1,
+            "xyzzy",
+            true,
+            0,
+            0,
+            &["spam".to_string()],
+        )
+        .is_none(),
+        "an excluded phrase in the path, matched case-insensitively, \
+         withholds the file — and with no files there is no reply"
+    );
+    assert!(
+        build_search_response(
+            &shares,
+            "me",
+            1,
+            "xyzzy",
+            true,
+            0,
+            0,
+            &["unrelated".to_string()],
+        )
+        .is_some(),
+        "an exclusion the path does not carry changes nothing"
+    );
+
+    // The phrases are lowercased where they arrive, so a server that sends
+    // one capitalised still matches a path.
+    let mut ctx = ClientContext::new();
+    ctx.set_excluded_search_phrases(vec!["SPAM".to_string()]);
+    assert!(
+        build_search_response(
+            &shares,
+            "me",
+            1,
+            "xyzzy",
+            true,
+            0,
+            0,
+            &ctx.excluded_search_phrases(),
+        )
+        .is_none(),
+        "a capitalised phrase from the server still withholds the file"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn our_own_interests_are_kept_lowercased_and_deduplicated() {
+    // The server matches interests case-insensitively and forgets them when
+    // the session ends, so they are held here in one spelling to be sent
+    // again next login.
+    let mut ctx = ClientContext::new();
+    assert_eq!(
+        ctx.add_own_interest("  Krautrock ", true).as_deref(),
+        Some("krautrock")
+    );
+    assert_eq!(
+        ctx.add_own_interest("   ", true),
+        None,
+        "an empty interest is not stored, and is not sent either"
+    );
+    ctx.add_own_interest("KRAUTROCK", true);
+    ctx.add_own_interest("Muzak", false);
+
+    let interests = ctx.own_interests();
+    assert_eq!(interests.likes, ["krautrock"]);
+    assert_eq!(interests.hates, ["muzak"]);
+
+    ctx.remove_own_interest("KrautRock", true);
+    assert!(ctx.own_interests().likes.is_empty());
+    assert_eq!(
+        ctx.own_interests().hates,
+        ["muzak"],
+        "the other list stands"
+    );
+}
+
+#[test]
+fn leaving_a_room_drops_its_ticker_board() {
+    let mut ctx = ClientContext::new();
+    ctx.apply_room_event(RoomEvent::Tickers {
+        room: "jazz".into(),
+        tickers: vec![RoomTicker {
+            username: "alice".into(),
+            ticker: "hi".into(),
+        }],
+    });
+    ctx.apply_room_event(RoomEvent::Left {
+        room: "jazz".into(),
+    });
+    assert!(
+        ctx.room_tickers("jazz").is_empty(),
+        "a board for a room we left is stale"
+    );
+}
+
+#[test]
+fn the_server_is_told_our_child_capacity_only_when_it_changes() {
+    // AcceptChildren is a standing state on the server, not a heartbeat.
+    let mut ctx = ClientContext::new();
+    assert_eq!(
+        ctx.accept_children_change(),
+        Some(false),
+        "the first answer is always worth sending"
+    );
+    assert_eq!(ctx.accept_children_change(), None, "unchanged, so silent");
 }

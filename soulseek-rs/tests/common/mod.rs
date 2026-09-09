@@ -137,6 +137,7 @@ pub fn login(host: &str, port: u16, user: &str, shares: Vec<String>) -> Client {
         enable_listen: true,
         listen_port: free_port().expect("peer port"),
         shared_directories: shares,
+        accept_children: false,
         version: soulseek_rs::ClientVersion::default(),
     });
     client.connect().expect("peer connect");
