@@ -12,7 +12,7 @@ use crate::peer::{ConnectionType, DownloadError, DownloadPeer, Peer};
 use crate::types::Download;
 use crate::utils::lock::RwLockExt;
 use crate::utils::semaphore::{Permit, Semaphore};
-use crate::{DownloadStatus, debug, error, info, trace};
+use crate::{debug, error, info, trace};
 
 /// How long to wait before accepting again after a failure.
 ///
@@ -130,20 +130,10 @@ fn wait_for_download_registration(
     deadline: Instant,
 ) -> Option<Download> {
     loop {
-        let download = match client_context.read_safe() {
-            Ok(context) => context
-                .get_download_by_token(token)
-                .filter(|d| {
-                    d.username == username
-                        && !matches!(
-                            d.status,
-                            DownloadStatus::InProgress { .. }
-                                | DownloadStatus::Paused { .. }
-                                | DownloadStatus::Completed
-                                | DownloadStatus::Cancelled
-                        )
-                })
-                .cloned(),
+        let download = match client_context.write_safe() {
+            Ok(mut context) => {
+                context.downloads.claim_for_peer(token, username)
+            }
             Err(e) => {
                 error!("[listener] client context lock: {}", e);
                 return None;
@@ -224,8 +214,6 @@ fn handle_file_connection(
                 Instant::now() + TOKEN_REGISTRATION_TIMEOUT,
             )
         });
-    let failure_token = download.as_ref().map(|d| d.token);
-
     let download_peer = DownloadPeer::new(
         peer.username.clone(),
         peer.host.clone(),
@@ -241,16 +229,6 @@ fn handle_file_connection(
         Some(stream),
     ) {
         Ok((download, filename)) => {
-            let _ = download.sender.send(DownloadStatus::Completed);
-            match context.client_context.write_safe() {
-                Ok(mut ctx) => ctx.update_download_with_status(
-                    download.token,
-                    DownloadStatus::Completed,
-                ),
-                Err(e) => {
-                    error!("[listener] handle_file_connection write: {}", e);
-                }
-            }
             info!(
                 "Successfully downloaded {} bytes to {}",
                 download.size, filename
@@ -262,22 +240,6 @@ fn handle_file_connection(
                 "Failed to download file from {}:{} (token: {}) - Error: {}",
                 peer.host, peer.port, token, e
             );
-            // A failed incoming transfer (e.g. a truncated/incomplete download)
-            // must not leave the download stuck as Queued/InProgress forever.
-            if let Some(failure_token) = failure_token {
-                match context.client_context.write_safe() {
-                    Ok(mut ctx) => ctx.update_download_with_status(
-                        failure_token,
-                        DownloadStatus::Failed(Some(e.to_string())),
-                    ),
-                    Err(e) => {
-                        error!(
-                            "[listener] handle_file_connection fail write: {}",
-                            e
-                        );
-                    }
-                }
-            }
         }
     }
 }
@@ -491,7 +453,7 @@ impl Listen {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::DownloadMetadata;
+    use crate::types::{DownloadMetadata, DownloadStatus};
     use std::io::Write;
     use std::net::TcpListener;
     use std::sync::mpsc;
