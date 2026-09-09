@@ -135,52 +135,33 @@ impl Client {
                         }
                     }
                     ClientOperation::DownloadFromPeer(token, peer, allowed) => {
-                        let maybe_download = match client_context.read_safe() {
-                            Ok(ctx) => {
-                                ctx.get_download_by_token(token).cloned()
-                            }
+                        let maybe_download = match client_context.write_safe() {
+                            Ok(mut ctx) => ctx
+                                .downloads
+                                .claim_for_peer(token, &peer.username),
                             Err(e) => {
-                                error!("[client] DownloadFromPeer read: {}", e);
+                                error!(
+                                    "[client] DownloadFromPeer write: {}",
+                                    e
+                                );
                                 continue;
                             }
                         };
-                        let own_username = own_username.clone();
-                        let client_context_clone = client_context.clone();
-
                         trace!(
                             "[client] DownloadFromPeer token: {} peer: {:?}",
                             token, peer
                         );
                         let Some(download) = maybe_download else {
-                            error!(
-                                "Can't find download with token {:?}",
-                                token
+                            debug!(
+                                "[client] transfer token {} is missing, belongs \
+                                 to another peer, or is already claimed; ignoring",
+                                token,
                             );
                             continue;
                         };
-                        if matches!(
-                            download.status,
-                            DownloadStatus::InProgress { .. }
-                                | DownloadStatus::Completed
-                                | DownloadStatus::Cancelled
-                        ) {
-                            debug!(
-                                "[client] transfer token {} already claimed; \
-                                 ignoring replayed TransferResponse",
-                                token
-                            );
-                            continue;
-                        }
-                        if let Ok(mut ctx) = client_context.write_safe() {
-                            ctx.update_download_with_status(
-                                token,
-                                DownloadStatus::InProgress {
-                                    bytes_downloaded: 0,
-                                    total_bytes: download.size,
-                                    speed_bytes_per_sec: 0.0,
-                                },
-                            );
-                        }
+
+                        let own_username = own_username.clone();
+                        let client_context = client_context.clone();
 
                         thread::spawn(move || {
                             let download_peer = DownloadPeer::new(
@@ -191,35 +172,12 @@ impl Client {
                                 allowed,
                                 own_username,
                             );
-                            let Some(filename) =
-                                download.filename.split('\\').next_back()
-                            else {
-                                error!(
-                                    "Cant find filename to save download: {:?}",
-                                    download.filename
-                                );
-                                return;
-                            };
                             match download_peer.download_file(
-                                client_context_clone.clone(),
+                                client_context,
                                 Some(download.clone()),
                                 None,
                             ) {
                                 Ok((download, filename)) => {
-                                    let _ = download
-                                        .sender
-                                        .send(DownloadStatus::Completed);
-                                    match client_context_clone.write_safe() {
-                                        Ok(mut ctx) => ctx
-                                            .update_download_with_status(
-                                                download.token,
-                                                DownloadStatus::Completed,
-                                            ),
-                                        Err(e) => error!(
-                                            "[client] download complete write: {}",
-                                            e
-                                        ),
-                                    }
                                     info!(
                                         "Successfully downloaded {} bytes to {}",
                                         download.size, filename
@@ -227,24 +185,9 @@ impl Client {
                                 }
                                 Err(DownloadError::Cancelled) => {}
                                 Err(e) => {
-                                    let reason = Some(e.to_string());
-                                    let _ = download.sender.send(
-                                        DownloadStatus::Failed(reason.clone()),
-                                    );
-                                    match client_context_clone.write_safe() {
-                                        Ok(mut ctx) => ctx
-                                            .update_download_with_status(
-                                                download.token,
-                                                DownloadStatus::Failed(reason),
-                                            ),
-                                        Err(e) => error!(
-                                            "[client] download failed write: {}",
-                                            e
-                                        ),
-                                    }
                                     error!(
                                         "Failed to download file '{}' from {}:{} (token: {}) - Error: {}",
-                                        filename,
+                                        download.filename,
                                         peer.host,
                                         peer.port,
                                         download.token,

@@ -1182,7 +1182,7 @@ fn an_interrupted_download_resumes_from_its_partial_file() {
     client.connect().expect("connect");
     assert!(client.login().expect("login"));
 
-    let filename = "resumed_song.mp3";
+    let filename = "resumed_file.bin";
     let content: Vec<u8> = (0..2000u32).map(|i| (i % 251) as u8).collect();
     let size = content.len() as u64;
     let already_have = 800usize;

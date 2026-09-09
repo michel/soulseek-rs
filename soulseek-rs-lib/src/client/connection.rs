@@ -1,8 +1,8 @@
 use super::{
     Arc, Client, ClientContext, ClientOperation, ConnectionType, DownloadPeer,
-    DownloadStatus, Listen, Peer, PeerRegistry, Receiver, Result, RwLock,
-    RwLockExt, Sender, ServerActor, ServerMessage, Shares, SoulseekRs,
-    TcpStream, error, info, mpsc, thread, trace, warn,
+    Listen, Peer, PeerRegistry, Receiver, Result, RwLock, RwLockExt, Sender,
+    ServerActor, ServerMessage, Shares, SoulseekRs, TcpStream, error, info,
+    mpsc, thread, trace, warn,
 };
 
 /// Ceiling on the wait for a login verdict. Generous enough for a slow server
@@ -282,27 +282,12 @@ impl Client {
                     own_username,
                 );
 
-                match download_peer.download_file(
-                    client_context.clone(),
-                    None,
-                    None,
-                ) {
+                match download_peer.download_file(client_context, None, None) {
                     Ok((download, filename)) => {
                         trace!(
                             "[client] downloaded {} bytes {:?} ",
                             filename, download.size
                         );
-                        let _ = download.sender.send(DownloadStatus::Completed);
-                        match client_context.write_safe() {
-                            Ok(mut ctx) => ctx.update_download_with_status(
-                                download.token,
-                                DownloadStatus::Completed,
-                            ),
-                            Err(e) => error!(
-                                "[client] connect_to_peer F write: {}",
-                                e
-                            ),
-                        }
                     }
                     Err(e) => {
                         trace!("[client] failed to download: {}", e);

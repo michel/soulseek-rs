@@ -567,16 +567,17 @@ fn a_replayed_transfer_response_does_not_start_a_second_transfer() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let port = u32::from(listener.local_addr().unwrap().port());
+    let download_dir = std::env::temp_dir()
+        .join(format!("soulseek-replayed-transfer-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&download_dir);
+    std::fs::create_dir_all(&download_dir).unwrap();
 
     let client = Client::new("u", "p");
     let (sender, _receiver) = mpsc::channel();
-    client.context.write().unwrap().add_download(download(
-        "peer",
-        "f.mp3",
-        9,
-        DownloadStatus::Queued,
-        sender,
-    ));
+    let mut queued =
+        download("peer", "f.mp3", 9, DownloadStatus::Queued, sender);
+    queued.download_directory = download_dir.display().to_string();
+    client.context.write().unwrap().add_download(queued);
 
     let (ops_tx, ops_rx) = mpsc::channel();
     Client::listen_to_client_operations(
@@ -625,6 +626,7 @@ fn a_replayed_transfer_response_does_not_start_a_second_transfer() {
         connections, 1,
         "a replayed TransferResponse must not dial the peer again"
     );
+    let _ = std::fs::remove_dir_all(download_dir);
 }
 
 #[test]
