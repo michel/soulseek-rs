@@ -551,7 +551,7 @@ fn an_expired_broker_connect_fails_the_queued_downloads() {
     let (_ops_tx, ops_rx) = mpsc::channel();
     Client::listen_to_client_operations(
         ops_rx,
-        client.context,
+        client.context.clone(),
         "u".to_string(),
     );
 
@@ -582,7 +582,7 @@ fn a_replayed_transfer_response_does_not_start_a_second_transfer() {
     let (ops_tx, ops_rx) = mpsc::channel();
     Client::listen_to_client_operations(
         ops_rx,
-        client.context,
+        client.context.clone(),
         "u".to_string(),
     );
 
@@ -648,7 +648,7 @@ fn a_cancelled_download_is_not_started_when_the_peer_allows_it() {
     let (ops_tx, ops_rx) = mpsc::channel();
     Client::listen_to_client_operations(
         ops_rx,
-        client.context,
+        client.context.clone(),
         "u".to_string(),
     );
     let peer = Peer::new(

@@ -133,6 +133,30 @@ impl Client {
         Ok(())
     }
 
+    /// Close the server connection and every peer connection.
+    ///
+    /// The server sees the socket close and marks us offline, which is what
+    /// releases the username: a client that simply goes out of scope without
+    /// this leaves a session the server still believes in, so mail addressed
+    /// to us is delivered to a connection nobody is reading and later logins
+    /// collide with our own ghost.
+    ///
+    /// Called automatically when the client is dropped. The peer listener's
+    /// bound port, if one was opened, is released with the process.
+    pub fn disconnect(&mut self) {
+        if let Some(handle) = self.server_handle.take() {
+            let _ = handle.stop();
+        }
+        let registry = self
+            .context
+            .read_safe()
+            .ok()
+            .and_then(|ctx| ctx.peer_registry.clone());
+        if let Some(registry) = registry {
+            registry.stop_all();
+        }
+    }
+
     /// Log in and wait for the server's verdict.
     ///
     /// The wait is bounded: the actor only answers once it has a working

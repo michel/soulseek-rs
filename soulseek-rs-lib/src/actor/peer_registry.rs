@@ -202,6 +202,24 @@ impl PeerRegistry {
         None
     }
 
+    /// Stop every peer actor and empty the registry, closing the connections
+    /// they hold. Used when the client shuts down.
+    pub fn stop_all(&self) {
+        let handles = match self.peers.lock_safe() {
+            Ok(mut peers) => peers
+                .drain()
+                .map(|(_, (_, handle))| handle)
+                .collect::<Vec<_>>(),
+            Err(e) => {
+                error!("[peer_registry] stop_all: {}", e);
+                return;
+            }
+        };
+        for handle in handles {
+            let _ = handle.stop();
+        }
+    }
+
     #[must_use]
     pub fn contains(&self, username: &str) -> bool {
         match self.peers.lock_safe() {

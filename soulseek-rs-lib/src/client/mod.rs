@@ -1163,6 +1163,12 @@ pub struct Client {
     session: SessionWatch,
 }
 
+impl Drop for Client {
+    fn drop(&mut self) {
+        self.disconnect();
+    }
+}
+
 impl Client {
     pub fn new(
         username: impl Into<String>,

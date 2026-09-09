@@ -4708,3 +4708,103 @@ fn a_private_room_someone_else_owns_cannot_be_taken() {
         "a refused room must not appear as one we belong to"
     );
 }
+
+#[test]
+fn an_acknowledged_offline_message_is_not_delivered_twice() {
+    // Private messages sent to an offline user are stored by the server and
+    // handed over at the next login; the client acknowledges each one
+    // (MessageAcked, code 23) so the server drops it. Without that ack the
+    // same message arrives again on every login, which is what this pins.
+    let server = server_or_skip!();
+
+    // Register the recipient so the server will hold mail for them.
+    let mut recipient =
+        Client::with_settings(server.settings("e2e_ack_recipient", "pw"));
+    recipient.connect().expect("recipient connect");
+    assert!(recipient.login().expect("recipient login"));
+    drop(recipient);
+    // The dropped session's socket must actually be gone before the mail is
+    // sent, or the server delivers it live to a connection nobody is reading.
+    std::thread::sleep(Duration::from_secs(2));
+
+    let mut sender =
+        Client::with_settings(server.settings("e2e_ack_sender", "pw"));
+    sender.connect().expect("sender connect");
+    assert!(sender.login().expect("sender login"));
+    let body = "left while you were out";
+    sender
+        .send_private_message("e2e_ack_recipient", body)
+        .expect("send to an offline user");
+    std::thread::sleep(Duration::from_millis(500));
+
+    let received_once = |label: &str| -> bool {
+        let mut client =
+            Client::with_settings(server.settings("e2e_ack_recipient", "pw"));
+        client.connect().unwrap_or_else(|e| panic!("{label}: {e}"));
+        assert!(client.login().expect("recipient login"), "{label}");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut got = false;
+        while Instant::now() < deadline && !got {
+            got = client
+                .take_private_messages()
+                .iter()
+                .any(|m| m.message() == body);
+            if !got {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+        std::thread::sleep(Duration::from_millis(500));
+        got
+    };
+
+    assert!(
+        received_once("first login"),
+        "the stored message should arrive at the next login"
+    );
+    assert!(
+        !received_once("second login"),
+        "an acknowledged message must not be delivered again"
+    );
+}
+
+#[test]
+fn a_wishlist_search_is_answered_like_any_other() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    let content: Vec<u8> = (0..1024u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(share_dir.join("e2e_wishlist_talisman.bin"), &content)
+        .unwrap();
+
+    let (_sharer, searcher) = sharer_and_searcher(
+        &server,
+        &share_dir,
+        "e2e_wish_sharer",
+        "e2e_wish_seeker",
+    );
+
+    // A wish returns at once; its results accumulate under the query.
+    let query = "talisman";
+    searcher
+        .start_wishlist_search(query)
+        .expect("start a wishlist search");
+
+    let reply = reply_from(&searcher, query, "e2e_wish_sharer")
+        .expect("a wishlist search should be answered like a plain one");
+    assert!(
+        reply
+            .files
+            .iter()
+            .any(|f| f.name.contains("e2e_wishlist_talisman")),
+        "the reply should carry the matching file, got {:?}",
+        reply.files
+    );
+
+    // The server also announces how often it will accept one.
+    assert!(
+        searcher.wishlist_interval() > Duration::ZERO,
+        "the wishlist interval should be a real wait"
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
