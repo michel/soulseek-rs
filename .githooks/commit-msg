@@ -1,0 +1,20 @@
+#!/bin/sh
+# Commits carry the author's attribution and nothing else. Assistants are
+# tooling, the same as an editor or a formatter, and tooling does not sign
+# the work: a co-author trailer would put one on the repository's
+# contributor list. The setting and CLAUDE.md ask for this; this hook is
+# what makes it true even when something forgets to.
+#
+# Enable it once per clone:  git config core.hooksPath .githooks
+
+msg="$1"
+tmp="$msg.attribution"
+
+grep -v -i -E \
+  '^(Co-Authored-By:.*(claude|anthropic|copilot|cursor|codex)|Claude-Session:|Generated with .*Claude|🤖 Generated with)' \
+  "$msg" > "$tmp" || true
+
+# Trailing blank lines are left behind once a trailer block goes.
+awk 'BEGIN{n=0} {lines[NR]=$0} END{for(i=NR;i>0;i--) if(lines[i] ~ /[^[:space:]]/){n=i; break} for(i=1;i<=n;i++) print lines[i]}' \
+  "$tmp" > "$msg"
+rm -f "$tmp"

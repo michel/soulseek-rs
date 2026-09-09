@@ -1,1 +1,4 @@
 /target
+
+# Editor and assistant scratch, not repository content
+.claude/
