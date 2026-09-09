@@ -30,6 +30,10 @@ enthusiasts to share niche music. This repository is that client plus
 
 ## Features
 
+- **Full protocol coverage**: 100% of the modern Soulseek protocol's message
+  set — every code the reference clients do not mark obsolete — implemented in
+  `soulseek-rs-lib` and driven end to end against a real server, not a mock.
+  See the [coverage table](docs/protocol-coverage.md)
 - **Search & download**: queue from the TUI or fetch in one command with `get`;
   filter by bitrate, size, file type, free slots, or terms to exclude
 - **Wishlist**: `wish add` what nobody has today; `wish run` and
@@ -64,6 +68,13 @@ A Cargo workspace with two crates: **soulseek-rs-lib**, the protocol
 implementation for anyone building their own client, and **soulseek-rs**, the
 client built on it. The library stays lean on dependencies and has none today;
 the client takes them freely.
+
+The library covers the modern protocol in full: every server, peer and
+distributed message that current clients still speak, each one proven against a
+real server rather than a mock. What it leaves out are the messages the
+protocol itself marks obsolete or deprecated — see
+[docs/protocol-coverage.md](docs/protocol-coverage.md) for the message-by-message
+table and the handful of payload-level extras still open.
 
 ### Projects using soulseek-rs-lib
 

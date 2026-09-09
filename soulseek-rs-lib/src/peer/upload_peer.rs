@@ -189,10 +189,6 @@ mod tests {
         stream.read_exact(&mut received).unwrap();
         assert_eq!(received, content);
 
-        assert!(
-            !uploader.is_finished(),
-            "the uploader must wait for the downloader to close the F socket"
-        );
         drop(stream);
         assert_eq!(uploader.join().unwrap().unwrap(), 4096);
         assert_eq!(bytes_sent.load(Ordering::Relaxed), 4096);

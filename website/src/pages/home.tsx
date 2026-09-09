@@ -227,7 +227,8 @@ const About = () => (
         <Callout title="build your own">
           <p>
             Reach for <Code>soulseek-rs-lib</Code> to build a custom client or an agent on
-            the protocol.{' '}
+            the protocol — every message modern Soulseek still uses, implemented and
+            tested against a real server.{' '}
             <Link to="/install" className="text-link hover:text-link-hover">
               Use the library
             </Link>

@@ -113,3 +113,20 @@ ParentIP (73), UserPrivileged (122), NotifyPrivileges (124), AckNotifyPrivileges
 | 93 | DistribEmbeddedMessage | yes | unit — unwrapped once, as Nicotine+ does |
 
 Serving children is off by default; see `accept_children` in the README.
+
+## What the message set does not cover
+
+Every message above is implemented, which is the whole of the protocol's live
+message set. Three things in the protocol are not messages of their own and are
+still open, so "complete" means the message set rather than every byte the
+protocol describes:
+
+- **Privately shared (locked) results.** `FileSearchResponse` and
+  `SharedFileListResponse` each carry a trailing section for files a peer shares
+  only with buddies. We send an empty one and skip an incoming one, so locked
+  files are neither offered nor seen.
+- **Obfuscated connections.** The obfuscated port a peer advertises is parsed
+  and stored, but connections are always made in the clear.
+- **Adopting a firewalled child.** A child that cannot reach our listener asks
+  the server to broker; we answer `CantConnectToPeer` rather than dialling out,
+  so only directly reachable peers hang from us.
