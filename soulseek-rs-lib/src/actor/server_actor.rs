@@ -27,6 +27,10 @@ use crate::message::server::UserLeftRoomHandler;
 use crate::message::server::WatchUserHandler;
 use crate::message::server::WishListIntervalHandler;
 use crate::message::server::{
+    CantCreateRoomHandler, OwnRoomStandingHandler, RoomMembersHandler,
+    RoomOperatorsHandler, RoomRosterChangeHandler,
+};
+use crate::message::server::{
     GetUserStatsHandler, GetUserStatusHandler, RoomListHandler,
 };
 use crate::message::server::{
@@ -229,6 +233,36 @@ pub enum ServerMessage {
     },
     /// Phrases the server refuses to search for (code 160).
     ExcludedSearchPhrases(Vec<String>),
+    /// Who may enter a private room (code 133).
+    PrivateRoomMembers {
+        room: String,
+        users: Vec<String>,
+    },
+    /// Who runs a private room (code 148).
+    PrivateRoomOperators {
+        room: String,
+        users: Vec<String>,
+    },
+    /// One user joined or left a private room's member or operator roster
+    /// (codes 134/135 and 143/144).
+    PrivateRoomRosterChanged {
+        room: String,
+        username: String,
+        /// True for the member roster, false for the operator roster.
+        members: bool,
+        added: bool,
+    },
+    /// Our own membership (139/140) or operatorship (145/146) of a private
+    /// room was granted or revoked.
+    OwnRoomStandingChanged {
+        room: String,
+        members: bool,
+        granted: bool,
+    },
+    /// The room we asked to join could not be created (code 1003).
+    CantCreateRoom {
+        room: String,
+    },
 }
 
 pub struct ServerActor {
@@ -386,6 +420,19 @@ impl ServerActor {
         handlers.register_handler(GetPeerAddressHandler);
         handlers.register_handler(ConnectToPeerHandler);
         handlers.register_handler(CantConnectToPeerHandler);
+        handlers.register_handler(RoomMembersHandler);
+        handlers.register_handler(RoomOperatorsHandler);
+        handlers.register_handler(RoomRosterChangeHandler::member_added());
+        handlers.register_handler(RoomRosterChangeHandler::member_removed());
+        handlers.register_handler(RoomRosterChangeHandler::operator_added());
+        handlers.register_handler(RoomRosterChangeHandler::operator_removed());
+        handlers.register_handler(OwnRoomStandingHandler::membership_granted());
+        handlers.register_handler(OwnRoomStandingHandler::membership_revoked());
+        handlers
+            .register_handler(OwnRoomStandingHandler::operatorship_granted());
+        handlers
+            .register_handler(OwnRoomStandingHandler::operatorship_revoked());
+        handlers.register_handler(CantCreateRoomHandler);
         handlers.register_handler(RoomTickersHandler);
         handlers.register_handler(RoomTickerAddedHandler);
         handlers.register_handler(RoomTickerRemovedHandler);
@@ -693,6 +740,45 @@ impl ServerActor {
                 self.forward_to_client(ClientOperation::CantConnectToPeer {
                     token,
                 });
+            }
+            ServerMessage::PrivateRoomMembers { room, users } => {
+                self.forward_room_event(RoomEvent::PrivateMembers {
+                    room,
+                    users,
+                });
+            }
+            ServerMessage::PrivateRoomOperators { room, users } => {
+                self.forward_room_event(RoomEvent::PrivateOperators {
+                    room,
+                    users,
+                });
+            }
+            ServerMessage::PrivateRoomRosterChanged {
+                room,
+                username,
+                members,
+                added,
+            } => {
+                self.forward_room_event(RoomEvent::PrivateRosterChanged {
+                    room,
+                    username,
+                    members,
+                    added,
+                });
+            }
+            ServerMessage::OwnRoomStandingChanged {
+                room,
+                members,
+                granted,
+            } => {
+                self.forward_room_event(RoomEvent::OwnStandingChanged {
+                    room,
+                    members,
+                    granted,
+                });
+            }
+            ServerMessage::CantCreateRoom { room } => {
+                self.forward_room_event(RoomEvent::CantCreate { room });
             }
             ServerMessage::ExcludedSearchPhrases(phrases) => {
                 self.forward_to_client(ClientOperation::ExcludedSearchPhrases(

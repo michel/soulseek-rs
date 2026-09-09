@@ -440,6 +440,11 @@ pub struct ClientContext {
     /// Per-member statistics for each joined room, from the stat vectors the
     /// server sends alongside the membership list.
     room_member_stats: HashMap<String, Vec<RoomUserStats>>,
+    /// Who may enter each private room we belong to (code 133), kept current
+    /// from the later roster changes.
+    private_room_members: HashMap<String, Vec<String>>,
+    /// Who runs each of those rooms (code 148).
+    private_room_operators: HashMap<String, Vec<String>>,
     /// The ticker board of each joined room, kept current from the board sent
     /// on join (code 113) and the later add/remove events (114/115).
     room_tickers: HashMap<String, Vec<RoomTicker>>,
@@ -490,6 +495,15 @@ pub struct ClientContext {
     upload_events: Vec<crate::types::UploadInfo>,
     actor_system: Arc<ActorSystem>,
 }
+/// A roster sorted and de-duplicated, so membership lookups can binary-search
+/// it and a repeated name cannot appear twice.
+fn sorted_unique(users: &[String]) -> Vec<String> {
+    let mut users = users.to_vec();
+    users.sort();
+    users.dedup();
+    users
+}
+
 impl Default for ClientContext {
     fn default() -> Self {
         Self::new()
@@ -569,6 +583,8 @@ impl ClientContext {
             room_members: HashMap::new(),
             room_member_stats: HashMap::new(),
             room_tickers: HashMap::new(),
+            private_room_members: HashMap::new(),
+            private_room_operators: HashMap::new(),
             recommendations: None,
             global_recommendations: None,
             item_recommendations: HashMap::new(),
@@ -641,9 +657,82 @@ impl ClientContext {
                     board.retain(|t| &t.username != username);
                 }
             }
-            RoomEvent::Message { .. } | RoomEvent::GlobalMessage { .. } => {}
+            RoomEvent::PrivateMembers { room, users } => {
+                self.private_room_members
+                    .insert(room.clone(), sorted_unique(users));
+            }
+            RoomEvent::PrivateOperators { room, users } => {
+                self.private_room_operators
+                    .insert(room.clone(), sorted_unique(users));
+            }
+            RoomEvent::PrivateRosterChanged {
+                room,
+                username,
+                members,
+                added,
+            } => {
+                let roster = if *members {
+                    self.private_room_members.entry(room.clone()).or_default()
+                } else {
+                    self.private_room_operators.entry(room.clone()).or_default()
+                };
+                match (added, roster.binary_search(username)) {
+                    (true, Err(at)) => roster.insert(at, username.clone()),
+                    (false, Ok(at)) => {
+                        roster.remove(at);
+                    }
+                    _ => {}
+                }
+            }
+            RoomEvent::OwnStandingChanged {
+                room,
+                members,
+                granted,
+            } => {
+                // Our own standing is rendered from the same rosters, so a
+                // revocation must drop the room rather than leave a roster
+                // we are no longer part of looking current.
+                if !granted {
+                    // Losing membership takes the operator roster with it:
+                    // a room we cannot enter has no roster worth showing.
+                    if *members {
+                        self.private_room_members.remove(room);
+                    }
+                    self.private_room_operators.remove(room);
+                }
+            }
+            RoomEvent::Message { .. }
+            | RoomEvent::GlobalMessage { .. }
+            | RoomEvent::CantCreate { .. } => {}
         }
         self.room_events.push(event);
+    }
+
+    /// Who may enter the private room `room`, as last reported.
+    #[must_use]
+    pub fn private_room_members(&self, room: &str) -> Vec<String> {
+        self.private_room_members
+            .get(room)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Who runs the private room `room`, as last reported.
+    #[must_use]
+    pub fn private_room_operators(&self, room: &str) -> Vec<String> {
+        self.private_room_operators
+            .get(room)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The private rooms we belong to, in a stable order.
+    #[must_use]
+    pub fn private_rooms(&self) -> Vec<String> {
+        let mut rooms: Vec<String> =
+            self.private_room_members.keys().cloned().collect();
+        rooms.sort();
+        rooms
     }
 
     /// The ticker board of `room` as last reported by the server.

@@ -4583,3 +4583,128 @@ fn a_queued_download_can_ask_where_it_sits() {
     let _ = peer.join();
     let _ = std::fs::remove_dir_all(download_dir);
 }
+
+#[test]
+fn a_private_room_is_owned_granted_and_revoked() {
+    use soulseek_rs::types::RoomEvent;
+    let server = server_or_skip!();
+
+    let room = "e2e_private_club";
+    let mut owner =
+        Client::with_settings(server.settings("e2e_priv_owner", "pw"));
+    let mut guest =
+        Client::with_settings(server.settings("e2e_priv_guest", "pw"));
+    owner.connect().expect("owner connect");
+    guest.connect().expect("guest connect");
+    assert!(owner.login().expect("owner login"));
+    assert!(guest.login().expect("guest login"));
+
+    guest
+        .set_room_invitations_enabled(true)
+        .expect("guest accepts invitations");
+    owner
+        .join_private_room(room)
+        .expect("owner creates the room");
+    std::thread::sleep(Duration::from_millis(750));
+
+    // The guest is invited, and hears about it (code 139).
+    owner
+        .add_room_member(room, "e2e_priv_guest")
+        .expect("owner invites the guest");
+    let granted = await_room_event(&guest, Duration::from_secs(5), |event| {
+        matches!(event, RoomEvent::OwnStandingChanged {
+            room: r, members: true, granted: true
+        } if r == room)
+        .then_some(())
+    });
+    assert!(
+        granted.is_some(),
+        "the guest should be told they are a member"
+    );
+
+    // The owner's own roster now carries the guest (code 134).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline
+        && !owner
+            .private_room_members(room)
+            .iter()
+            .any(|u| u == "e2e_priv_guest")
+    {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        owner
+            .private_room_members(room)
+            .iter()
+            .any(|u| u == "e2e_priv_guest"),
+        "the member roster should carry the guest, got {:?}",
+        owner.private_room_members(room)
+    );
+
+    // A member can be made an operator (code 145 for them, 143 for the room).
+    owner
+        .add_room_operator(room, "e2e_priv_guest")
+        .expect("owner promotes the guest");
+    let promoted = await_room_event(&guest, Duration::from_secs(5), |event| {
+        matches!(event, RoomEvent::OwnStandingChanged {
+            room: r, members: false, granted: true
+        } if r == room)
+        .then_some(())
+    });
+    assert!(
+        promoted.is_some(),
+        "the guest should be told they run the room"
+    );
+
+    // And membership can be taken away again (code 140).
+    owner
+        .remove_room_member(room, "e2e_priv_guest")
+        .expect("owner removes the guest");
+    let revoked = await_room_event(&guest, Duration::from_secs(5), |event| {
+        matches!(event, RoomEvent::OwnStandingChanged {
+            room: r, members: true, granted: false
+        } if r == room)
+        .then_some(())
+    });
+    assert!(revoked.is_some(), "the guest should be told they are out");
+}
+
+#[test]
+fn a_private_room_someone_else_owns_cannot_be_taken() {
+    use soulseek_rs::types::RoomEvent;
+    let server = server_or_skip!();
+
+    let room = "e2e_private_taken";
+    let mut owner =
+        Client::with_settings(server.settings("e2e_taken_owner", "pw"));
+    owner.connect().expect("owner connect");
+    assert!(owner.login().expect("owner login"));
+    owner
+        .join_private_room(room)
+        .expect("owner creates the room");
+    std::thread::sleep(Duration::from_millis(750));
+
+    // An outsider asking for the same name must be refused (code 1003), not
+    // handed the room.
+    let mut outsider =
+        Client::with_settings(server.settings("e2e_taken_outsider", "pw"));
+    outsider.connect().expect("outsider connect");
+    assert!(outsider.login().expect("outsider login"));
+    outsider
+        .join_private_room(room)
+        .expect("outsider asks for the same room");
+
+    let refused =
+        await_room_event(&outsider, Duration::from_secs(5), |event| {
+            matches!(event, RoomEvent::CantCreate { room: r } if r == room)
+                .then_some(())
+        });
+    assert!(
+        refused.is_some(),
+        "a private room owned by someone else must be refused"
+    );
+    assert!(
+        outsider.private_rooms().is_empty(),
+        "a refused room must not appear as one we belong to"
+    );
+}

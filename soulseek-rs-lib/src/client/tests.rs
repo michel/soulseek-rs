@@ -951,3 +951,86 @@ fn asking_again_about_a_users_interests_drops_the_previous_answer() {
         "a stale answer must not be mistaken for the next one"
     );
 }
+
+#[test]
+fn a_private_room_roster_tracks_who_is_added_and_removed() {
+    let mut ctx = ClientContext::new();
+    ctx.apply_room_event(RoomEvent::PrivateMembers {
+        room: "club".into(),
+        users: vec!["bob".into(), "alice".into(), "bob".into()],
+    });
+    assert_eq!(
+        ctx.private_room_members("club"),
+        vec!["alice".to_string(), "bob".to_string()],
+        "a roster is sorted and free of repeats"
+    );
+
+    ctx.apply_room_event(RoomEvent::PrivateRosterChanged {
+        room: "club".into(),
+        username: "carol".into(),
+        members: true,
+        added: true,
+    });
+    ctx.apply_room_event(RoomEvent::PrivateRosterChanged {
+        room: "club".into(),
+        username: "alice".into(),
+        members: true,
+        added: false,
+    });
+    assert_eq!(
+        ctx.private_room_members("club"),
+        vec!["bob".to_string(), "carol".to_string()]
+    );
+
+    // Operators are a separate roster in the same room.
+    ctx.apply_room_event(RoomEvent::PrivateRosterChanged {
+        room: "club".into(),
+        username: "bob".into(),
+        members: false,
+        added: true,
+    });
+    assert_eq!(ctx.private_room_operators("club"), vec!["bob".to_string()]);
+    assert_eq!(ctx.private_rooms(), vec!["club".to_string()]);
+}
+
+#[test]
+fn revoked_membership_drops_the_room_we_can_no_longer_see() {
+    let mut ctx = ClientContext::new();
+    ctx.apply_room_event(RoomEvent::PrivateMembers {
+        room: "club".into(),
+        users: vec!["alice".into()],
+    });
+    ctx.apply_room_event(RoomEvent::PrivateOperators {
+        room: "club".into(),
+        users: vec!["alice".into()],
+    });
+
+    ctx.apply_room_event(RoomEvent::OwnStandingChanged {
+        room: "club".into(),
+        members: true,
+        granted: false,
+    });
+    assert!(ctx.private_rooms().is_empty());
+    assert!(ctx.private_room_operators("club").is_empty());
+}
+
+#[test]
+fn losing_operatorship_keeps_the_membership_it_does_not_touch() {
+    let mut ctx = ClientContext::new();
+    ctx.apply_room_event(RoomEvent::PrivateMembers {
+        room: "club".into(),
+        users: vec!["alice".into()],
+    });
+    ctx.apply_room_event(RoomEvent::PrivateOperators {
+        room: "club".into(),
+        users: vec!["alice".into()],
+    });
+
+    ctx.apply_room_event(RoomEvent::OwnStandingChanged {
+        room: "club".into(),
+        members: false,
+        granted: false,
+    });
+    assert_eq!(ctx.private_room_members("club"), vec!["alice".to_string()]);
+    assert!(ctx.private_room_operators("club").is_empty());
+}

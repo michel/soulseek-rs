@@ -21,6 +21,137 @@ impl Client {
         self.send_server_message(MessageFactory::build_server_ping())
     }
 
+    /// Join a private room, creating it (and owning it) if the name is free.
+    ///
+    /// A name already taken by someone else's private room comes back as a
+    /// [`crate::RoomEvent::CantCreate`] rather than a join.
+    ///
+    /// # Errors
+    /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
+    pub fn join_private_room(&self, room: &str) -> Result<()> {
+        self.send_server_message(MessageFactory::build_join_room(room, true))
+    }
+
+    /// Invite `username` into the private room we own (code 134).
+    ///
+    /// # Errors
+    /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
+    pub fn add_room_member(&self, room: &str, username: &str) -> Result<()> {
+        self.send_server_message(MessageFactory::build_add_room_member(
+            room, username,
+        ))
+    }
+
+    /// Remove `username` from the private room we own (code 135).
+    ///
+    /// # Errors
+    /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
+    pub fn remove_room_member(&self, room: &str, username: &str) -> Result<()> {
+        self.send_server_message(MessageFactory::build_remove_room_member(
+            room, username,
+        ))
+    }
+
+    /// Give up our own membership of a private room (code 136).
+    ///
+    /// # Errors
+    /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
+    pub fn leave_private_room(&self, room: &str) -> Result<()> {
+        self.send_server_message(MessageFactory::build_cancel_room_membership(
+            room,
+        ))
+    }
+
+    /// Give up ownership of a private room, which deletes it (code 137).
+    ///
+    /// # Errors
+    /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
+    pub fn disband_private_room(&self, room: &str) -> Result<()> {
+        self.send_server_message(MessageFactory::build_cancel_room_ownership(
+            room,
+        ))
+    }
+
+    /// Say whether we accept private-room invitations (code 141).
+    ///
+    /// # Errors
+    /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
+    pub fn set_room_invitations_enabled(&self, enabled: bool) -> Result<()> {
+        self.send_server_message(MessageFactory::build_enable_room_invitations(
+            enabled,
+        ))
+    }
+
+    /// Make `username` an operator of our private room (code 143).
+    ///
+    /// # Errors
+    /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
+    pub fn add_room_operator(&self, room: &str, username: &str) -> Result<()> {
+        self.send_server_message(MessageFactory::build_add_room_operator(
+            room, username,
+        ))
+    }
+
+    /// Take operator status away from `username` (code 144).
+    ///
+    /// # Errors
+    /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
+    pub fn remove_room_operator(
+        &self,
+        room: &str,
+        username: &str,
+    ) -> Result<()> {
+        self.send_server_message(MessageFactory::build_remove_room_operator(
+            room, username,
+        ))
+    }
+
+    /// Give up our own operator status in `room` (code 147).
+    ///
+    /// # Errors
+    /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
+    pub fn resign_room_operatorship(&self, room: &str) -> Result<()> {
+        self.send_server_message(
+            MessageFactory::build_cancel_room_operatorship(room),
+        )
+    }
+
+    /// Who may enter the private room `room`, as the server last reported.
+    #[must_use]
+    pub fn private_room_members(&self, room: &str) -> Vec<String> {
+        match self.context.read_safe() {
+            Ok(ctx) => ctx.private_room_members(room),
+            Err(e) => {
+                error!("[client] private_room_members: {}", e);
+                Vec::new()
+            }
+        }
+    }
+
+    /// Who runs the private room `room`.
+    #[must_use]
+    pub fn private_room_operators(&self, room: &str) -> Vec<String> {
+        match self.context.read_safe() {
+            Ok(ctx) => ctx.private_room_operators(room),
+            Err(e) => {
+                error!("[client] private_room_operators: {}", e);
+                Vec::new()
+            }
+        }
+    }
+
+    /// The private rooms we belong to.
+    #[must_use]
+    pub fn private_rooms(&self) -> Vec<String> {
+        match self.context.read_safe() {
+            Ok(ctx) => ctx.private_rooms(),
+            Err(e) => {
+                error!("[client] private_rooms: {}", e);
+                Vec::new()
+            }
+        }
+    }
+
     /// Set our online status (server code 28): away, or back to online.
     ///
     /// Other clients see it in their `GetUserStatus` and watch replies, and

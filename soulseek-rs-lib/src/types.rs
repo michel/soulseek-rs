@@ -414,6 +414,28 @@ pub enum RoomEvent {
         username: String,
         message: String,
     },
+    /// Who may enter a private room (code 133).
+    PrivateMembers { room: String, users: Vec<String> },
+    /// Who runs a private room (code 148).
+    PrivateOperators { room: String, users: Vec<String> },
+    /// One user joined or left a private room's member roster (`members`
+    /// true, codes 134/135) or its operator roster (143/144).
+    PrivateRosterChanged {
+        room: String,
+        username: String,
+        members: bool,
+        added: bool,
+    },
+    /// Our own membership (`members` true, codes 139/140) or operatorship
+    /// (145/146) of a private room was granted or revoked.
+    OwnStandingChanged {
+        room: String,
+        members: bool,
+        granted: bool,
+    },
+    /// The room we asked to join could not be created (code 1003) — the name
+    /// belongs to a private room we are not a member of.
+    CantCreate { room: String },
 }
 
 /// One user's ticker (the scrolling one-line message) in a room.

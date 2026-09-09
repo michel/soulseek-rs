@@ -14,6 +14,7 @@ mod message_factory;
 mod message_user;
 mod parent_min_speed;
 mod parent_speed_ratio;
+mod private_rooms;
 mod privileged_users;
 mod relogged;
 mod room_list;
@@ -47,6 +48,10 @@ pub use message_factory::MessageFactory;
 pub use message_user::MessageUser;
 pub use parent_min_speed::ParentMinSpeedHandler;
 pub use parent_speed_ratio::ParentSpeedRatioHandler;
+pub use private_rooms::{
+    CantCreateRoomHandler, OwnRoomStandingHandler, RoomMembersHandler,
+    RoomOperatorsHandler, RoomRosterChangeHandler,
+};
 pub use privileged_users::{CheckPrivilegesHandler, PrivilegedUsersHandler};
 pub use relogged::ReloggedHandler;
 pub use room_list::RoomListHandler;

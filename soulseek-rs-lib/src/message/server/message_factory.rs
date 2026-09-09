@@ -310,6 +310,73 @@ impl MessageFactory {
             .clone()
     }
 
+    /// Invite `username` into the private room we own (server code 134).
+    #[must_use]
+    pub fn build_add_room_member(room: &str, username: &str) -> Message {
+        Message::new()
+            .write_int32(134)
+            .write_string(room)
+            .write_string(username)
+            .clone()
+    }
+
+    /// Remove `username` from the private room we own (server code 135).
+    #[must_use]
+    pub fn build_remove_room_member(room: &str, username: &str) -> Message {
+        Message::new()
+            .write_int32(135)
+            .write_string(room)
+            .write_string(username)
+            .clone()
+    }
+
+    /// Give up our own membership of a private room (server code 136).
+    #[must_use]
+    pub fn build_cancel_room_membership(room: &str) -> Message {
+        Message::new().write_int32(136).write_string(room).clone()
+    }
+
+    /// Give up ownership of a private room, which deletes it (code 137).
+    #[must_use]
+    pub fn build_cancel_room_ownership(room: &str) -> Message {
+        Message::new().write_int32(137).write_string(room).clone()
+    }
+
+    /// Say whether we accept private-room invitations (server code 141).
+    #[must_use]
+    pub fn build_enable_room_invitations(enabled: bool) -> Message {
+        Message::new()
+            .write_int32(141)
+            .write_int8(u8::from(enabled))
+            .clone()
+    }
+
+    /// Make `username` an operator of our private room (server code 143).
+    #[must_use]
+    pub fn build_add_room_operator(room: &str, username: &str) -> Message {
+        Message::new()
+            .write_int32(143)
+            .write_string(room)
+            .write_string(username)
+            .clone()
+    }
+
+    /// Take operator status away from `username` (server code 144).
+    #[must_use]
+    pub fn build_remove_room_operator(room: &str, username: &str) -> Message {
+        Message::new()
+            .write_int32(144)
+            .write_string(room)
+            .write_string(username)
+            .clone()
+    }
+
+    /// Give up our own operator status in a room (server code 147).
+    #[must_use]
+    pub fn build_cancel_room_operatorship(room: &str) -> Message {
+        Message::new().write_int32(147).write_string(room).clone()
+    }
+
     /// A keepalive ping (server code 32, no body). The server sends no reply;
     /// its only job is to keep a quiet connection from being reaped by a NAT
     /// or the server's own idle timeout, the way other clients ping.
@@ -829,4 +896,55 @@ fn a_multi_user_message_counts_its_recipients_first() {
     assert_eq!(decoded.read_string(), "alice");
     assert_eq!(decoded.read_string(), "bob");
     assert_eq!(decoded.read_string(), "hi all");
+}
+
+#[test]
+fn the_private_room_roster_messages_carry_room_then_user() {
+    for (message, code) in [
+        (MessageFactory::build_add_room_member("club", "bob"), 134),
+        (MessageFactory::build_remove_room_member("club", "bob"), 135),
+        (MessageFactory::build_add_room_operator("club", "bob"), 143),
+        (
+            MessageFactory::build_remove_room_operator("club", "bob"),
+            144,
+        ),
+    ] {
+        let mut decoded = Message::new_with_data(message.get_buffer());
+        assert_eq!(decoded.get_message_code(), code);
+        decoded.set_pointer(8);
+        assert_eq!(decoded.read_string(), "club");
+        assert_eq!(decoded.read_string(), "bob");
+    }
+}
+
+#[test]
+fn giving_up_a_room_standing_names_only_the_room() {
+    for (message, code) in [
+        (MessageFactory::build_cancel_room_membership("club"), 136),
+        (MessageFactory::build_cancel_room_ownership("club"), 137),
+        (MessageFactory::build_cancel_room_operatorship("club"), 147),
+    ] {
+        let mut decoded = Message::new_with_data(message.get_buffer());
+        assert_eq!(decoded.get_message_code(), code);
+        decoded.set_pointer(8);
+        assert_eq!(decoded.read_string(), "club");
+    }
+}
+
+#[test]
+fn room_invitations_are_toggled_by_a_single_byte() {
+    let message = MessageFactory::build_enable_room_invitations(true);
+    assert_eq!(message.get_data(), [141, 0, 0, 0, 1]);
+    let message = MessageFactory::build_enable_room_invitations(false);
+    assert_eq!(message.get_data(), [141, 0, 0, 0, 0]);
+}
+
+#[test]
+fn a_private_join_sets_the_private_flag() {
+    let message = MessageFactory::build_join_room("club", true);
+    let mut decoded = Message::new_with_data(message.get_buffer());
+    assert_eq!(decoded.get_message_code(), 14);
+    decoded.set_pointer(8);
+    assert_eq!(decoded.read_string(), "club");
+    assert_eq!(decoded.read_int32(), 1);
 }
