@@ -533,6 +533,7 @@ file, in that order of precedence. Flags work before or after the subcommand.
 | `--shared-dir` (repeatable)    | `SOULSEEK_SHARED_DIR`               | `shared_dir` / `shared_dirs` | the download dir          |
 | `--listener-port`              | `SOULSEEK_LISTENER_PORT`            | `listener_port`              | `2234`                    |
 | `--no-listener` / `--listener` | `SOULSEEK_NO_LISTENER`              | `disable_listener`           | listener on               |
+| —                              | —                                   | `accept_children`            | off                       |
 | `--max-concurrent-downloads`   | `SOULSEEK_MAX_CONCURRENT_DOWNLOADS` | `max_concurrent_downloads`   | `20`                      |
 | `--search-timeout`             | `SOULSEEK_SEARCH_TIMEOUT`           | `search_timeout`             | `10`                      |
 | `--daemon ADDR`                | `SOULSEEK_DAEMON`                   | `daemon`                     | local socket if one is up |
@@ -548,10 +549,17 @@ the config and state directories wholesale. The file lives at
 also read from a `.env` in the working directory, usually the tidiest way to
 hand a container its credentials.
 
-`config get` and `config set` cover the eleven settings the file holds
-(`username`, `server`, `listener_port`, `disable_listener`, `download_dir`,
-`shared_dirs`, `max_concurrent_downloads`, `search_timeout`, `password_cmd`,
-`daemon`, `daemon_token`), and list them back at you when you name something
+`accept_children` makes this client carry part of the distributed search
+network: other peers hang from it and every search it receives is passed down
+to them. It is off by default — each child costs a socket and a copy of the
+network's whole search stream — and it needs the listener, since a child has to
+be able to dial in.
+
+`config get` and `config set` cover the twelve settings the file holds
+(`username`, `server`, `listener_port`, `disable_listener`, `accept_children`,
+`download_dir`, `shared_dirs`, `max_concurrent_downloads`, `search_timeout`,
+`password_cmd`, `daemon`, `daemon_token`), and list them back at you when you
+name something
 else. An empty string clears a key, and `shared_dirs` takes a comma-separated
 list. Waits expressed in seconds (`--search-timeout`, `--timeout`,
 `--duration`) are bounded to one day, so a mistyped flag is rejected rather
