@@ -3768,3 +3768,554 @@ fn a_leaf_adopts_a_parent_and_answers_the_searches_it_passes_down() {
 
     let _ = std::fs::remove_dir_all(share_dir);
 }
+
+// ---------------------------------------------------------------------------
+// Room tickers, the global room feed, interests and the targeted searches.
+//
+// Every one of these is a message the client can now speak; the point of
+// driving them through soulfind is that the wire shapes are right in both
+// directions, not just that they parse.
+// ---------------------------------------------------------------------------
+
+/// Poll `client`'s room events until `pick` matches one, or time out.
+fn await_room_event<T>(
+    client: &Client,
+    timeout: Duration,
+    mut pick: impl FnMut(&soulseek_rs::types::RoomEvent) -> Option<T>,
+) -> Option<T> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        for event in client.take_room_events() {
+            if let Some(found) = pick(&event) {
+                return Some(found);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    None
+}
+
+#[test]
+fn a_ticker_set_in_a_room_reaches_the_other_members() {
+    use soulseek_rs::types::RoomEvent;
+    let server = server_or_skip!();
+
+    let room = "e2e_ticker_room";
+    let mut alice =
+        Client::with_settings(server.settings("e2e_tick_alice", "pw"));
+    let mut bob = Client::with_settings(server.settings("e2e_tick_bob", "pw"));
+    alice.connect().expect("alice connect");
+    bob.connect().expect("bob connect");
+    assert!(alice.login().expect("alice login"));
+    assert!(bob.login().expect("bob login"));
+
+    alice.join_room(room).expect("alice joins");
+    bob.join_room(room).expect("bob joins");
+    std::thread::sleep(Duration::from_millis(500));
+    let _ = bob.take_room_events();
+
+    alice
+        .set_room_ticker(room, "alice was here")
+        .expect("set ticker");
+
+    let seen =
+        await_room_event(&bob, Duration::from_secs(5), |event| match event {
+            RoomEvent::TickerAdded {
+                room: r,
+                username,
+                ticker,
+            } if r == room => Some((username.clone(), ticker.clone())),
+            _ => None,
+        })
+        .expect("bob should see alice's ticker");
+    assert_eq!(
+        seen,
+        ("e2e_tick_alice".to_string(), "alice was here".into())
+    );
+
+    // The board is kept, not just the event: a UI reads it back from state.
+    let board = bob.room_tickers(room);
+    assert_eq!(
+        board
+            .iter()
+            .find(|t| t.username == "e2e_tick_alice")
+            .map(|t| t.ticker.as_str()),
+        Some("alice was here")
+    );
+}
+
+#[test]
+fn a_client_joining_later_receives_the_whole_ticker_board() {
+    use soulseek_rs::types::RoomEvent;
+    let server = server_or_skip!();
+
+    let room = "e2e_ticker_board";
+    let mut alice =
+        Client::with_settings(server.settings("e2e_board_alice", "pw"));
+    alice.connect().expect("alice connect");
+    assert!(alice.login().expect("alice login"));
+    alice.join_room(room).expect("alice joins");
+    std::thread::sleep(Duration::from_millis(300));
+    alice
+        .set_room_ticker(room, "standing message")
+        .expect("set ticker");
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Carol joins afterwards and must be handed the board that already exists.
+    let mut carol =
+        Client::with_settings(server.settings("e2e_board_carol", "pw"));
+    carol.connect().expect("carol connect");
+    assert!(carol.login().expect("carol login"));
+    carol.join_room(room).expect("carol joins");
+
+    let tickers =
+        await_room_event(&carol, Duration::from_secs(5), |event| match event {
+            RoomEvent::Tickers { room: r, tickers } if r == room => {
+                Some(tickers.clone())
+            }
+            _ => None,
+        })
+        .expect("carol should receive the ticker board on join");
+    assert!(
+        tickers.iter().any(|t| t.username == "e2e_board_alice"
+            && t.ticker == "standing message"),
+        "the board should carry alice's standing ticker, got {tickers:?}"
+    );
+}
+
+#[test]
+fn the_global_room_feed_carries_a_room_we_never_joined() {
+    use soulseek_rs::types::RoomEvent;
+    let server = server_or_skip!();
+
+    let room = "e2e_global_source";
+    let mut watcher =
+        Client::with_settings(server.settings("e2e_global_watch", "pw"));
+    let mut talker =
+        Client::with_settings(server.settings("e2e_global_talk", "pw"));
+    watcher.connect().expect("watcher connect");
+    talker.connect().expect("talker connect");
+    assert!(watcher.login().expect("watcher login"));
+    assert!(talker.login().expect("talker login"));
+
+    watcher.join_global_room().expect("join global room");
+    talker.join_room(room).expect("talker joins a room");
+    std::thread::sleep(Duration::from_millis(500));
+    let _ = watcher.take_room_events();
+
+    let body = "spoken where nobody is watching";
+    talker.say_in_room(room, body).expect("say in room");
+
+    let got =
+        await_room_event(
+            &watcher,
+            Duration::from_secs(5),
+            |event| match event {
+                RoomEvent::GlobalMessage {
+                    room: r,
+                    username,
+                    message,
+                } if message == body => Some((r.clone(), username.clone())),
+                _ => None,
+            },
+        )
+        .expect("the global feed should carry the message");
+    assert_eq!(got, (room.to_string(), "e2e_global_talk".to_string()));
+
+    // And leaving the feed stops it: the next message must not arrive.
+    watcher.leave_global_room().expect("leave global room");
+    std::thread::sleep(Duration::from_millis(500));
+    let _ = watcher.take_room_events();
+    talker
+        .say_in_room(room, "after leaving")
+        .expect("say again");
+    let after = await_room_event(&watcher, Duration::from_secs(2), |event| {
+        matches!(event, RoomEvent::GlobalMessage { message, .. }
+            if message == "after leaving")
+        .then_some(())
+    });
+    assert!(after.is_none(), "the feed should stop once left");
+}
+
+#[test]
+fn a_user_search_is_answered_by_the_user_it_names() {
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    let content: Vec<u8> = (0..1024u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(share_dir.join("e2e_usersearch_grail.bin"), &content)
+        .unwrap();
+
+    let (_sharer, searcher) = sharer_and_searcher(
+        &server,
+        &share_dir,
+        "e2e_us_sharer",
+        "e2e_us_seeker",
+    );
+
+    let query = "grail";
+    searcher
+        .search_user("e2e_us_sharer", query)
+        .expect("user search");
+
+    let reply = reply_from(&searcher, query, "e2e_us_sharer")
+        .expect("the named user should answer a user search");
+    assert!(
+        reply
+            .files
+            .iter()
+            .any(|f| f.name.contains("e2e_usersearch_grail")),
+        "the reply should carry the matching file, got {:?}",
+        reply.files
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+#[test]
+fn a_room_search_is_answered_by_the_rooms_members() {
+    let server = server_or_skip!();
+
+    let room = "e2e_search_room";
+    let share_dir = unique_download_dir();
+    let content: Vec<u8> = (0..1024u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(share_dir.join("e2e_roomsearch_relic.bin"), &content)
+        .unwrap();
+
+    let (sharer, searcher) = sharer_and_searcher(
+        &server,
+        &share_dir,
+        "e2e_rs_sharer",
+        "e2e_rs_seeker",
+    );
+    sharer.join_room(room).expect("sharer joins");
+    searcher.join_room(room).expect("searcher joins");
+    std::thread::sleep(Duration::from_millis(750));
+
+    let query = "relic";
+    searcher.search_room(room, query).expect("room search");
+
+    let reply = reply_from(&searcher, query, "e2e_rs_sharer")
+        .expect("a member of the room should answer a room search");
+    assert!(
+        reply
+            .files
+            .iter()
+            .any(|f| f.name.contains("e2e_roomsearch_relic")),
+        "the reply should carry the matching file, got {:?}",
+        reply.files
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+#[test]
+fn shared_interests_make_two_users_similar() {
+    let server = server_or_skip!();
+
+    let mut alice =
+        Client::with_settings(server.settings("e2e_like_alice", "pw"));
+    let mut bob = Client::with_settings(server.settings("e2e_like_bob", "pw"));
+    alice.connect().expect("alice connect");
+    bob.connect().expect("bob connect");
+    assert!(alice.login().expect("alice login"));
+    assert!(bob.login().expect("bob login"));
+
+    let item = "e2e_interest_krautrock";
+    alice.add_interest(item).expect("alice likes it");
+    bob.add_interest(item).expect("bob likes it too");
+    alice
+        .add_dislike("e2e_interest_muzak")
+        .expect("alice dislikes something");
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Who else likes this item (code 112).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut likers = Vec::new();
+    while Instant::now() < deadline
+        && !likers.iter().any(|u| u == "e2e_like_bob")
+    {
+        alice
+            .request_item_similar_users(item)
+            .expect("ask who likes it");
+        std::thread::sleep(Duration::from_millis(250));
+        likers = alice.item_similar_users(item);
+    }
+    assert!(
+        likers.iter().any(|u| u == "e2e_like_bob"),
+        "bob likes the same item, got {likers:?}"
+    );
+
+    // The overlap also makes bob a similar user (code 110).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut similar = Vec::new();
+    while Instant::now() < deadline
+        && !similar
+            .iter()
+            .any(|u: &soulseek_rs::SimilarUser| u.username == "e2e_like_bob")
+    {
+        alice
+            .request_similar_users()
+            .expect("ask for similar users");
+        std::thread::sleep(Duration::from_millis(250));
+        similar = alice.similar_users();
+    }
+    assert!(
+        similar
+            .iter()
+            .any(|u| u.username == "e2e_like_bob" && u.weight > 0),
+        "bob should be similar with a non-zero weight, got {similar:?}"
+    );
+
+    // And alice's own likes and hates read back over code 57.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut interests = None;
+    while Instant::now() < deadline && interests.is_none() {
+        bob.request_user_interests("e2e_like_alice")
+            .expect("ask about alice");
+        std::thread::sleep(Duration::from_millis(250));
+        interests = bob.user_interests("e2e_like_alice");
+    }
+    let interests = interests.expect("bob should learn alice's interests");
+    assert!(interests.likes.iter().any(|i| i == item));
+    assert!(
+        interests.hates.iter().any(|i| i == "e2e_interest_muzak"),
+        "hates should come back too, got {interests:?}"
+    );
+
+    // A dropped interest stops being reported.
+    alice.remove_interest(item).expect("alice drops it");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut still_liked = true;
+    while Instant::now() < deadline && still_liked {
+        bob.request_user_interests("e2e_like_alice")
+            .expect("ask again");
+        std::thread::sleep(Duration::from_millis(250));
+        still_liked = bob
+            .user_interests("e2e_like_alice")
+            .is_none_or(|i| i.likes.iter().any(|l| l == item));
+    }
+    assert!(
+        !still_liked,
+        "a removed interest should stop being reported"
+    );
+}
+
+#[test]
+fn recommendations_are_returned_for_our_interests() {
+    let server = server_or_skip!();
+
+    // Recommendations come from what *other* users who share an interest also
+    // like: bob likes both items, so alice, who likes only the first, should
+    // be recommended the second.
+    let mut alice =
+        Client::with_settings(server.settings("e2e_rec_alice", "pw"));
+    let mut bob = Client::with_settings(server.settings("e2e_rec_bob", "pw"));
+    alice.connect().expect("alice connect");
+    bob.connect().expect("bob connect");
+    assert!(alice.login().expect("alice login"));
+    assert!(bob.login().expect("bob login"));
+
+    let shared = "e2e_rec_shared";
+    let other = "e2e_rec_other";
+    alice.add_interest(shared).expect("alice likes shared");
+    bob.add_interest(shared).expect("bob likes shared");
+    bob.add_interest(other).expect("bob likes other");
+    std::thread::sleep(Duration::from_millis(500));
+
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut recommended = Vec::new();
+    while Instant::now() < deadline
+        && !recommended
+            .iter()
+            .any(|r: &soulseek_rs::Recommendation| r.item == other)
+    {
+        alice
+            .request_recommendations()
+            .expect("ask for recommendations");
+        std::thread::sleep(Duration::from_millis(250));
+        recommended =
+            alice.recommendations().map(|(r, _)| r).unwrap_or_default();
+    }
+    assert!(
+        recommended.iter().any(|r| r.item == other),
+        "the other item bob likes should be recommended, got {recommended:?}"
+    );
+
+    // The server-wide list (code 56) answers too, with the same shape.
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut global = None;
+    while Instant::now() < deadline && global.is_none() {
+        alice
+            .request_global_recommendations()
+            .expect("ask for global recommendations");
+        std::thread::sleep(Duration::from_millis(250));
+        global = alice.global_recommendations();
+    }
+    let (global_items, _) = global.expect("the server should answer code 56");
+    assert!(
+        global_items.iter().any(|r| r.item == shared),
+        "an item two users like should show server-wide, got {global_items:?}"
+    );
+
+    // And per-item recommendations (code 111) answer for a named item.
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut item_recs = Vec::new();
+    while Instant::now() < deadline && item_recs.is_empty() {
+        alice
+            .request_item_recommendations(shared)
+            .expect("ask about one item");
+        std::thread::sleep(Duration::from_millis(250));
+        item_recs = alice.item_recommendations(shared);
+    }
+    assert!(
+        item_recs.iter().any(|r| r.item == other),
+        "people who like {shared} also like {other}, got {item_recs:?}"
+    );
+}
+
+#[test]
+fn a_ping_leaves_the_session_usable() {
+    let server = server_or_skip!();
+
+    // A ping has no reply, so what it must not do is upset the session: the
+    // very next request has to still be answered.
+    let mut client =
+        Client::with_settings(server.settings("e2e_ping_user", "pw"));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login"));
+
+    for _ in 0..3 {
+        client.ping_server().expect("ping");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut listed = false;
+    while Instant::now() < deadline && !listed {
+        client.request_room_list().expect("request room list");
+        std::thread::sleep(Duration::from_millis(250));
+        listed = !client.room_list().is_empty()
+            || client.session_loss().is_none() && Instant::now() > deadline;
+    }
+    assert!(
+        client.session_loss().is_none(),
+        "pings must not cost us the session"
+    );
+}
+
+#[test]
+fn one_message_reaches_several_users_at_once() {
+    let server = server_or_skip!();
+
+    let mut sender =
+        Client::with_settings(server.settings("e2e_many_sender", "pw"));
+    let mut first =
+        Client::with_settings(server.settings("e2e_many_first", "pw"));
+    let mut second =
+        Client::with_settings(server.settings("e2e_many_second", "pw"));
+    for client in [&mut sender, &mut first, &mut second] {
+        client.connect().expect("connect");
+        assert!(client.login().expect("login"));
+    }
+
+    let body = "one message, two recipients";
+    sender
+        .send_private_message_to_many(
+            &["e2e_many_first".to_string(), "e2e_many_second".to_string()],
+            body,
+        )
+        .expect("send to many");
+
+    for client in [&first, &second] {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut got = false;
+        while Instant::now() < deadline && !got {
+            got = client
+                .take_private_messages()
+                .iter()
+                .any(|m| m.message() == body);
+            if !got {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+        assert!(got, "every named recipient should receive the message");
+    }
+}
+
+#[test]
+fn a_changed_password_is_what_the_next_login_needs() {
+    let server = server_or_skip!();
+
+    let user = "e2e_pwchange_user";
+    let mut client = Client::with_settings(server.settings(user, "first-pw"));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login registers the account"));
+
+    client
+        .change_password("second-pw")
+        .expect("change password");
+    std::thread::sleep(Duration::from_millis(500));
+    drop(client);
+
+    let mut stale = Client::with_settings(server.settings(user, "first-pw"));
+    stale.connect().expect("connect with the old password");
+    assert!(
+        !matches!(stale.login(), Ok(true)),
+        "the old password must stop working"
+    );
+    drop(stale);
+
+    let mut fresh = Client::with_settings(server.settings(user, "second-pw"));
+    fresh.connect().expect("connect with the new password");
+    assert!(
+        fresh.login().expect("login with the new password"),
+        "the new password must be accepted"
+    );
+}
+
+#[test]
+fn a_brokered_dial_we_cannot_complete_tells_the_waiting_peer() {
+    // The peer asks the server to broker a connection to us but is itself
+    // unreachable — it advertises a port nothing listens on. Our dial fails,
+    // and the peer must be told (CantConnectToPeer, code 1001) rather than
+    // left waiting for a connection that is never coming.
+    let server = server_or_skip!();
+    let addr = format!("{}:{}", server.host, server.port);
+
+    let mut client =
+        Client::with_settings(server.settings("e2e_cantconn_us", "pw"));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login"));
+
+    let mut peer =
+        login_raw(&addr, "e2e_cantconn_peer", "pw").expect("peer login");
+    // A port that is free is a port nothing answers on: the dial is refused.
+    let dead_port = free_port().expect("free port");
+    peer.write_all(
+        &MessageFactory::build_set_wait_port_message(dead_port).get_buffer(),
+    )
+    .expect("set wait port");
+    peer.flush().expect("flush wait port");
+
+    let token = 424_242_u32;
+    peer.write_all(
+        &MessageFactory::build_connect_to_peer(
+            token,
+            "e2e_cantconn_us",
+            ConnectionType::P,
+        )
+        .get_buffer(),
+    )
+    .expect("ask the server to broker");
+    peer.flush().expect("flush broker request");
+
+    let mut reply = read_until_code(&mut peer, 1001, Duration::from_secs(20))
+        .expect("the peer should be told the connection failed");
+    reply.set_pointer(8);
+    assert_eq!(
+        reply.read_int32(),
+        token,
+        "the reply should quote the token the peer asked with"
+    );
+}
