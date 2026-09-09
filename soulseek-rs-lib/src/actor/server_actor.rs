@@ -227,6 +227,8 @@ pub enum ServerMessage {
     CantConnectToPeer {
         token: u32,
     },
+    /// Phrases the server refuses to search for (code 160).
+    ExcludedSearchPhrases(Vec<String>),
 }
 
 pub struct ServerActor {
@@ -691,6 +693,11 @@ impl ServerActor {
                 self.forward_to_client(ClientOperation::CantConnectToPeer {
                     token,
                 });
+            }
+            ServerMessage::ExcludedSearchPhrases(phrases) => {
+                self.forward_to_client(ClientOperation::ExcludedSearchPhrases(
+                    phrases,
+                ));
             }
             other => {
                 error!("[server] unroutable message: {:?}", other);

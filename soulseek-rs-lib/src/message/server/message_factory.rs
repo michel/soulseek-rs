@@ -301,6 +301,15 @@ impl MessageFactory {
             .clone()
     }
 
+    /// Ask a peer where the file we queued with them sits (peer code 51).
+    #[must_use]
+    pub fn build_place_in_queue_request(filename: &str) -> Message {
+        Message::new()
+            .write_int32(51)
+            .write_string(filename)
+            .clone()
+    }
+
     /// A keepalive ping (server code 32, no body). The server sends no reply;
     /// its only job is to keep a quiet connection from being reaped by a NAT
     /// or the server's own idle timeout, the way other clients ping.
@@ -685,6 +694,15 @@ fn an_upload_speed_report_carries_the_rate() {
     assert_eq!(decoded.get_message_code(), 121);
     decoded.set_pointer(8);
     assert_eq!(decoded.read_int32(), 900);
+}
+
+#[test]
+fn a_place_in_queue_request_names_the_file() {
+    let message = MessageFactory::build_place_in_queue_request("a\\b.mp3");
+    let mut decoded = Message::new_with_data(message.get_buffer());
+    assert_eq!(decoded.get_message_code(), 51);
+    decoded.set_pointer(8);
+    assert_eq!(decoded.read_string(), "a\\b.mp3");
 }
 
 #[test]

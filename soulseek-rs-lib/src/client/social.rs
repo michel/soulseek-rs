@@ -21,6 +21,39 @@ impl Client {
         self.send_server_message(MessageFactory::build_server_ping())
     }
 
+    /// Set our online status (server code 28): away, or back to online.
+    ///
+    /// Other clients see it in their `GetUserStatus` and watch replies, and
+    /// the server uses it when it decides who to hand a search to.
+    ///
+    /// # Errors
+    /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
+    pub fn set_away(&self, away: bool) -> Result<()> {
+        let status = u32::from(!away) + 1; // away = 1, online = 2
+        self.send_server_message(MessageFactory::build_set_status_message(
+            status,
+        ))
+    }
+
+    /// Ask `username` where the file we queued with them sits (peer code 51).
+    ///
+    /// The answer arrives asynchronously and lands on the download, readable
+    /// through [`Client::downloads`] as its queue position. A peer we have no
+    /// connection to is resolved and the request delivered once it is up, the
+    /// same way a browse request is.
+    ///
+    /// # Errors
+    /// [`crate::SoulseekRs::NotConnected`] when there is no server connection,
+    /// or [`crate::SoulseekRs::LockPoisoned`] if the client state is poisoned.
+    pub fn request_place_in_queue(
+        &self,
+        username: &str,
+        filename: &str,
+    ) -> Result<()> {
+        let request = MessageFactory::build_place_in_queue_request(filename);
+        self.send_to_peer_or_queue(username, request)
+    }
+
     /// Set our ticker in `room` — the one-line message other members see.
     /// Passing an empty `ticker` clears ours.
     ///

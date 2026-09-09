@@ -4319,3 +4319,267 @@ fn a_brokered_dial_we_cannot_complete_tells_the_waiting_peer() {
         "the reply should quote the token the peer asked with"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Features that were implemented but never driven end to end: the away
+// status, the phrases the server refuses to search for, and asking a peer
+// where our queued file sits.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn going_away_is_visible_to_another_user() {
+    use soulseek_rs::types::UserStatus;
+    let server = server_or_skip!();
+
+    let mut alice =
+        Client::with_settings(server.settings("e2e_away_alice", "pw"));
+    let mut bob = Client::with_settings(server.settings("e2e_away_bob", "pw"));
+    alice.connect().expect("alice connect");
+    bob.connect().expect("bob connect");
+    assert!(alice.login().expect("alice login"));
+    assert!(bob.login().expect("bob login"));
+
+    // Online to begin with, as the post-login handshake announces.
+    let status_of = |client: &Client| -> Option<UserStatus> {
+        client
+            .user_info("e2e_away_alice")
+            .and_then(|info| info.presence)
+            .map(|presence| presence.status)
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline
+        && status_of(&bob) != Some(UserStatus::Online)
+    {
+        bob.request_user_info("e2e_away_alice").expect("ask");
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    assert_eq!(status_of(&bob), Some(UserStatus::Online));
+
+    alice.set_away(true).expect("alice goes away");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline && status_of(&bob) != Some(UserStatus::Away)
+    {
+        bob.request_user_info("e2e_away_alice").expect("ask again");
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    assert_eq!(
+        status_of(&bob),
+        Some(UserStatus::Away),
+        "the away status should reach another user"
+    );
+
+    // And coming back is visible too.
+    alice.set_away(false).expect("alice comes back");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline
+        && status_of(&bob) != Some(UserStatus::Online)
+    {
+        bob.request_user_info("e2e_away_alice")
+            .expect("ask once more");
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    assert_eq!(status_of(&bob), Some(UserStatus::Online));
+}
+
+/// A minimal server that answers a login and then sends `after_login`.
+///
+/// soulfind keeps its search filters in its database, which the suite has no
+/// way to seed, so the excluded-phrase path is driven from a stub that speaks
+/// just enough of the protocol to deliver code 160 on the wire.
+fn stub_server_sending(
+    after_login: Vec<Message>,
+) -> (String, std::thread::JoinHandle<()>) {
+    let listener =
+        std::net::TcpListener::bind("127.0.0.1:0").expect("bind stub server");
+    let addr = listener.local_addr().expect("stub addr");
+    let handle = std::thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("stub read timeout");
+        // Wait for the login (code 1) before answering it.
+        loop {
+            match read_framed(&mut stream) {
+                Ok(msg) if msg.get_message_code() == 1 => break,
+                Ok(_) => {}
+                Err(_) => return,
+            }
+        }
+        let mut ok = Message::new();
+        ok.write_int32(1)
+            .write_int8(1)
+            .write_string("stub greeting")
+            .write_int32(0)
+            .write_string("")
+            .write_int8(0);
+        if stream.write_all(&ok.get_buffer()).is_err() {
+            return;
+        }
+        for message in after_login {
+            if stream.write_all(&message.get_buffer()).is_err() {
+                return;
+            }
+        }
+        let _ = stream.flush();
+        // Hold the connection open so the client stays logged in.
+        std::thread::sleep(Duration::from_secs(10));
+    });
+    (format!("{}:{}", addr.ip(), addr.port()), handle)
+}
+
+#[test]
+fn an_excluded_phrase_is_refused_before_a_search_is_spent() {
+    let mut phrases = Message::new();
+    phrases
+        .write_int32(160)
+        .write_int32(2)
+        .write_string("banned-phrase")
+        .write_string("blocked");
+    let (addr, stub) = stub_server_sending(vec![phrases]);
+    let (host, port) = addr.rsplit_once(':').expect("stub addr");
+
+    let mut client = Client::with_settings(ClientSettings {
+        username: "e2e_excluded".to_string(),
+        password: "pw".to_string(),
+        server_address: PeerAddress::new(
+            host.to_string(),
+            port.parse().expect("stub port"),
+        ),
+        enable_listen: false,
+        listen_port: 0,
+        shared_directories: Vec::new(),
+        version: ClientVersion::default(),
+    });
+    client.connect().expect("connect to stub");
+    assert!(client.login().expect("login to stub"));
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline
+        && client.excluded_search_phrases().is_empty()
+    {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(
+        client.excluded_search_phrases(),
+        ["banned-phrase", "blocked"],
+        "the announced phrases should be kept"
+    );
+
+    // A query carrying one is refused here rather than spent on the server,
+    // and the match is case-insensitive on substrings, as the server's is.
+    match client.search("A BANNED-PHRASE query", Duration::from_millis(100)) {
+        Err(soulseek_rs::SoulseekRs::SearchPhraseExcluded(phrase)) => {
+            assert_eq!(phrase, "banned-phrase");
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    // A clean query is not refused.
+    assert!(
+        client
+            .search("something else", Duration::from_millis(100))
+            .is_ok()
+    );
+
+    drop(client);
+    let _ = stub.join();
+}
+
+#[test]
+fn a_queued_download_can_ask_where_it_sits() {
+    // We queue a file with a peer that never starts it, then ask where it
+    // sits (peer code 51). The peer's answer (code 44) must land on the
+    // download as its queue position.
+    let server = server_or_skip!();
+
+    let listen_port = free_port().expect("free listen port");
+    let mut client = Client::with_settings(server.listening_settings(
+        "e2e_place_asker",
+        "pw",
+        listen_port,
+    ));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login"));
+
+    let filename = "waiting_in_line.mp3";
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let (asked_tx, asked_rx) = std::sync::mpsc::channel();
+    let listen_addr = format!("127.0.0.1:{listen_port}");
+    let peer = std::thread::spawn(move || -> std::io::Result<()> {
+        let mut p = connect_retry(&listen_addr, Duration::from_secs(5))?;
+        p.set_read_timeout(Some(Duration::from_secs(15)))?;
+        p.write_all(&peer_init_bytes("e2e_place_peer", "P", 0))?;
+        p.flush()?;
+        let _ = ready_tx.send(());
+
+        // Sit on the queue request, then answer the place request with 7.
+        loop {
+            let mut msg = read_framed(&mut p)?;
+            // A QueueUpload (43) is accepted but never started: the file
+            // stays in line, which is the state being asked about.
+            if msg.get_message_code() == 51 {
+                msg.set_pointer(8);
+                let asked = msg.read_string();
+                let mut reply = Message::new();
+                reply.write_int32(44).write_string(&asked).write_int32(7);
+                p.write_all(&reply.get_buffer())?;
+                p.flush()?;
+                let _ = asked_tx.send(asked);
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_secs(1));
+        Ok(())
+    });
+    ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("mock peer P connection");
+    std::thread::sleep(Duration::from_millis(1000));
+
+    let download_dir = unique_download_dir();
+    let (_download, _status_rx) = client
+        .download(
+            filename.to_string(),
+            "e2e_place_peer".to_string(),
+            10,
+            download_dir.display().to_string(),
+        )
+        .expect("start download");
+
+    // Ask, retrying until the control connection carries it.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut asked = None;
+    while Instant::now() < deadline && asked.is_none() {
+        client
+            .request_place_in_queue("e2e_place_peer", filename)
+            .expect("ask for our place");
+        asked = asked_rx.recv_timeout(Duration::from_millis(500)).ok();
+    }
+    assert_eq!(
+        asked.as_deref(),
+        Some(filename),
+        "the peer should be asked about the file we queued"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut place = None;
+    while Instant::now() < deadline && place.is_none() {
+        place = client
+            .get_all_downloads()
+            .into_iter()
+            .find(|d| d.filename == filename)
+            .and_then(|d| d.queue_position);
+        if place.is_none() {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+    assert_eq!(
+        place,
+        Some(7),
+        "the peer's answer should land on the download"
+    );
+
+    let _ = peer.join();
+    let _ = std::fs::remove_dir_all(download_dir);
+}

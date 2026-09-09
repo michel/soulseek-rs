@@ -368,6 +368,8 @@ pub enum ClientOperation {
     CantConnectToPeer {
         token: u32,
     },
+    /// Phrases the server refuses to search for (code 160).
+    ExcludedSearchPhrases(Vec<String>),
     /// A parent candidate told us how deep it sits. `link` says which dial
     /// to that user is talking.
     ParentBranchLevel {
@@ -469,6 +471,9 @@ pub struct ClientContext {
     privileged_users: HashSet<String>,
     /// Seconds of our own privileges left (code 92), once we have asked.
     own_privileges: Option<u32>,
+    /// Phrases the server will not search for (code 160). A query carrying one
+    /// is refused locally rather than spent on the server.
+    excluded_search_phrases: Vec<String>,
     /// Peers waiting for one of our upload slots.
     upload_queue: Vec<QueuedUpload>,
     /// Arrival counter for the queue's first-come tie-break.
@@ -575,6 +580,7 @@ impl ClientContext {
             wishlist_interval: None,
             privileged_users: HashSet::new(),
             own_privileges: None,
+            excluded_search_phrases: Vec::new(),
             upload_queue: Vec::new(),
             upload_seq: 0,
             upload_slots: DEFAULT_UPLOAD_SLOTS,
@@ -723,6 +729,31 @@ impl ClientContext {
     #[must_use]
     pub fn user_interests(&self, username: &str) -> Option<UserInterests> {
         self.user_interests.get(username).cloned()
+    }
+
+    /// Record the phrases the server refuses to search for (code 160).
+    pub fn set_excluded_search_phrases(&mut self, phrases: Vec<String>) {
+        self.excluded_search_phrases = phrases;
+    }
+
+    /// The phrases the server refuses to search for.
+    #[must_use]
+    pub fn excluded_search_phrases(&self) -> Vec<String> {
+        self.excluded_search_phrases.clone()
+    }
+
+    /// The first excluded phrase `query` contains, if any. Matching is
+    /// case-insensitive and on substrings, which is how the server applies its
+    /// own filter.
+    #[must_use]
+    pub fn excluded_phrase_in(&self, query: &str) -> Option<String> {
+        let haystack = query.to_lowercase();
+        self.excluded_search_phrases
+            .iter()
+            .find(|phrase| {
+                !phrase.is_empty() && haystack.contains(&phrase.to_lowercase())
+            })
+            .cloned()
     }
 
     /// Forget any interests cached for `username`, so a poll after a fresh

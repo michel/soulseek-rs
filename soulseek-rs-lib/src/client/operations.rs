@@ -816,6 +816,11 @@ impl Client {
                             ctx.apply_user_interests(interests);
                         }
                     }
+                    ClientOperation::ExcludedSearchPhrases(phrases) => {
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.set_excluded_search_phrases(phrases);
+                        }
+                    }
                     ClientOperation::CantConnectToPeer { token } => {
                         // The peer we asked the server to broker gave up. The
                         // token is the correlation we sent, so it names the
