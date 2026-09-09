@@ -57,6 +57,14 @@ impl FocusedPane {
 pub struct PaneLayout {
     hidden: [bool; FocusedPane::ALL.len()],
     pub zoomed: bool,
+    /// Cell height dragged onto the divider between Results and the row
+    /// underneath. `None` keeps the default proportions.
+    pub top_height: Option<u16>,
+    /// Cell widths dragged onto the dividers in the bottom row. `None` keeps
+    /// the default proportions; Info, which has no divider of its own, takes
+    /// whatever the row has left over.
+    pub searches_width: Option<u16>,
+    pub downloads_width: Option<u16>,
 }
 
 impl PaneLayout {
@@ -322,6 +330,15 @@ pub struct AppState {
     pub searches_pane_area: Option<Rect>,
     pub results_pane_area: Option<Rect>,
     pub downloads_pane_area: Option<Rect>,
+    /// The whole area the panes share, and the bottom row's part of it,
+    /// recorded at each draw so a divider drag maps to cells.
+    pub content_area: Option<Rect>,
+    pub row_area: Option<Rect>,
+    pub info_pane_area: Option<Rect>,
+    /// The border rows a mouse can grab to resize: the one Results sits on
+    /// and the seam at the right of each row pane.
+    pub hsplit_divider: Option<Rect>,
+    pub vsplit_dividers: Vec<(FocusedPane, Rect)>,
     /// Where the open popup was last drawn, for its page size. Only one is
     /// ever open, so one record serves them all.
     pub popup_area: Option<Rect>,
@@ -397,6 +414,11 @@ impl AppState {
             searches_pane_area: None,
             results_pane_area: None,
             downloads_pane_area: None,
+            content_area: None,
+            row_area: None,
+            info_pane_area: None,
+            hsplit_divider: None,
+            vsplit_dividers: Vec::new(),
             popup_area: None,
         }
     }

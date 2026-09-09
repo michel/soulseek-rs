@@ -1,4 +1,5 @@
 use super::MainTui;
+use super::render::{MIN_PANE, shrink};
 use crate::models::{CommandBarMode, FocusedPane, LogView, PaneLayout};
 use crate::ui::page_of;
 use crate::ui::panes::{
@@ -102,6 +103,9 @@ impl MainTui {
                 return;
             }
             KeyCode::Char('W') => {
+                // The universal undo for the window: every pane back, zoom
+                // off, and any mouse-dragged pane sizes back to the default
+                // proportions — they all live in the layout.
                 self.state.layout = PaneLayout::default();
                 return;
             }
@@ -566,24 +570,131 @@ impl MainTui {
     }
 
     pub(super) fn handle_mouse_event(&mut self, mouse: MouseEvent) {
-        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
-            return;
-        }
-
-        let clicked = Position::new(mouse.column, mouse.row);
-        // The areas are from the last draw. A pane hidden since then, in the
-        // same batch of events, still has one, and is not there to click.
-        let hit = FocusedPane::ALL.into_iter().find(|pane| {
-            self.state.layout.is_visible(*pane)
-                && self
-                    .state
-                    .pane_area(*pane)
-                    .is_some_and(|area| area.contains(clicked))
-        });
-        if let Some(pane) = hit {
-            self.state.focused_pane = pane;
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                let at = Position::new(mouse.column, mouse.row);
+                // A divider wins over the panes it separates; grabbing one
+                // starts a drag, and the click alone already resizes.
+                if let Some(drag) = self.grabbed_divider(at) {
+                    self.resize_drag = Some(drag);
+                    self.apply_resize(drag, at);
+                    return;
+                }
+                // The areas are from the last draw. A pane hidden since then, in the
+                // same batch of events, still has one, and is not there to click.
+                let hit = FocusedPane::ALL.into_iter().find(|pane| {
+                    self.state.layout.is_visible(*pane)
+                        && self
+                            .state
+                            .pane_area(*pane)
+                            .is_some_and(|area| area.contains(at))
+                });
+                if let Some(pane) = hit {
+                    self.state.focused_pane = pane;
+                }
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if let Some(drag) = self.resize_drag {
+                    self.apply_resize(
+                        drag,
+                        Position::new(mouse.column, mouse.row),
+                    );
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.resize_drag = None;
+            }
+            _ => {}
         }
     }
+
+    /// Which dragged divider, if any, the pointer is on. Nothing is grabbable
+    /// while a popup or a zoom covers the dividers.
+    fn grabbed_divider(&self, at: Position) -> Option<ResizeDrag> {
+        if self.state.layout.zoomed
+            || self.state.show_help
+            || self.state.show_messages
+            || self.state.show_browse
+            || self.state.show_rooms
+            || self.state.settings.is_some()
+        {
+            return None;
+        }
+        if self
+            .state
+            .hsplit_divider
+            .is_some_and(|rect| rect.contains(at))
+        {
+            return Some(ResizeDrag::Rows);
+        }
+        self.state
+            .vsplit_dividers
+            .iter()
+            .find(|(_, rect)| rect.contains(at))
+            .map(|(pane, _)| ResizeDrag::Columns(*pane))
+    }
+
+    /// Move the divider under the pointer to where the pointer is, keeping
+    /// every pane at least [`MIN_PANE`] cells.
+    fn apply_resize(&mut self, drag: ResizeDrag, at: Position) {
+        match drag {
+            ResizeDrag::Rows => {
+                let Some(area) = self.state.content_area else {
+                    return;
+                };
+                // The dragged row is the pane's last row, so the height is
+                // everything from the top of the content down to it.
+                let height = at.y.saturating_sub(area.y).saturating_add(1);
+                self.state.layout.top_height =
+                    Some(shrink(height, area.height));
+            }
+            ResizeDrag::Columns(pane) => {
+                let Some(row) = self.state.row_area else {
+                    return;
+                };
+                let left = if pane == FocusedPane::Downloads
+                    && self.state.layout.is_visible(FocusedPane::Searches)
+                {
+                    // Downloads starts where Searches ends.
+                    self.state
+                        .searches_pane_area
+                        .map_or(row.x, |area| area.x.saturating_add(area.width))
+                } else {
+                    row.x
+                };
+                let width = at.x.saturating_sub(left).saturating_add(1);
+                // Info shares the row, so the drag may not crowd it (and any
+                // other visible pane) out of `MIN_PANE` cells.
+                let others = MIN_PANE
+                    * u16::from(
+                        self.state.layout.is_visible(FocusedPane::Searches)
+                            && pane == FocusedPane::Downloads,
+                    )
+                    + MIN_PANE;
+                let max = row.width.saturating_sub(others).max(MIN_PANE);
+                let width = width.max(MIN_PANE).min(max);
+                match pane {
+                    FocusedPane::Searches => {
+                        self.state.layout.searches_width = Some(width);
+                    }
+                    FocusedPane::Downloads => {
+                        self.state.layout.downloads_width = Some(width);
+                    }
+                    FocusedPane::Results => {}
+                }
+            }
+        }
+    }
+}
+
+/// What a divider does while the left button is held on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ResizeDrag {
+    /// The border between Results and the row underneath: sets that row's height.
+    Rows,
+    /// The seam at the right of the named row pane: gives it that width and
+    /// takes it from the panes to its right.
+    Columns(FocusedPane),
 }
 
 /// What a key did to a filter being typed.

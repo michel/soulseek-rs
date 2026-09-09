@@ -31,6 +31,8 @@ pub struct MainTui {
     config_path: Option<std::path::PathBuf>,
     /// Last snapshot written to disk, to skip no-op saves.
     saved_snapshot: Snapshot,
+    /// Which divider the left mouse button is holding, if any.
+    resize_drag: Option<input::ResizeDrag>,
 }
 
 impl MainTui {
@@ -50,6 +52,7 @@ impl MainTui {
             store,
             config_path,
             saved_snapshot: Snapshot::default(),
+            resize_drag: None,
         };
         tui.restore_persisted_state();
         tui
@@ -1360,6 +1363,27 @@ mod tests {
         screen_sized(tui, 160, 40)
     }
 
+    fn mouse(
+        tui: &mut MainTui,
+        kind: ratatui::crossterm::event::MouseEventKind,
+        column: u16,
+        row: u16,
+    ) {
+        tui.handle_mouse_event(ratatui::crossterm::event::MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        });
+    }
+
+    fn mouse_drag_row(tui: &mut MainTui, from: (u16, u16), to: (u16, u16)) {
+        use ratatui::crossterm::event::{MouseButton, MouseEventKind};
+        mouse(tui, MouseEventKind::Down(MouseButton::Left), from.0, from.1);
+        mouse(tui, MouseEventKind::Drag(MouseButton::Left), to.0, to.1);
+        mouse(tui, MouseEventKind::Up(MouseButton::Left), to.0, to.1);
+    }
+
     /// The screen row carrying a pane's legend, `[2] Results` say, without
     /// the quotes the test backend wraps each row in.
     fn row_with<'a>(screen: &'a str, needle: &str) -> &'a str {
@@ -2042,6 +2066,88 @@ mod tests {
         let _ = screen_of(&mut tui);
         tui.handle_mouse_event(inside);
         assert_eq!(tui.state.focused_pane, FocusedPane::Downloads);
+    }
+
+    #[test]
+    fn dragging_the_border_under_results_resizes_its_row() {
+        let mut tui = furnished_tui();
+        let _ = screen_of(&mut tui);
+        let results = tui.state.results_pane_area.expect("laid out");
+        let divider = tui.state.hsplit_divider.expect("a divider");
+        let before = results.height;
+        let focused = tui.state.focused_pane;
+
+        // Two drags: the row shrinks by the rows the pointer moved up.
+        mouse_drag_row(
+            &mut tui,
+            (results.x + 1, divider.y),
+            (results.x + 1, divider.y - 2),
+        );
+        assert_eq!(tui.state.layout.top_height, Some(before - 2));
+        assert_eq!(
+            tui.state.focused_pane, focused,
+            "a grab is not a focus click"
+        );
+
+        let _ = screen_of(&mut tui);
+        assert_eq!(
+            tui.state.results_pane_area.expect("laid out").height,
+            before - 2
+        );
+
+        // A drag far past the row stops at the smallest pane, not zero.
+        mouse_drag_row(
+            &mut tui,
+            (results.x + 1, divider.y - 2),
+            (results.x + 1, 0),
+        );
+        assert!(tui.state.layout.top_height.expect("resized") >= 3);
+
+        press(&mut tui, KeyCode::Char('W'));
+        assert_eq!(tui.state.layout.top_height, None, "W resets the layout");
+    }
+
+    #[test]
+    fn dragging_a_row_panes_right_edge_gives_it_width() {
+        use ratatui::crossterm::event::{MouseButton, MouseEventKind};
+
+        let mut tui = furnished_tui();
+        let _ = screen_of(&mut tui);
+        let searches = tui.state.searches_pane_area.expect("laid out");
+        let seam = tui
+            .state
+            .vsplit_dividers
+            .iter()
+            .find(|(pane, _)| *pane == FocusedPane::Searches)
+            .map(|(_, rect)| *rect)
+            .expect("a seam beside Searches");
+        tui.state.focused_pane = FocusedPane::Downloads;
+
+        mouse_drag_row(
+            &mut tui,
+            (seam.x, searches.y + 1),
+            (seam.x + 4, searches.y + 1),
+        );
+        assert_eq!(tui.state.layout.searches_width, Some(searches.width + 4));
+        assert_eq!(tui.state.focused_pane, FocusedPane::Downloads);
+
+        // The widths are applied, and Info narrows to whatever is left.
+        let _ = screen_of(&mut tui);
+        assert_eq!(
+            tui.state.searches_pane_area.expect("laid out").width,
+            searches.width + 4
+        );
+        assert!(tui.state.info_pane_area.expect("laid out").width >= 3);
+
+        // Releasing the button ends the drag: later motions just move the
+        // pointer.
+        mouse(
+            &mut tui,
+            MouseEventKind::Drag(MouseButton::Left),
+            seam.x + 40,
+            searches.y + 1,
+        );
+        assert_eq!(tui.state.layout.searches_width, Some(searches.width + 4));
     }
 
     #[test]

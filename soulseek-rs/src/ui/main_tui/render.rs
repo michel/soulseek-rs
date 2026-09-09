@@ -29,8 +29,9 @@ const HELP_LEFT: &[(&str, &[(&str, &str)])] = &[
             ("z", "zoom the focused pane"),
             ("w", "hide the focused pane"),
             ("Esc", "leave zoom"),
-            ("W", "every pane back, zoom off"),
+            ("W", "every pane back, zoom off, sizes reset"),
             ("click", "focus a pane"),
+            ("drag", "resize panes by their borders"),
         ],
     ),
     (
@@ -170,11 +171,16 @@ impl MainTui {
         self.state.searches_pane_area = None;
         self.state.results_pane_area = None;
         self.state.downloads_pane_area = None;
+        self.state.info_pane_area = None;
+        self.state.hsplit_divider = None;
+        self.state.vsplit_dividers.clear();
+        self.state.row_area = None;
 
         if self.state.layout.zoomed {
             self.render_pane(frame, area, self.state.focused_pane);
             return;
         }
+        self.state.content_area = Some(area);
 
         // Transfers carry the most columns, so they get the most width.
         let row_panes: Vec<(FocusedPane, u16)> =
@@ -187,26 +193,61 @@ impl MainTui {
             // With only Info left in the row, the results deserve more of
             // the height.
             let row_weight = if row_panes.is_empty() { 1 } else { 2 };
-            let [top, bottom] = Layout::vertical([
-                Constraint::Fill(3),
-                Constraint::Fill(row_weight),
-            ])
-            .areas(area);
+            let top = match self.state.layout.top_height {
+                Some(rows) => Constraint::Length(shrink(rows, area.height)),
+                None => Constraint::Fill(3),
+            };
+            let [top, bottom] =
+                Layout::vertical([top, Constraint::Fill(row_weight)])
+                    .areas(area);
+            // The two touching border rows between the halves; either can
+            // be dragged.
+            self.state.hsplit_divider = Some(Rect::new(
+                area.x,
+                top.y.saturating_add(top.height).saturating_sub(1),
+                area.width,
+                2,
+            ));
             self.render_pane(frame, top, FocusedPane::Results);
             bottom
         } else {
             area
         };
+        self.state.row_area = Some(row_area);
 
         let mut constraints: Vec<Constraint> = row_panes
             .iter()
-            .map(|(_, weight)| Constraint::Fill(*weight))
+            .map(|(pane, weight)| {
+                let dragged = match *pane {
+                    FocusedPane::Searches => self.state.layout.searches_width,
+                    FocusedPane::Downloads => self.state.layout.downloads_width,
+                    FocusedPane::Results => None,
+                };
+                match dragged {
+                    Some(cols) => {
+                        Constraint::Length(shrink(cols, row_area.width))
+                    }
+                    None => Constraint::Fill(*weight),
+                }
+            })
             .collect();
         constraints.push(Constraint::Fill(6)); // Info
         let chunks = Layout::horizontal(constraints).split(row_area);
         for (chunk, (pane, _)) in chunks.iter().zip(&row_panes) {
+            // The seam at this pane's right edge: its border column and the
+            // next pane's, both draggable.
+            self.state.vsplit_dividers.push((
+                *pane,
+                Rect::new(
+                    chunk.x.saturating_add(chunk.width).saturating_sub(1),
+                    row_area.y,
+                    2,
+                    row_area.height,
+                ),
+            ));
             self.render_pane(frame, *chunk, *pane);
         }
+        self.state.info_pane_area = Some(chunks[row_panes.len()]);
         self.render_info_pane(frame, chunks[row_panes.len()]);
     }
 
@@ -767,6 +808,18 @@ impl MainTui {
 
 /// Columns between the two halves of the keys list.
 const HELP_GAP: u16 = 2;
+
+/// A dragged pane size kept inside the space the terminal now offers: never
+/// below [`MIN_PANE`], and never so big that what shares the split with it
+/// drops below `MIN_PANE` too.
+pub(super) fn shrink(dragged: u16, total: u16) -> u16 {
+    let max = total.saturating_sub(MIN_PANE).max(MIN_PANE);
+    dragged.max(MIN_PANE).min(max)
+}
+
+/// The smallest pane a drag can leave anyone: a border and a row or column
+/// of content each side.
+pub(super) const MIN_PANE: u16 = 3;
 
 /// The widest key in a column, so the descriptions line up.
 fn key_column_width(sections: &[(&str, &[(&str, &str)])]) -> usize {
