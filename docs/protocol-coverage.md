@@ -23,8 +23,8 @@ Message names and codes follow the Soulseek protocol as implemented by
 | 13 | SayChatroom | yes | e2e — a message between two users in a room |
 | 14 | JoinRoom | yes | e2e — public rooms, and private ones |
 | 15 | LeaveRoom | yes | e2e — room list and membership |
-| 16 | UserJoinedRoom | yes | e2e — room membership statistics |
-| 17 | UserLeftRoom | yes | e2e — room membership statistics |
+| 16 | UserJoinedRoom | yes | e2e — a member arriving is announced |
+| 17 | UserLeftRoom | yes | e2e — a member leaving is announced |
 | 18 | ConnectToPeer | yes | e2e — firewalled download and browse |
 | 22 | MessageUser | yes | e2e — a private message between users |
 | 23 | MessageAcked | yes | e2e — an offline message is delivered once |

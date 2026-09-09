@@ -5212,3 +5212,75 @@ fn a_peer_tells_us_about_itself_when_asked() {
 
     let _ = std::fs::remove_dir_all(share_dir);
 }
+
+#[test]
+fn a_room_reports_members_arriving_and_leaving() {
+    use soulseek_rs::types::RoomEvent;
+    let server = server_or_skip!();
+
+    let room = "e2e_room_comings";
+    let mut alice =
+        Client::with_settings(server.settings("e2e_comings_alice", "pw"));
+    alice.connect().expect("alice connect");
+    assert!(alice.login().expect("alice login"));
+    alice.join_room(room).expect("alice joins");
+    std::thread::sleep(Duration::from_millis(500));
+    let _ = alice.take_room_events();
+
+    // Bob arrives after her: she is told (code 16), and her roster grows.
+    let mut bob =
+        Client::with_settings(server.settings("e2e_comings_bob", "pw"));
+    bob.connect().expect("bob connect");
+    assert!(bob.login().expect("bob login"));
+    bob.join_room(room).expect("bob joins");
+
+    let joined =
+        await_room_event(&alice, Duration::from_secs(5), |event| match event {
+            RoomEvent::UserJoined { room: r, username }
+                if r == room && username == "e2e_comings_bob" =>
+            {
+                Some(())
+            }
+            _ => None,
+        });
+    assert!(joined.is_some(), "alice should be told bob arrived");
+    assert!(
+        alice
+            .room_members(room)
+            .iter()
+            .any(|u| u == "e2e_comings_bob"),
+        "the roster should carry bob, got {:?}",
+        alice.room_members(room)
+    );
+
+    // And when he leaves (code 17) the roster loses him again.
+    bob.leave_room(room).expect("bob leaves");
+    let left =
+        await_room_event(&alice, Duration::from_secs(5), |event| match event {
+            RoomEvent::UserLeft { room: r, username }
+                if r == room && username == "e2e_comings_bob" =>
+            {
+                Some(())
+            }
+            _ => None,
+        });
+    assert!(left.is_some(), "alice should be told bob left");
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline
+        && alice
+            .room_members(room)
+            .iter()
+            .any(|u| u == "e2e_comings_bob")
+    {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        !alice
+            .room_members(room)
+            .iter()
+            .any(|u| u == "e2e_comings_bob"),
+        "the roster should drop him, got {:?}",
+        alice.room_members(room)
+    );
+}
