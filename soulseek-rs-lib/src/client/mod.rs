@@ -384,6 +384,9 @@ pub enum ClientOperation {
     PossibleParents(Vec<(String, String, u16)>),
     /// The server told us to drop our parent.
     ResetDistributed,
+    /// A session just started: anything the server keeps only per-session —
+    /// our interests — has to be sent again.
+    SessionEstablished,
     /// A peer dialled us with a `D` connection, asking to hang from us in the
     /// distributed search network.
     ChildConnected {
@@ -523,6 +526,10 @@ pub struct ClientContext {
     item_similar_users: HashMap<String, Vec<String>>,
     /// Interests of other users (code 57), keyed by username.
     user_interests: HashMap<String, UserInterests>,
+    /// What we ourselves like and hate. The server keeps these only for the
+    /// duration of a session, so they are held here and sent again after each
+    /// login — the same thing Nicotine+ does from its config.
+    own_interests: UserInterests,
     /// What the server has told us about other users, merged across the
     /// separate status and statistics replies.
     user_info: HashMap<String, UserInfo>,
@@ -658,6 +665,7 @@ impl ClientContext {
             similar_users: Vec::new(),
             item_similar_users: HashMap::new(),
             user_interests: HashMap::new(),
+            own_interests: UserInterests::default(),
             user_info: HashMap::new(),
             watched_users: HashSet::new(),
             wishlist_interval: None,
@@ -687,6 +695,9 @@ impl ClientContext {
             }
             RoomEvent::Left { room } => {
                 self.room_members.remove(room);
+                // A board for a room we are not in is stale; the server sends
+                // the whole board again on the next join.
+                self.room_tickers.remove(room);
             }
             RoomEvent::UserJoined { room, username } => {
                 let members =
@@ -773,6 +784,41 @@ impl ClientContext {
             | RoomEvent::CantCreate { .. } => {}
         }
         self.room_events.push(event);
+    }
+
+    /// Remember an interest of our own so it can be sent again next login.
+    /// Interests are matched by the server case-insensitively, and Nicotine+
+    /// lowercases them before sending; do the same so two spellings of one
+    /// interest cannot both be held.
+    pub fn add_own_interest(&mut self, item: &str, liked: bool) -> String {
+        let item = item.trim().to_lowercase();
+        let list = if liked {
+            &mut self.own_interests.likes
+        } else {
+            &mut self.own_interests.hates
+        };
+        if !item.is_empty() && !list.contains(&item) {
+            list.push(item.clone());
+        }
+        item
+    }
+
+    /// Forget one of our own interests.
+    pub fn remove_own_interest(&mut self, item: &str, liked: bool) -> String {
+        let item = item.trim().to_lowercase();
+        let list = if liked {
+            &mut self.own_interests.likes
+        } else {
+            &mut self.own_interests.hates
+        };
+        list.retain(|held| held != &item);
+        item
+    }
+
+    /// What we like and hate, as last set.
+    #[must_use]
+    pub fn own_interests(&self) -> UserInterests {
+        self.own_interests.clone()
     }
 
     /// Record what the server says our own upload speed is, and re-derive the

@@ -5048,3 +5048,68 @@ fn one_folder_of_a_peers_shares_can_be_asked_for_by_itself() {
 
     let _ = std::fs::remove_dir_all(share_dir);
 }
+
+#[test]
+fn our_interests_are_sent_again_after_a_new_login() {
+    // The server keeps interests only for the session that set them, so a
+    // client that does not send them again comes back with none — which is
+    // why Nicotine+ re-sends its list at every login, from its config. Ours
+    // holds the list itself: an interest set before there is a connection is
+    // still on the server once one is made.
+    let server = server_or_skip!();
+
+    let item = "e2e_relike_shoegaze";
+    let mut alice =
+        Client::with_settings(server.settings("e2e_relike_alice", "pw"));
+    // Set before connecting: there is nothing to send it over yet, and the
+    // login is what puts it on the wire.
+    let _ = alice.add_interest(item);
+    assert_eq!(alice.own_interests().likes, [item]);
+
+    alice.connect().expect("alice connect");
+    assert!(alice.login().expect("alice login"));
+    std::thread::sleep(Duration::from_millis(500));
+
+    let mut watcher =
+        Client::with_settings(server.settings("e2e_relike_watch", "pw"));
+    watcher.connect().expect("watcher connect");
+    assert!(watcher.login().expect("watcher login"));
+
+    let likes_of_alice = |watcher: &Client| -> Vec<String> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut likes = Vec::new();
+        while Instant::now() < deadline && !likes.iter().any(|i| i == item) {
+            watcher
+                .request_user_interests("e2e_relike_alice")
+                .expect("ask about alice");
+            std::thread::sleep(Duration::from_millis(250));
+            likes = watcher
+                .user_interests("e2e_relike_alice")
+                .map(|i| i.likes)
+                .unwrap_or_default();
+        }
+        likes
+    };
+
+    let likes = likes_of_alice(&watcher);
+    assert!(
+        likes.iter().any(|i| i == item),
+        "the login should have carried the interest with it, got {likes:?}"
+    );
+
+    // The same client, in a new session: its list goes back up by itself.
+    drop(alice);
+    std::thread::sleep(Duration::from_secs(1));
+    let mut again =
+        Client::with_settings(server.settings("e2e_relike_alice", "pw"));
+    let _ = again.add_interest(item);
+    again.connect().expect("reconnect");
+    assert!(again.login().expect("re-login"));
+    std::thread::sleep(Duration::from_millis(500));
+
+    let likes = likes_of_alice(&watcher);
+    assert!(
+        likes.iter().any(|i| i == item),
+        "a new session should carry the interests too, got {likes:?}"
+    );
+}

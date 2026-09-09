@@ -917,6 +917,30 @@ impl Client {
                         }
                         Self::announce_child_capacity(&client_context);
                     }
+                    ClientOperation::SessionEstablished => {
+                        // Interests live in the server only for the session
+                        // that set them, so a new one starts by sending ours
+                        // again — what Nicotine+ does from its config file.
+                        let (sender, interests) = match client_context
+                            .read_safe()
+                        {
+                            Ok(ctx) => {
+                                (ctx.server_sender.clone(), ctx.own_interests())
+                            }
+                            Err(_) => continue,
+                        };
+                        let Some(sender) = sender else { continue };
+                        for item in &interests.likes {
+                            let _ = sender.send(ServerMessage::SendMessage(
+                                MessageFactory::build_add_thing_i_like(item),
+                            ));
+                        }
+                        for item in &interests.hates {
+                            let _ = sender.send(ServerMessage::SendMessage(
+                                MessageFactory::build_add_thing_i_hate(item),
+                            ));
+                        }
+                    }
                     ClientOperation::ExcludedSearchPhrases(phrases) => {
                         if let Ok(mut ctx) = client_context.write_safe() {
                             ctx.set_excluded_search_phrases(phrases);

@@ -1084,3 +1084,45 @@ fn a_file_the_server_excludes_is_left_out_of_a_reply() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn our_own_interests_are_kept_lowercased_and_deduplicated() {
+    // The server matches interests case-insensitively and forgets them when
+    // the session ends, so they are held here in one spelling to be sent
+    // again next login.
+    let mut ctx = ClientContext::new();
+    assert_eq!(ctx.add_own_interest("  Krautrock ", true), "krautrock");
+    ctx.add_own_interest("KRAUTROCK", true);
+    ctx.add_own_interest("Muzak", false);
+
+    let interests = ctx.own_interests();
+    assert_eq!(interests.likes, ["krautrock"]);
+    assert_eq!(interests.hates, ["muzak"]);
+
+    ctx.remove_own_interest("KrautRock", true);
+    assert!(ctx.own_interests().likes.is_empty());
+    assert_eq!(
+        ctx.own_interests().hates,
+        ["muzak"],
+        "the other list stands"
+    );
+}
+
+#[test]
+fn leaving_a_room_drops_its_ticker_board() {
+    let mut ctx = ClientContext::new();
+    ctx.apply_room_event(RoomEvent::Tickers {
+        room: "jazz".into(),
+        tickers: vec![RoomTicker {
+            username: "alice".into(),
+            ticker: "hi".into(),
+        }],
+    });
+    ctx.apply_room_event(RoomEvent::Left {
+        room: "jazz".into(),
+    });
+    assert!(
+        ctx.room_tickers("jazz").is_empty(),
+        "a board for a room we left is stale"
+    );
+}

@@ -265,10 +265,16 @@ impl Client {
     /// Add an interest (code 51). Interests are what the recommendation and
     /// similar-user queries below are computed from.
     ///
+    /// The server holds interests only for the session that set them, so the
+    /// list is kept here and sent again after every login. An interest added
+    /// before there is a connection is kept all the same — the error says
+    /// only that it could not go out yet, not that it was dropped.
+    ///
     /// # Errors
     /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
     pub fn add_interest(&self, item: &str) -> Result<()> {
-        self.send_server_message(MessageFactory::build_add_thing_i_like(item))
+        let item = self.context.write_safe()?.add_own_interest(item, true);
+        self.send_server_message(MessageFactory::build_add_thing_i_like(&item))
     }
 
     /// Drop an interest (code 52).
@@ -276,8 +282,9 @@ impl Client {
     /// # Errors
     /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
     pub fn remove_interest(&self, item: &str) -> Result<()> {
+        let item = self.context.write_safe()?.remove_own_interest(item, true);
         self.send_server_message(MessageFactory::build_remove_thing_i_like(
-            item,
+            &item,
         ))
     }
 
@@ -286,7 +293,8 @@ impl Client {
     /// # Errors
     /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
     pub fn add_dislike(&self, item: &str) -> Result<()> {
-        self.send_server_message(MessageFactory::build_add_thing_i_hate(item))
+        let item = self.context.write_safe()?.add_own_interest(item, false);
+        self.send_server_message(MessageFactory::build_add_thing_i_hate(&item))
     }
 
     /// Drop a dislike (code 118).
@@ -294,8 +302,9 @@ impl Client {
     /// # Errors
     /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
     pub fn remove_dislike(&self, item: &str) -> Result<()> {
+        let item = self.context.write_safe()?.remove_own_interest(item, false);
         self.send_server_message(MessageFactory::build_remove_thing_i_hate(
-            item,
+            &item,
         ))
     }
 
@@ -316,6 +325,20 @@ impl Client {
     /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
     pub fn request_global_recommendations(&self) -> Result<()> {
         self.send_server_message(MessageFactory::build_global_recommendations())
+    }
+
+    /// What we ourselves like and hate, as set through this client. The
+    /// server forgets these when the session ends, so they are re-sent after
+    /// each login.
+    #[must_use]
+    pub fn own_interests(&self) -> UserInterests {
+        match self.context.read_safe() {
+            Ok(ctx) => ctx.own_interests(),
+            Err(e) => {
+                error!("[client] own_interests: {}", e);
+                UserInterests::default()
+            }
+        }
     }
 
     /// The last reply to [`Client::request_recommendations`] as

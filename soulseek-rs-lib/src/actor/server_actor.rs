@@ -834,6 +834,8 @@ impl ServerActor {
             // The distributed stance is the leaf's to announce, and a new
             // session starts without a parent.
             self.forward_to_client(ClientOperation::ResetDistributed);
+            // The server holds interests only for the life of a session.
+            self.forward_to_client(ClientOperation::SessionEstablished);
         }
         match self.context.write_safe() {
             Ok(mut ctx) => ctx.logged_in = Some(message),
