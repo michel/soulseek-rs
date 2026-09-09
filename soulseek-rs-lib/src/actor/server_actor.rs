@@ -233,6 +233,11 @@ pub enum ServerMessage {
     },
     /// Phrases the server refuses to search for (code 160).
     ExcludedSearchPhrases(Vec<String>),
+    /// The upload speed a client needs before the server lets it carry
+    /// children (code 83).
+    ParentMinSpeed(u32),
+    /// The divisor turning that speed into a child count (code 84).
+    ParentSpeedRatio(u32),
     /// Who may enter a private room (code 133).
     PrivateRoomMembers {
         room: String,
@@ -779,6 +784,14 @@ impl ServerActor {
             }
             ServerMessage::CantCreateRoom { room } => {
                 self.forward_room_event(RoomEvent::CantCreate { room });
+            }
+            ServerMessage::ParentMinSpeed(speed) => {
+                self.forward_to_client(ClientOperation::ParentMinSpeed(speed));
+            }
+            ServerMessage::ParentSpeedRatio(ratio) => {
+                self.forward_to_client(ClientOperation::ParentSpeedRatio(
+                    ratio,
+                ));
             }
             ServerMessage::ExcludedSearchPhrases(phrases) => {
                 self.forward_to_client(ClientOperation::ExcludedSearchPhrases(

@@ -149,6 +149,11 @@ fn upload_speed(
 
 /// Build a `FileSearchResponse` for `query` against `shares`, or `None` if
 /// nothing matches. `own_username` is the name the searcher will download from.
+// One reply's worth of state: the shares to search, who we are, and the
+// figures the reply advertises. Kept as arguments rather than a struct
+// because every one of them is read straight from the client context at the
+// call site, and a struct would only move the same list one line up.
+#[allow(clippy::too_many_arguments)]
 fn build_search_response(
     shares: &Shares,
     own_username: &str,
@@ -157,13 +162,21 @@ fn build_search_response(
     free_slot: bool,
     speed: u32,
     queue_length: u32,
+    excluded_phrases: &[String],
 ) -> Option<crate::message::Message> {
     let matches = shares.search(query);
     if matches.is_empty() {
         return None;
     }
+    // A file whose path carries a phrase the server excludes (code 160) is
+    // left out of the reply, the way Nicotine+ does it: the exclusion is the
+    // server policing what travels the search network, and answering with one
+    // anyway is what it is asking us not to do.
     let entries: Vec<FileEntry> = matches
         .iter()
+        .filter(|f| {
+            !path_carries_excluded_phrase(&f.virtual_path, excluded_phrases)
+        })
         .take(crate::types::MAX_SEARCH_REPLY_FILES)
         .map(|f| FileEntry {
             name: &f.virtual_path,
@@ -171,6 +184,9 @@ fn build_search_response(
             attribs: &f.attributes,
         })
         .collect();
+    if entries.is_empty() {
+        return None;
+    }
     Some(build_file_search_response(
         own_username,
         token,
@@ -179,6 +195,18 @@ fn build_search_response(
         speed,
         queue_length,
     ))
+}
+
+/// Whether `path` contains any of the phrases the server excludes. Matching
+/// is on the lowercased path, as the phrases themselves are lowercase.
+fn path_carries_excluded_phrase(path: &str, excluded: &[String]) -> bool {
+    if excluded.is_empty() {
+        return false;
+    }
+    let lowered = path.to_lowercase();
+    excluded
+        .iter()
+        .any(|phrase| !phrase.is_empty() && lowered.contains(phrase))
 }
 
 #[derive(Debug, Clone)]
@@ -312,6 +340,13 @@ pub enum ClientOperation {
         token: u32,
         folder: String,
     },
+    /// A peer answered our request for one folder of their shares.
+    FolderContents {
+        username: String,
+        token: u32,
+        folder: String,
+        directories: Vec<SharedDirectory>,
+    },
     /// A peer we are browsing returned their shared-file listing.
     BrowseResult {
         username: String,
@@ -382,6 +417,10 @@ pub enum ClientOperation {
     },
     /// Phrases the server refuses to search for (code 160).
     ExcludedSearchPhrases(Vec<String>),
+    /// The minimum upload speed for carrying children (code 83).
+    ParentMinSpeed(u32),
+    /// The divisor turning that speed into a child count (code 84).
+    ParentSpeedRatio(u32),
     /// A parent candidate told us how deep it sits. `link` says which dial
     /// to that user is talking.
     ParentBranchLevel {
@@ -419,6 +458,13 @@ pub struct ClientContext {
     leaf: distributed::Leaf,
     /// The children hanging from us, when the client serves any.
     pub(crate) children: children::Children,
+    /// The upload speed the server records for us, once it has told us. The
+    /// child limit is derived from it.
+    own_average_speed: Option<u32>,
+    /// The speed a parent needs (code 83) and the divisor turning speed into
+    /// a child count (code 84), as the server announced them.
+    parent_min_speed: u32,
+    parent_speed_ratio: u32,
     searches: HashMap<String, Search>,
     private_messages: Vec<UserMessage>,
     /// Correlation tokens for server-brokered (firewalled) connections, mapping
@@ -443,6 +489,8 @@ pub struct ClientContext {
     pending_serves: HashMap<String, Vec<u32>>,
     /// Shared-file listings received from peers we browsed.
     browse_results: HashMap<String, Vec<SharedDirectory>>,
+    /// One-folder listings received from peers, keyed by peer and folder.
+    folder_contents: HashMap<(String, String), Vec<SharedDirectory>>,
     pending_browses: HashMap<String, Instant>,
     /// Latest snapshot of the public chat-room list (from `RoomList`, code 64).
     room_list: Vec<RoomInfo>,
@@ -580,6 +628,9 @@ impl ClientContext {
             operations: None,
             leaf: distributed::Leaf::new(""),
             children: children::Children::default(),
+            own_average_speed: None,
+            parent_min_speed: 0,
+            parent_speed_ratio: 0,
             searches: HashMap::new(),
             private_messages: Vec::new(),
             pending_connect_tokens: HashMap::new(),
@@ -592,6 +643,7 @@ impl ClientContext {
             active_uploads: HashMap::new(),
             pending_serves: HashMap::new(),
             browse_results: HashMap::new(),
+            folder_contents: HashMap::new(),
             pending_browses: HashMap::new(),
             room_list: Vec::new(),
             room_events: Vec::new(),
@@ -721,6 +773,63 @@ impl ClientContext {
             | RoomEvent::CantCreate { .. } => {}
         }
         self.room_events.push(event);
+    }
+
+    /// Record what the server says our own upload speed is, and re-derive the
+    /// child limit from it.
+    pub fn set_own_average_speed(&mut self, speed: u32) {
+        self.own_average_speed = Some(speed);
+        self.apply_child_limits();
+    }
+
+    /// Record the server's parent figures (codes 83 and 84).
+    pub fn set_parent_min_speed(&mut self, speed: u32) {
+        self.parent_min_speed = speed;
+        self.apply_child_limits();
+    }
+
+    pub fn set_parent_speed_ratio(&mut self, ratio: u32) {
+        self.parent_speed_ratio = ratio;
+        self.apply_child_limits();
+    }
+
+    fn apply_child_limits(&mut self) {
+        self.children.set_limits(
+            self.own_average_speed,
+            self.parent_min_speed,
+            self.parent_speed_ratio,
+        );
+    }
+
+    /// Whether something is feeding us the distributed search stream: a
+    /// parent of our own, or the server relaying searches to us. Children may
+    /// only hang from a client that has one.
+    pub fn set_fed_by(&mut self, fed: bool) {
+        self.children.set_fed(fed);
+        if !fed {
+            self.children.drop_all();
+        }
+    }
+
+    /// Record one folder's listing from `username`.
+    pub fn store_folder_contents(
+        &mut self,
+        username: String,
+        folder: String,
+        directories: Vec<SharedDirectory>,
+    ) {
+        self.folder_contents.insert((username, folder), directories);
+    }
+
+    /// Remove and return the listing of `folder` from `username`, if it has
+    /// arrived.
+    pub fn take_folder_contents(
+        &mut self,
+        username: &str,
+        folder: &str,
+    ) -> Option<Vec<SharedDirectory>> {
+        self.folder_contents
+            .remove(&(username.to_string(), folder.to_string()))
     }
 
     /// Who may enter the private room `room`, as last reported.

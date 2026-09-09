@@ -62,9 +62,6 @@ impl Client {
         let Some(handle) = &self.server_handle else {
             return Err(SoulseekRs::NotConnected);
         };
-        if let Some(phrase) = self.excluded_phrase_in(query) {
-            return Err(SoulseekRs::SearchPhraseExcluded(phrase));
-        }
         let token = next_search_token();
 
         self.context.write_safe()?.searches.insert(
@@ -122,9 +119,6 @@ impl Client {
         if self.server_handle.is_none() {
             return Err(SoulseekRs::NotConnected);
         }
-        if let Some(phrase) = self.excluded_phrase_in(query) {
-            return Err(SoulseekRs::SearchPhraseExcluded(phrase));
-        }
         let token = next_search_token();
         self.context.write_safe()?.searches.insert(
             query.to_string(),
@@ -136,24 +130,15 @@ impl Client {
         Ok(token)
     }
 
-    /// The phrases the server refuses to search for (code 160), as last
-    /// announced. Empty until the server has said.
+    /// The phrases the server excludes from the search network (code 160), as
+    /// last announced. Files whose path carries one are left out of the
+    /// replies this client sends. Empty until the server has said.
     #[must_use]
     pub fn excluded_search_phrases(&self) -> Vec<String> {
         self.context
             .read_safe()
             .map(|ctx| ctx.excluded_search_phrases())
             .unwrap_or_default()
-    }
-
-    /// The excluded phrase `query` carries, if any — what a search would be
-    /// refused for.
-    #[must_use]
-    pub fn excluded_phrase_in(&self, query: &str) -> Option<String> {
-        self.context
-            .read_safe()
-            .ok()
-            .and_then(|ctx| ctx.excluded_phrase_in(query))
     }
 
     /// Let responses accumulate for `timeout`, or until cancelled.

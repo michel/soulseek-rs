@@ -320,8 +320,10 @@ pub fn announce_move(
     has_parent: bool,
 ) {
     let server = ctx.server_sender.clone();
-    let accepting = ctx.children.accepting();
-    announce(server.as_ref(), branch, has_parent, accepting);
+    // What the server needs to know is whether it may offer us to another
+    // peer right now, not whether we serve children in principle.
+    let has_room = ctx.children.has_room();
+    announce(server.as_ref(), branch, has_parent, has_room);
     ctx.children.broadcast_stance(&branch.root, branch.level);
 }
 

@@ -264,6 +264,25 @@ impl Client {
         registered
     }
 
+    /// Tell the server we could not reach the peer it asked us to connect to,
+    /// quoting the token that peer is waiting on.
+    pub(crate) fn report_cant_connect(
+        client_context: &Arc<RwLock<ClientContext>>,
+        token: u32,
+        username: &str,
+    ) {
+        let sender = match client_context.read_safe() {
+            Ok(ctx) => ctx.server_sender.clone(),
+            Err(_) => return,
+        };
+        let Some(sender) = sender else { return };
+        let message =
+            crate::message::server::MessageFactory::build_cant_connect_to_peer(
+                token, username,
+            );
+        let _ = sender.send(ServerMessage::SendMessage(message));
+    }
+
     pub(crate) fn connect_to_peer(
         peer: Peer,
         client_context: Arc<RwLock<ClientContext>>,
@@ -306,7 +325,13 @@ impl Client {
                     own_username,
                 );
 
-                match download_peer.download_file(client_context, None, None) {
+                let brokered = peer_clone.brokered;
+                let username = peer_clone.username;
+                match download_peer.download_file(
+                    client_context.clone(),
+                    None,
+                    None,
+                ) {
                     Ok((download, filename)) => {
                         trace!(
                             "[client] downloaded {} bytes {:?} ",
@@ -315,6 +340,17 @@ impl Client {
                     }
                     Err(e) => {
                         trace!("[client] failed to download: {}", e);
+                        // A file connection the server asked us to make and
+                        // we could not complete owes that peer a
+                        // CantConnectToPeer, exactly as a control connection
+                        // does: it is waiting on this token.
+                        if brokered {
+                            Self::report_cant_connect(
+                                &client_context,
+                                token,
+                                &username,
+                            );
+                        }
                     }
                 }
             }

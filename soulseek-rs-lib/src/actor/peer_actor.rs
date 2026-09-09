@@ -2,11 +2,11 @@ use crate::actor::{Actor, ActorHandle, ConnectionState};
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
 use crate::message::peer::{
-    FileSearchResponse, FolderContentsRequest, GetShareFileList, PeerInit,
-    PlaceInQueueRequest, PlaceInQueueResponse, QueueUploadHandler,
-    SharedDirectory, SharedFileListResponseHandler, TransferRequest,
-    TransferResponse, UploadDeniedHandler, UploadFailedHandler,
-    UserInfoRequest,
+    FileSearchResponse, FolderContentsRequest, FolderContentsResponseHandler,
+    GetShareFileList, PeerInit, PlaceInQueueRequest, PlaceInQueueResponse,
+    QueueUploadHandler, SharedDirectory, SharedFileListResponseHandler,
+    TransferRequest, TransferResponse, UploadDeniedHandler,
+    UploadFailedHandler, UserInfoRequest,
 };
 use crate::message::server::MessageFactory;
 use crate::message::{Handlers, Message, MessageReader, MessageType};
@@ -47,6 +47,12 @@ pub enum PeerMessage {
     ShareListRequested,
     /// A peer we are browsing sent us their shared-file listing (code 5).
     ShareListReceived(Vec<SharedDirectory>),
+    /// A peer answered our `FolderContentsRequest` with one folder's listing.
+    FolderContentsReceived {
+        token: u32,
+        folder: String,
+        directories: Vec<SharedDirectory>,
+    },
     /// A peer asked what we say about ourselves (they sent us code 15).
     UserInfoRequested,
     /// A peer asked for one folder of our shares (they sent us code 36).
@@ -199,6 +205,7 @@ impl PeerActor {
         handlers.register_handler(TransferResponse);
         handlers.register_handler(GetShareFileList);
         handlers.register_handler(FolderContentsRequest);
+        handlers.register_handler(FolderContentsResponseHandler);
         handlers.register_handler(UserInfoRequest);
         handlers.register_handler(UploadDeniedHandler);
         handlers.register_handler(UploadFailedHandler);
@@ -307,6 +314,18 @@ impl PeerActor {
             PeerMessage::ShareListReceived(directories) => {
                 self.forward(ClientOperation::BrowseResult {
                     username: self.peer_username(),
+                    directories,
+                });
+            }
+            PeerMessage::FolderContentsReceived {
+                token,
+                folder,
+                directories,
+            } => {
+                self.forward(ClientOperation::FolderContents {
+                    username: self.peer_username(),
+                    token,
+                    folder,
                     directories,
                 });
             }

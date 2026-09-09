@@ -166,6 +166,42 @@ impl Client {
         ))
     }
 
+    /// Ask `username` for the contents of one folder of their shares (peer
+    /// code 36) — what "download folder" in other clients asks for, without
+    /// pulling their whole listing.
+    ///
+    /// The answer arrives asynchronously; take it with
+    /// [`Client::take_folder_contents`].
+    ///
+    /// # Errors
+    /// [`crate::SoulseekRs::NotConnected`] when there is no server connection,
+    /// or [`crate::SoulseekRs::LockPoisoned`] if the client state is poisoned.
+    pub fn request_folder_contents(
+        &self,
+        username: &str,
+        folder: &str,
+    ) -> Result<()> {
+        let request = crate::message::peer::build_folder_contents_request(
+            crate::client::next_search_token(),
+            folder,
+        );
+        self.send_to_peer_or_queue(username, request)
+    }
+
+    /// Remove and return the listing of `folder` from `username`, once their
+    /// answer to [`Client::request_folder_contents`] has arrived.
+    #[must_use]
+    pub fn take_folder_contents(
+        &self,
+        username: &str,
+        folder: &str,
+    ) -> Option<Vec<crate::SharedDirectory>> {
+        self.context
+            .write_safe()
+            .ok()
+            .and_then(|mut ctx| ctx.take_folder_contents(username, folder))
+    }
+
     /// Ask `username` where the file we queued with them sits (peer code 51).
     ///
     /// The answer arrives asynchronously and lands on the download, readable

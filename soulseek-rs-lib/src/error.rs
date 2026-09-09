@@ -20,9 +20,6 @@ pub enum SoulseekRs {
     CompressionError(String),
     /// A lock was poisoned by a panic in another thread
     LockPoisoned,
-    /// The query carries a phrase the server refuses to search for (code 160),
-    /// so sending it would spend a search on a query nothing answers.
-    SearchPhraseExcluded(String),
 }
 
 impl fmt::Display for SoulseekRs {
@@ -43,9 +40,6 @@ impl fmt::Display for SoulseekRs {
             Self::NotConnected => write!(f, "Not connected to server"),
             Self::CompressionError(msg) => {
                 write!(f, "Compression error: {msg}")
-            }
-            Self::SearchPhraseExcluded(phrase) => {
-                write!(f, "The server excludes searches for \"{phrase}\"")
             }
             Self::LockPoisoned => {
                 write!(f, "Lock poisoned by panicking thread")

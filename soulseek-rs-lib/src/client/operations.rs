@@ -10,6 +10,12 @@ use crate::peer::DownloadError;
 
 const CONNECT_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 
+/// How often to ask the peers holding our queued downloads where they sit
+/// (peer code 51). Five minutes is what Nicotine+ uses: often enough that a
+/// queue position on screen means something, rare enough that a peer with a
+/// long queue is not pestered.
+const QUEUE_POSITION_INTERVAL: Duration = Duration::from_secs(300);
+
 impl Client {
     pub(crate) fn listen_to_client_operations(
         reader: Receiver<ClientOperation>,
@@ -18,6 +24,7 @@ impl Client {
     ) {
         thread::spawn(move || {
             let mut last_sweep = Instant::now();
+            let mut last_queue_poll = Instant::now();
             loop {
                 let next = reader.recv_timeout(CONNECT_SWEEP_INTERVAL);
                 if last_sweep.elapsed() >= CONNECT_SWEEP_INTERVAL {
@@ -34,6 +41,10 @@ impl Client {
                             );
                         }
                     }
+                }
+                if last_queue_poll.elapsed() >= QUEUE_POSITION_INTERVAL {
+                    last_queue_poll = Instant::now();
+                    Self::poll_queue_positions(&client_context);
                 }
                 let operation = match next {
                     Ok(operation) => operation,
@@ -537,14 +548,28 @@ impl Client {
                         token,
                         query,
                     } => {
-                        // Pass it down the tree first: carrying the search
-                        // stream is a parent's whole duty, and it is owed
-                        // even for a search we ourselves cannot answer.
-                        if let Ok(mut ctx) = client_context.write_safe()
-                            && !ctx.children.is_empty()
+                        // Every search we receive comes from the tree: from
+                        // our parent, or from the server acting as one. That
+                        // is what qualifies us to carry children at all —
+                        // Nicotine+ refuses them until something feeds it —
+                        // and passing the search down is the whole duty.
+                        let capacity_changed = match client_context.write_safe()
                         {
-                            ctx.children
-                                .broadcast_search(&username, token, &query);
+                            Ok(mut ctx) => {
+                                let was_fed = ctx.children.is_fed();
+                                let before = ctx.children.len();
+                                ctx.set_fed_by(true);
+                                ctx.children
+                                    .broadcast_search(&username, token, &query);
+                                // A child whose socket has gone is dropped by
+                                // that write, which frees a slot the server
+                                // should hear about.
+                                !was_fed || ctx.children.len() != before
+                            }
+                            Err(_) => false,
+                        };
+                        if capacity_changed {
+                            Self::announce_child_capacity(&client_context);
                         }
 
                         // Don't answer our own distributed search.
@@ -560,6 +585,7 @@ impl Client {
                                 ctx.has_free_upload_slot(),
                                 ctx.last_upload_speed,
                                 ctx.upload_queue.len() as u32,
+                                &ctx.excluded_search_phrases(),
                             ),
                             Err(e) => {
                                 error!("[client] IncomingSearch read: {}", e);
@@ -754,6 +780,10 @@ impl Client {
                             continue;
                         };
                         ctx.leaf.reset();
+                        // A fresh session feeds us nothing until the tree (or
+                        // the server) starts again, so the children we were
+                        // carrying are let go rather than left starving.
+                        ctx.set_fed_by(false);
                         let branch = ctx.leaf.branch();
                         super::distributed::announce_move(
                             &mut ctx, &branch, false,
@@ -831,6 +861,9 @@ impl Client {
                         if stream.set_nodelay(true).is_err() {
                             continue;
                         }
+                        if username == own_username {
+                            continue; // we cannot hang from ourselves
+                        }
                         if ctx.children.accept(&username, stream) {
                             let branch = ctx.leaf.branch();
                             ctx.children.send_stance_to(
@@ -842,7 +875,47 @@ impl Client {
                                 "[distributed] carrying {} children",
                                 ctx.children.len()
                             );
+                            // The server stops offering us to peers once we
+                            // are full, and starts again when one leaves.
+                            let full = !ctx.children.has_room();
+                            drop(ctx);
+                            if full {
+                                Self::announce_child_capacity(&client_context);
+                            }
                         }
+                    }
+                    ClientOperation::FolderContents {
+                        username,
+                        token,
+                        folder,
+                        directories,
+                    } => {
+                        trace!(
+                            "[client] folder {} from {} (token {}): {} dirs",
+                            folder,
+                            username,
+                            token,
+                            directories.len()
+                        );
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.store_folder_contents(
+                                username,
+                                folder,
+                                directories,
+                            );
+                        }
+                    }
+                    ClientOperation::ParentMinSpeed(speed) => {
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.set_parent_min_speed(speed);
+                        }
+                        Self::announce_child_capacity(&client_context);
+                    }
+                    ClientOperation::ParentSpeedRatio(ratio) => {
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.set_parent_speed_ratio(ratio);
+                        }
+                        Self::announce_child_capacity(&client_context);
                     }
                     ClientOperation::ExcludedSearchPhrases(phrases) => {
                         if let Ok(mut ctx) = client_context.write_safe() {
@@ -1073,6 +1146,50 @@ impl Client {
                 }
             }
         });
+    }
+
+    /// Ask every peer holding a queued download of ours where it sits. The
+    /// answers arrive as `PlaceInQueueResponse` and land on the downloads.
+    fn poll_queue_positions(client_context: &Arc<RwLock<ClientContext>>) {
+        let (registry, queued) = match client_context.read_safe() {
+            Ok(ctx) => (
+                ctx.peer_registry.clone(),
+                ctx.get_downloads()
+                    .iter()
+                    .filter(|d| matches!(d.status, DownloadStatus::Queued))
+                    .map(|d| (d.username.clone(), d.filename.clone()))
+                    .collect::<Vec<_>>(),
+            ),
+            Err(_) => return,
+        };
+        let Some(registry) = registry else { return };
+        for (username, filename) in queued {
+            // Only over a connection we already hold: a peer we cannot reach
+            // is a connection problem, not a queue question.
+            if !registry.contains(&username) {
+                continue;
+            }
+            let request =
+                MessageFactory::build_place_in_queue_request(&filename);
+            let _ = registry
+                .send_to_peer(&username, PeerMessage::SendMessage(request));
+        }
+    }
+
+    /// Tell the server whether we would take another child right now
+    /// (`AcceptChildren`, code 100). Sent whenever that answer changes: the
+    /// server only offers us to peers while it is true.
+    fn announce_child_capacity(client_context: &Arc<RwLock<ClientContext>>) {
+        let (sender, has_room) = match client_context.read_safe() {
+            Ok(ctx) => (ctx.server_sender.clone(), ctx.children.has_room()),
+            Err(_) => return,
+        };
+        let Some(sender) = sender else { return };
+        let message =
+            crate::message::server::MessageFactory::build_accept_children(
+                has_room,
+            );
+        let _ = sender.send(ServerMessage::SendMessage(message));
     }
 
     /// Answer a peer with the message `build` derives from the client state.

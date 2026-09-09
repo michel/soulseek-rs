@@ -161,7 +161,7 @@ fn build_search_response_matches_shares_and_echoes_token() {
     let shares = Shares::scan(&dir).unwrap();
 
     let response =
-        build_search_response(&shares, "me", 99, "xyzzy", true, 0, 0)
+        build_search_response(&shares, "me", 99, "xyzzy", true, 0, 0, &[])
             .expect("a matching share yields a response");
     let mut decoded =
         crate::message::Message::new_with_data(response.get_buffer());
@@ -172,7 +172,7 @@ fn build_search_response_matches_shares_and_echoes_token() {
     assert!(result.files.iter().any(|f| f.name.contains("probe_xyzzy")));
 
     assert!(
-        build_search_response(&shares, "me", 1, "nomatch", true, 0, 0)
+        build_search_response(&shares, "me", 1, "nomatch", true, 0, 0, &[])
             .is_none()
     );
     let _ = std::fs::remove_dir_all(dir);
@@ -1033,4 +1033,54 @@ fn losing_operatorship_keeps_the_membership_it_does_not_touch() {
     });
     assert_eq!(ctx.private_room_members("club"), vec!["alice".to_string()]);
     assert!(ctx.private_room_operators("club").is_empty());
+}
+
+#[test]
+fn a_file_the_server_excludes_is_left_out_of_a_reply() {
+    // The server's excluded phrases (code 160) police what travels the search
+    // network: a matching file whose path carries one must not be offered,
+    // and a reply with nothing left is not sent at all.
+    let dir = std::env::temp_dir()
+        .join(format!("soulseek-excluded-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("Spam_Xyzzy.bin"), b"data").unwrap();
+    let shares = Shares::scan(&dir).unwrap();
+
+    assert!(
+        build_search_response(&shares, "me", 1, "xyzzy", true, 0, 0, &[])
+            .is_some(),
+        "with no exclusions the file is offered"
+    );
+    assert!(
+        build_search_response(
+            &shares,
+            "me",
+            1,
+            "xyzzy",
+            true,
+            0,
+            0,
+            &["spam".to_string()],
+        )
+        .is_none(),
+        "an excluded phrase in the path, matched case-insensitively, \
+         withholds the file — and with no files there is no reply"
+    );
+    assert!(
+        build_search_response(
+            &shares,
+            "me",
+            1,
+            "xyzzy",
+            true,
+            0,
+            0,
+            &["unrelated".to_string()],
+        )
+        .is_some(),
+        "an exclusion the path does not carry changes nothing"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -4431,7 +4431,11 @@ fn stub_server_sending(
 }
 
 #[test]
-fn an_excluded_phrase_is_refused_before_a_search_is_spent() {
+fn phrases_the_server_excludes_are_kept_for_our_replies() {
+    // The server tells clients which phrases are excluded from the search
+    // network (code 160). Nicotine+ applies them to the files it offers in a
+    // search reply, not to the searches it sends, and so do we — this pins
+    // that the announced list arrives and is kept for that use.
     let mut phrases = Message::new();
     phrases
         .write_int32(160)
@@ -4469,18 +4473,11 @@ fn an_excluded_phrase_is_refused_before_a_search_is_spent() {
         "the announced phrases should be kept"
     );
 
-    // A query carrying one is refused here rather than spent on the server,
-    // and the match is case-insensitive on substrings, as the server's is.
-    match client.search("A BANNED-PHRASE query", Duration::from_millis(100)) {
-        Err(soulseek_rs::SoulseekRs::SearchPhraseExcluded(phrase)) => {
-            assert_eq!(phrase, "banned-phrase");
-        }
-        other => panic!("expected a refusal, got {other:?}"),
-    }
-    // A clean query is not refused.
+    // Our own searches are not policed by them: that is the server's job, and
+    // no reference client refuses a query locally.
     assert!(
         client
-            .search("something else", Duration::from_millis(100))
+            .search("a banned-phrase query", Duration::from_millis(100))
             .is_ok()
     );
 
@@ -4865,6 +4862,28 @@ fn a_parent_tells_a_child_where_it_sits_and_passes_searches_down() {
     parent.connect().expect("parent connect");
     assert!(parent.login().expect("parent login"));
 
+    // A client takes children only once something feeds it the search
+    // stream — here the server, which relays every search to us. Until then
+    // a child would hang from a branch that receives nothing, which is why
+    // Nicotine+ refuses one too.
+    let addr = format!("{}:{}", server.host, server.port);
+    let mut searcher =
+        login_raw(&addr, "e2e_par_searcher", "pw").expect("searcher login");
+    let search = |searcher: &mut TcpStream, token: u32| {
+        searcher
+            .write_all(
+                &MessageFactory::build_file_search_message(
+                    token,
+                    "e2e_child_relay_probe",
+                )
+                .get_buffer(),
+            )
+            .expect("send a search");
+        searcher.flush().expect("flush the search");
+    };
+    search(&mut searcher, 515_150);
+    std::thread::sleep(Duration::from_secs(2));
+
     let mut child =
         dial_as_child(listen_port, "e2e_par_child").expect("child dials");
 
@@ -4902,20 +4921,8 @@ fn a_parent_tells_a_child_where_it_sits_and_passes_searches_down() {
 
     // A search the server hands us must reach the child, whether or not we
     // can answer it ourselves — carrying the stream is the parent's duty.
-    let addr = format!("{}:{}", server.host, server.port);
-    let mut searcher =
-        login_raw(&addr, "e2e_par_searcher", "pw").expect("searcher login");
     let token = 515_151_u32;
-    searcher
-        .write_all(
-            &MessageFactory::build_file_search_message(
-                token,
-                "e2e_child_relay_probe",
-            )
-            .get_buffer(),
-        )
-        .expect("send a search");
-    searcher.flush().expect("flush the search");
+    search(&mut searcher, token);
 
     let relayed = read_distributed_until(
         &mut child,
@@ -4938,19 +4945,24 @@ fn a_parent_tells_a_child_where_it_sits_and_passes_searches_down() {
         )
     );
 
+    // A second link from the same child is refused: the one we hold is live.
+    let mut duplicate =
+        dial_as_child(listen_port, "e2e_par_child").expect("child dials again");
+    let told_again =
+        read_distributed_until(&mut duplicate, Duration::from_secs(3), |f| {
+            matches!(f, distributed::Distributed::BranchRoot(_)).then_some(())
+        });
+    assert!(told_again.is_none(), "a child we carry is not taken twice");
+    assert_eq!(parent.children(), vec!["e2e_par_child".to_string()]);
+    drop(duplicate);
+
     // A child that hangs up loses its place.
     drop(child);
     let deadline = Instant::now() + Duration::from_secs(20);
+    let mut next_token = token + 1;
     while !parent.children().is_empty() && Instant::now() < deadline {
-        searcher
-            .write_all(
-                &MessageFactory::build_file_search_message(
-                    token + 1,
-                    "e2e_child_relay_probe",
-                )
-                .get_buffer(),
-            )
-            .expect("send another search");
+        search(&mut searcher, next_token);
+        next_token += 1;
         std::thread::sleep(Duration::from_millis(500));
     }
     assert!(
@@ -4983,4 +4995,56 @@ fn a_client_that_does_not_serve_children_turns_one_away() {
         });
     assert!(told.is_none(), "a leaf must not take on a child");
     assert!(leaf.children().is_empty());
+}
+
+#[test]
+fn one_folder_of_a_peers_shares_can_be_asked_for_by_itself() {
+    // "Download folder" in other clients asks for one folder (peer code 36)
+    // rather than pulling the peer's whole listing.
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    std::fs::create_dir_all(share_dir.join("wanted")).unwrap();
+    std::fs::create_dir_all(share_dir.join("unwanted")).unwrap();
+    std::fs::write(share_dir.join("wanted").join("keep.bin"), b"abcd").unwrap();
+    std::fs::write(share_dir.join("unwanted").join("skip.bin"), b"efgh")
+        .unwrap();
+
+    let (_sharer, asker) = sharer_and_searcher(
+        &server,
+        &share_dir,
+        "e2e_folder_sharer",
+        "e2e_folder_asker",
+    );
+
+    // The folder is named the way the sharer advertises it: the share root's
+    // basename, then the subfolder, backslash-separated.
+    let root = share_dir.file_name().unwrap().to_string_lossy().to_string();
+    let folder = format!("{root}\\wanted");
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut listing = None;
+    while Instant::now() < deadline && listing.is_none() {
+        asker
+            .request_folder_contents("e2e_folder_sharer", &folder)
+            .expect("ask for one folder");
+        std::thread::sleep(Duration::from_millis(500));
+        listing = asker.take_folder_contents("e2e_folder_sharer", &folder);
+    }
+    let listing = listing.expect("the peer should answer with that folder");
+
+    assert!(
+        listing
+            .iter()
+            .any(|dir| dir.files.iter().any(|f| f.name.contains("keep.bin"))),
+        "the folder we asked for should be in the answer, got {listing:?}"
+    );
+    assert!(
+        !listing
+            .iter()
+            .any(|dir| dir.files.iter().any(|f| f.name.contains("skip.bin"))),
+        "no other folder should come with it, got {listing:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(share_dir);
 }
