@@ -70,8 +70,8 @@ Message names and codes follow the Soulseek protocol as implemented by
 | 142 | ChangePassword | yes | e2e — the next login needs the new one |
 | 143 / 144 | AddRoomOperator / Remove | yes | e2e — the guest is promoted |
 | 145 / 146 | RoomOperatorshipGranted / Revoked | yes | e2e — the guest is told |
-| 147 | CancelRoomOperatorship | yes | unit |
-| 148 | RoomOperators | yes | unit |
+| 147 | CancelRoomOperatorship | yes | e2e — an operator stands down |
+| 148 | RoomOperators | yes | e2e — the roster after a promotion |
 | 149 | MessageUsers | yes | e2e — one message, two recipients |
 | 150 / 151 / 152 | Global room | yes | e2e — the feed starts and stops |
 | 160 | ExcludedSearchPhrases | yes | e2e — the list is kept for our replies |

@@ -4655,6 +4655,48 @@ fn a_private_room_is_owned_granted_and_revoked() {
         "the guest should be told they run the room"
     );
 
+    // The owner's operator roster carries them too (code 143).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline
+        && !owner
+            .private_room_operators(room)
+            .iter()
+            .any(|u| u == "e2e_priv_guest")
+    {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        owner
+            .private_room_operators(room)
+            .iter()
+            .any(|u| u == "e2e_priv_guest"),
+        "the operator roster should carry the guest, got {:?}",
+        owner.private_room_operators(room)
+    );
+
+    // And an operator can stand down themselves (code 147), which the
+    // owner's roster reflects.
+    guest
+        .resign_room_operatorship(room)
+        .expect("guest stands down");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline
+        && owner
+            .private_room_operators(room)
+            .iter()
+            .any(|u| u == "e2e_priv_guest")
+    {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert!(
+        !owner
+            .private_room_operators(room)
+            .iter()
+            .any(|u| u == "e2e_priv_guest"),
+        "an operator who stood down should leave the roster, got {:?}",
+        owner.private_room_operators(room)
+    );
+
     // And membership can be taken away again (code 140).
     owner
         .remove_room_member(room, "e2e_priv_guest")
