@@ -295,8 +295,9 @@ mod tests {
         download_dir_set: std::sync::Mutex<Option<String>>,
         /// What `set_shared_directories` was last asked for, if anything.
         shares_set: std::sync::Mutex<Option<Vec<String>>>,
-        download_cancelled: std::sync::Mutex<Option<(String, String)>>,
-        upload_cancelled: std::sync::Mutex<Option<(String, String)>>,
+        download_cancelled: std::sync::Mutex<Vec<(String, String)>>,
+        upload_cancelled: std::sync::Mutex<Vec<(String, String)>>,
+        download_removed: std::sync::Mutex<Vec<(String, String)>>,
     }
 
     fn queued(username: &str, filename: &str) -> soulseek_rs::types::Download {
@@ -449,8 +450,12 @@ mod tests {
         fn remove_queued_download(&self, _u: &str, _f: &str) -> bool {
             false
         }
-        fn remove_download(&self, _u: &str, _f: &str) -> bool {
-            false
+        fn remove_download(&self, u: &str, f: &str) -> bool {
+            self.download_removed
+                .lock()
+                .expect("not poisoned")
+                .push((u.to_string(), f.to_string()));
+            true
         }
         fn uploads(&self) -> Vec<soulseek_rs::UploadInfo> {
             Vec::new()
@@ -459,13 +464,17 @@ mod tests {
             Vec::new()
         }
         fn cancel_upload(&self, u: &str, f: &str) -> bool {
-            *self.upload_cancelled.lock().expect("not poisoned") =
-                Some((u.to_string(), f.to_string()));
+            self.upload_cancelled
+                .lock()
+                .expect("not poisoned")
+                .push((u.to_string(), f.to_string()));
             true
         }
         fn cancel_download(&self, u: &str, f: &str) -> bool {
-            *self.download_cancelled.lock().expect("not poisoned") =
-                Some((u.to_string(), f.to_string()));
+            self.download_cancelled
+                .lock()
+                .expect("not poisoned")
+                .push((u.to_string(), f.to_string()));
             true
         }
         fn set_upload_slots(&self, _slots: usize) {}
@@ -614,11 +623,70 @@ mod tests {
 
         assert_eq!(
             *session.download_cancelled.lock().expect("not poisoned"),
-            Some(("bob".to_string(), "song.mp3".to_string()))
+            vec![("bob".to_string(), "song.mp3".to_string())]
+        );
+        assert!(
+            session
+                .upload_cancelled
+                .lock()
+                .expect("not poisoned")
+                .is_empty(),
+            "the download row cancels no upload"
+        );
+    }
+
+    #[test]
+    fn shift_c_clears_the_whole_transfer_list() {
+        let session = Arc::new(TalkativeSession::default());
+        let mut tui = attach(session.clone());
+        tui.state.downloads.push(crate::models::DownloadEntry {
+            download: queued("bob", "waiting.mp3"),
+            receiver: None,
+        });
+        tui.state.downloads.push(crate::models::DownloadEntry {
+            download: at_status(
+                "carol",
+                "live.mp3",
+                soulseek_rs::DownloadStatus::InProgress {
+                    bytes_downloaded: 1,
+                    total_bytes: 4096,
+                    speed_bytes_per_sec: 1.0,
+                },
+            ),
+            receiver: None,
+        });
+        tui.state.downloads.push(crate::models::DownloadEntry {
+            download: completed("dave", "done.mp3"),
+            receiver: None,
+        });
+        tui.state.uploads.push(uploading("alice", "served.mp3"));
+        tui.state.downloads_table_state.select(Some(0));
+        tui.state.focused_pane = FocusedPane::Downloads;
+
+        tui.handle_key_event(key('C'));
+
+        assert!(tui.state.downloads.is_empty(), "every row goes");
+        assert_eq!(
+            *session.download_cancelled.lock().expect("not poisoned"),
+            vec![
+                ("bob".to_string(), "waiting.mp3".to_string()),
+                ("carol".to_string(), "live.mp3".to_string()),
+            ],
+            "live downloads are cancelled; the finished one is not"
+        );
+        assert_eq!(
+            *session.download_removed.lock().expect("not poisoned"),
+            vec![
+                ("bob".to_string(), "waiting.mp3".to_string()),
+                ("carol".to_string(), "live.mp3".to_string()),
+                ("dave".to_string(), "done.mp3".to_string()),
+            ],
+            "the session forgets every download, not just this window's rows"
         );
         assert_eq!(
             *session.upload_cancelled.lock().expect("not poisoned"),
-            None
+            vec![("alice".to_string(), "served.mp3".to_string())],
+            "a streaming upload is cancelled too"
         );
     }
 
@@ -654,9 +722,13 @@ mod tests {
 
         tui.handle_key_event(key('x'));
 
-        assert_eq!(
-            *session.download_cancelled.lock().expect("not poisoned"),
-            None
+        assert!(
+            session
+                .download_cancelled
+                .lock()
+                .expect("not poisoned")
+                .is_empty(),
+            "a finished download is not cancelled"
         );
     }
 
@@ -676,11 +748,15 @@ mod tests {
 
         assert_eq!(
             *session.upload_cancelled.lock().expect("not poisoned"),
-            Some(("alice".to_string(), "served.mp3".to_string()))
+            vec![("alice".to_string(), "served.mp3".to_string())]
         );
-        assert_eq!(
-            *session.download_cancelled.lock().expect("not poisoned"),
-            None
+        assert!(
+            session
+                .download_cancelled
+                .lock()
+                .expect("not poisoned")
+                .is_empty(),
+            "the upload row cancels no download"
         );
     }
 
@@ -2040,6 +2116,18 @@ mod tests {
         press(&mut tui, KeyCode::Char('?'));
         let screen = screen_of(&mut tui);
         assert!(screen.contains("run the search again"), "{screen}");
+    }
+
+    #[test]
+    fn the_downloads_pane_lists_its_clear_everything_key() {
+        let mut tui = furnished_tui();
+        tui.state.focused_pane = FocusedPane::Downloads;
+        let screen = screen_sized(&mut tui, 300, 40);
+        assert!(screen.contains("[c → clear finished]"), "{screen}");
+        assert!(screen.contains("[C → clear all]"), "{screen}");
+        press(&mut tui, KeyCode::Char('?'));
+        let screen = screen_of(&mut tui);
+        assert!(screen.contains("cancelling the live ones"), "{screen}");
     }
 
     #[test]

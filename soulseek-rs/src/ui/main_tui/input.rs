@@ -569,6 +569,9 @@ impl MainTui {
             KeyCode::Char('c') => {
                 self.clear_finished_downloads();
             }
+            KeyCode::Char('C') => {
+                self.clear_all_transfers();
+            }
             _ => {}
         }
     }
