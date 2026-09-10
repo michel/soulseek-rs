@@ -8,6 +8,11 @@ use super::{
 use crate::message::server::MessageFactory;
 use crate::peer::DownloadError;
 
+mod peers;
+mod search;
+mod transfers;
+mod tree;
+
 const CONNECT_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 
 /// How often to ask the peers holding our queued downloads where they sit
@@ -98,118 +103,24 @@ impl Client {
                             }
                         }
                     }
-                    ClientOperation::PeerDisconnected(id, username, error) => {
-                        // Scope the read guard: process_failed_uploads
-                        // below acquires a write lock on the same
-                        // RwLock, which would self-deadlock the entire
-                        // client ops loop if this read guard were still
-                        // held on this thread. Evict only if this exact
-                        // actor still occupies the slot, so a replaced
-                        // actor's shutdown can't remove its successor.
-                        {
-                            let context = match client_context.read_safe() {
-                                Ok(c) => c,
-                                Err(e) => {
-                                    error!(
-                                        "[client] PeerDisconnected read: {}",
-                                        e
-                                    );
-                                    continue;
-                                }
-                            };
-                            if let Some(ref registry) = context.peer_registry
-                                && let Some(handle) =
-                                    registry.remove_peer_if(&username, id)
-                            {
-                                let _ = handle.stop();
-                            }
-                        }
-                        // Only an error is evidence the peer is gone. A clean
-                        // close — our idle reaper, or a remote client tidying
-                        // an idle socket while it waits in our queue — must
-                        // not throw away everything that peer has queued: the
-                        // connection comes back, the queue cannot. A departed
-                        // peer wedging uploads shut is still covered: its
-                        // erroring transfer fails within the socket deadlines
-                        // and the error branch here frees its slots.
-                        if let Some(error) = error {
-                            warn!(
-                                "[client] Peer {} disconnected with error: {:?}",
-                                username, error
-                            );
-                            Self::process_failed_uploads(
-                                client_context.clone(),
-                                &username,
-                                None,
-                            );
-                            Self::release_upload_slots(
-                                &client_context,
-                                &username,
-                            );
-                        }
-                    }
-                    ClientOperation::DownloadFromPeer(token, peer, allowed) => {
-                        let maybe_download = match client_context.write_safe() {
-                            Ok(mut ctx) => ctx
-                                .downloads
-                                .claim_for_peer(token, &peer.username),
-                            Err(e) => {
-                                error!(
-                                    "[client] DownloadFromPeer write: {}",
-                                    e
-                                );
-                                continue;
-                            }
-                        };
-                        trace!(
-                            "[client] DownloadFromPeer token: {} peer: {:?}",
-                            token, peer
+                    operation @ (ClientOperation::PeerDisconnected(..)
+                    | ClientOperation::PeerConnectFailed(..)
+                    | ClientOperation::ChildConnected { .. }) => {
+                        Self::on_peers(
+                            operation,
+                            &client_context,
+                            &own_username,
                         );
-                        let Some(download) = maybe_download else {
-                            debug!(
-                                "[client] transfer token {} is missing, belongs \
-                                 to another peer, or is already claimed; ignoring",
-                                token,
-                            );
-                            continue;
-                        };
-
-                        let own_username = own_username.clone();
-                        let client_context = client_context.clone();
-
-                        thread::spawn(move || {
-                            let download_peer = DownloadPeer::new(
-                                download.username.clone(),
-                                peer.host.clone(),
-                                peer.port,
-                                token,
-                                allowed,
-                                own_username,
-                            );
-                            match download_peer.download_file(
-                                client_context,
-                                Some(download.clone()),
-                                None,
-                            ) {
-                                Ok((download, filename)) => {
-                                    info!(
-                                        "Successfully downloaded {} bytes to {}",
-                                        download.size, filename
-                                    );
-                                }
-                                Err(DownloadError::Cancelled) => {}
-                                Err(e) => {
-                                    error!(
-                                        "Failed to download file '{}' from {}:{} (token: {}) - Error: {}",
-                                        download.filename,
-                                        peer.host,
-                                        peer.port,
-                                        download.token,
-                                        e
-                                    );
-                                }
-                            }
-                        });
+                    }
+                    operation @ (ClientOperation::DownloadFromPeer(..)
+                    | ClientOperation::UpdateDownloadTokens(..)
+                    | ClientOperation::StartUpload { .. }
+                    | ClientOperation::QueueUpload { .. }) => {
+                        Self::on_transfers(
+                            operation,
+                            &client_context,
+                            &own_username,
+                        );
                     }
                     ClientOperation::GetPeerAddressResponse {
                         username,
@@ -307,78 +218,6 @@ impl Client {
                                 client_context.clone(),
                                 own_username.clone(),
                                 None,
-                            );
-                        }
-                    }
-                    ClientOperation::UpdateDownloadTokens(
-                        transfer,
-                        username,
-                    ) => {
-                        let mut context = match client_context.write_safe() {
-                            Ok(c) => c,
-                            Err(e) => {
-                                error!(
-                                    "[client] UpdateDownloadTokens write: {}",
-                                    e
-                                );
-                                continue;
-                            }
-                        };
-
-                        let download_to_update =
-                            context.get_downloads().iter().find_map(|d| {
-                                if d.username == username
-                                    && d.filename == transfer.filename
-                                {
-                                    Some((d.token, d.clone()))
-                                } else {
-                                    None
-                                }
-                            });
-
-                        let cancelled = download_to_update
-                            .as_ref()
-                            .is_some_and(|(_, d)| {
-                                matches!(d.status, DownloadStatus::Cancelled)
-                            });
-                        if !cancelled
-                            && let Some((old_token, download)) =
-                                download_to_update
-                        {
-                            trace!(
-                                "[client] UpdateDownloadTokens found {old_token}, transfer: {:?}",
-                                transfer
-                            );
-
-                            context.add_download(Download {
-                                token: transfer.token,
-                                size: transfer.size,
-                                ..download
-                            });
-                            context.remove_download(old_token);
-                        }
-
-                        // Only now invite the file connection: it is
-                        // matched by this token, which is recorded as
-                        // of the line above. Answering any earlier
-                        // races the peer's connection against our own
-                        // bookkeeping.
-                        let registry = context.peer_registry.clone();
-                        drop(context);
-                        if let Some(registry) = registry {
-                            let response = if cancelled {
-                                MessageFactory::build_transfer_denial_message(
-                                    transfer.token,
-                                    "Cancelled",
-                                )
-                            } else {
-                                MessageFactory::build_transfer_response_message(
-                                    transfer,
-                                )
-                            };
-                            let _ = registry.send_to_peer(
-                                &username,
-                                PeerMessage::SendMessage(response),
                             );
                         }
                     }
@@ -583,138 +422,12 @@ impl Client {
                             }
                         }
                     }
-                    ClientOperation::IncomingSearch {
-                        username,
-                        token,
-                        query,
-                        from_parent,
-                    } => {
-                        // Every search we receive comes from the tree: from
-                        // our parent, or from the server acting as one. That
-                        // is what qualifies us to carry children at all —
-                        // Nicotine+ refuses them until something feeds it —
-                        // and passing the search down is the whole duty.
-                        let (capacity_changed, answer) = match client_context
-                            .write_safe()
-                        {
-                            Ok(mut ctx) => {
-                                let was_fed = ctx.children.is_fed();
-                                let before = ctx.children.len();
-                                ctx.set_fed_by(true);
-                                if !from_parent {
-                                    // A parent's search was passed down where
-                                    // it arrived; this is the server's.
-                                    ctx.children.broadcast_search(
-                                        &username, token, &query,
-                                    );
-                                }
-                                // Answering costs a scan of everything we
-                                // share, so the budget applies to searches
-                                // from the tree. The server's own are few.
-                                let answer = !from_parent
-                                    || ctx.leaf.admit_search(Instant::now());
-                                // A child whose socket has gone is dropped by
-                                // that write, which frees a slot the server
-                                // should hear about.
-                                (
-                                    !was_fed || ctx.children.len() != before,
-                                    answer,
-                                )
-                            }
-                            Err(_) => (false, false),
-                        };
-                        if capacity_changed {
-                            Self::announce_child_capacity(&client_context);
-                        }
-                        if !answer {
-                            continue;
-                        }
-
-                        // Don't answer our own distributed search.
-                        if username == own_username {
-                            continue;
-                        }
-                        let response = match client_context.read_safe() {
-                            Ok(ctx) => build_search_response(
-                                &ctx.shares,
-                                &own_username,
-                                token,
-                                &query,
-                                ctx.has_free_upload_slot(),
-                                ctx.last_upload_speed,
-                                ctx.upload_queue.len() as u32,
-                                &ctx.excluded_search_phrases,
-                            ),
-                            Err(e) => {
-                                error!("[client] IncomingSearch read: {}", e);
-                                continue;
-                            }
-                        };
-                        let Some(message) = response else {
-                            continue; // no matching shares
-                        };
-
-                        // Deliver to the searcher: send now if we have a
-                        // control connection, else open one and queue.
-                        let (connected, registry, server_sender) =
-                            match client_context.read_safe() {
-                                Ok(ctx) => (
-                                    ctx.peer_registry
-                                        .as_ref()
-                                        .is_some_and(|r| r.contains(&username)),
-                                    ctx.peer_registry.clone(),
-                                    ctx.server_sender.clone(),
-                                ),
-                                Err(_) => continue,
-                            };
-                        if connected {
-                            if let Some(registry) = registry {
-                                let _ = registry.send_to_peer(
-                                    &username,
-                                    PeerMessage::SendMessage(message),
-                                );
-                            }
-                        } else {
-                            if let Ok(mut ctx) = client_context.write_safe() {
-                                ctx.queue_peer_message(&username, message);
-                            }
-                            if let Some(sender) = server_sender {
-                                let _ = sender.send(
-                                    ServerMessage::GetPeerAddress(username),
-                                );
-                            }
-                        }
-                    }
-                    ClientOperation::QueueUpload {
-                        requester_key,
-                        filename,
-                    } => {
-                        // The peer served next may not be this one.
-                        match client_context.write_safe() {
-                            Ok(mut ctx) => {
-                                let Some(file) = ctx.shares.get(&filename)
-                                else {
-                                    debug!(
-                                        "[client] QueueUpload for unknown file {}",
-                                        filename
-                                    );
-                                    continue;
-                                };
-                                let size = file.size;
-                                let real_path = file.real_path.clone();
-                                ctx.enqueue_upload(
-                                    &requester_key,
-                                    &filename,
-                                    real_path,
-                                    size,
-                                );
-                            }
-                            Err(e) => {
-                                error!("[client] QueueUpload write: {}", e);
-                                continue;
-                            }
-                        }
-                        Self::pump_upload_queue(&client_context);
+                    operation @ ClientOperation::IncomingSearch { .. } => {
+                        Self::on_search(
+                            operation,
+                            &client_context,
+                            &own_username,
+                        );
                     }
                     ClientOperation::PlaceInQueueRequested {
                         requester_key,
@@ -760,99 +473,16 @@ impl Client {
                             );
                         }
                     }
-                    ClientOperation::ParentBranchLevel {
-                        parent,
-                        link,
-                        level,
-                    } => {
-                        let Ok(mut ctx) = client_context.write_safe() else {
-                            continue;
-                        };
-                        if let Some(branch) =
-                            ctx.leaf.branch_level(&parent, link, level)
-                        {
-                            super::distributed::announce_move(
-                                &mut ctx, &branch, true,
-                            );
-                        }
+                    operation @ (ClientOperation::ParentSearch { .. }
+                    | ClientOperation::ParentBranchLevel {
+                        ..
                     }
-                    ClientOperation::ParentBranchRoot {
-                        parent,
-                        link,
-                        root,
-                    } => {
-                        let Ok(mut ctx) = client_context.write_safe() else {
-                            continue;
-                        };
-                        if let Some(branch) =
-                            ctx.leaf.branch_root(&parent, link, &root)
-                        {
-                            super::distributed::announce_move(
-                                &mut ctx, &branch, true,
-                            );
-                        }
+                    | ClientOperation::ParentBranchRoot {
+                        ..
                     }
-                    ClientOperation::ParentSearch {
-                        parent,
-                        link,
-                        username,
-                        token,
-                        query,
-                    } => {
-                        let Ok(mut ctx) = client_context.write_safe() else {
-                            continue;
-                        };
-                        if let Some(branch) =
-                            ctx.leaf.search_from(&parent, link)
-                        {
-                            super::distributed::announce_move(
-                                &mut ctx, &branch, true,
-                            );
-                        }
-                        if ctx.leaf.is_parent(&parent, link) {
-                            // The tree's stream is not ours to throttle: every
-                            // search goes down to our children. The budget
-                            // below bounds only the share scan we do for our
-                            // own reply.
-                            ctx.children
-                                .broadcast_search(&username, token, &query);
-                            if let Some(ops) = &ctx.operations {
-                                let _ =
-                                    ops.send(ClientOperation::IncomingSearch {
-                                        username,
-                                        token,
-                                        query,
-                                        from_parent: true,
-                                    });
-                            }
-                        }
-                    }
-                    ClientOperation::ParentClosed { parent, link } => {
-                        let Ok(mut ctx) = client_context.write_safe() else {
-                            continue;
-                        };
-                        if ctx.leaf.closed(&parent, link) {
-                            let branch = ctx.leaf.branch();
-                            super::distributed::announce_move(
-                                &mut ctx, &branch, false,
-                            );
-                        }
-                    }
-                    // Also what a fresh login means: whatever tree we hung
-                    // from belongs to the old session.
-                    ClientOperation::ResetDistributed => {
-                        let Ok(mut ctx) = client_context.write_safe() else {
-                            continue;
-                        };
-                        ctx.leaf.reset();
-                        // A fresh session feeds us nothing until the tree (or
-                        // the server) starts again, so the children we were
-                        // carrying are let go rather than left starving.
-                        ctx.set_fed_by(false);
-                        let branch = ctx.leaf.branch();
-                        super::distributed::announce_move(
-                            &mut ctx, &branch, false,
-                        );
+                    | ClientOperation::ParentClosed { .. }
+                    | ClientOperation::ResetDistributed) => {
+                        Self::on_tree(operation, &client_context);
                     }
                     ClientOperation::PrivilegedUsers(users) => {
                         if let Ok(mut ctx) = client_context.write_safe() {
@@ -909,51 +539,6 @@ impl Client {
                     ClientOperation::UserInterests(interests) => {
                         if let Ok(mut ctx) = client_context.write_safe() {
                             ctx.apply_user_interests(interests);
-                        }
-                    }
-                    ClientOperation::ChildConnected { username, stream } => {
-                        // A peer wants to hang from us. Take it on if this
-                        // client serves children and has room, then tell it
-                        // where our branch sits so it can report its own
-                        // place; otherwise the socket is dropped here and the
-                        // peer looks for another parent.
-                        let Ok(mut ctx) = client_context.write_safe() else {
-                            continue;
-                        };
-                        if !ctx.children.has_room() {
-                            continue;
-                        }
-                        // A child that stops reading must not wedge us: the
-                        // relay writes under the context lock, so the write
-                        // is bounded and a child that hits it loses its slot.
-                        if stream.set_nodelay(true).is_err()
-                            || stream
-                                .set_write_timeout(Some(CHILD_WRITE_TIMEOUT))
-                                .is_err()
-                        {
-                            continue;
-                        }
-                        if username == own_username {
-                            continue; // we cannot hang from ourselves
-                        }
-                        if ctx.children.accept(&username, stream) {
-                            let branch = ctx.leaf.branch();
-                            ctx.children.send_stance_to(
-                                &username,
-                                &branch.root,
-                                branch.level,
-                            );
-                            debug!(
-                                "[distributed] carrying {} children",
-                                ctx.children.len()
-                            );
-                            // The server stops offering us to peers once we
-                            // are full, and starts again when one leaves.
-                            let full = !ctx.children.has_room();
-                            drop(ctx);
-                            if full {
-                                Self::announce_child_capacity(&client_context);
-                            }
                         }
                     }
                     ClientOperation::PeerInfoReceived { username, info } => {
@@ -1058,49 +643,6 @@ impl Client {
                             );
                         }
                     }
-                    ClientOperation::StartUpload { token } => {
-                        // The peer accepted our offer: resolve their
-                        // address (from the code-9 GetPeerAddress) and
-                        // stream the file, or queue until it resolves.
-                        let (job_addr, downloader) = match client_context
-                            .write_safe()
-                        {
-                            Ok(mut ctx) => {
-                                ctx.mark_offer_answered(token);
-                                let Some(job) = ctx.uploads.get(&token) else {
-                                    continue;
-                                };
-                                (
-                                    ctx.peer_address(&job.downloader),
-                                    job.downloader.clone(),
-                                )
-                            }
-                            Err(_) => continue,
-                        };
-                        if let Some((host, port)) = job_addr {
-                            Self::spawn_serve(
-                                &client_context,
-                                &own_username,
-                                token,
-                                host,
-                                port,
-                            );
-                        } else {
-                            if let Ok(mut ctx) = client_context.write_safe() {
-                                ctx.pending_serves
-                                    .entry(downloader.clone())
-                                    .or_default()
-                                    .push(token);
-                            }
-                            if let Ok(ctx) = client_context.read_safe()
-                                && let Some(sender) = ctx.server_sender.clone()
-                            {
-                                let _ = sender.send(
-                                    ServerMessage::GetPeerAddress(downloader),
-                                );
-                            }
-                        }
-                    }
                     ClientOperation::ShareListRequested { requester_key } => {
                         Self::reply_to_peer(
                             &client_context,
@@ -1155,103 +697,6 @@ impl Client {
                         if let Ok(mut ctx) = client_context.write_safe() {
                             ctx.store_browse_result(username, directories);
                         }
-                    }
-                    ClientOperation::PeerConnectFailed(
-                        id,
-                        username,
-                        brokered_token,
-                    ) => {
-                        // Direct connect failed. A dial the server asked
-                        // us to make is answered with CantConnectToPeer
-                        // quoting the peer's own token: that peer is
-                        // already waiting on the server, and asking it to
-                        // broker the same connection back only trades one
-                        // unreachable direction for the other. Every other
-                        // dial falls back to the broker below.
-                        if let Some(peer_token) = brokered_token {
-                            let server_sender = match client_context
-                                .write_safe()
-                            {
-                                Ok(ctx) => {
-                                    if let Some(handle) =
-                                        ctx.peer_registry.as_ref().and_then(
-                                            |r| r.remove_peer_if(&username, id),
-                                        )
-                                    {
-                                        let _ = handle.stop();
-                                    }
-                                    ctx.server_sender.clone()
-                                }
-                                Err(e) => {
-                                    error!(
-                                        "[client] PeerConnectFailed write: {}",
-                                        e
-                                    );
-                                    continue;
-                                }
-                            };
-                            if let Some(sender) = server_sender {
-                                let msg = crate::message::server::MessageFactory::build_cant_connect_to_peer(
-                                    peer_token,
-                                    &username,
-                                );
-                                let _ = sender
-                                    .send(ServerMessage::SendMessage(msg));
-                            }
-                            // Nothing else is coming from this peer, so
-                            // anything queued for it fails now rather than
-                            // waiting out its timeout.
-                            Self::fail_queued_downloads(
-                                &client_context,
-                                &username,
-                            );
-                            continue;
-                        }
-
-                        // Direct connect failed: ask the server to
-                        // broker it. Register a correlation token, then
-                        // send ConnectToPeer so the (firewalled) peer
-                        // connects back to our listener quoting it.
-                        let token = next_connect_token();
-                        let server_sender = match client_context.write_safe() {
-                            Ok(mut ctx) => {
-                                // Reap the dead outbound actor so it
-                                // stops pinning a pool worker and no
-                                // longer shadows the brokered reconnect
-                                // (a stale registry entry would make
-                                // later downloads queue into a dead,
-                                // streamless actor and hang). Identity-
-                                // aware so a newer namesake is untouched.
-                                if let Some(handle) =
-                                    ctx.peer_registry.as_ref().and_then(|r| {
-                                        r.remove_peer_if(&username, id)
-                                    })
-                                {
-                                    let _ = handle.stop();
-                                }
-                                ctx.add_pending_connect(
-                                    token,
-                                    username.clone(),
-                                );
-                                ctx.server_sender.clone()
-                            }
-                            Err(e) => {
-                                error!(
-                                    "[client] PeerConnectFailed write: {}",
-                                    e
-                                );
-                                continue;
-                            }
-                        };
-                        let Some(sender) = server_sender else {
-                            continue;
-                        };
-                        let msg = crate::message::server::MessageFactory::build_connect_to_peer(
-                            token,
-                            &username,
-                            ConnectionType::P,
-                        );
-                        let _ = sender.send(ServerMessage::SendMessage(msg));
                     }
                 }
             }
