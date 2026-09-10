@@ -1895,8 +1895,19 @@ fn room_listen_streams_what_is_said_in_the_room() {
         .spawn()
         .expect("the binary should run");
 
-    // Give the listener time to join before saying anything.
-    std::thread::sleep(Duration::from_secs(3));
+    // The room announces the listener once the server has it in; a line
+    // said before that never reaches it.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !speaker.take_room_events().iter().any(|event| {
+        matches!(
+            event,
+            soulseek_rs::types::RoomEvent::UserJoined { room, username }
+                if room == "cli_e2e_lobby_b" && username == "cli_e2e_room_reader"
+        )
+    }) {
+        assert!(Instant::now() < deadline, "the listener never joined");
+        std::thread::sleep(Duration::from_millis(50));
+    }
     speaker
         .say_in_room("cli_e2e_lobby_b", "streamed line")
         .expect("say");
@@ -1965,6 +1976,11 @@ fn a_private_message_reaches_its_recipient() {
 fn message_read_streams_incoming_private_messages() {
     let server = server_or_skip!();
     let sender = server.client("cli_e2e_pm_sender", Vec::new());
+    // soulfind drops a message to a name it has never seen but keeps one for
+    // a known user until they log in, so however long the reader takes to
+    // get online, the line below reaches it. Registered before the reader's
+    // own session exists: a later login as them would take its place.
+    drop(server.client("cli_e2e_pm_reader", Vec::new()));
     settle();
 
     let mut args = server.args("cli_e2e_pm_reader");
