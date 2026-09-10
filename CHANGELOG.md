@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [19.0.0](https://github.com/michel/soulseek-rs/compare/v18.0.0...v19.0.0) - 2026-09-10
+
+### Added
+
+- browse your own shares as a peer receives them
+- *(tui)* account settings — stats, password change, and logout
+- *(tui)* clear the whole queue from the transfers pane
+- folders in the browse tree carry their download's mark too
+- mark browsed files with their download status
+- browse the highlighted transfer's user with b
+- *(distributed)* serve children in the search tree
+- *(rooms)* private room membership, operators and refusals
+- *(tui)* resize panes by dragging pane borders
+- *(tui)* run the highlighted search again with S
+- *(tui)* search a room's log and members, and a conversation
+- *(tui)* folder jumps, open-all and a path filter in the browse popup
+- *(tui)* W puts the pane layout back
+- *(tui)* show the clear-all key in the searches pane's shortcuts
+- *(tui)* show a result's file name and folder in columns of their own
+- *(peer)* ask a peer what it says about itself
+- *(distributed)* learn our own upload speed by watching ourselves
+- *(interests)* keep our own list and send it again each login
+- *(protocol)* folder requests, and heuristics matched to other clients
+- *(protocol)* away status, excluded phrases, queue-place requests
+- *(protocol)* interests, tickers, global room and cant-connect
+- *(download)* resume interrupted transfers
+
+### Fixed
+
+- *(uploads)* finish a transfer when the file lands, not when the peer closes
+- review findings on the protocol work
+- *(distributed)* a server with no parent figures leaves our cap alone
+- *(messages)* acknowledge stored private messages, and disconnect cleanly
+
+### Other
+
+- back-merge master to pick up the v14.2.0-v18.0.0 releases
+- split the files that had grown past reading size
+- trim the folder mark's allocations and indirection
+- drop the per-row String behind the browse marker's gap
+- *(tests)* share one soulfind fixture across the e2e suites
+- *(tui)* one page window and one filter editor for every list
+- *(tui)* wrap a chat log as it arrives instead of on every frame
+- *(tui)* flatten a browsed share once and draw one page of it
+- *(tui)* build only the visible page of result rows
+- *(tui)* trim the folder column change to what it needs
+- stop pinning a library version the instructions cannot keep current
+- give the hung-up child's reap a wall-clock budget
+- spell two Durations in their optimal units
+- lead with the protocol coverage, and drop a stale upload assertion
+- *(e2e)* the operator roster of a private room
+- *(e2e)* resigning a private room, disbanding it, gifting privileges
+- *(e2e)* a room announces members arriving and leaving
+- *(e2e)* drive the new protocol messages against soulfind
+
 ## [18.0.0](https://github.com/michel/soulseek-rs/compare/v17.0.0...v18.0.0) - 2026-09-08
 
 ### Added
