@@ -151,6 +151,10 @@ impl MainTui {
                     && let Some(owner) = self.highlighted_result_owner()
                 {
                     self.start_browse(owner);
+                } else if self.state.focused_pane == FocusedPane::Downloads
+                    && let Some(user) = self.selected_transfer_user()
+                {
+                    self.start_browse(user);
                 } else {
                     self.state.command_bar_active = true;
                     self.state.command_bar_mode = CommandBarMode::Browse;

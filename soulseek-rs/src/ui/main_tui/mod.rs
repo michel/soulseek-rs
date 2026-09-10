@@ -310,6 +310,20 @@ mod tests {
         at_status(username, filename, soulseek_rs::DownloadStatus::Completed)
     }
 
+    fn uploading(
+        username: &str,
+        filename: &str,
+    ) -> soulseek_rs::types::UploadInfo {
+        soulseek_rs::types::UploadInfo {
+            username: username.to_string(),
+            filename: filename.to_string(),
+            size: 10,
+            bytes_sent: 1,
+            speed_bytes_per_sec: 1.0,
+            status: soulseek_rs::types::UploadStatus::InProgress,
+        }
+    }
+
     fn at_status(
         username: &str,
         filename: &str,
@@ -654,14 +668,7 @@ mod tests {
             download: queued("bob", "song.mp3"),
             receiver: None,
         });
-        tui.state.uploads.push(soulseek_rs::types::UploadInfo {
-            username: "alice".to_string(),
-            filename: "served.mp3".to_string(),
-            size: 10,
-            bytes_sent: 1,
-            speed_bytes_per_sec: 1.0,
-            status: soulseek_rs::types::UploadStatus::InProgress,
-        });
+        tui.state.uploads.push(uploading("alice", "served.mp3"));
         tui.state.downloads_table_state.select(Some(1));
         tui.state.focused_pane = FocusedPane::Downloads;
 
@@ -674,6 +681,45 @@ mod tests {
         assert_eq!(
             *session.download_cancelled.lock().expect("not poisoned"),
             None
+        );
+    }
+
+    #[test]
+    fn b_browses_the_user_of_the_highlighted_download() {
+        let mut tui = with_session(TalkativeSession::default());
+        tui.state.downloads.push(crate::models::DownloadEntry {
+            download: queued("bob", "song.mp3"),
+            receiver: None,
+        });
+        tui.state.downloads_table_state.select(Some(0));
+        tui.state.focused_pane = FocusedPane::Downloads;
+
+        tui.handle_key_event(key('b'));
+
+        assert!(tui.state.show_browse, "the browse popup opens");
+        assert_eq!(
+            tui.state.browse.active_tab().map(|b| b.username.as_str()),
+            Some("bob"),
+            "the download's user is the one browsed"
+        );
+        assert!(
+            !tui.state.command_bar_active,
+            "b on a transfer goes straight to the user, not the prompt"
+        );
+    }
+
+    #[test]
+    fn b_on_an_upload_row_browses_that_user() {
+        let mut tui = with_session(TalkativeSession::default());
+        tui.state.uploads.push(uploading("alice", "served.mp3"));
+        tui.state.downloads_table_state.select(Some(0));
+        tui.state.focused_pane = FocusedPane::Downloads;
+
+        tui.handle_key_event(key('b'));
+
+        assert_eq!(
+            tui.state.browse.active_tab().map(|b| b.username.as_str()),
+            Some("alice")
         );
     }
 
@@ -1591,9 +1637,11 @@ mod tests {
         let screen = screen_sized(&mut tui, 80, 24);
         assert!(screen.contains("Tab / Shift-Tab"), "{screen}");
 
-        // A wide window shows both columns at once, nothing to scroll.
+        // A wide window shows both columns at once, nothing to scroll. It
+        // has to be tall enough to hold the taller column outright; in a
+        // shorter one End follows the tail and the headings scroll off.
         press(&mut tui, KeyCode::End);
-        let screen = screen_of(&mut tui);
+        let screen = screen_sized(&mut tui, 160, 44);
         let panes = row_with(&screen, "Panes");
         assert!(panes.contains("Searches"), "two columns: {panes}");
         assert!(screen.contains("Tab / Shift-Tab"), "{screen}");

@@ -206,6 +206,21 @@ impl MainTui {
         self.state.results_selected_indices.clear();
     }
 
+    /// The user behind the highlighted transfer, download or upload.
+    pub(super) fn selected_transfer_user(&self) -> Option<String> {
+        match selected_transfer(
+            self.state.downloads_table_state.selected(),
+            &self.state.downloads,
+            &self.state.uploads,
+        ) {
+            Some(InfoSubject::Download(entry)) => {
+                Some(entry.download.username.clone())
+            }
+            Some(InfoSubject::Upload(upload)) => Some(upload.username.clone()),
+            Some(InfoSubject::Result(_)) | None => None,
+        }
+    }
+
     pub(super) fn cancel_selected_transfer(&self) {
         let selected = selected_transfer(
             self.state.downloads_table_state.selected(),
