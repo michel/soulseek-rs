@@ -884,21 +884,28 @@ fn split_session_flags(args: &[&str]) -> (Vec<String>, Vec<String>) {
 ///
 /// `--no-config` is dropped for the obvious reason, and `--quiet` with it:
 /// these commands report the schedule the *server* chose on stderr, which is
-/// the only place a test can see it.
+/// the only place a test can see it. Session flags go to the daemon, as in
+/// [`cli`].
 fn cli_with_config(
     server: &TestServer,
     user: &str,
     config: &Path,
     args: &[&str],
 ) -> Output {
+    let (session_flags, command_args) = match mode() {
+        Mode::Local => {
+            (Vec::new(), args.iter().map(|a| (*a).to_string()).collect())
+        }
+        Mode::Daemon => split_session_flags(args),
+    };
     let mut all: Vec<String> = server
-        .args(user)
+        .args_with(user, &session_flags)
         .into_iter()
         .filter(|arg| arg != "--no-config" && arg != "--quiet")
         .collect();
     all.push("--config".to_string());
     all.push(config.to_str().expect("utf-8 path").to_string());
-    all.extend(args.iter().map(|a| (*a).to_string()));
+    all.extend(command_args);
     let refs: Vec<&str> = all.iter().map(String::as_str).collect();
     run(&refs)
 }
