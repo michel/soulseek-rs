@@ -150,8 +150,11 @@ impl Client {
     /// Returns [`SoulseekRs::NotConnected`] if the client is not connected.
     pub fn watch_user(&self, username: &str) -> Result<()> {
         use crate::message::server::MessageFactory;
+        // Held across the send: the reply is applied under this lock, so it
+        // cannot land first and have its "does not exist" undone by the add.
+        let mut context = self.context.write_safe()?;
         self.send_server_message(MessageFactory::build_watch_user(username))?;
-        self.context.write_safe()?.add_watched_user(username);
+        context.add_watched_user(username);
         Ok(())
     }
 

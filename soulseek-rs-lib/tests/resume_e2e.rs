@@ -379,18 +379,21 @@ fn a_live_download_pauses_and_resumes_on_the_same_connection() {
         matches!(status, DownloadStatus::Paused { .. })
     });
 
-    // Give a read already in flight one timeout cycle to observe the pause.
-    std::thread::sleep(Duration::from_millis(1_200));
+    // The pause is checked before every read, so once it lands only the read
+    // already in flight can finish: one 64 KiB buffer at most. Queue more
+    // than that, which a transfer ignoring the pause would take all of.
     let stable_len = fs::metadata(&part_path).expect("paused partial").len();
-    let queued_while_paused = 8 * 1024;
+    let in_flight = 64 * 1024;
+    let queued_while_paused = in_flight + 8 * 1024;
     peer.write_all(&content[first_chunk..first_chunk + queued_while_paused])
         .expect("queue bytes while paused");
     peer.flush().expect("flush bytes while paused");
     std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(
-        fs::metadata(&part_path).expect("paused partial").len(),
-        stable_len,
-        "a paused transfer must stop consuming its socket"
+    let paused_len = fs::metadata(&part_path).expect("paused partial").len();
+    assert!(
+        paused_len <= stable_len + in_flight as u64,
+        "a paused transfer must stop consuming its socket: {paused_len} \
+         bytes after pausing at {stable_len}"
     );
 
     assert!(subject.client.resume_download(&control.username, filename));
