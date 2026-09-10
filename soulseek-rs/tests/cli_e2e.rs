@@ -11,7 +11,7 @@
 
 mod common;
 
-use common::{CLI_ENV_VARS, Soulfind, free_port, login, settle};
+use common::{CLI_ENV_VARS, Soulfind, free_port, login, settle, silent_peer};
 use soulseek_rs::Client;
 use std::io::Write;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -1560,12 +1560,14 @@ fn transfer_cancel_stops_a_download_another_client_is_waiting_on() {
         return;
     }
     let server = server_or_skip!();
+    let _peer =
+        silent_peer(&server.host, server.port, "cli_e2e_cancel_silent_peer");
     let mut all = server.args("cli_e2e_cancel_waiter");
     all.extend(
         [
             "download",
-            "e2e_ghost_peer",
-            "@@ghost\\never.mp3",
+            "cli_e2e_cancel_silent_peer",
+            "@@silent\\never.mp3",
             "--size",
             "10",
             "--timeout",
@@ -1587,7 +1589,12 @@ fn transfer_cancel_stops_a_download_another_client_is_waiting_on() {
         let output = cli(
             &server,
             "cli_e2e_cancel_waiter",
-            &["transfer", "cancel", "e2e_ghost_peer", "@@ghost\\never.mp3"],
+            &[
+                "transfer",
+                "cancel",
+                "cli_e2e_cancel_silent_peer",
+                "@@silent\\never.mp3",
+            ],
         );
         if code(&output) == EXIT_OK {
             cancelled = Some(output);
