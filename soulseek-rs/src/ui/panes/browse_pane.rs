@@ -174,7 +174,7 @@ fn render_browse_one(
                             .collect();
                         let transfer = folder_status(&below);
                         let marker = transfer.map_or_else(
-                            || Span::raw(String::new()),
+                            || Span::raw(""),
                             |status| {
                                 let (glyph, style) =
                                     download_status_glyph(status);
@@ -182,16 +182,14 @@ fn render_browse_one(
                             },
                         );
                         let open = if row.expanded { "▾" } else { "▸" };
-                        let size = transfer
-                            .filter(|status| {
-                                matches!(
-                                    status,
-                                    DownloadStatus::InProgress { .. }
-                                )
-                            })
-                            .map_or_else(String::new, |_| {
-                                format!("{}%", folder_percent(&below))
-                            });
+                        let size = if matches!(
+                            transfer,
+                            Some(DownloadStatus::InProgress { .. })
+                        ) {
+                            format!("{}%", folder_percent(&below))
+                        } else {
+                            String::new()
+                        };
                         (
                             Cell::from(Line::from(vec![
                                 Span::raw(indent),
@@ -289,11 +287,7 @@ fn folder_status<'a>(files: &[&'a Download]) -> Option<&'a DownloadStatus> {
 fn folder_percent(files: &[&Download]) -> u8 {
     let bytes: u64 = files.iter().map(|d| d.bytes_downloaded()).sum();
     let total: u64 = files.iter().map(|d| d.size).sum();
-    if total == 0 {
-        0
-    } else {
-        (bytes * 100 / total) as u8
-    }
+    bytes.saturating_mul(100).checked_div(total).unwrap_or(0) as u8
 }
 
 #[cfg(test)]
