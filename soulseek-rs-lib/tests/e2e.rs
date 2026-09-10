@@ -327,8 +327,15 @@ fn a_chat_room_message_is_delivered_between_users() {
     alice.join_room(room).expect("alice joins room");
     bob.join_room(room).expect("bob joins room");
 
-    // Give both joins time to register on the server before speaking.
-    std::thread::sleep(Duration::from_millis(500));
+    // Each is in once the server has sent them the member list; a line said
+    // before bob is in never reaches him.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while alice.room_members(room).is_empty()
+        || bob.room_members(room).is_empty()
+    {
+        assert!(Instant::now() < deadline, "both should get into the room");
+        std::thread::sleep(Duration::from_millis(50));
+    }
     let _ = alice.take_room_events();
     let _ = bob.take_room_events();
 
@@ -4256,7 +4263,23 @@ fn a_changed_password_is_what_the_next_login_needs() {
     client
         .change_password("second-pw")
         .expect("change password");
-    std::thread::sleep(Duration::from_millis(500));
+    // soulfind stores the new password once it has hashed it, and forgets the
+    // change if our session closes first. The session stays until a login
+    // with the new password shows it landed; a refused one leaves it alone.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let mut fresh =
+            Client::with_settings(server.settings(user, "second-pw"));
+        fresh.connect().expect("connect with the new password");
+        if matches!(fresh.login(), Ok(true)) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the new password must be accepted"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
     drop(client);
 
     let mut stale = Client::with_settings(server.settings(user, "first-pw"));
@@ -4264,14 +4287,6 @@ fn a_changed_password_is_what_the_next_login_needs() {
     assert!(
         !matches!(stale.login(), Ok(true)),
         "the old password must stop working"
-    );
-    drop(stale);
-
-    let mut fresh = Client::with_settings(server.settings(user, "second-pw"));
-    fresh.connect().expect("connect with the new password");
-    assert!(
-        fresh.login().expect("login with the new password"),
-        "the new password must be accepted"
     );
 }
 
