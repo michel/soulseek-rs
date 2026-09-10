@@ -19,7 +19,7 @@ use std::collections::HashMap;
 /// open) above the active user's collapsible shared-file tree.
 ///
 /// `downloads` is the window's transfer list; a file row whose download is
-/// there shows its status glyph, the way the results pane marks its own.
+/// there shows the same status glyph the Downloads pane gives it.
 pub fn render_browse_pane(
     frame: &mut Frame,
     area: Rect,
@@ -175,7 +175,7 @@ fn render_browse_one(
                         // transfer's glyph while its download lives in the
                         // list: ⋯ queued, ↯ active, ⏸ paused, ✓ done.
                         let marker = status.map_or_else(
-                            || Span::raw("  ".to_string()),
+                            || Span::raw("  "),
                             |status| {
                                 let (glyph, style) =
                                     download_status_glyph(status);
