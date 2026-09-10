@@ -116,7 +116,7 @@ cargo install soulseek-rs             # or from crates.io
 
 From source, `cargo build --release` leaves the binary at
 `target/release/soulseek-rs`. To build your own client on the protocol library,
-add `soulseek-rs-lib = "8"` to your `Cargo.toml`.
+run `cargo add soulseek-rs-lib`.
 
 ## Usage
 

@@ -104,7 +104,6 @@ verify it against the adjacent `.sha256`, and extract the binary.
 
 ## Using the library
 
-```toml
-[dependencies]
-soulseek-rs-lib = "6"
+```bash
+cargo add soulseek-rs-lib
 ```

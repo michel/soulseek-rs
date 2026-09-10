@@ -357,14 +357,7 @@ const Steps = () => (
           Write your own client on <Code>soulseek-rs-lib</Code>: the protocol
           implementation, separate from the TUI.
         </p>
-        <Terminal
-          label="Cargo.toml"
-          lines={[
-            { t: 'cm', text: '[dependencies]' },
-            { t: 'code', text: 'soulseek-rs-lib = "8"' },
-          ]}
-          copy={'[dependencies]\nsoulseek-rs-lib = "8"'}
-        />
+        <Terminal lines={[{ t: 'cmd', text: 'cargo add soulseek-rs-lib' }]} />
         <Terminal label="src/main.rs" lines={LIB_LINES} copy={LIB_SRC} />
         <p className="text-[13px] text-muted">
           Full API reference on <ExtLink href={LINKS.docsrs}>docs.rs</ExtLink>. The lib API

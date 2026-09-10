@@ -11,11 +11,10 @@ network. It can be used to build custom Soulseek clients.
 
 ## Usage
 
-Add this to your `Cargo.toml`:
+Add it to your `Cargo.toml`:
 
-```toml
-[dependencies]
-soulseek-rs-lib = "8"
+```bash
+cargo add soulseek-rs-lib
 ```
 
 ## Example
