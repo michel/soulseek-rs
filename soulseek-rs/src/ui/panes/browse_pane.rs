@@ -13,13 +13,15 @@ use ratatui::{
     widgets::{Cell, HighlightSpacing, Paragraph, Row, Table, TableState},
 };
 use soulseek_rs::DownloadStatus;
+use soulseek_rs::types::Download;
 use std::collections::HashMap;
 
 /// Render the browse popup: a tab bar of browsed users (when more than one is
 /// open) above the active user's collapsible shared-file tree.
 ///
 /// `downloads` is the window's transfer list; a file row whose download is
-/// there shows the same status glyph the Downloads pane gives it.
+/// there shows the same status glyph the Downloads pane gives it, and a
+/// folder row summarises the downloads of the files queued below it.
 pub fn render_browse_pane(
     frame: &mut Frame,
     area: Rect,
@@ -145,12 +147,14 @@ fn render_browse_one(
             let all = browse.rows();
             // Queued files carry the download's full share path, so a row
             // matches a transfer of this user by path alone.
-            let status_of: HashMap<&str, &DownloadStatus> = downloads
+            let transfers: Vec<&Download> = downloads
                 .iter()
                 .filter(|entry| entry.download.username == browse.username)
-                .map(|entry| {
-                    (entry.download.filename.as_str(), &entry.download.status)
-                })
+                .map(|entry| &entry.download)
+                .collect();
+            let status_of: HashMap<&str, &DownloadStatus> = transfers
+                .iter()
+                .map(|download| (download.filename.as_str(), &download.status))
                 .collect();
             table_state.select(Some(browse.selected_row));
             let window = page_window(table_state, all.len(), area, 0);
@@ -160,14 +164,45 @@ fn render_browse_one(
                 .map(|row| {
                     let indent = "  ".repeat(row.depth);
                     let (label, size) = if row.is_folder {
-                        let glyph = if row.expanded { "▾" } else { "▸" };
+                        // A folder's download is its files' downloads, so
+                        // the folder reports the one status that describes
+                        // the files queued below it.
+                        let below: Vec<&Download> = transfers
+                            .iter()
+                            .copied()
+                            .filter(|d| under_folder(&d.filename, &row.path))
+                            .collect();
+                        let transfer = folder_status(&below);
+                        let marker = transfer.map_or_else(
+                            || Span::raw(String::new()),
+                            |status| {
+                                let (glyph, style) =
+                                    download_status_glyph(status);
+                                Span::styled(format!("{glyph} "), style)
+                            },
+                        );
+                        let open = if row.expanded { "▾" } else { "▸" };
+                        let size = transfer
+                            .filter(|status| {
+                                matches!(
+                                    status,
+                                    DownloadStatus::InProgress { .. }
+                                )
+                            })
+                            .map_or_else(String::new, |_| {
+                                format!("{}%", folder_percent(&below))
+                            });
                         (
-                            Cell::from(format!("{indent}{glyph} {}", row.name))
-                                .style(
+                            Cell::from(Line::from(vec![
+                                Span::raw(indent),
+                                marker,
+                                Span::styled(
+                                    format!("{open} {}", row.name),
                                     primary_style()
                                         .add_modifier(Modifier::BOLD),
                                 ),
-                            Cell::from(String::new()),
+                            ])),
+                            Cell::from(size).style(warning_style()),
                         )
                     } else {
                         let status = status_of.get(row.path.as_str()).copied();
@@ -218,6 +253,46 @@ fn render_browse_one(
 
             render_page(frame, table, area, table_state, start);
         }
+    }
+}
+
+/// Whether `file` is one of the folder's own files in a share path.
+fn under_folder(file: &str, folder: &str) -> bool {
+    file.strip_prefix(folder)
+        .is_some_and(|rest| rest.starts_with('\\'))
+}
+
+/// How loudly a status speaks for a whole folder: moving work first,
+/// then paused, then queued, then a failure worth surfacing; done only
+/// says so once every file is.
+const fn status_rank(status: &DownloadStatus) -> u8 {
+    match status {
+        DownloadStatus::InProgress { .. } => 5,
+        DownloadStatus::Paused { .. } => 4,
+        DownloadStatus::Queued => 3,
+        DownloadStatus::Failed(_) | DownloadStatus::TimedOut => 2,
+        DownloadStatus::Cancelled => 1,
+        DownloadStatus::Completed => 0,
+    }
+}
+
+/// The status that describes a folder's download: the loudest of its
+/// files', or nothing while none of them is in the transfer list.
+fn folder_status<'a>(files: &[&'a Download]) -> Option<&'a DownloadStatus> {
+    files
+        .iter()
+        .map(|download| &download.status)
+        .max_by_key(|status| status_rank(status))
+}
+
+/// How far a folder's queued bytes have come, whole percents.
+fn folder_percent(files: &[&Download]) -> u8 {
+    let bytes: u64 = files.iter().map(|d| d.bytes_downloaded()).sum();
+    let total: u64 = files.iter().map(|d| d.size).sum();
+    if total == 0 {
+        0
+    } else {
+        (bytes * 100 / total) as u8
     }
 }
 
@@ -316,6 +391,43 @@ mod tests {
             screen.contains("    plain.mp3"),
             "an unqueued row keeps the two plain spaces: {screen}"
         );
+    }
+
+    #[test]
+    fn a_folder_marks_with_its_files_download() {
+        // One file moving, one done: the folder row reports the job with
+        // the loudest status below it, and the bytes' percent beside it.
+        let screen = screen_with(&[
+            download(
+                "active.mp3",
+                DownloadStatus::InProgress {
+                    bytes_downloaded: 1024,
+                    total_bytes: 4096,
+                    speed_bytes_per_sec: 1.0,
+                },
+            ),
+            download("done.mp3", DownloadStatus::Completed),
+        ]);
+        assert!(
+            screen.contains(&format!("{GLYPH_ACTIVE} ▾ share")),
+            "{screen}"
+        );
+        // 1024 of the 8192 bytes the two files hold has moved — the done
+        // one brings its own 4096 — so the folder sits at 62%.
+        assert!(screen.contains("62%"), "{screen}");
+    }
+
+    #[test]
+    fn a_folder_is_done_when_every_file_is() {
+        let screen = screen_with(&[
+            download("active.mp3", DownloadStatus::Completed),
+            download("done.mp3", DownloadStatus::Completed),
+        ]);
+        assert!(
+            screen.contains(&format!("{GLYPH_DONE} ▾ share")),
+            "{screen}"
+        );
+        assert!(!screen.contains(GLYPH_ACTIVE), "{screen}");
     }
 
     #[test]
