@@ -403,14 +403,14 @@ mod tests {
         children.accept("alice", ours);
         drop(child);
 
-        // The first write after the peer is gone may still be buffered; the
-        // second is the one that fails. Either way the child must not keep
-        // its slot forever.
-        for _ in 0..50 {
+        // Writes keep landing in the send buffer until the peer's RST has
+        // crossed the loopback, which under load takes real wall-clock time.
+        for _ in 0..100 {
             children.broadcast_search("seeker", 1, "q");
             if children.is_empty() {
                 break;
             }
+            std::thread::sleep(std::time::Duration::from_millis(5));
         }
         assert!(children.is_empty(), "a dead child is dropped");
     }
