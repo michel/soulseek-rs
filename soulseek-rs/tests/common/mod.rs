@@ -3,8 +3,10 @@
 
 #![allow(dead_code)]
 
+use soulseek_rs::message::server::MessageFactory;
 use soulseek_rs::{Client, ClientSettings, PeerAddress};
-use std::net::TcpStream;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -143,6 +145,57 @@ pub fn login(host: &str, port: u16, user: &str, shares: Vec<String>) -> Client {
     client.connect().expect("peer connect");
     assert!(client.login().expect("peer login"), "peer should log in");
     client
+}
+
+/// A user who is online and reachable but never answers, held for as long as
+/// the value lives.
+///
+/// Their listener accepts a connection and then says nothing, so a download
+/// from them waits in the queue the way one waits behind a busy peer, with no
+/// timer to race. A user who does not exist cannot stand in for this: the
+/// server refuses to broker a connection to them, and their download fails
+/// before a test gets to act on it.
+pub struct SilentPeer {
+    _session: TcpStream,
+    _listener: TcpListener,
+}
+
+pub fn silent_peer(host: &str, port: u16, user: &str) -> SilentPeer {
+    // Not loopback: soulfind hands a loopback login's address out as the
+    // host's LAN address, where a 127.0.0.1 listener is never reached.
+    let listener = TcpListener::bind("0.0.0.0:0").expect("silent listener");
+    let wait_port = listener.local_addr().expect("listener address").port();
+    let mut session = TcpStream::connect((host, port)).expect("server");
+    let login = MessageFactory::build_login_message(
+        user,
+        "pw",
+        soulseek_rs::ClientVersion::default(),
+    );
+    session
+        .write_all(&login.get_buffer())
+        .expect("silent login");
+    // soulfind drops everything but a login until the login has landed, so a
+    // port announced any sooner is announced to nobody.
+    session
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("read timeout");
+    loop {
+        let mut len = [0; 4];
+        session.read_exact(&mut len).expect("login reply");
+        let mut body = vec![0; u32::from_le_bytes(len) as usize];
+        session.read_exact(&mut body).expect("login reply");
+        if body[..4] == 1u32.to_le_bytes() {
+            assert_eq!(body[4], 1, "{user} should log in");
+            break;
+        }
+    }
+    let wait = MessageFactory::build_set_wait_port_message(wait_port);
+    session.write_all(&wait.get_buffer()).expect("wait port");
+    settle();
+    SilentPeer {
+        _session: session,
+        _listener: listener,
+    }
 }
 
 /// Wait out the SetWaitPort registrations so peer lookups resolve.

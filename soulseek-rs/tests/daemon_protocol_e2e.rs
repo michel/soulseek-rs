@@ -13,7 +13,7 @@
 
 mod common;
 
-use common::{CLI_ENV_VARS, Soulfind, free_port};
+use common::{CLI_ENV_VARS, Soulfind, free_port, silent_peer};
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -838,19 +838,21 @@ fn a_wishlist_search_is_reported_as_just_started() {
 #[test]
 fn a_queued_download_is_cancelled_and_listed_as_such() {
     let daemon = daemon_or_skip!();
+    let _peer =
+        silent_peer("127.0.0.1", daemon.server.port(), "cli_e2e_silent_peer");
     let mut connection = daemon.connect_tcp().expect("tcp");
     connection
         .authenticate(Some(&daemon.token()))
         .expect("an answer");
     let started = connection
         .call(
-            r#"{"jsonrpc":"2.0","id":2,"method":"download.start","params":{"username":"e2e_ghost_peer","filename":"@@ghost\\never.mp3","size":10}}"#,
+            r#"{"jsonrpc":"2.0","id":2,"method":"download.start","params":{"username":"cli_e2e_silent_peer","filename":"@@silent\\never.mp3","size":10}}"#,
         )
         .expect("an answer");
     assert!(!started.contains("error"), "got {started}");
     let reply = connection
         .call(
-            r#"{"jsonrpc":"2.0","id":3,"method":"download.cancel","params":{"username":"e2e_ghost_peer","filename":"@@ghost\\never.mp3"}}"#,
+            r#"{"jsonrpc":"2.0","id":3,"method":"download.cancel","params":{"username":"cli_e2e_silent_peer","filename":"@@silent\\never.mp3"}}"#,
         )
         .expect("an answer");
     assert!(reply.contains(r#""ok":true"#), "got {reply}");
