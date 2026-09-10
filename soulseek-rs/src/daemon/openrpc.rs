@@ -12,10 +12,10 @@ use super::proto::{
     Ack, AuthParams, AuthResult, BrowseEvent, DaemonStatus, DirectoriesParams,
     DirectoryParams, DownloadStartParams, DownloadStarted, DownloadStatusEvent,
     Downloads, Event, IntervalSeconds, MemberStats, Members, MessageParams,
-    Messages, Method, QueryParams, RoomEventDto, RoomRef, SayParams,
-    SearchResults, Searches, Seconds, SessionLossEvent, SharesStatus,
-    SlotsParams, TransferRef, UploadInfoDto, Uploads, UserMessageDto, UserRef,
-    UserResult, Watched,
+    Messages, Method, PasswordParams, QueryParams, RoomEventDto, RoomRef,
+    SayParams, SearchResults, Searches, Seconds, SessionLossEvent,
+    SharedListing, SharesStatus, SlotsParams, TransferRef, UploadInfoDto,
+    Uploads, UserMessageDto, UserRef, UserResult, Watched,
 };
 use schemars::{JsonSchema, SchemaGenerator, generate::SchemaSettings};
 use serde_json::{Value, json};
@@ -47,6 +47,7 @@ fn params_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         | Method::DownloadCancel
         | Method::UploadCancel => schema_of::<TransferRef>(generator),
         Method::DownloadSetDir => schema_of::<DirectoryParams>(generator),
+        Method::AccountPassword => schema_of::<PasswordParams>(generator),
         Method::UploadSlots => schema_of::<SlotsParams>(generator),
         Method::RoomJoin
         | Method::RoomLeave
@@ -73,6 +74,7 @@ fn params_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         | Method::MessageHistory
         | Method::SearchList
         | Method::SharesStatusOf
+        | Method::SharesFiles
         | Method::SharesReindex
         | Method::UserWatched => json!({ "type": "null" }),
     }
@@ -101,6 +103,7 @@ fn result_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         Method::SharesStatusOf | Method::SharesSet | Method::SharesReindex => {
             schema_of::<SharesStatus>(generator)
         }
+        Method::SharesFiles => schema_of::<SharedListing>(generator),
         // Everything else acknowledges and says nothing more.
         Method::DaemonStop
         | Method::SearchStart
@@ -111,6 +114,7 @@ fn result_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         | Method::DownloadRemoveQueued
         | Method::DownloadCancel
         | Method::DownloadSetDir
+        | Method::AccountPassword
         | Method::UploadCancel
         | Method::UploadSlots
         | Method::PrivilegesCheck
@@ -170,6 +174,10 @@ fn summary(method: Method) -> &'static str {
         Method::DownloadSetDir => {
             "Land future transfers in a different folder on the daemon's host."
         }
+        Method::AccountPassword => {
+            "Change the password of the account the daemon is logged in as, \
+             and store it on the daemon's host so a restart still logs in."
+        }
         Method::UploadList => "Uploads being served, active first.",
         Method::UploadCancel => "Stop serving an upload in progress.",
         Method::UploadSlots => "How many uploads may run at once.",
@@ -206,6 +214,9 @@ fn summary(method: Method) -> &'static str {
         }
         Method::UserInfoOf => "What the server has said about a user so far.",
         Method::SharesStatusOf => "What the share index currently holds.",
+        Method::SharesFiles => {
+            "Every indexed file, in the listing a browsing peer receives."
+        }
         Method::SharesSet => "Replace the shared folders and re-index.",
         Method::SharesReindex => "Re-scan the configured folders.",
     }

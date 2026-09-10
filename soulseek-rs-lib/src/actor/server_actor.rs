@@ -2,12 +2,14 @@ use crate::actor::{Actor, ActorHandle, ConnectionState};
 use crate::client::ClientOperation;
 use crate::dispatcher::MessageDispatcher;
 use crate::message::server::AdminMessageHandler;
+use crate::message::server::CantConnectToPeerHandler;
 use crate::message::server::CheckPrivilegesHandler;
 use crate::message::server::ConnectToPeerHandler;
 use crate::message::server::EmbeddedMessageHandler;
 use crate::message::server::ExcludedSearchPhrasesHandler;
 use crate::message::server::FileSearchHandler;
 use crate::message::server::GetPeerAddressHandler;
+use crate::message::server::GlobalRoomMessageHandler;
 use crate::message::server::JoinRoomHandler;
 use crate::message::server::LeaveRoomHandler;
 use crate::message::server::LoginHandler;
@@ -25,15 +27,27 @@ use crate::message::server::UserLeftRoomHandler;
 use crate::message::server::WatchUserHandler;
 use crate::message::server::WishListIntervalHandler;
 use crate::message::server::{
+    CantCreateRoomHandler, OwnRoomStandingHandler, RoomMembersHandler,
+    RoomOperatorsHandler, RoomRosterChangeHandler,
+};
+use crate::message::server::{
     GetUserStatsHandler, GetUserStatusHandler, RoomListHandler,
+};
+use crate::message::server::{
+    GlobalRecommendationsHandler, ItemRecommendationsHandler,
+    ItemSimilarUsersHandler, RecommendationsHandler, SimilarUsersHandler,
+    UserInterestsHandler,
+};
+use crate::message::server::{
+    RoomTickerAddedHandler, RoomTickerRemovedHandler, RoomTickersHandler,
 };
 use crate::message::{Handlers, MessageType};
 use crate::message::{Message, MessageReader};
 use crate::peer::ConnectionType;
 use crate::peer::Peer;
 use crate::types::{
-    ClientVersion, RoomEvent, RoomInfo, RoomUserStats, SessionLoss,
-    SessionWatch,
+    ClientVersion, Recommendation, RoomEvent, RoomInfo, RoomUserStats,
+    SessionLoss, SessionWatch, SimilarUser, UserInterests,
 };
 use crate::utils::lock::RwLockExt;
 
@@ -45,6 +59,7 @@ use std::time::{Duration, Instant};
 
 use crate::{SoulseekRs, debug, error, trace, warn};
 
+mod handlers;
 mod types;
 pub use types::{Context, PeerAddress, UserMessage};
 
@@ -164,6 +179,96 @@ pub enum ServerMessage {
     PossibleParents(Vec<(String, String, u16)>),
     /// The server asks us to drop our parent and start over.
     ResetDistributed,
+    /// The ticker board of a room we just joined (code 113).
+    RoomTickers {
+        room: String,
+        tickers: Vec<crate::types::RoomTicker>,
+    },
+    /// One member set their ticker (code 114).
+    RoomTickerAdded {
+        room: String,
+        username: String,
+        ticker: String,
+    },
+    /// One member cleared their ticker (code 115).
+    RoomTickerRemoved {
+        room: String,
+        username: String,
+    },
+    /// A message from the global room feed (code 152).
+    GlobalRoomMessageReceived {
+        room: String,
+        username: String,
+        message: String,
+    },
+    /// Recommendations from our own interests (code 54).
+    RecommendationsReceived {
+        recommended: Vec<Recommendation>,
+        unrecommended: Vec<Recommendation>,
+    },
+    /// Server-wide recommendations (code 56).
+    GlobalRecommendationsReceived {
+        recommended: Vec<Recommendation>,
+        unrecommended: Vec<Recommendation>,
+    },
+    /// Recommendations for one item (code 111).
+    ItemRecommendationsReceived {
+        item: String,
+        recommendations: Vec<Recommendation>,
+    },
+    /// Users similar to us (code 110).
+    SimilarUsersReceived {
+        users: Vec<SimilarUser>,
+    },
+    /// Users who like one item (code 112).
+    ItemSimilarUsersReceived {
+        item: String,
+        usernames: Vec<String>,
+    },
+    /// What another user likes and hates (code 57).
+    UserInterestsReceived(UserInterests),
+    /// A peer could not connect to us after we asked the server to broker
+    /// (code 1001); the token is the one we quoted.
+    CantConnectToPeer {
+        token: u32,
+    },
+    /// Phrases the server refuses to search for (code 160).
+    ExcludedSearchPhrases(Vec<String>),
+    /// The upload speed a client needs before the server lets it carry
+    /// children (code 83).
+    ParentMinSpeed(u32),
+    /// The divisor turning that speed into a child count (code 84).
+    ParentSpeedRatio(u32),
+    /// Who may enter a private room (code 133).
+    PrivateRoomMembers {
+        room: String,
+        users: Vec<String>,
+    },
+    /// Who runs a private room (code 148).
+    PrivateRoomOperators {
+        room: String,
+        users: Vec<String>,
+    },
+    /// One user joined or left a private room's member or operator roster
+    /// (codes 134/135 and 143/144).
+    PrivateRoomRosterChanged {
+        room: String,
+        username: String,
+        /// True for the member roster, false for the operator roster.
+        members: bool,
+        added: bool,
+    },
+    /// Our own membership (139/140) or operatorship (145/146) of a private
+    /// room was granted or revoked.
+    OwnRoomStandingChanged {
+        room: String,
+        members: bool,
+        granted: bool,
+    },
+    /// The room we asked to join could not be created (code 1003).
+    CantCreateRoom {
+        room: String,
+    },
 }
 
 pub struct ServerActor {
@@ -320,6 +425,28 @@ impl ServerActor {
         handlers.register_handler(FileSearchHandler);
         handlers.register_handler(GetPeerAddressHandler);
         handlers.register_handler(ConnectToPeerHandler);
+        handlers.register_handler(CantConnectToPeerHandler);
+        handlers.register_handler(RoomMembersHandler);
+        handlers.register_handler(RoomOperatorsHandler);
+        // Members added/removed (134/135), operators added/removed (143/144).
+        for code in [134, 135, 143, 144] {
+            handlers.register_handler(RoomRosterChangeHandler(code));
+        }
+        // Our own membership (139/140) and operatorship (145/146).
+        for code in [139, 140, 145, 146] {
+            handlers.register_handler(OwnRoomStandingHandler(code));
+        }
+        handlers.register_handler(CantCreateRoomHandler);
+        handlers.register_handler(RoomTickersHandler);
+        handlers.register_handler(RoomTickerAddedHandler);
+        handlers.register_handler(RoomTickerRemovedHandler);
+        handlers.register_handler(GlobalRoomMessageHandler);
+        handlers.register_handler(RecommendationsHandler);
+        handlers.register_handler(GlobalRecommendationsHandler);
+        handlers.register_handler(ItemRecommendationsHandler);
+        handlers.register_handler(SimilarUsersHandler);
+        handlers.register_handler(ItemSimilarUsersHandler);
+        handlers.register_handler(UserInterestsHandler);
 
         self.dispatcher = Some(MessageDispatcher::new(
             "server".into(),
@@ -343,363 +470,6 @@ impl ServerActor {
         self.queue_message(MessageFactory::build_file_search_message(
             token, query,
         ));
-    }
-
-    fn handle_message(&mut self, msg: ServerMessage) {
-        if !matches!(self.connection_state, ConnectionState::Connected)
-            && !matches!(
-                &msg,
-                ServerMessage::ProcessRead | ServerMessage::Login { .. }
-            )
-        {
-            self.queued_messages.push(msg);
-            return;
-        }
-
-        match msg {
-            ServerMessage::ConnectToPeer(peer) => {
-                self.handle_connect_to_peer(peer);
-            }
-            ServerMessage::LoginStatus(message) => {
-                self.handle_login_status(message);
-            }
-            ServerMessage::Relogged => self.handle_relogged(),
-            ServerMessage::PierceFirewall(token) => {
-                self.send_message(
-                    MessageFactory::build_pierce_firewall_message(token),
-                );
-            }
-            ServerMessage::SendMessage(message) => {
-                self.send_message(message);
-            }
-            ServerMessage::GetPeerAddress(username) => {
-                self.send_message(MessageFactory::build_get_peer_address(
-                    &username,
-                ));
-            }
-            ServerMessage::GetPeerAddressResponse {
-                username,
-                host,
-                port,
-                obfuscation_type,
-                obfuscated_port,
-            } => {
-                self.handle_get_peer_address_response(
-                    username,
-                    host,
-                    port,
-                    obfuscation_type,
-                    obfuscated_port,
-                );
-            }
-            ServerMessage::PrivateMessageReceived(user_message) => {
-                self.handle_private_message_received(user_message);
-            }
-            ServerMessage::ProcessRead => {
-                self.process_read();
-            }
-            ServerMessage::Login {
-                username,
-                password,
-                version,
-                response,
-            } => {
-                self.handle_login(username, password, version, response);
-            }
-            ServerMessage::FileSearch { token, query } => {
-                self.file_search(token, &query);
-            }
-            ServerMessage::FileSearchRequest {
-                username,
-                token,
-                query,
-            } => {
-                self.handle_file_search_request(username, token, query);
-            }
-            other => self.handle_social_message(other),
-        }
-    }
-
-    /// Rooms and users (codes 7, 5, 36, 13-17, 64): forwarded as room events
-    /// and user status or stats. Split out, like the standing traffic below,
-    /// only to keep `handle_message`'s match readable.
-    fn handle_social_message(&mut self, message: ServerMessage) {
-        match message {
-            ServerMessage::RoomListReceived(rooms) => {
-                self.forward_room_event(RoomEvent::List(rooms));
-            }
-            ServerMessage::UserStatusReceived {
-                username,
-                status,
-                privileged,
-            } => {
-                self.forward_to_client(ClientOperation::UserStatusReceived {
-                    username,
-                    status,
-                    privileged,
-                });
-            }
-            ServerMessage::WatchedUserReceived {
-                username,
-                exists,
-                status,
-                average_speed,
-                shared_files,
-                shared_folders,
-            } => {
-                self.forward_to_client(ClientOperation::WatchedUserReceived {
-                    username,
-                    exists,
-                    status,
-                    average_speed,
-                    shared_files,
-                    shared_folders,
-                });
-            }
-            ServerMessage::UserStatsReceived {
-                username,
-                average_speed,
-                shared_files,
-                shared_folders,
-            } => {
-                self.forward_to_client(ClientOperation::UserStatsReceived {
-                    username,
-                    average_speed,
-                    shared_files,
-                    shared_folders,
-                });
-            }
-            ServerMessage::RoomJoined { room, users } => {
-                self.forward_room_event(RoomEvent::Joined { room, users });
-            }
-            ServerMessage::RoomMemberStats { room, stats } => {
-                self.forward_to_client(ClientOperation::RoomMemberStats {
-                    room,
-                    stats,
-                });
-            }
-            ServerMessage::RoomLeft { room } => {
-                self.forward_room_event(RoomEvent::Left { room });
-            }
-            ServerMessage::RoomMessageReceived {
-                room,
-                username,
-                message,
-            } => {
-                self.forward_room_event(RoomEvent::Message {
-                    room,
-                    username,
-                    message,
-                });
-            }
-            ServerMessage::RoomUserJoined { room, username } => {
-                self.forward_room_event(RoomEvent::UserJoined {
-                    room,
-                    username,
-                });
-            }
-            ServerMessage::RoomUserLeft { room, username } => {
-                self.forward_room_event(RoomEvent::UserLeft { room, username });
-            }
-            other => self.handle_standing_message(other),
-        }
-    }
-
-    /// The wishlist and privilege traffic: standing searches (codes 103/104) and
-    /// who is privileged (codes 69/92).
-    ///
-    /// Split out only because it keeps `handle_message`'s match to a readable
-    /// length; there is no behaviour here beyond dispatch.
-    fn handle_standing_message(&mut self, message: ServerMessage) {
-        match message {
-            ServerMessage::PossibleParents(candidates) => {
-                self.forward_to_client(ClientOperation::PossibleParents(
-                    candidates,
-                ));
-            }
-            ServerMessage::ResetDistributed => {
-                self.forward_to_client(ClientOperation::ResetDistributed);
-            }
-            ServerMessage::WishlistSearch { token, query } => {
-                self.queue_message(MessageFactory::build_wishlist_search(
-                    token, &query,
-                ));
-            }
-            ServerMessage::WishlistInterval(seconds) => {
-                self.forward_to_client(ClientOperation::WishlistInterval(
-                    seconds,
-                ));
-            }
-            ServerMessage::PrivilegedUsers(users) => {
-                self.forward_to_client(ClientOperation::PrivilegedUsers(users));
-            }
-            ServerMessage::OwnPrivileges(seconds) => {
-                self.forward_to_client(ClientOperation::OwnPrivileges(seconds));
-            }
-            ServerMessage::CheckPrivileges => {
-                self.queue_message(MessageFactory::build_check_privileges());
-            }
-            other => {
-                error!("[server] unroutable message: {:?}", other);
-            }
-        }
-    }
-
-    fn handle_connect_to_peer(&self, peer: Peer) {
-        if let Some(op) = match peer.connection_type {
-            ConnectionType::P | ConnectionType::F => {
-                Some(ClientOperation::ConnectToPeer(peer))
-            }
-            ConnectionType::D => None,
-        } && let Err(e) = self.client_channel.send(op)
-        {
-            error!("[server] failed to send ConnectToPeer: {}", e);
-        }
-    }
-
-    fn handle_login_status(&mut self, message: bool) {
-        // Send the post-login handshake exactly once, only on success,
-        // on the live path (the old ServerActor::login did this but was
-        // never called). Advertises real shared counts and, when
-        // listening, the port peers must connect to.
-        if message {
-            for msg in post_login_messages(
-                self.enable_listen,
-                self.listen_port,
-                self.shared_folder_count,
-                self.shared_file_count,
-            ) {
-                self.send_message(msg);
-            }
-            self.session.clear();
-            // The distributed stance is the leaf's to announce, and a new
-            // session starts without a parent.
-            self.forward_to_client(ClientOperation::ResetDistributed);
-        }
-        match self.context.write_safe() {
-            Ok(mut ctx) => ctx.logged_in = Some(message),
-            Err(e) => {
-                error!("[server] LoginStatus write: {}", e);
-            }
-        }
-    }
-
-    fn handle_get_peer_address_response(
-        &self,
-        username: String,
-        host: String,
-        port: u32,
-        obfuscation_type: u32,
-        obfuscated_port: u16,
-    ) {
-        debug!(
-            "[server] Received GetPeerAddress response for {}: {}:{} (obf_type: {}, obf_port: {})",
-            username, host, port, obfuscation_type, obfuscated_port
-        );
-
-        if let Err(e) =
-            self.client_channel
-                .send(ClientOperation::GetPeerAddressResponse {
-                    username,
-                    host,
-                    port,
-                    obfuscation_type,
-                    obfuscated_port,
-                })
-        {
-            error!(
-                "[server] Error forwarding GetPeerAddress response to client: {}",
-                e
-            );
-        }
-    }
-
-    /// Hand an operation to the client loop, logging a dead channel rather
-    /// than unwinding the actor.
-    fn forward_to_client(&self, operation: ClientOperation) {
-        if let Err(e) = self.client_channel.send(operation) {
-            error!("[server] Error forwarding to client: {}", e);
-        }
-    }
-
-    fn handle_private_message_received(&self, user_message: UserMessage) {
-        debug!("[server] Private message from {}", user_message.username());
-        if let Err(e) = self
-            .client_channel
-            .send(ClientOperation::PrivateMessageReceived(user_message))
-        {
-            error!(
-                "[server] Error forwarding private message to client: {}",
-                e
-            );
-        }
-    }
-
-    fn handle_login(
-        &mut self,
-        username: String,
-        password: String,
-        version: ClientVersion,
-        response: std::sync::mpsc::Sender<Result<bool, SoulseekRs>>,
-    ) {
-        if self.stream.is_none() && !self.initiate_connection() {
-            let _ = response.send(Err(SoulseekRs::NotConnected));
-            return;
-        }
-        if let Ok(mut ctx) = self.context.write_safe() {
-            ctx.logged_in = None;
-        }
-        self.queue_message(MessageFactory::build_login_message(
-            &username, &password, version,
-        ));
-
-        let start = std::time::Instant::now();
-
-        let context = self.context.clone();
-        std::thread::spawn(move || {
-            loop {
-                if start.elapsed() >= LOGIN_VERDICT_TIMEOUT {
-                    let _ = response.send(Err(SoulseekRs::Timeout));
-                    break;
-                }
-
-                let logged_in = match context.read_safe() {
-                    Ok(ctx) => ctx.logged_in,
-                    Err(e) => {
-                        let _ = response.send(Err(e));
-                        break;
-                    }
-                };
-                if let Some(logged_in) = logged_in {
-                    let result = if logged_in {
-                        Ok(true)
-                    } else {
-                        Err(SoulseekRs::AuthenticationFailed)
-                    };
-                    let _ = response.send(result);
-                    break;
-                }
-
-                std::thread::sleep(Duration::from_millis(100));
-            }
-        });
-    }
-
-    fn handle_file_search_request(
-        &self,
-        username: String,
-        token: u32,
-        query: String,
-    ) {
-        if let Err(e) =
-            self.client_channel.send(ClientOperation::IncomingSearch {
-                username,
-                token,
-                query,
-            })
-        {
-            error!("[server] forward IncomingSearch: {}", e);
-        }
     }
 
     fn process_read(&mut self) {

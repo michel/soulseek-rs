@@ -38,6 +38,12 @@ pub const GLYPH_DONE: &str = "✓";
 pub const GLYPH_FAILED: &str = "✗";
 pub const GLYPH_TIMED_OUT: &str = "⧗";
 pub const GLYPH_CURSOR: &str = "▮";
+
+/// What a password looks like on screen: one bullet per character.
+#[must_use]
+pub fn mask(secret: &str) -> String {
+    "•".repeat(secret.chars().count())
+}
 pub const HIGHLIGHT_SYMBOL: &str = "›";
 /// Between a key and its action in the legend, spaced.
 pub const SHORTCUT_ARROW: &str = " → ";
@@ -136,6 +142,23 @@ pub fn plain_title(title: impl Into<String>, focused: bool) -> Line<'static> {
         format!(" {} ", title.into()),
         title_style(focused),
     ))
+}
+
+/// A popup's title: `idle` until its list is filtered, then what it is
+/// filtered by, a caret after it while that is still being typed, and how
+/// the filter ends.
+#[must_use]
+pub fn filter_title(
+    head: &str,
+    filter: &str,
+    typing: bool,
+    idle: &str,
+) -> String {
+    if !typing && filter.is_empty() {
+        return idle.to_string();
+    }
+    let caret = if typing { "_" } else { "" };
+    format!(" {head} · filter: {filter}{caret}  (Enter: keep, Esc: clear) ")
 }
 
 /// The standard bordered pane. Chain `.title(..)` for a legend.

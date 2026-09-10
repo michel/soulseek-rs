@@ -34,10 +34,9 @@ pub enum DownloadError {
     DownloadInfoMissing(u32),
     FileWriteError(io::Error),
     PathResolutionError(String),
-    InvalidTokenBytes,
     LockPoisoned,
     Cancelled,
-    IncompleteDownload { received: usize, expected: usize },
+    IncompleteDownload { received: u64, expected: u64 },
 }
 
 impl std::fmt::Display for DownloadError {
@@ -59,9 +58,6 @@ impl std::fmt::Display for DownloadError {
             Self::FileWriteError(e) => write!(f, "File write error: {e}"),
             Self::PathResolutionError(msg) => {
                 write!(f, "Path resolution error: {msg}")
-            }
-            Self::InvalidTokenBytes => {
-                write!(f, "Invalid token bytes received")
             }
             Self::LockPoisoned => write!(f, "Lock poisoned"),
             Self::Cancelled => write!(f, "Download cancelled"),
@@ -147,8 +143,9 @@ impl PartFile {
                 .map_err(DownloadError::FileWriteError)?;
         }
 
-        // A `.part` that already meets or exceeds the expected size is left over
-        // from a different (or corrupted) transfer, not a resume point.
+        // A `.part` at or beyond the advertised size is restarted. We do not
+        // persist its username, full remote path, or prior expected size, so
+        // equality alone cannot prove that its bytes belong to this transfer.
         let on_disk = fs::metadata(&path).map_or(0, |m| m.len());
         let written = if on_disk < download.size { on_disk } else { 0 };
 
@@ -170,8 +167,9 @@ impl PartFile {
     /// Peers can coalesce trailing bytes into the last chunk, so overshoot past
     /// the expected size is dropped rather than written.
     fn write(&mut self, data: &[u8]) -> Result<(), DownloadError> {
-        let remaining = (self.expected - self.written) as usize;
-        let data = &data[..data.len().min(remaining)];
+        let remaining = self.expected - self.written;
+        let write_len = remaining.min(data.len() as u64) as usize;
+        let data = &data[..write_len];
         self.file
             .write_all(data)
             .map_err(DownloadError::FileWriteError)?;
@@ -193,8 +191,8 @@ impl PartFile {
     fn finish(self) -> Result<String, DownloadError> {
         if !self.is_complete() {
             return Err(DownloadError::IncompleteDownload {
-                received: self.written as usize,
-                expected: self.expected as usize,
+                received: self.written,
+                expected: self.expected,
             });
         }
         drop(self.file);
@@ -319,75 +317,71 @@ impl DownloadPeer {
         Ok((download, part))
     }
 
-    fn begin_pierced_download(
-        &self,
-        data: &[u8],
-        stream: &mut TcpStream,
-        client_context: &Arc<RwLock<ClientContext>>,
-    ) -> Result<(Download, PartFile), DownloadError> {
-        let token_bytes =
-            data.get(0..4).ok_or(DownloadError::InvalidTokenBytes)?;
-        let token_array: [u8; 4] = token_bytes
-            .try_into()
-            .map_err(|_| DownloadError::InvalidTokenBytes)?;
-        let token_u32 = u32::from_le_bytes(token_array);
-
-        trace!(
-            "[download_peer:{}] got token: {} from data chunk",
-            self.username, token_u32
-        );
-
-        let client_guard = client_context
-            .read()
-            .map_err(|_| DownloadError::LockPoisoned)?;
-        let download_info =
-            client_guard.get_download_by_token(token_u32).cloned();
-        drop(client_guard);
-
-        let download =
-            download_info.ok_or(DownloadError::TokenNotFound(token_u32))?;
-
-        Self::start_transfer(download, stream, client_context)
-    }
-
     fn read_download_stream(
         &self,
         stream: &mut TcpStream,
         client_context: &Arc<RwLock<ClientContext>>,
         download: Option<Download>,
+        matched_download: &mut Option<Download>,
     ) -> Result<(Download, String), DownloadError> {
         let mut read_buffer = vec![0u8; READ_BUFFER_SIZE];
         let mut bytes_since_last_update = 0usize;
         let mut last_update_time = Instant::now();
-        let mut last_data = Instant::now();
-        stream
-            .set_read_timeout(Some(CANCEL_POLL))
-            .map_err(DownloadError::ConnectionFailed)?;
 
         trace!(
             "[download_peer:{}] Starting to read data from peer",
             self.username
         );
 
-        let mut transfer = match download {
-            Some(dl) => Some(Self::start_transfer(dl, stream, client_context)?),
-            None => None,
+        let (download, mut part) = match download {
+            Some(download) => {
+                Self::start_transfer(download, stream, client_context)?
+            }
+            None if !self.no_pierce => {
+                let mut token = [0u8; 4];
+                stream
+                    .read_exact(&mut token)
+                    .map_err(DownloadError::StreamReadError)?;
+                let token = u32::from_le_bytes(token);
+                trace!(
+                    "[download_peer:{}] got token: {} from data chunk",
+                    self.username, token
+                );
+                let download = client_context
+                    .write()
+                    .map_err(|_| DownloadError::LockPoisoned)?
+                    .downloads
+                    .claim_for_peer(token, &self.username)
+                    .ok_or(DownloadError::TokenNotFound(token))?;
+                *matched_download = Some(download.clone());
+                Self::start_transfer(download, stream, client_context)?
+            }
+            None => {
+                return Err(DownloadError::DownloadInfoMissing(self.token));
+            }
         };
+        stream
+            .set_read_timeout(Some(CANCEL_POLL))
+            .map_err(DownloadError::ConnectionFailed)?;
+        let mut last_data = Instant::now();
 
         loop {
-            if let Some((dl, _)) = &transfer {
-                match Self::wait_while_paused(client_context, dl) {
-                    Ok(true) => last_data = Instant::now(),
-                    Ok(false) => {}
-                    Err(e) => {
-                        if matches!(e, DownloadError::Cancelled)
-                            && let Some((_, part)) = transfer.take()
-                        {
-                            part.discard();
-                        }
-                        return Err(e);
+            match Self::wait_while_paused(client_context, &download) {
+                Ok(true) => last_data = Instant::now(),
+                Ok(false) => {}
+                Err(error) => {
+                    if matches!(error, DownloadError::Cancelled) {
+                        part.discard();
                     }
+                    return Err(error);
                 }
+            }
+
+            // A zero-byte transfer needs no payload bytes. There is no offset
+            // acknowledgement in Soulseek's transfer protocol, so the uploader
+            // waits for us to close and we must finalize without another read.
+            if part.is_complete() {
+                break;
             }
 
             match stream.read(&mut read_buffer) {
@@ -400,24 +394,7 @@ impl DownloadPeer {
                 }
                 Ok(bytes_read) => {
                     last_data = Instant::now();
-                    let data = &read_buffer[..bytes_read];
-
-                    if transfer.is_none() && !self.no_pierce {
-                        transfer = Some(self.begin_pierced_download(
-                            data,
-                            stream,
-                            client_context,
-                        )?);
-                        continue;
-                    }
-
-                    let Some((dl, part)) = transfer.as_mut() else {
-                        return Err(DownloadError::DownloadInfoMissing(
-                            self.token,
-                        ));
-                    };
-
-                    part.write(data)?;
+                    part.write(&read_buffer[..bytes_read])?;
                     bytes_since_last_update += bytes_read;
 
                     if bytes_since_last_update >= PROGRESS_INTERVAL_BYTES {
@@ -429,7 +406,7 @@ impl DownloadPeer {
                         };
                         Self::report_progress(
                             client_context,
-                            dl,
+                            &download,
                             part.written,
                             speed,
                         );
@@ -457,11 +434,9 @@ impl DownloadPeer {
             self.username
         );
 
-        let Some((download, part)) = transfer else {
-            return Err(DownloadError::DownloadInfoMissing(self.token));
-        };
-
-        Ok((download, part.finish()?))
+        let final_path =
+            Self::finish_transfer(client_context, &download, part)?;
+        Ok((download, final_path))
     }
 
     fn report_progress(
@@ -481,7 +456,7 @@ impl DownloadPeer {
         );
     }
 
-    fn send_download_status(
+    pub(crate) fn send_download_status(
         client_context: &Arc<RwLock<ClientContext>>,
         download: &Download,
         status: DownloadStatus,
@@ -493,6 +468,56 @@ impl DownloadPeer {
         });
         if applied {
             let _ = download.sender.send(status);
+        }
+    }
+
+    /// Promote a complete partial and publish `Completed` as one operation with
+    /// respect to cancellation. Holding the store write lock across the rename
+    /// gives both possible races deterministic outcomes: cancellation marks the
+    /// row first and discards the partial, or completion lands first and a later
+    /// cancellation is refused.
+    fn finish_transfer(
+        client_context: &Arc<RwLock<ClientContext>>,
+        download: &Download,
+        part: PartFile,
+    ) -> Result<String, DownloadError> {
+        loop {
+            let mut context = client_context
+                .write()
+                .map_err(|_| DownloadError::LockPoisoned)?;
+            let status = context
+                .get_download_by_token(download.token)
+                .map(|download| download.status.clone())
+                .ok_or(DownloadError::TokenNotFound(download.token))?;
+
+            if matches!(status, DownloadStatus::Cancelled) {
+                drop(context);
+                part.discard();
+                return Err(DownloadError::Cancelled);
+            }
+            if matches!(status, DownloadStatus::Paused { .. }) {
+                drop(context);
+                if let Err(error) =
+                    Self::wait_while_paused(client_context, download)
+                {
+                    if matches!(error, DownloadError::Cancelled) {
+                        part.discard();
+                    }
+                    return Err(error);
+                }
+                continue;
+            }
+
+            let final_path = part.finish()?;
+            if !context
+                .downloads
+                .update_status(download.token, DownloadStatus::Completed)
+            {
+                return Err(DownloadError::TokenNotFound(download.token));
+            }
+            drop(context);
+            let _ = download.sender.send(DownloadStatus::Completed);
+            return Ok(final_path);
         }
     }
 
@@ -527,36 +552,54 @@ impl DownloadPeer {
         download: Option<Download>,
         stream: Option<TcpStream>,
     ) -> Result<(Download, String), DownloadError> {
-        trace!(
-            "[download_peer:{}] download_file: download is present?: {:?}, stream is present?: {:?}, no_pierce: {}",
-            self.username,
-            download.is_some(),
-            stream.is_some(),
-            self.no_pierce
-        );
+        let mut matched_download = download.clone();
+        let result: Result<_, DownloadError> = (|| {
+            trace!(
+                "[download_peer:{}] download_file: download is present?: {:?}, stream is present?: {:?}, no_pierce: {}",
+                self.username,
+                download.is_some(),
+                stream.is_some(),
+                self.no_pierce
+            );
 
-        let mut stream = match stream {
-            Some(s) => {
-                Self::apply_transfer_deadlines(&s)?;
-                s
-            }
-            None => self.establish_connection()?,
-        };
+            let mut stream = match stream {
+                Some(s) => {
+                    Self::apply_transfer_deadlines(&s)?;
+                    s
+                }
+                None => self.establish_connection()?,
+            };
 
-        trace!("[download_peer:{}] connected", self.username);
+            trace!("[download_peer:{}] connected", self.username);
 
-        self.perform_handshake(&mut stream)?;
-        trace!("[download_peer:{}] handshake completed", self.username);
+            self.perform_handshake(&mut stream)?;
+            trace!("[download_peer:{}] handshake completed", self.username);
 
-        let (download, final_path) =
-            self.read_download_stream(&mut stream, &client_context, download)?;
+            let (download, final_path) = self.read_download_stream(
+                &mut stream,
+                &client_context,
+                download,
+                &mut matched_download,
+            )?;
 
-        trace!(
-            "[download_peer:{}] download completed successfully: {} bytes, saved to: {}",
-            self.username, download.size, final_path
-        );
+            trace!(
+                "[download_peer:{}] download completed successfully: {} bytes, saved to: {}",
+                self.username, download.size, final_path
+            );
 
-        Ok((download, final_path))
+            Ok((download, final_path))
+        })();
+        if let Err(error) = &result
+            && !matches!(error, DownloadError::Cancelled)
+            && let Some(download) = matched_download
+        {
+            Self::send_download_status(
+                &client_context,
+                &download,
+                DownloadStatus::Failed(Some(error.to_string())),
+            );
+        }
+        result
     }
 }
 
@@ -580,7 +623,7 @@ mod tests {
     fn download_into(dir: &std::path::Path, size: u64) -> Download {
         Download {
             username: "peer".to_string(),
-            filename: "song.mp3".to_string(),
+            filename: "file.bin".to_string(),
             token: 1,
             size,
             download_directory: dir.display().to_string(),
@@ -596,13 +639,13 @@ mod tests {
         let dir = scratch_dir("discard");
         let mut part = PartFile::open(&download_into(&dir, 8)).unwrap();
         part.write(b"data").unwrap();
-        let path = dir.join("song.mp3.part");
+        let path = dir.join("file.bin.part");
         assert!(path.exists());
 
         part.discard();
 
         assert!(!path.exists());
-        assert!(!dir.join("song.mp3").exists());
+        assert!(!dir.join("file.bin").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -625,7 +668,7 @@ mod tests {
                         .write()
                         .unwrap()
                         .downloads
-                        .resume_by_file("peer", "song.mp3")
+                        .resume_by_file("peer", "file.bin")
                 );
             })
         };
@@ -682,6 +725,131 @@ mod tests {
     }
 
     #[test]
+    fn a_pierced_short_transfer_reports_failure() {
+        let dir = scratch_dir("pierced-short-transfer");
+        let (sender, receiver) = mpsc::channel();
+        let mut download = download_into(&dir, 10);
+        download.sender = sender;
+        let context = Arc::new(RwLock::new(ClientContext::new()));
+        context.write().unwrap().add_download(download.clone());
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let client_stream =
+            std::net::TcpStream::connect(listener.local_addr().unwrap())
+                .unwrap();
+        let (mut uploader, _) = listener.accept().unwrap();
+        uploader
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let peer = DownloadPeer::new(
+            download.username.clone(),
+            "127.0.0.1".into(),
+            0,
+            99,
+            false,
+            "me".into(),
+        );
+        let worker_context = context.clone();
+        let worker = std::thread::spawn(move || {
+            peer.download_file(worker_context, None, Some(client_stream))
+        });
+
+        // Drain the framed PierceFirewall request before sending the raw token.
+        let mut frame_len = [0u8; 4];
+        std::io::Read::read_exact(&mut uploader, &mut frame_len).unwrap();
+        let mut frame = vec![0; u32::from_le_bytes(frame_len) as usize];
+        std::io::Read::read_exact(&mut uploader, &mut frame).unwrap();
+
+        std::io::Write::write_all(&mut uploader, &download.token.to_le_bytes())
+            .unwrap();
+
+        let mut offset = [0u8; 8];
+        std::io::Read::read_exact(&mut uploader, &mut offset).unwrap();
+        assert_eq!(u64::from_le_bytes(offset), 0);
+        std::io::Write::write_all(&mut uploader, b"0123").unwrap();
+        std::net::TcpStream::shutdown(&uploader, std::net::Shutdown::Write)
+            .unwrap();
+        drop(uploader);
+
+        assert!(matches!(
+            worker.join().unwrap(),
+            Err(DownloadError::IncompleteDownload {
+                received: 4,
+                expected: 10
+            })
+        ));
+        assert!(matches!(
+            receiver.recv_timeout(std::time::Duration::from_secs(2)),
+            Ok(DownloadStatus::InProgress { .. })
+        ));
+        assert!(matches!(
+            receiver.recv_timeout(std::time::Duration::from_secs(2)),
+            Ok(DownloadStatus::Failed(_))
+        ));
+        assert!(matches!(
+            context
+                .read()
+                .unwrap()
+                .get_download_by_token(download.token)
+                .unwrap()
+                .status,
+            DownloadStatus::Failed(_)
+        ));
+        assert_eq!(std::fs::read(dir.join("file.bin.part")).unwrap(), b"0123");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_pierced_token_cannot_claim_another_peers_download() {
+        let dir = scratch_dir("token-peer-mismatch");
+        let mut download = download_into(&dir, 10);
+        download.username = "victim".into();
+        let context = Arc::new(RwLock::new(ClientContext::new()));
+        context.write().unwrap().add_download(download.clone());
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let client_stream =
+            std::net::TcpStream::connect(listener.local_addr().unwrap())
+                .unwrap();
+        let (mut attacker, _) = listener.accept().unwrap();
+        let peer = DownloadPeer::new(
+            "attacker".into(),
+            "127.0.0.1".into(),
+            0,
+            100,
+            false,
+            "me".into(),
+        );
+        let worker_context = context.clone();
+        let worker = std::thread::spawn(move || {
+            peer.download_file(worker_context, None, Some(client_stream))
+        });
+
+        let mut frame_len = [0u8; 4];
+        std::io::Read::read_exact(&mut attacker, &mut frame_len).unwrap();
+        let mut frame = vec![0; u32::from_le_bytes(frame_len) as usize];
+        std::io::Read::read_exact(&mut attacker, &mut frame).unwrap();
+        std::io::Write::write_all(&mut attacker, &download.token.to_le_bytes())
+            .unwrap();
+
+        assert!(matches!(
+            worker.join().unwrap(),
+            Err(DownloadError::TokenNotFound(1))
+        ));
+        assert!(!dir.join("file.bin.part").exists());
+        assert!(matches!(
+            context
+                .read()
+                .unwrap()
+                .get_download_by_token(download.token)
+                .unwrap()
+                .status,
+            DownloadStatus::Queued
+        ));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn start_transfer_refuses_a_cancelled_download() {
         let dir = scratch_dir("refuse");
         let mut download = download_into(&dir, 8);
@@ -698,7 +866,7 @@ mod tests {
             DownloadPeer::start_transfer(download, &mut stream, &context);
 
         assert!(matches!(outcome, Err(DownloadError::Cancelled)));
-        assert!(!dir.join("song.mp3.part").exists(), "no .part is opened");
+        assert!(!dir.join("file.bin.part").exists(), "no .part is opened");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -722,7 +890,7 @@ mod tests {
     #[test]
     fn a_partial_file_sets_the_resume_offset() {
         let dir = scratch_dir("resume");
-        std::fs::write(dir.join("song.mp3.part"), b"0123").unwrap();
+        std::fs::write(dir.join("file.bin.part"), b"0123").unwrap();
 
         let mut part = PartFile::open(&download_into(&dir, 10)).unwrap();
         assert_eq!(part.written, 4, "resume from what is already on disk");
@@ -732,9 +900,68 @@ mod tests {
 
         assert_eq!(std::fs::read(&final_path).unwrap(), b"0123456789");
         assert!(
-            !dir.join("song.mp3.part").exists(),
+            !dir.join("file.bin.part").exists(),
             "the .part is renamed, not left behind"
         );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_unidentified_exact_size_partial_restarts_from_zero() {
+        // With no persisted transfer identity, length alone cannot distinguish
+        // a final write awaiting rename from unrelated same-sized content.
+        let dir = scratch_dir("complete");
+        std::fs::write(dir.join("file.bin.part"), b"0123456789").unwrap();
+
+        let mut part = PartFile::open(&download_into(&dir, 10)).unwrap();
+        assert_eq!(part.written, 0);
+        assert!(!part.is_complete());
+
+        part.write(b"abcdefghij").unwrap();
+        let final_path = part.finish().unwrap();
+        assert_eq!(std::fs::read(final_path).unwrap(), b"abcdefghij");
+        assert!(!dir.join("file.bin.part").exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn cancellation_while_a_complete_transfer_is_paused_discards_its_part() {
+        let dir = scratch_dir("cancel-paused-finish");
+        let mut download = download_into(&dir, 10);
+        let mut part = PartFile::open(&download).unwrap();
+        part.write(b"0123456789").unwrap();
+        download.status = DownloadStatus::Paused {
+            bytes_downloaded: 10,
+            total_bytes: 10,
+        };
+        let context = Arc::new(RwLock::new(ClientContext::new()));
+        context.write().unwrap().add_download(download.clone());
+        let worker_context = context.clone();
+        let worker_download = download.clone();
+
+        let worker = std::thread::spawn(move || {
+            DownloadPeer::finish_transfer(
+                &worker_context,
+                &worker_download,
+                part,
+            )
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(
+            context
+                .write()
+                .unwrap()
+                .downloads
+                .cancel_by_file(&download.username, &download.filename)
+                .is_some()
+        );
+
+        assert!(matches!(
+            worker.join().unwrap(),
+            Err(DownloadError::Cancelled)
+        ));
+        assert!(!dir.join("file.bin.part").exists());
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -742,7 +969,7 @@ mod tests {
     fn an_oversized_partial_file_restarts_from_zero() {
         // Left over from a different transfer — not a valid resume point.
         let dir = scratch_dir("stale");
-        std::fs::write(dir.join("song.mp3.part"), vec![9u8; 40]).unwrap();
+        std::fs::write(dir.join("file.bin.part"), vec![9u8; 40]).unwrap();
 
         let mut part = PartFile::open(&download_into(&dir, 10)).unwrap();
         assert_eq!(part.written, 0);
@@ -770,11 +997,11 @@ mod tests {
             })
         ));
         assert_eq!(
-            std::fs::read(dir.join("song.mp3.part")).unwrap(),
+            std::fs::read(dir.join("file.bin.part")).unwrap(),
             b"01234",
             "the partial stays on disk for the next attempt"
         );
-        assert!(!dir.join("song.mp3").exists());
+        assert!(!dir.join("file.bin").exists());
         let _ = std::fs::remove_dir_all(dir);
     }
 

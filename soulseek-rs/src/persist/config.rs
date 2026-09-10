@@ -12,6 +12,11 @@ pub struct FileConfig {
     pub server: Option<String>,
     pub listener_port: Option<u16>,
     pub disable_listener: Option<bool>,
+    /// Serve children in the distributed search network: other peers hang
+    /// from this client and every search it receives is passed down to them.
+    /// Off by default — it costs a socket and the network's whole search
+    /// stream per child, and it needs the listener.
+    pub accept_children: Option<bool>,
     pub download_dir: Option<String>,
     /// Single shared folder (also what `--shared-dir` sets). Prefer
     /// `shared_dirs` for multiple; both may be combined.
@@ -46,6 +51,7 @@ impl FileConfig {
         "server",
         "listener_port",
         "disable_listener",
+        "accept_children",
         "download_dir",
         "shared_dirs",
         "max_concurrent_downloads",
@@ -64,6 +70,7 @@ impl FileConfig {
             "server" => self.server.clone(),
             "listener_port" => self.listener_port.map(|v| v.to_string()),
             "disable_listener" => self.disable_listener.map(|v| v.to_string()),
+            "accept_children" => self.accept_children.map(|v| v.to_string()),
             "download_dir" => self.download_dir.clone(),
             "shared_dirs" => {
                 let dirs = self.shared_dirs.clone().unwrap_or_default();
@@ -121,6 +128,22 @@ impl FileConfig {
                         other => {
                             return Err(format!(
                                 "disable_listener wants true or false, got \
+                                 '{other}'"
+                            ));
+                        }
+                    })
+                };
+            }
+            "accept_children" => {
+                self.accept_children = if clear {
+                    None
+                } else {
+                    Some(match value {
+                        "true" | "1" | "yes" => true,
+                        "false" | "0" | "no" => false,
+                        other => {
+                            return Err(format!(
+                                "accept_children wants true or false, got \
                                  '{other}'"
                             ));
                         }
@@ -251,6 +274,7 @@ pub struct Resolved {
     pub server: String,
     pub listener_port: u16,
     pub disable_listener: bool,
+    pub accept_children: bool,
     pub download_dir: String,
     pub shared_dirs: Vec<String>,
     pub max_concurrent_downloads: usize,
@@ -283,6 +307,11 @@ pub fn resolve(cli: &crate::cli::Cli, file: &FileConfig) -> Resolved {
         .clone()
         .or_else(|| file.download_dir.clone())
         .unwrap_or_else(super::paths::default_download_dir);
+    let disable_listener = if cli.listener {
+        false
+    } else {
+        cli.no_listener || file.disable_listener.unwrap_or(false)
+    };
     Resolved {
         username: cli.username.clone().or_else(|| file.username.clone()),
         server: cli
@@ -294,11 +323,11 @@ pub fn resolve(cli: &crate::cli::Cli, file: &FileConfig) -> Resolved {
             .listener_port
             .or(file.listener_port)
             .unwrap_or(DEFAULT_LISTENER_PORT),
-        disable_listener: if cli.listener {
-            false
-        } else {
-            cli.no_listener || file.disable_listener.unwrap_or(false)
-        },
+        disable_listener,
+        // A client with no listener has nothing for a child to dial, so the
+        // setting only takes effect alongside one.
+        accept_children: file.accept_children.unwrap_or(false)
+            && !disable_listener,
         download_dir: download_dir.clone(),
         shared_dirs: resolve_shared_dirs(cli, file, &download_dir),
         max_concurrent_downloads: cli
@@ -497,12 +526,44 @@ mod tests {
     }
 
     #[test]
+    fn accepting_children_needs_a_listener() {
+        // Serving children means peers dial us; with the listener off there
+        // is nothing to dial, so the setting must not survive resolution.
+        let file = FileConfig {
+            accept_children: Some(true),
+            ..FileConfig::default()
+        };
+        assert!(resolve(&bare_cli(), &file).accept_children);
+
+        let off = FileConfig {
+            disable_listener: Some(true),
+            ..file.clone()
+        };
+        assert!(!resolve(&bare_cli(), &off).accept_children);
+
+        let mut cli = bare_cli();
+        cli.no_listener = true;
+        assert!(!resolve(&cli, &file).accept_children);
+    }
+
+    #[test]
+    fn accept_children_round_trips_through_get_and_set() {
+        let mut file = FileConfig::default();
+        file.set("accept_children", "true").expect("set");
+        assert_eq!(file.get("accept_children").as_deref(), Some("true"));
+        assert!(file.set("accept_children", "maybe").is_err());
+        file.set("accept_children", "").expect("clear");
+        assert_eq!(file.get("accept_children"), None);
+    }
+
+    #[test]
     fn file_values_override_defaults() {
         let file = FileConfig {
             username: Some("alice".into()),
             server: Some("localhost:2242".into()),
             listener_port: Some(4321),
             disable_listener: Some(true),
+            accept_children: None,
             download_dir: Some("/music".into()),
             shared_dir: Some("/shared".into()),
             shared_dirs: None,

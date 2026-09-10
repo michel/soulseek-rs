@@ -1,6 +1,6 @@
 use super::MainTui;
-use super::input::{jumped, list_jump};
-use crate::models::{BrowseStatus, files_under, find_node};
+use super::input::{FilterEdit, edit_filter, jumped, list_jump};
+use crate::models::BrowseStatus;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::{thread, time::Duration};
 
@@ -9,11 +9,27 @@ const BROWSE_TIMEOUT: Duration = Duration::from_secs(20);
 
 impl MainTui {
     pub(super) fn handle_browse_input(&mut self, key: KeyEvent) {
+        // Typing goes to the filter; the other keys still move around.
+        if self.state.browse.active_tab().is_some_and(|b| b.filtering)
+            && self.handle_browse_filter_input(key)
+        {
+            return;
+        }
+        // Esc peels back one level: a filter first, then the popup.
+        if key.code == KeyCode::Esc
+            && let Some(browse) = self.state.browse.active_tab_mut()
+            && !browse.filter().is_empty()
+        {
+            browse.set_filter(String::new());
+            return;
+        }
         if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
             self.state.show_browse = false;
             return;
         }
-        let jump = list_jump(key, self.popup_page());
+        // The tab bar takes a row once more than one user is open.
+        let chrome = u16::from(self.state.browse.tabs.len() > 1);
+        let jump = list_jump(key, self.popup_page(chrome));
         // Control combinations are only ever jumps: ctrl-d pages, d downloads.
         if jump.is_none() && key.modifiers.contains(KeyModifiers::CONTROL) {
             return;
@@ -38,6 +54,14 @@ impl MainTui {
                 self.sync_browse_selection();
                 return;
             }
+            KeyCode::Char('B') => {
+                self.show_own_shares();
+                return;
+            }
+            KeyCode::Char('r') if self.state.browse.active_is_own() => {
+                self.reindex_shares();
+                return;
+            }
             KeyCode::Char('r') => {
                 // Retry a timed-out browse.
                 if let Some(username) = self.state.browse.retry_active() {
@@ -45,11 +69,18 @@ impl MainTui {
                 }
                 return;
             }
+            // The shared folders themselves are the settings pane's business,
+            // so adding or dropping one is a keystroke away from seeing it.
+            KeyCode::Char('o') if self.state.browse.active_is_own() => {
+                self.state.show_browse = false;
+                self.open_settings();
+                return;
+            }
             _ => {}
         }
 
-        // Snapshot the flattened rows + current selection, then drop the borrow.
-        let (rows, sel, row) = {
+        // The highlighted row and where it sits, then drop the borrow.
+        let (len, sel, row) = {
             let Some(browse) = self.state.browse.active_tab() else {
                 self.state.show_browse = false;
                 return;
@@ -62,13 +93,12 @@ impl MainTui {
                 return;
             }
             let sel = browse.selected_row.min(rows.len() - 1);
-            let row = rows[sel].clone();
-            (rows, sel, row)
+            (rows.len(), sel, rows[sel].clone())
         };
 
         if let Some(jump) = jump {
             if let Some(browse) = self.state.browse.active_tab_mut() {
-                browse.selected_row = jumped(sel, rows.len(), jump);
+                browse.selected_row = jumped(sel, len, jump);
             }
             self.sync_browse_selection();
             return;
@@ -85,7 +115,11 @@ impl MainTui {
             }
             KeyCode::Char('d') => {
                 let files = if row.is_folder {
-                    self.browse_folder_files(&row.path)
+                    self.state
+                        .browse
+                        .active_tab()
+                        .map(|b| b.folder_files(&row.path))
+                        .unwrap_or_default()
                 } else {
                     vec![(row.path.clone(), row.size.unwrap_or(0))]
                 };
@@ -102,41 +136,68 @@ impl MainTui {
                     browse.selected_row = sel.saturating_sub(1);
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    browse.selected_row = (sel + 1).min(rows.len() - 1);
+                    browse.selected_row = (sel + 1).min(len - 1);
                 }
+                // The folder-sized steps: the next or previous folder row.
+                KeyCode::Char('J') => {
+                    if let Some(next) =
+                        (sel + 1..len).find(|&i| browse.rows()[i].is_folder)
+                    {
+                        browse.selected_row = next;
+                    }
+                }
+                KeyCode::Char('K') => {
+                    if let Some(previous) =
+                        (0..sel).rev().find(|&i| browse.rows()[i].is_folder)
+                    {
+                        browse.selected_row = previous;
+                    }
+                }
+                KeyCode::Char('H') => browse.collapse_all(),
+                KeyCode::Char('L') => browse.expand_all(),
+                KeyCode::Char('/') => browse.filtering = true,
                 KeyCode::Right | KeyCode::Char('l') => {
                     if row.is_folder && !row.expanded {
-                        browse.expanded.insert(row.path.clone());
+                        browse.set_expanded(&row.path, true);
                     } else if row.is_folder {
-                        browse.selected_row = (sel + 1).min(rows.len() - 1);
+                        browse.selected_row = (sel + 1).min(len - 1);
                     }
                 }
                 KeyCode::Left | KeyCode::Char('h') => {
                     if row.is_folder && row.expanded {
-                        browse.expanded.remove(&row.path);
-                    } else if let Some(parent) =
-                        (0..sel).rev().find(|&i| rows[i].depth < row.depth)
+                        browse.set_expanded(&row.path, false);
+                    } else if let Some(parent) = (0..sel)
+                        .rev()
+                        .find(|&i| browse.rows()[i].depth < row.depth)
                     {
                         browse.selected_row = parent;
                     }
                 }
                 KeyCode::Enter => {
                     // Folder toggle (files handled above).
-                    if row.expanded {
-                        browse.expanded.remove(&row.path);
-                    } else {
-                        browse.expanded.insert(row.path.clone());
-                    }
+                    browse.set_expanded(&row.path, !row.expanded);
                 }
                 _ => {}
             }
-            // Re-clamp against the new flattened length.
-            let new_len = browse.rows().len();
-            browse.selected_row =
-                browse.selected_row.min(new_len.saturating_sub(1));
         }
 
         self.sync_browse_selection();
+    }
+
+    /// The keys that edit the filter while it is being typed. Says whether
+    /// `key` was one of them; the rest move around the narrowed rows.
+    fn handle_browse_filter_input(&mut self, key: KeyEvent) -> bool {
+        let Some(browse) = self.state.browse.active_tab_mut() else {
+            return false;
+        };
+        let mut filter = browse.filter().to_string();
+        let Some(edit) = edit_filter(&mut filter, key) else {
+            return false;
+        };
+        browse.filtering = edit == FilterEdit::Changed;
+        browse.set_filter(filter);
+        self.sync_browse_selection();
+        true
     }
 
     /// Point the browse table cursor at the active tab's selected row.
@@ -145,20 +206,12 @@ impl MainTui {
         self.state.browse_table_state.select(selected);
     }
 
-    /// Files (`path`, `size`) under the active browse tab's folder at `path`.
-    fn browse_folder_files(&self, path: &str) -> Vec<(String, u64)> {
-        self.state
-            .browse
-            .active_tab()
-            .and_then(|b| find_node(&b.tree, path))
-            .map(files_under)
-            .unwrap_or_default()
-    }
-
     /// Queue downloads of `files` (path, size) from the active browse tab's user.
+    ///
+    /// Our own shares are already on this disk, so the own tab queues nothing.
     fn queue_browse_files(&mut self, files: Vec<(String, u64)>) {
         let Some(username) =
-            self.state.browse.active_tab().map(|b| b.username.clone())
+            self.state.browse.download_target().map(str::to_string)
         else {
             return;
         };
@@ -201,6 +254,31 @@ impl MainTui {
             let _ = self.client.browse_user(&username);
         }
         self.state.show_browse = true;
+        self.sync_browse_selection();
+    }
+
+    /// Open (or focus) the view of what this session shares, filled from the
+    /// index the network is served from.
+    pub(super) fn show_own_shares(&mut self) {
+        if self.state.browse.open_own(&self.client.username()) {
+            self.load_own_shares();
+        }
+        self.state.show_browse = true;
+        self.sync_browse_selection();
+    }
+
+    /// Put a fresh copy of the share index into the own tab, if it is open.
+    /// A re-index or an added folder would otherwise leave it showing what
+    /// the network saw a scan ago.
+    pub(super) fn load_own_shares(&mut self) {
+        // The early return matters: without an own tab there is nothing to
+        // fill, and against a daemon asking anyway is a whole index over the
+        // socket for nobody.
+        let Some(idx) = self.state.browse.own_index() else {
+            return;
+        };
+        let listing = self.client.shared_listing();
+        self.state.browse.tabs[idx].load(&listing);
         self.sync_browse_selection();
     }
 

@@ -89,6 +89,31 @@ impl MainTui {
         }
     }
 
+    /// Empty the whole transfer list: every live download is cancelled and
+    /// every row — live or finished — is forgotten by the session too, so a
+    /// shared queue empties for every window rather than only this one.
+    /// Uploads still streaming are cancelled; finished ones are the
+    /// session's history and refresh back from it regardless.
+    pub(super) fn clear_all_transfers(&mut self) {
+        for entry in &self.state.downloads {
+            let download = &entry.download;
+            if !download.is_finished() {
+                self.client
+                    .cancel_download(&download.username, &download.filename);
+            }
+            self.client
+                .remove_download(&download.username, &download.filename);
+        }
+        for upload in &self.state.uploads {
+            if upload.status == UploadStatus::InProgress {
+                self.client
+                    .cancel_upload(&upload.username, &upload.filename);
+            }
+        }
+        self.state.downloads.clear();
+        self.state.downloads_table_state.select(None);
+    }
+
     pub(super) fn toggle_selected_download_pause(&self) {
         let Some(index) = self.state.downloads_table_state.selected() else {
             return;
@@ -204,6 +229,21 @@ impl MainTui {
 
         // Clear selection
         self.state.results_selected_indices.clear();
+    }
+
+    /// The user behind the highlighted transfer, download or upload.
+    pub(super) fn selected_transfer_user(&self) -> Option<String> {
+        match selected_transfer(
+            self.state.downloads_table_state.selected(),
+            &self.state.downloads,
+            &self.state.uploads,
+        ) {
+            Some(InfoSubject::Download(entry)) => {
+                Some(entry.download.username.clone())
+            }
+            Some(InfoSubject::Upload(upload)) => Some(upload.username.clone()),
+            Some(InfoSubject::Result(_)) | None => None,
+        }
     }
 
     pub(super) fn cancel_selected_transfer(&self) {

@@ -1,6 +1,6 @@
 use crate::models::{BrowseTabs, FileDisplayData, RoomsState, SettingsState};
 use chrono::{DateTime, Local};
-use ratatui::{layout::Rect, widgets::TableState};
+use ratatui::{layout::Rect, text::Line, widgets::TableState};
 use soulseek_rs::{DownloadStatus, types::Download};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, mpsc::Receiver, mpsc::Sender};
@@ -57,6 +57,14 @@ impl FocusedPane {
 pub struct PaneLayout {
     hidden: [bool; FocusedPane::ALL.len()],
     pub zoomed: bool,
+    /// Cell height dragged onto the divider between Results and the row
+    /// underneath. `None` keeps the default proportions.
+    pub top_height: Option<u16>,
+    /// Cell widths dragged onto the dividers in the bottom row. `None` keeps
+    /// the default proportions; Info, which has no divider of its own, takes
+    /// whatever the row has left over.
+    pub searches_width: Option<u16>,
+    pub downloads_width: Option<u16>,
 }
 
 impl PaneLayout {
@@ -174,6 +182,55 @@ impl LogView {
     }
 }
 
+/// A log wrapped to a width, kept between frames.
+///
+/// Wrapping every line of a long log on every draw is what made a busy room
+/// lag. Lines only ever arrive at the end, so a draw wraps the new ones and
+/// starts over only when the width or `key` (what is being shown, a filter
+/// say) changes.
+#[derive(Debug, Clone, Default)]
+pub struct WrappedLog {
+    width: usize,
+    key: String,
+    /// How many source lines the rows cover.
+    wrapped: usize,
+    rows: Vec<Line<'static>>,
+}
+
+impl WrappedLog {
+    /// The rows for `lines`, `wrap` turning one line into its rows (none,
+    /// for a line a filter drops).
+    pub fn rows<T>(
+        &mut self,
+        width: usize,
+        key: &str,
+        lines: &[T],
+        wrap: impl Fn(&T) -> Vec<Line<'static>>,
+    ) -> &[Line<'static>] {
+        if width != self.width || key != self.key || lines.len() < self.wrapped
+        {
+            self.rows.clear();
+            self.wrapped = 0;
+            self.width = width;
+            self.key = key.to_string();
+        }
+        for line in &lines[self.wrapped..] {
+            self.rows.extend(wrap(line));
+        }
+        self.wrapped = lines.len();
+        &self.rows
+    }
+}
+
+/// Why the window closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TuiExit {
+    /// The program is done.
+    Quit,
+    /// The account was logged out: the caller shows the login screen again.
+    Logout,
+}
+
 /// What the shared command bar is currently capturing input for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandBarMode {
@@ -238,7 +295,8 @@ pub struct AppState {
     /// Where the keys overlay is being read, for a terminal too short to
     /// show it whole.
     pub help_view: LogView,
-    pub should_exit: bool,
+    /// Set once, when the window is closing, to why.
+    pub exit: Option<TuiExit>,
     pub command_bar_active: bool,
     pub command_bar_input: String,
     pub command_bar_cursor_position: usize,
@@ -254,6 +312,11 @@ pub struct AppState {
     /// Compose buffer for the active conversation.
     pub chat_input: String,
     pub chat_composing: bool,
+    /// The open conversation wrapped for drawing.
+    pub chat_wrapped: WrappedLog,
+    /// Narrows the open conversation to messages mentioning it.
+    pub chat_filter: String,
+    pub chat_filtering: bool,
     /// Where the conversation is being read.
     pub chat_view: LogView,
 
@@ -277,6 +340,15 @@ pub struct AppState {
     pub searches_pane_area: Option<Rect>,
     pub results_pane_area: Option<Rect>,
     pub downloads_pane_area: Option<Rect>,
+    /// The whole area the panes share, and the bottom row's part of it,
+    /// recorded at each draw so a divider drag maps to cells.
+    pub content_area: Option<Rect>,
+    pub row_area: Option<Rect>,
+    pub info_pane_area: Option<Rect>,
+    /// The border rows a mouse can grab to resize: the one Results sits on
+    /// and the seam at the right of each row pane.
+    pub hsplit_divider: Option<Rect>,
+    pub vsplit_dividers: Vec<(FocusedPane, Rect)>,
     /// Where the open popup was last drawn, for its page size. Only one is
     /// ever open, so one record serves them all.
     pub popup_area: Option<Rect>,
@@ -320,7 +392,7 @@ impl AppState {
             layout: PaneLayout::default(),
             show_help: false,
             help_view: LogView::default(),
-            should_exit: false,
+            exit: None,
             command_bar_active: false,
             command_bar_input: String::new(),
             command_bar_cursor_position: 0,
@@ -332,6 +404,9 @@ impl AppState {
             chat_peer: None,
             chat_input: String::new(),
             chat_composing: false,
+            chat_wrapped: WrappedLog::default(),
+            chat_filter: String::new(),
+            chat_filtering: false,
             chat_view: LogView::default(),
 
             browse: BrowseTabs::new(),
@@ -349,6 +424,11 @@ impl AppState {
             searches_pane_area: None,
             results_pane_area: None,
             downloads_pane_area: None,
+            content_area: None,
+            row_area: None,
+            info_pane_area: None,
+            hsplit_divider: None,
+            vsplit_dividers: Vec::new(),
             popup_area: None,
         }
     }
@@ -499,6 +579,27 @@ mod tests {
 
     fn visible(layout: &PaneLayout) -> Vec<FocusedPane> {
         layout.visible().collect()
+    }
+
+    #[test]
+    fn a_wrapped_log_only_wraps_what_arrived_and_starts_over_on_a_change() {
+        let wrap = |line: &String| vec![Line::raw(line.clone())];
+        let mut log = WrappedLog::default();
+        let mut lines = vec!["a".to_string(), "b".to_string()];
+        assert_eq!(log.rows(40, "", &lines, wrap).len(), 2);
+        lines.push("c".to_string());
+        assert_eq!(log.rows(40, "", &lines, wrap).len(), 3);
+        // A narrower pane or another filter rebuilds; fewer lines do too.
+        let only_c = |line: &String| {
+            (line == "c")
+                .then(|| Line::raw(line.clone()))
+                .into_iter()
+                .collect()
+        };
+        assert_eq!(log.rows(40, "c", &lines, only_c).len(), 1);
+        assert_eq!(log.rows(30, "c", &lines, wrap).len(), 3);
+        lines.truncate(1);
+        assert_eq!(log.rows(30, "c", &lines, wrap).len(), 1);
     }
 
     #[test]

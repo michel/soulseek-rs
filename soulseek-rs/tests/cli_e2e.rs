@@ -11,8 +11,8 @@
 
 mod common;
 
-use common::{CLI_ENV_VARS, free_port, soulfind_binary};
-use soulseek_rs::{Client, ClientSettings, PeerAddress};
+use common::{CLI_ENV_VARS, Soulfind, free_port, login, settle};
+use soulseek_rs::Client;
 use std::io::Write;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
@@ -508,8 +508,9 @@ static SERVER_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 struct TestServer {
     host: String,
     port: u16,
-    child: Option<Child>,
-    db: Option<PathBuf>,
+    /// The soulfind spawned for this run; `None` against a server named by
+    /// `SOULSEEK_TEST_SERVER`.
+    _server: Option<Soulfind>,
     _gate: std::sync::MutexGuard<'static, ()>,
     /// Daemons started for this server, one per (user, session flags). Dropped
     /// with the server, which kills them.
@@ -640,41 +641,17 @@ impl TestServer {
             return Some(Self {
                 host: host.to_string(),
                 port,
-                child: None,
-                db: None,
+                _server: None,
                 _gate: gate,
                 daemons: std::sync::Mutex::new(std::collections::HashMap::new()),
             });
         }
 
-        let bin = soulfind_binary()?;
-        let port = free_port()?;
-        let db = std::env::temp_dir().join(format!("soulfind-cli-{port}.db"));
-        let _ = std::fs::remove_file(&db);
-
-        let mut child = Command::new(&bin)
-            .arg("-p")
-            .arg(port.to_string())
-            .arg("-d")
-            .arg(&db)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
-
-        if wait_until_listening("127.0.0.1", port, Duration::from_secs(5))
-            .is_none()
-        {
-            let _ = child.kill();
-            let _ = child.wait();
-            return None;
-        }
-
+        let server = Soulfind::start()?;
         Some(Self {
             host: "127.0.0.1".to_string(),
-            port,
-            child: Some(child),
-            db: Some(db),
+            port: server.port(),
+            _server: Some(server),
             _gate: gate,
             daemons: std::sync::Mutex::new(std::collections::HashMap::new()),
         })
@@ -777,31 +754,7 @@ impl TestServer {
 
     /// An in-process client, used to stand up the other end of a test.
     fn client(&self, user: &str, shares: Vec<String>) -> Client {
-        let port = free_port().expect("peer port");
-        let mut client = Client::with_settings(ClientSettings {
-            username: user.to_string(),
-            password: "pw".to_string(),
-            server_address: PeerAddress::new(self.host.clone(), self.port),
-            enable_listen: true,
-            listen_port: port,
-            shared_directories: shares,
-            version: soulseek_rs::ClientVersion::default(),
-        });
-        client.connect().expect("peer connect");
-        assert!(client.login().expect("peer login"), "peer should log in");
-        client
-    }
-}
-
-impl Drop for TestServer {
-    fn drop(&mut self) {
-        if let Some(child) = self.child.as_mut() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        if let Some(db) = self.db.as_ref() {
-            let _ = std::fs::remove_file(db);
-        }
+        login(&self.host, self.port, user, shares)
     }
 }
 
@@ -829,17 +782,7 @@ macro_rules! server_or_skip {
         match TestServer::resolve() {
             Some(server) => server,
             None => {
-                let required = std::env::var("SOULSEEK_E2E_REQUIRED")
-                    .is_ok_and(|v| v != "0" && !v.is_empty());
-                assert!(
-                    !required,
-                    "SOULSEEK_E2E_REQUIRED is set but no soulfind server could \
-                     be started (set SOULFIND_BIN or SOULSEEK_TEST_SERVER)"
-                );
-                println!(
-                    "cli e2e skipped: no soulfind server (set SOULFIND_BIN or \
-                     SOULSEEK_TEST_SERVER to run)"
-                );
+                common::no_server("cli e2e");
                 return;
             }
         }
@@ -934,11 +877,6 @@ fn split_session_flags(args: &[&str]) -> (Vec<String>, Vec<String>) {
         }
     }
     (session, command)
-}
-
-/// Wait out the SetWaitPort registrations so peer lookups resolve.
-fn settle() {
-    std::thread::sleep(Duration::from_secs(1));
 }
 
 /// Like [`cli`], but keeping a config file so a command that reads or writes
@@ -2359,6 +2297,87 @@ fn shares_status_reports_what_the_network_will_see() {
     let record = json_record(&output);
     assert_eq!(record["files"], 3);
     assert!(record["folders"].as_u64().is_some_and(|n| n >= 1));
+}
+
+/// The index, file by file, in the records `browse` gives for a peer — the
+/// point being that the two are comparable: what the network sees of us
+/// reads exactly like what it sees of anyone else.
+#[test]
+fn shares_files_lists_the_index_as_a_peer_would_receive_it() {
+    let server = server_or_skip!();
+    let share = Scratch::new("share");
+    std::fs::create_dir_all(share.path().join("album")).expect("subfolder");
+    std::fs::write(share.path().join("top.bin"), probe_bytes())
+        .expect("share file");
+    std::fs::write(share.path().join("album").join("deep.bin"), probe_bytes())
+        .expect("share file");
+
+    let listed = cli(
+        &server,
+        "cli_e2e_share_files",
+        &[
+            "--shared-dir",
+            &share.display(),
+            "--json",
+            "shares",
+            "files",
+        ],
+    );
+    assert_eq!(code(&listed), EXIT_OK, "stderr: {}", stderr(&listed));
+
+    let paths: Vec<String> = records(&listed)
+        .iter()
+        .map(|line| {
+            serde_json::from_str::<serde_json::Value>(line).expect("JSON")
+                ["path"]
+                .as_str()
+                .expect("a path")
+                .to_string()
+        })
+        .collect();
+    assert_eq!(paths.len(), 2, "both files, got {paths:?}");
+    assert!(
+        paths.iter().any(|p| p.ends_with("album\\deep.bin")),
+        "the nested file carries the backslash path peers download by: \
+         {paths:?}"
+    );
+
+    let first = json_record(&listed);
+    assert_eq!(first["user"], "cli_e2e_share_files");
+    assert!(first["size"].as_u64().is_some_and(|size| size > 0));
+
+    // The filter narrows to matching paths, and finding nothing is exit 4
+    // rather than an empty success.
+    let narrowed = cli(
+        &server,
+        "cli_e2e_share_files",
+        &[
+            "--shared-dir",
+            &share.display(),
+            "--json",
+            "shares",
+            "files",
+            "--filter",
+            "DEEP",
+        ],
+    );
+    assert_eq!(code(&narrowed), EXIT_OK, "stderr: {}", stderr(&narrowed));
+    assert_eq!(records(&narrowed).len(), 1, "case-insensitively");
+
+    let missing = cli(
+        &server,
+        "cli_e2e_share_files",
+        &[
+            "--shared-dir",
+            &share.display(),
+            "--json",
+            "shares",
+            "files",
+            "--filter",
+            "nothing-like-this",
+        ],
+    );
+    assert_eq!(code(&missing), EXIT_NO_RESULTS);
 }
 
 #[test]

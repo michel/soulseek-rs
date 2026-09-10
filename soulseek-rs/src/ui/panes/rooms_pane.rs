@@ -1,8 +1,11 @@
-use crate::models::{LogView, RoomsState, RoomsView};
+use crate::models::{
+    ChatFilter, LogView, OpenRoom, RoomLine, RoomsState, RoomsView, WrappedLog,
+    contains_filter, matching_users,
+};
 use crate::ui::{
-    HIGHLIGHT_SYMBOL, PANE_PADDING, accent_style, dimmed_style,
-    highlight_style, info_style, pane_block, plain_title, primary_style,
-    row_highlight_style, wrap_chat_line,
+    HIGHLIGHT_SYMBOL, PANE_PADDING, accent_style, dimmed_style, filter_title,
+    highlight_style, info_style, page_window, pane_block, plain_title,
+    primary_style, render_page, row_highlight_style, wrap_chat_line,
 };
 use ratatui::{
     Frame,
@@ -61,7 +64,10 @@ fn render_list(
         Cell::from("room").style(dimmed_style()),
         Cell::from("users").style(dimmed_style()),
     ]);
-    let table_rows: Vec<Row> = filtered
+    table_state.select(Some(rooms.list_selected));
+    let window = page_window(table_state, filtered.len(), area, 1);
+    let start = window.start;
+    let table_rows: Vec<Row> = filtered[window]
         .iter()
         .map(|r| {
             let open = rooms.open_index(&r.name).is_some();
@@ -90,14 +96,18 @@ fn render_list(
             .highlight_spacing(HighlightSpacing::Always)
             .block(block);
 
-    table_state.select(Some(rooms.list_selected.min(filtered.len() - 1)));
-    frame.render_stateful_widget(table, area, table_state);
+    render_page(frame, table, area, table_state, start);
 }
 
 fn render_chat(frame: &mut Frame, area: Rect, rooms: &mut RoomsState) {
-    let block = pane_block(true).title(
-        " Chat rooms  (Tab: switch, l: room list, x: leave, Esc: back) ",
+    let typing_log = rooms.filtering == Some(ChatFilter::Log);
+    let title = filter_title(
+        "Chat rooms",
+        &rooms.log_filter,
+        typing_log,
+        " Chat rooms  (Tab: switch, /: find, u: find user, l: room list, x: leave, Esc: back) ",
     );
+    let block = pane_block(true).title(title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -115,6 +125,9 @@ fn render_chat(frame: &mut Frame, area: Rect, rooms: &mut RoomsState) {
         active: active_index,
         user_selected,
         composing,
+        log_filter,
+        user_filter,
+        filtering,
         ..
     } = rooms;
     let Some(active) = open.get_mut(*active_index) else {
@@ -131,8 +144,28 @@ fn render_chat(frame: &mut Frame, area: Rect, rooms: &mut RoomsState) {
         Layout::horizontal([Constraint::Fill(1), Constraint::Length(22)])
             .split(chunks[1]);
 
-    render_messages(frame, body[0], active.lines.as_slice(), &mut active.view);
-    render_users(frame, body[1], &active.users, *user_selected);
+    let OpenRoom {
+        lines,
+        view,
+        wrapped,
+        users,
+        ..
+    } = active;
+    render_messages(frame, body[0], lines, view, wrapped, log_filter);
+    let shown = matching_users(users, user_filter);
+    let typing_users = *filtering == Some(ChatFilter::Users);
+    let members = if typing_users || !user_filter.is_empty() {
+        format!(
+            "Users {}/{} · {}{}",
+            shown.len(),
+            users.len(),
+            user_filter,
+            if typing_users { "_" } else { "" }
+        )
+    } else {
+        format!("Users ({})", users.len())
+    };
+    render_users(frame, body[1], &shown, *user_selected, members);
 
     // Compose line or hint.
     if *composing {
@@ -179,33 +212,32 @@ fn render_tab_bar(frame: &mut Frame, area: Rect, rooms: &RoomsState) {
 fn render_messages(
     frame: &mut Frame,
     area: Rect,
-    lines: &[crate::models::RoomLine],
+    lines: &[RoomLine],
     view: &mut LogView,
+    wrapped: &mut WrappedLog,
+    filter: &str,
 ) {
-    // Wrap each message to the pane width, then show the rows the reader is
+    // Each message wrapped to the pane width, then the rows the reader is
     // at: the newest ones, unless they are holding a place in the history.
     let width = area.width as usize;
-    let rendered: Vec<Line> = lines
-        .iter()
-        .flat_map(|l| {
-            let time =
-                Span::styled(l.at.format("%H:%M ").to_string(), dimmed_style());
-            match &l.username {
-                Some(user) => wrap_chat_line(
-                    vec![
-                        time,
-                        Span::styled(format!("<{user}> "), info_style()),
-                    ],
-                    &l.text,
-                    primary_style(),
-                    width,
-                ),
-                None => {
-                    wrap_chat_line(vec![time], &l.text, dimmed_style(), width)
-                }
-            }
-        })
-        .collect();
+    let rendered = wrapped.rows(width, filter, lines, |l| {
+        let sender = l.username.as_deref().unwrap_or_default();
+        if !contains_filter(&l.text, filter) && !contains_filter(sender, filter)
+        {
+            return Vec::new();
+        }
+        let time =
+            Span::styled(l.at.format("%H:%M ").to_string(), dimmed_style());
+        match &l.username {
+            Some(user) => wrap_chat_line(
+                vec![time, Span::styled(format!("<{user}> "), info_style())],
+                &l.text,
+                primary_style(),
+                width,
+            ),
+            None => wrap_chat_line(vec![time], &l.text, dimmed_style(), width),
+        }
+    });
     let window = view.window(rendered.len(), usize::from(area.height));
     frame.render_widget(Paragraph::new(rendered[window].to_vec()), area);
 }
@@ -213,14 +245,15 @@ fn render_messages(
 fn render_users(
     frame: &mut Frame,
     area: Rect,
-    users: &[String],
+    users: &[&str],
     selected: usize,
+    title: String,
 ) {
     let block = Block::default()
         .borders(Borders::LEFT)
         .border_style(dimmed_style())
         .padding(PANE_PADDING)
-        .title(plain_title(format!("Users ({})", users.len()), false));
+        .title(plain_title(title, false));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 

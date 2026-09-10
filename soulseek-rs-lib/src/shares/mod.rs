@@ -146,14 +146,18 @@ impl Shares {
                 .virtual_path
                 .rsplit_once('\\')
                 .unwrap_or(("", file.virtual_path.as_str()));
-            by_dir
-                .entry(dir.to_string())
-                .or_default()
-                .push(SharedFileEntry {
-                    name: base.to_string(),
-                    size: file.size,
-                    attributes: file.attributes.clone(),
-                });
+            let entry = SharedFileEntry {
+                name: base.to_string(),
+                size: file.size,
+                attributes: file.attributes.clone(),
+            };
+            // Looked up before inserting: `entry()` would allocate the key
+            // for every file, and a folder holds many.
+            if let Some(files) = by_dir.get_mut(dir) {
+                files.push(entry);
+            } else {
+                by_dir.insert(dir.to_string(), vec![entry]);
+            }
         }
         by_dir
             .into_iter()

@@ -148,6 +148,13 @@ file is its own; changing it does not reach a daemon. The exception is
 `shares.set`, which the CLI's `shares add`/`remove` call so a folder is served
 without waiting for a restart.
 
+**A password change belongs to the daemon's account.** `account.password`
+changes the password of the account the daemon is logged in as, and stores the
+new one on the daemon's host so the next start still logs in. The server sends
+no verdict on the change, so the `{"ok":true}` means the request went out. The
+password crosses the socket in plain text, exactly like the token: keep TCP
+behind an SSH tunnel.
+
 **Several clients, no locking.** Last write wins. Two clients cancelling the
 same transfer is two hands on one keyboard, not an error.
 

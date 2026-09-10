@@ -895,6 +895,16 @@ fn write_baseline(path: &Path, score: &Score, cfg: &Config, m: &Metrics) {
 /// Live thread count for this process, so the harness can show whether load is
 /// being absorbed or simply turned into threads.
 fn thread_count() -> usize {
+    // Linux keeps the count in /proc; `ps -M` is macOS's spelling and returns
+    // a single unrelated line there, which read as one thread all along and
+    // made this guard against thread explosions useless on CI.
+    if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+        return status
+            .lines()
+            .find_map(|line| line.strip_prefix("Threads:"))
+            .and_then(|count| count.trim().parse().ok())
+            .unwrap_or(0);
+    }
     Command::new("ps")
         .args(["-M", &std::process::id().to_string()])
         .output()
@@ -1026,6 +1036,7 @@ fn main() {
         enable_listen: true,
         listen_port: client_port,
         shared_directories: vec![share_dir.display().to_string()],
+        accept_children: false,
         version: ClientVersion::default(),
     });
     client.connect().expect("client connect");

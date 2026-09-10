@@ -1,7 +1,7 @@
-use crate::models::{AppState, ChatMessage, LogView, MessageDirection};
+use crate::models::{AppState, MessageDirection, contains_filter};
 use crate::ui::{
-    accent_style, border_style, dimmed_style, highlight_style, info_style,
-    primary_style, wrap_chat_line,
+    accent_style, border_style, dimmed_style, filter_title, highlight_style,
+    info_style, primary_style, wrap_chat_line,
 };
 use ratatui::{
     Frame,
@@ -24,7 +24,16 @@ pub fn render_chat_pane(
     let peer = peer.as_deref();
     let title = peer.map_or_else(
         || " Messages  (m: compose, i/Esc: close) ".to_string(),
-        |peer| format!(" {peer}  (↑↓/Tab: switch, m: to…, i/Esc: close) "),
+        |peer| {
+            filter_title(
+                peer,
+                &state.chat_filter,
+                state.chat_filtering,
+                &format!(
+                    " {peer}  (↑↓/Tab: switch, /: find, m: to…, i/Esc: close) "
+                ),
+            )
+        },
     );
     let block = Block::default()
         .borders(Borders::ALL)
@@ -52,14 +61,7 @@ pub fn render_chat_pane(
         return;
     };
 
-    render_messages(
-        frame,
-        body[0],
-        &state.messages,
-        &mut state.chat_view,
-        peer,
-        own_username,
-    );
+    render_messages(frame, body[0], state, peer, own_username);
     render_compose(frame, chunks[1], state);
 }
 
@@ -102,34 +104,37 @@ fn render_peers(
 fn render_messages(
     frame: &mut Frame,
     area: Rect,
-    messages: &[ChatMessage],
-    view: &mut LogView,
+    state: &mut AppState,
     peer: &str,
     own_username: &str,
 ) {
+    let AppState {
+        messages,
+        chat_view: view,
+        chat_wrapped: wrapped,
+        chat_filter: filter,
+        ..
+    } = state;
     let width = area.width as usize;
-    let lines: Vec<Line> = messages
-        .iter()
-        .filter(|m| m.peer == peer)
-        .flat_map(|m| {
-            let (sender, sender_style) = match m.direction {
-                MessageDirection::Incoming => (peer, info_style()),
-                MessageDirection::Outgoing => (own_username, accent_style()),
-            };
-            wrap_chat_line(
-                vec![
-                    Span::styled(
-                        m.at.format("%H:%M ").to_string(),
-                        dimmed_style(),
-                    ),
-                    Span::styled(format!("<{sender}> "), sender_style),
-                ],
-                &m.text,
-                primary_style(),
-                width,
-            )
-        })
-        .collect();
+    let key = format!("{peer}\n{filter}");
+    let lines = wrapped.rows(width, &key, messages, |m| {
+        if m.peer != peer || !contains_filter(&m.text, filter) {
+            return Vec::new();
+        }
+        let (sender, sender_style) = match m.direction {
+            MessageDirection::Incoming => (peer, info_style()),
+            MessageDirection::Outgoing => (own_username, accent_style()),
+        };
+        wrap_chat_line(
+            vec![
+                Span::styled(m.at.format("%H:%M ").to_string(), dimmed_style()),
+                Span::styled(format!("<{sender}> "), sender_style),
+            ],
+            &m.text,
+            primary_style(),
+            width,
+        )
+    });
 
     // The newest rows, unless the reader is holding a place in the history.
     let window = view.window(lines.len(), usize::from(area.height));

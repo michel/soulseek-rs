@@ -13,9 +13,9 @@ use crate::daemon::proto::{
     DaemonStatus, DirectoriesParams, DirectoryParams, DownloadDto,
     DownloadStartParams, DownloadStarted, Downloads, Event, IntervalSeconds,
     MemberStats, Members, MessageParams, Messages, Method, PROTOCOL_VERSION,
-    QueryParams, Request, Response, RoomRef, RpcError, SayParams,
-    SearchResults, Searches, Seconds, SharesStatus, SlotsParams, TransferRef,
-    Uploads, UserRef, UserResult, Watched,
+    PasswordParams, QueryParams, Request, Response, RoomRef, RpcError,
+    SayParams, SearchResults, Searches, Seconds, SharedListing, SharesStatus,
+    SlotsParams, TransferRef, Uploads, UserRef, UserResult, Watched,
 };
 use mirror::Mirror;
 use serde::de::DeserializeOwned;
@@ -823,12 +823,33 @@ impl SessionApi for RemoteSession {
         self.shares().directories
     }
 
+    // ponytail: a blocking round-trip that carries the whole index — a very
+    // large share is tens of MB of JSON before the next redraw. It is only
+    // ever a keypress, never a frame; if that stops being tolerable, push it
+    // as an event the way `browse.user` answers with `event.browse`.
+    fn shared_listing(&self) -> Vec<SharedDirectory> {
+        self.request::<_, SharedListing>(Method::SharesFiles, ())
+            .map(|listing| {
+                listing.directories.into_iter().map(Into::into).collect()
+            })
+            .unwrap_or_default()
+    }
+
     fn set_shared_directories(&self, directories: Vec<String>) -> Result<()> {
         self.tell(Method::SharesSet, DirectoriesParams { directories })
     }
 
     fn set_download_directory(&self, directory: String) -> Result<()> {
         self.tell(Method::DownloadSetDir, DirectoryParams { directory })
+    }
+
+    fn change_password(&self, password: &str) -> Result<()> {
+        self.tell(
+            Method::AccountPassword,
+            PasswordParams {
+                password: password.to_string(),
+            },
+        )
     }
 }
 

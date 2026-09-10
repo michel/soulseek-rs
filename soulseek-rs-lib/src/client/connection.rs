@@ -1,9 +1,10 @@
 use super::{
-    Arc, Client, ClientContext, ClientOperation, ConnectionType, DownloadPeer,
-    DownloadStatus, Listen, Peer, PeerRegistry, Receiver, Result, RwLock,
+    Arc, AtomicBool, Client, ClientContext, ClientOperation, ConnectionType,
+    DownloadPeer, Listen, Peer, PeerRegistry, Receiver, Result, RwLock,
     RwLockExt, Sender, ServerActor, ServerMessage, Shares, SoulseekRs,
     TcpStream, error, info, mpsc, thread, trace, warn,
 };
+use std::sync::atomic::Ordering;
 
 /// Ceiling on the wait for a login verdict. Generous enough for a slow server
 /// and a retrying connect, short enough that an unattended caller ends.
@@ -96,6 +97,7 @@ impl Client {
         } else {
             None
         };
+        self.listener_stopped = Arc::new(AtomicBool::new(false));
 
         let mut server_actor = ServerActor::new(
             self.address.clone(),
@@ -118,9 +120,16 @@ impl Client {
             let client_sender = listen_sender;
             let context = self.context.clone();
             let own_username = self.username.clone();
+            let stopped = self.listener_stopped.clone();
 
             thread::spawn(move || {
-                Listen::serve(&listener, client_sender, context, own_username);
+                Listen::serve(
+                    &listener,
+                    client_sender,
+                    context,
+                    own_username,
+                    stopped,
+                );
             });
         }
 
@@ -131,6 +140,42 @@ impl Client {
         );
 
         Ok(())
+    }
+
+    /// Close the server connection and every peer connection.
+    ///
+    /// The server sees the socket close and marks us offline, which is what
+    /// releases the username: a client that simply goes out of scope without
+    /// this leaves a session the server still believes in, so mail addressed
+    /// to us is delivered to a connection nobody is reading and later logins
+    /// collide with our own ghost.
+    ///
+    /// Called automatically when the client is dropped. The peer listener's
+    /// bound port, if one was opened, is released with the process.
+    pub fn disconnect(&mut self) {
+        if let Some(handle) = self.server_handle.take() {
+            let _ = handle.stop();
+        }
+        let registry = match self.context.write_safe() {
+            Ok(mut ctx) => {
+                // Dropping our end of the operations channel is what lets its
+                // thread finish once the peers and the listener have gone.
+                ctx.operations = None;
+                ctx.peer_registry.clone()
+            }
+            Err(_) => None,
+        };
+        if let Some(registry) = registry {
+            registry.stop_all();
+        }
+        // The listener thread is parked in accept(), so it only notices the
+        // flag when a connection arrives: dial it once ourselves. Without
+        // this the port stays bound for the life of the process, and the next
+        // client falls back to an ephemeral port nobody was told about.
+        self.listener_stopped.store(true, Ordering::Relaxed);
+        if let Some(port) = self.bound_port.take() {
+            let _ = TcpStream::connect(("127.0.0.1", port));
+        }
     }
 
     /// Log in and wait for the server's verdict.
@@ -240,6 +285,25 @@ impl Client {
         registered
     }
 
+    /// Tell the server we could not reach the peer it asked us to connect to,
+    /// quoting the token that peer is waiting on.
+    pub(crate) fn report_cant_connect(
+        client_context: &Arc<RwLock<ClientContext>>,
+        token: u32,
+        username: &str,
+    ) {
+        let sender = match client_context.read_safe() {
+            Ok(ctx) => ctx.server_sender.clone(),
+            Err(_) => return,
+        };
+        let Some(sender) = sender else { return };
+        let message =
+            crate::message::server::MessageFactory::build_cant_connect_to_peer(
+                token, username,
+            );
+        let _ = sender.send(ServerMessage::SendMessage(message));
+    }
+
     pub(crate) fn connect_to_peer(
         peer: Peer,
         client_context: Arc<RwLock<ClientContext>>,
@@ -282,6 +346,8 @@ impl Client {
                     own_username,
                 );
 
+                let brokered = peer_clone.brokered;
+                let username = peer_clone.username;
                 match download_peer.download_file(
                     client_context.clone(),
                     None,
@@ -292,25 +358,35 @@ impl Client {
                             "[client] downloaded {} bytes {:?} ",
                             filename, download.size
                         );
-                        let _ = download.sender.send(DownloadStatus::Completed);
-                        match client_context.write_safe() {
-                            Ok(mut ctx) => ctx.update_download_with_status(
-                                download.token,
-                                DownloadStatus::Completed,
-                            ),
-                            Err(e) => error!(
-                                "[client] connect_to_peer F write: {}",
-                                e
-                            ),
-                        }
                     }
                     Err(e) => {
                         trace!("[client] failed to download: {}", e);
+                        // A file connection the server asked us to make and
+                        // we could not complete owes that peer a
+                        // CantConnectToPeer, exactly as a control connection
+                        // does: it is waiting on this token.
+                        if brokered {
+                            Self::report_cant_connect(
+                                &client_context,
+                                token,
+                                &username,
+                            );
+                        }
                     }
                 }
             }
             ConnectionType::D => {
-                error!("ConnectionType::D not implemented");
+                // ponytail: we never dial out to adopt a child — children
+                // reach us through the listener. Tell the peer rather than
+                // leave it waiting; wire the outbound half if firewalled
+                // children turn out to matter.
+                if let (true, Some(token)) = (peer.brokered, peer.token) {
+                    Self::report_cant_connect(
+                        &client_context,
+                        token,
+                        &peer.username,
+                    );
+                }
             }
         }
     }

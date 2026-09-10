@@ -61,11 +61,43 @@ impl DownloadStore {
         let Some(download) = self.get_by_token_mut(token) else {
             return false;
         };
-        if matches!(download.status, DownloadStatus::Cancelled) {
+        if download.status.is_terminal()
+            || matches!(
+                (&download.status, &status),
+                (
+                    DownloadStatus::Paused { .. },
+                    DownloadStatus::InProgress { .. }
+                )
+            )
+        {
             return false;
         }
         download.status = status;
         true
+    }
+
+    /// Atomically reserve a queued download for the peer that owns it.
+    ///
+    /// Every file-connection direction uses this before opening a partial, so
+    /// two sockets cannot both observe `Queued` and write the same target.
+    pub fn claim_for_peer(
+        &mut self,
+        token: u32,
+        username: &str,
+    ) -> Option<Download> {
+        let download = self.get_by_token_mut(token)?;
+        if download.username != username
+            || !matches!(download.status, DownloadStatus::Queued)
+        {
+            return None;
+        }
+
+        download.status = DownloadStatus::InProgress {
+            bytes_downloaded: 0,
+            total_bytes: download.size,
+            speed_bytes_per_sec: 0.0,
+        };
+        Some(download.clone())
     }
 
     pub fn cancel_by_file(
@@ -371,6 +403,52 @@ mod tests {
                 speed_bytes_per_sec: 0.0
             }
         ));
+    }
+
+    #[test]
+    fn progress_cannot_implicitly_resume_a_paused_download() {
+        let mut store = DownloadStore::new();
+        store.add(make_download(
+            1,
+            DownloadStatus::Paused {
+                bytes_downloaded: 25,
+                total_bytes: 100,
+            },
+        ));
+
+        assert!(!store.update_status(
+            1,
+            DownloadStatus::InProgress {
+                bytes_downloaded: 50,
+                total_bytes: 100,
+                speed_bytes_per_sec: 10.0,
+            },
+        ));
+        assert!(matches!(
+            store.get_by_token(1).unwrap().status,
+            DownloadStatus::Paused {
+                bytes_downloaded: 25,
+                total_bytes: 100
+            }
+        ));
+    }
+
+    #[test]
+    fn a_download_can_only_be_claimed_once_and_by_its_peer() {
+        let mut store = DownloadStore::new();
+        store.add(make_download(1, DownloadStatus::Queued));
+
+        assert!(store.claim_for_peer(1, "other").is_none());
+        let claimed = store.claim_for_peer(1, "peer").unwrap();
+        assert!(matches!(
+            claimed.status,
+            DownloadStatus::InProgress {
+                bytes_downloaded: 0,
+                total_bytes: 100,
+                speed_bytes_per_sec: 0.0
+            }
+        ));
+        assert!(store.claim_for_peer(1, "peer").is_none());
     }
 
     #[test]

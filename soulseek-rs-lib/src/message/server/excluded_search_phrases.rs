@@ -12,7 +12,7 @@ impl MessageHandler<ServerMessage> for ExcludedSearchPhrasesHandler {
         160
     }
 
-    fn handle(&self, message: &mut Message, _sender: Sender<ServerMessage>) {
+    fn handle(&self, message: &mut Message, sender: Sender<ServerMessage>) {
         let item_count = message.read_int32();
 
         let mut exluded_phrases: Vec<String> = Vec::new();
@@ -25,6 +25,11 @@ impl MessageHandler<ServerMessage> for ExcludedSearchPhrasesHandler {
             exluded_phrases.push(phrase);
         }
         debug!("Excluded search phrases: {:?}", exluded_phrases);
+        // Kept, not just logged: the server rejects a search carrying one of
+        // these, so a client that forgets them spends its search allowance on
+        // queries that were never going to be answered.
+        let _ =
+            sender.send(ServerMessage::ExcludedSearchPhrases(exluded_phrases));
     }
 }
 
@@ -42,5 +47,23 @@ mod tests {
             m.write_int32(u32::MAX);
         });
         ExcludedSearchPhrasesHandler.handle(&mut message, tx);
+    }
+
+    #[test]
+    fn the_phrases_are_reported_not_only_logged() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut message = framed(|m| {
+            m.write_int32(2);
+            m.write_string("banned");
+            m.write_string("blocked");
+        });
+
+        ExcludedSearchPhrasesHandler.handle(&mut message, tx);
+        match rx.try_recv() {
+            Ok(ServerMessage::ExcludedSearchPhrases(phrases)) => {
+                assert_eq!(phrases, ["banned", "blocked"]);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
     }
 }

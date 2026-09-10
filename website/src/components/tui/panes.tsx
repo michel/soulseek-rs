@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils'
 import { TuiPane } from './chrome'
 import type { ResultRow, SearchRow, TransferRow, TransferStatus } from './data'
 
-const RESULT_COLS = '30px 1fr 74px 92px 78px 74px 42px'
+const RESULT_COLS = '30px 3fr 2fr 74px 92px 78px 74px 42px'
 const TRANSFER_COLS = '48px 1fr 96px 168px 74px'
 
 interface SearchesPaneProps {
@@ -134,6 +134,7 @@ export const ResultsPane = ({
     >
       <span>✓</span>
       <span>Filename</span>
+      <span>Folder</span>
       <span>Size</span>
       <span>User</span>
       <span>Bitrate</span>
@@ -143,6 +144,7 @@ export const ResultsPane = ({
     <div className="flex-1 overflow-y-auto">
       {rows.map((row, i) => {
         const { glyph, tone } = resultGlyph(row)
+        const parts = row.name.split('\\')
         const isSelected = selected === i
         return (
           <button
@@ -167,7 +169,10 @@ export const ResultsPane = ({
                 isSelected ? 'text-[var(--color-paper)]' : 'text-[var(--color-paper-dim)]',
               )}
             >
-              {row.name}
+              {parts.at(-1)}
+            </span>
+            <span className="overflow-hidden text-ellipsis whitespace-nowrap text-[var(--color-dust)]">
+              {parts.slice(0, -1).join('\\')}
             </span>
             <span className="text-right text-[var(--color-tape)]">{row.size}</span>
             <span className="text-[var(--color-signal)]">{row.user}</span>

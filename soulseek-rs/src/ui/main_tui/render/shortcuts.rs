@@ -1,21 +1,15 @@
-use super::MainTui;
-use crate::models::{CommandBarMode, FocusedPane, RoomsView};
-use crate::ui::panes::{
-    InfoSubject, ResultsPaneParams, render_browse_pane, render_chat_pane,
-    render_download_info_pane, render_downloads_pane, render_results_pane,
-    render_rooms_pane, render_searches_pane, selected_transfer,
-};
-use crate::ui::{
+//! The keys the window advertises: the shortcut bar along the foot, the `?`
+//! overlay behind it, and the unread badge that rides in the bar.
+//!
+//! A child module of `render`, so it still reaches the window's state and
+//! `render`'s own helpers directly; only what `render` calls back into is
+//! widened to `pub(super)`.
+
+use super::{
+    Alignment, CommandBarMode, Constraint, FocusedPane, Frame, Layout, Line,
+    MainTui, Modifier, PaneLayout, Paragraph, Rect, RoomsView, Span,
     accent_style, body_style, dimmed_style, info_style, pack_shortcuts,
-    pane_block, plain_title, primary_style, render_download_stats,
-    warning_style,
-};
-use ratatui::{
-    Frame,
-    layout::{Alignment, Constraint, Layout, Position, Rect},
-    style::Modifier,
-    text::{Line, Span},
-    widgets::Paragraph,
+    pane_block, plain_title, warning_style,
 };
 
 /// The keys overlay, grouped by where a key applies. Two columns, because a
@@ -29,7 +23,9 @@ const HELP_LEFT: &[(&str, &[(&str, &str)])] = &[
             ("z", "zoom the focused pane"),
             ("w", "hide the focused pane"),
             ("Esc", "leave zoom"),
+            ("W", "every pane back, zoom off, sizes reset"),
             ("click", "focus a pane"),
+            ("drag", "resize panes by their borders"),
         ],
     ),
     (
@@ -37,6 +33,7 @@ const HELP_LEFT: &[(&str, &[(&str, &str)])] = &[
         &[
             ("s", "search the network"),
             ("b", "browse a user's files"),
+            ("B", "browse what you share yourself"),
             ("m", "compose a private message"),
             ("i", "inbox"),
             ("o", "settings"),
@@ -55,6 +52,14 @@ const HELP_LEFT: &[(&str, &[(&str, &str)])] = &[
             ("0 / $", "its start / its end"),
         ],
     ),
+    (
+        "Settings popup",
+        &[
+            ("Enter", "change the password, log out, edit the folder"),
+            ("a / d", "add / remove a shared folder"),
+            ("r", "re-index the shares"),
+        ],
+    ),
 ];
 
 const HELP_RIGHT: &[(&str, &[(&str, &str)])] = &[
@@ -62,6 +67,7 @@ const HELP_RIGHT: &[(&str, &[(&str, &str)])] = &[
         "Searches",
         &[
             ("Enter", "show its results"),
+            ("S", "run the search again"),
             ("d", "remove the search"),
             ("C", "clear every search"),
             ("c", "chat rooms"),
@@ -86,6 +92,8 @@ const HELP_RIGHT: &[(&str, &[(&str, &str)])] = &[
             ("r", "retry a failed one"),
             ("d", "delete a queued or finished one"),
             ("c", "clear every finished one"),
+            ("C", "clear every one, cancelling the live ones"),
+            ("b", "browse that user"),
         ],
     ),
     (
@@ -95,200 +103,83 @@ const HELP_RIGHT: &[(&str, &[(&str, &str)])] = &[
             ("^u ^d", "half a page of them"),
             ("Home End / g G", "oldest / newest, or first / last row"),
             ("Tab / Shift-Tab", "next room, chat or user"),
+            ("/", "filter the messages, the room list or the tree"),
+            ("u", "filter a room's member list"),
+        ],
+    ),
+    (
+        "Browse popup",
+        &[
+            ("← → / h l", "close / open a folder, or step out / in"),
+            ("J K", "next / previous folder"),
+            ("H L", "close / open every folder"),
+            ("/", "filter by path, Enter keeps it, Esc clears"),
+            ("Enter", "open a folder, or download a file"),
+            ("d", "download a file, or a folder's files"),
+            ("r", "ask again after a timeout, re-index your own"),
+            ("o", "shared folders (your own tab)"),
         ],
     ),
 ];
 
-impl MainTui {
-    pub(super) fn render(&mut self, frame: &mut Frame) {
-        let shortcuts = self.shortcut_rows(frame.area().width);
-        let mut constraints = vec![
-            Constraint::Length(3), // Status bar
-            Constraint::Fill(1),   // Main content
-        ];
-        if self.state.command_bar_active {
-            constraints.push(Constraint::Length(3)); // Command bar
+/// What the bar offers while a filter is being typed, wherever that is,
+/// with the keys that still move around there.
+fn filter_keys(
+    moves: &[(&'static str, &'static str)],
+) -> Vec<(&'static str, &'static str)> {
+    let mut keys = vec![("Type", "filter")];
+    keys.extend_from_slice(moves);
+    keys.extend([("Enter", "keep filter"), ("Esc", "clear filter")]);
+    keys
+}
+
+/// What the bar offers in the settings popup: the keys that always apply,
+/// plus what Enter does on the row the selection rests on.
+fn settings_shortcuts(
+    settings: &crate::models::SettingsState,
+) -> Vec<(&'static str, &'static str)> {
+    use crate::models::{SettingsMode, SettingsRow};
+    match settings.mode {
+        SettingsMode::ConfirmingLogout => {
+            vec![("y", "log out"), ("n/Esc", "stay")]
         }
-        constraints.push(Constraint::Length(shortcuts.len() as u16 + 2));
-        let main_chunks = Layout::vertical(constraints).split(frame.area());
-
-        let daemon = self.client.daemon_endpoint();
-        render_download_stats(
-            frame,
-            main_chunks[0],
-            &self.state.downloads,
-            self.state.active_downloads_count,
-            daemon.as_deref(),
-        );
-
-        self.render_content(frame, main_chunks[1]);
-
-        // Render command bar if active (vim-style, above shortcuts)
-        if self.state.command_bar_active {
-            self.render_command_bar(frame, main_chunks[2]);
-            self.render_shortcuts(frame, main_chunks[3], shortcuts);
-        } else {
-            self.render_shortcuts(frame, main_chunks[2], shortcuts);
+        SettingsMode::NewPassword => {
+            vec![
+                ("Type", "password"),
+                ("Enter", "repeat it"),
+                ("Esc", "cancel"),
+            ]
         }
-
-        self.render_overlays(frame);
-    }
-
-    /// Results across the top, where a long file name has the whole width;
-    /// Searches, Downloads and Info in a row underneath. A hidden pane drops
-    /// out of its row and the rest widen; a zoomed one has the area alone.
-    fn render_content(&mut self, frame: &mut Frame, area: Rect) {
-        // Only what is drawn can be clicked.
-        self.state.searches_pane_area = None;
-        self.state.results_pane_area = None;
-        self.state.downloads_pane_area = None;
-
-        if self.state.layout.zoomed {
-            self.render_pane(frame, area, self.state.focused_pane);
-            return;
+        SettingsMode::RepeatPassword(_) => {
+            vec![
+                ("Type", "password"),
+                ("Enter", "change it"),
+                ("Esc", "cancel"),
+            ]
         }
-
-        // Transfers carry the most columns, so they get the most width.
-        let row_panes: Vec<(FocusedPane, u16)> =
-            [(FocusedPane::Searches, 5), (FocusedPane::Downloads, 10)]
-                .into_iter()
-                .filter(|(pane, _)| self.state.layout.is_visible(*pane))
-                .collect();
-
-        let row_area = if self.state.layout.is_visible(FocusedPane::Results) {
-            // With only Info left in the row, the results deserve more of
-            // the height.
-            let row_weight = if row_panes.is_empty() { 1 } else { 2 };
-            let [top, bottom] = Layout::vertical([
-                Constraint::Fill(3),
-                Constraint::Fill(row_weight),
-            ])
-            .areas(area);
-            self.render_pane(frame, top, FocusedPane::Results);
-            bottom
-        } else {
-            area
-        };
-
-        let mut constraints: Vec<Constraint> = row_panes
-            .iter()
-            .map(|(_, weight)| Constraint::Fill(*weight))
-            .collect();
-        constraints.push(Constraint::Fill(6)); // Info
-        let chunks = Layout::horizontal(constraints).split(row_area);
-        for (chunk, (pane, _)) in chunks.iter().zip(&row_panes) {
-            self.render_pane(frame, *chunk, *pane);
+        SettingsMode::EditingDownloadDir | SettingsMode::AddingShare => {
+            vec![("Type", "path"), ("Enter", "save"), ("Esc", "cancel")]
         }
-        self.render_info_pane(frame, chunks[row_panes.len()]);
-    }
-
-    fn render_pane(
-        &mut self,
-        frame: &mut Frame,
-        area: Rect,
-        pane: FocusedPane,
-    ) {
-        let focused = self.state.focused_pane == pane;
-        match pane {
-            FocusedPane::Searches => {
-                self.state.searches_pane_area = Some(area);
-                render_searches_pane(
-                    frame,
-                    area,
-                    &self.state.searches,
-                    &mut self.state.searches_table_state,
-                    focused,
-                    self.state.searches_query_offset,
-                );
-            }
-            FocusedPane::Results => {
-                self.state.results_pane_area = Some(area);
-                self.render_results_pane(frame, area, focused);
-            }
-            FocusedPane::Downloads => {
-                self.state.downloads_pane_area = Some(area);
-                render_downloads_pane(
-                    frame,
-                    area,
-                    &self.state.downloads,
-                    &self.state.uploads,
-                    &mut self.state.downloads_table_state,
-                    focused,
-                    self.state.downloads_name_offset,
-                );
-            }
-        }
-    }
-
-    fn render_results_pane(
-        &mut self,
-        frame: &mut Frame,
-        area: Rect,
-        focused: bool,
-    ) {
-        // When a filter is active the rendered rows are a subset, so the pane
-        // also needs the mapping back to unfiltered indices to render the
-        // selection checkboxes correctly.
-        let (results_items, results_original_indices) =
-            if self.state.results_filter_query.is_empty() {
-                (&self.state.results_items, None)
-            } else {
-                (
-                    &self.state.results_filtered_items,
-                    Some(self.state.results_filtered_indices.as_slice()),
-                )
-            };
-
-        let active_search_query = self
-            .state
-            .selected_search_index
-            .and_then(|idx| self.state.searches.get(idx))
-            .map(|search| search.query.as_str());
-
-        render_results_pane(
-            frame,
-            area,
-            ResultsPaneParams {
-                items: results_items,
-                table_state: &mut self.state.results_table_state,
-                selected_indices: &self.state.results_selected_indices,
-                original_indices: results_original_indices,
-                filter_query: &self.state.results_filter_query,
-                is_filtering: self.state.results_is_filtering,
-                focused,
-                active_search_query,
-                name_offset: self.state.results_name_offset,
+        SettingsMode::Navigate => vec![
+            ("↑↓", "move"),
+            match settings.selected_row() {
+                SettingsRow::ChangePassword => ("Enter", "change password"),
+                SettingsRow::Logout => ("Enter", "log out"),
+                SettingsRow::DownloadDir => ("Enter", "edit folder"),
+                SettingsRow::Share(_) => ("d", "remove share"),
             },
-        );
+            ("a", "add share"),
+            ("r", "re-index"),
+            ("Esc", "close"),
+        ],
     }
+}
 
-    /// The Info pane follows the focus: the highlighted result, or the
-    /// highlighted transfer.
-    fn render_info_pane(&self, frame: &mut Frame, area: Rect) {
-        let selected = if self.state.focused_pane == FocusedPane::Results {
-            self.highlighted_result().map(InfoSubject::Result)
-        } else {
-            selected_transfer(
-                self.state.downloads_table_state.selected(),
-                &self.state.downloads,
-                &self.state.uploads,
-            )
-        };
-        render_download_info_pane(
-            frame,
-            area,
-            selected,
-            matches!(
-                self.state.focused_pane,
-                FocusedPane::Results | FocusedPane::Downloads
-            ),
-        );
-    }
-
+impl MainTui {
     /// The keys list, two columns side by side where the terminal is wide
     /// enough and one on top of the other where it is not, scrolling when
     /// even that is taller than the window.
-    fn render_help_popup(&mut self, frame: &mut Frame) {
+    pub(super) fn render_help_popup(&mut self, frame: &mut Frame) {
         let screen = frame.area();
         // Borders and padding on either side of the text.
         let frame_width = 4;
@@ -332,128 +223,6 @@ impl MainTui {
         }
     }
 
-    fn render_overlays(&mut self, frame: &mut Frame) {
-        // Messages inbox overlays everything when open.
-        if self.state.show_messages {
-            self.render_messages_popup(frame);
-        }
-
-        // Browse tree overlays everything when open.
-        if self.state.show_browse && !self.state.browse.is_empty() {
-            let area = centered_rect(80, 80, frame.area());
-            self.state.popup_area = Some(area);
-            frame.render_widget(ratatui::widgets::Clear, area);
-            render_browse_pane(
-                frame,
-                area,
-                &self.state.browse,
-                &mut self.state.browse_table_state,
-                self.spinner_state,
-            );
-        }
-
-        // Settings popup overlays everything when open.
-        if self.state.settings.is_some() {
-            self.render_settings_popup(frame);
-        }
-
-        // Chat rooms overlay everything when open.
-        if self.state.show_rooms {
-            let area = centered_rect(85, 80, frame.area());
-            self.state.popup_area = Some(area);
-            frame.render_widget(ratatui::widgets::Clear, area);
-            render_rooms_pane(
-                frame,
-                area,
-                &mut self.state.rooms,
-                &mut self.state.rooms_list_table_state,
-            );
-        }
-
-        // The keys list only opens from the main view, so it is on top of
-        // nothing; drawn last so that stays true if that ever changes.
-        if self.state.show_help {
-            self.render_help_popup(frame);
-        }
-    }
-
-    fn render_settings_popup(&self, frame: &mut Frame) {
-        use crate::models::SettingsMode;
-        let Some(settings) = self.state.settings.as_ref() else {
-            return;
-        };
-        let area = centered_rect(70, 60, frame.area());
-        frame.render_widget(ratatui::widgets::Clear, area);
-
-        let mut lines: Vec<Line> = Vec::new();
-        let marker = |selected: bool| if selected { "> " } else { "  " };
-        let entry = |selected: bool, label: &str, value: String| {
-            Line::from(vec![
-                Span::styled(marker(selected).to_string(), accent_style()),
-                Span::styled(label.to_string(), dimmed_style()),
-                Span::styled(value, primary_style()),
-            ])
-        };
-
-        lines.push(if settings.mode == SettingsMode::EditingDownloadDir {
-            Line::from(vec![
-                Span::styled("> ", accent_style()),
-                Span::styled("Download folder: ", dimmed_style()),
-                Span::styled(settings.input.clone(), primary_style()),
-                Span::styled("▏", accent_style()),
-            ])
-        } else {
-            entry(
-                settings.selected == 0,
-                "Download folder: ",
-                settings.download_dir.clone(),
-            )
-        });
-        lines.push(Line::from(""));
-        lines.push(Line::styled(
-            format!("Shared folders ({}):", settings.share_dirs.len()),
-            dimmed_style(),
-        ));
-        for (i, dir) in settings.share_dirs.iter().enumerate() {
-            lines.push(entry(settings.selected == i + 1, "", dir.clone()));
-        }
-        if settings.share_dirs.is_empty() {
-            lines.push(Line::styled(
-                "  (nothing shared — press 'a' to add a folder)",
-                dimmed_style(),
-            ));
-        }
-        if settings.mode == SettingsMode::AddingShare {
-            lines.push(Line::from(vec![
-                Span::styled("  Add share: ", dimmed_style()),
-                Span::styled(settings.input.clone(), primary_style()),
-                Span::styled("▏", accent_style()),
-            ]));
-        }
-        if let Some(status) = &settings.status {
-            lines.push(Line::from(""));
-            lines.push(Line::styled(status.clone(), warning_style()));
-        }
-
-        let block = pane_block(true).title(plain_title("Settings", true));
-        frame.render_widget(
-            ratatui::widgets::Paragraph::new(lines)
-                .block(block)
-                .wrap(ratatui::widgets::Wrap { trim: false }),
-            area,
-        );
-    }
-
-    fn render_messages_popup(&mut self, frame: &mut Frame) {
-        // The per-conversation chat box supersedes the old flat message list;
-        // it renders the messages and the compose line itself.
-        let area = centered_rect(70, 60, frame.area());
-        frame.render_widget(ratatui::widgets::Clear, area);
-        self.state.popup_area = Some(area);
-        let own = self.client.username();
-        render_chat_pane(frame, area, &mut self.state, &own);
-    }
-
     /// Context shortcuts for the chat-rooms popup.
     fn rooms_shortcuts(&self) -> Vec<(&'static str, &'static str)> {
         if self.state.rooms.composing {
@@ -481,10 +250,15 @@ impl MainTui {
                     ]
                 }
             }
+            RoomsView::Chat if self.state.rooms.filtering.is_some() => {
+                filter_keys(&[("PgUp/PgDn", "scroll"), ("↑↓", "pick user")])
+            }
             RoomsView::Chat => vec![
                 ("Enter", "say"),
                 ("PgUp/PgDn", "scroll"),
                 ("↑↓", "pick user"),
+                ("/", "find in chat"),
+                ("u", "find user"),
                 ("b", "browse user"),
                 ("m", "message user"),
                 ("Tab", "switch room"),
@@ -497,7 +271,7 @@ impl MainTui {
     /// The keys every pane shares for moving between and resizing panes,
     /// ending the bar the same way wherever the focus sits.
     fn pane_shortcuts(&self) -> Vec<(&'static str, &'static str)> {
-        vec![
+        let mut keys = vec![
             ("Tab/1-3", "pane"),
             (
                 "z",
@@ -508,9 +282,13 @@ impl MainTui {
                 },
             ),
             ("w", "hide"),
-            ("?", "keys"),
-            ("q", "quit"),
-        ]
+        ];
+        // Only once a pane is hidden or zoomed is there a layout to reset.
+        if self.state.layout != PaneLayout::default() {
+            keys.push(("W", "reset layout"));
+        }
+        keys.extend([("?", "keys"), ("q", "quit")]);
+        keys
     }
 
     /// Which shortcuts the bar offers, which is purely a question of what is
@@ -518,15 +296,8 @@ impl MainTui {
     fn shortcuts(&self) -> Vec<(&'static str, &'static str)> {
         if self.state.show_help {
             vec![("?/Esc", "close")]
-        } else if self.state.settings.is_some() {
-            vec![
-                ("↑↓", "move"),
-                ("Enter/e", "edit download dir"),
-                ("a", "add share"),
-                ("d", "remove share"),
-                ("r", "re-index"),
-                ("Esc", "close"),
-            ]
+        } else if let Some(settings) = self.state.settings.as_ref() {
+            settings_shortcuts(settings)
         } else if self.state.show_messages {
             if self.state.chat_composing {
                 vec![
@@ -534,11 +305,14 @@ impl MainTui {
                     ("Enter", "send"),
                     ("Esc", "stop typing"),
                 ]
+            } else if self.state.chat_filtering {
+                filter_keys(&[("PgUp/PgDn", "scroll")])
             } else {
                 vec![
                     ("Enter", "type"),
                     ("PgUp/PgDn", "scroll"),
                     ("↑↓/Tab", "switch chat"),
+                    ("/", "find"),
                     ("m", "new chat"),
                     ("i/Esc", "close"),
                 ]
@@ -546,17 +320,40 @@ impl MainTui {
         } else if self.state.show_rooms {
             self.rooms_shortcuts()
         } else if self.state.show_browse {
-            vec![
-                ("↑↓", "move"),
-                ("PgUp/PgDn", "page"),
-                ("→←", "expand/collapse"),
-                ("Enter", "open/download"),
-                ("d", "download folder"),
-                ("Tab", "switch user"),
-                ("r", "retry"),
-                ("w", "close tab"),
-                ("Esc", "hide"),
-            ]
+            if self.state.browse.active_tab().is_some_and(|b| b.filtering) {
+                // Typing goes to the filter, so no letter keys are on offer.
+                filter_keys(&[("↑/↓", "navigate"), ("PgUp/PgDn", "page")])
+            } else {
+                // Nothing of ours is downloadable from ourselves, and `r`
+                // re-scans the disk instead of re-asking a peer.
+                let acts = if self.state.browse.active_is_own() {
+                    [
+                        ("Enter", "open folder"),
+                        ("r", "re-index"),
+                        ("o", "shared folders"),
+                    ]
+                } else {
+                    [
+                        ("Enter", "open/download"),
+                        ("d", "download folder"),
+                        ("r", "retry"),
+                    ]
+                };
+                let mut keys = vec![
+                    ("↑↓", "move"),
+                    ("J/K", "next/prev folder"),
+                    ("→←", "expand/collapse"),
+                    ("H/L", "collapse/expand all"),
+                    ("/", "filter"),
+                ];
+                keys.extend(acts);
+                keys.extend([
+                    ("Tab", "switch user"),
+                    ("w", "close tab"),
+                    ("Esc", "hide"),
+                ]);
+                keys
+            }
         } else if self.state.command_bar_active {
             match self.state.command_bar_mode {
                 CommandBarMode::Search => vec![
@@ -581,19 +378,15 @@ impl MainTui {
             && self.state.focused_pane == FocusedPane::Results
         {
             // Typing goes to the filter, so no letter keys are on offer here.
-            vec![
-                ("Type", "filter"),
-                ("↑/↓", "navigate"),
-                ("PgUp/PgDn", "page"),
-                ("Enter", "keep filter"),
-                ("Esc", "clear filter"),
-            ]
+            filter_keys(&[("↑/↓", "navigate"), ("PgUp/PgDn", "page")])
         } else {
             let mut keys = match self.state.focused_pane {
                 FocusedPane::Searches => vec![
                     ("s", "search"),
+                    ("S", "search again"),
                     ("Enter", "results"),
                     ("d", "remove"),
+                    ("C", "clear all"),
                     ("m", "message"),
                     ("i", "inbox"),
                     ("c", "chat"),
@@ -616,6 +409,7 @@ impl MainTui {
                     ("r", "retry failed"),
                     ("d", "delete queued/done"),
                     ("c", "clear finished"),
+                    ("C", "clear all"),
                     ("b", "browse user"),
                     ("h/l", "scroll name"),
                 ],
@@ -627,7 +421,7 @@ impl MainTui {
 
     /// The legend packed into rows for a window `width` wide, so a narrow
     /// terminal grows the bar instead of cutting keys off its right edge.
-    fn shortcut_rows(&self, width: u16) -> Vec<Line<'static>> {
+    pub(super) fn shortcut_rows(&self, width: u16) -> Vec<Line<'static>> {
         // Borders and padding, and the unread badge's column when it shows.
         let badge = self.unread_badge().width() as u16;
         let reserved = 4 + if badge > 0 { badge + 1 } else { 0 };
@@ -646,7 +440,7 @@ impl MainTui {
         )
     }
 
-    fn render_shortcuts(
+    pub(super) fn render_shortcuts(
         &self,
         frame: &mut Frame,
         area: Rect,
@@ -684,40 +478,6 @@ impl MainTui {
                 Paragraph::new(unread).alignment(Alignment::Right),
                 cols[1],
             );
-        }
-    }
-
-    fn render_command_bar(&self, frame: &mut Frame, area: Rect) {
-        let prefix = match self.state.command_bar_mode {
-            CommandBarMode::Search => "search: ",
-            CommandBarMode::Message => "message (to: recipient text): ",
-            CommandBarMode::Browse => "browse user: ",
-        };
-        let block = pane_block(true);
-        // Derive from the block's inner rect so borders and padding stay in
-        // one place; the cursor follows whatever the pane reserves.
-        let inner = block.inner(area);
-        let prefix_width = prefix.chars().count() as u16;
-        let input_width = inner.width.saturating_sub(prefix_width);
-        let (visible_input, cursor_column) = visible_input_at_cursor(
-            &self.state.command_bar_input,
-            self.state.command_bar_cursor_position,
-            input_width,
-        );
-        let command_line = Line::from(vec![
-            Span::styled(prefix, accent_style()),
-            Span::styled(visible_input, primary_style()),
-        ]);
-
-        frame.render_widget(Paragraph::new(command_line).block(block), area);
-
-        if inner.width > 0 && inner.height > 0 {
-            let cursor_x = inner
-                .x
-                .saturating_add(prefix_width)
-                .saturating_add(cursor_column)
-                .min(inner.x.saturating_add(inner.width.saturating_sub(1)));
-            frame.set_cursor_position(Position::new(cursor_x, inner.y));
         }
     }
 }
@@ -776,22 +536,6 @@ fn help_lines(sections: &[(&str, &[(&str, &str)])]) -> Vec<Line<'static>> {
     lines
 }
 
-/// A `Rect` centered within `area`, sized to the given percentages.
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let vertical = Layout::vertical([
-        Constraint::Percentage((100 - percent_y) / 2),
-        Constraint::Percentage(percent_y),
-        Constraint::Percentage((100 - percent_y) / 2),
-    ])
-    .split(area);
-    Layout::horizontal([
-        Constraint::Percentage((100 - percent_x) / 2),
-        Constraint::Percentage(percent_x),
-        Constraint::Percentage((100 - percent_x) / 2),
-    ])
-    .split(vertical[1])[1]
-}
-
 /// Build the shortcuts-bar unread badge: `✉ N` for unread private messages and
 /// `💬 N` for unread chat-room messages. Returns an empty line when nothing is
 /// unread so the caller can skip it.
@@ -822,33 +566,6 @@ fn unread_indicator(
         dimmed_style()
     };
     Line::from(Span::styled(format!("⟨ {} ⟩", counts.join("  ")), style))
-}
-
-fn visible_input_at_cursor(
-    input: &str,
-    cursor_position: usize,
-    width: u16,
-) -> (String, u16) {
-    if width == 0 {
-        return (String::new(), 0);
-    }
-
-    let cursor_position = input.floor_char_boundary(cursor_position);
-    let cursor_character_index = input[..cursor_position].chars().count();
-    let max_cursor_column = usize::from(width.saturating_sub(1));
-    let start_character_index =
-        cursor_character_index.saturating_sub(max_cursor_column);
-
-    let visible_input = input
-        .chars()
-        .skip(start_character_index)
-        .take(usize::from(width))
-        .collect();
-    let cursor_column = cursor_character_index
-        .saturating_sub(start_character_index)
-        .min(max_cursor_column);
-
-    (visible_input, cursor_column as u16)
 }
 
 #[cfg(test)]

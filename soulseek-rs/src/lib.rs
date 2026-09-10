@@ -14,3 +14,9 @@ pub(crate) mod port_mapping;
 pub mod remote;
 pub mod run;
 pub(crate) mod ui;
+
+/// The interactive window, reachable so an integration test can drive it
+/// with key events, advance it a frame at a time and read the screen back.
+/// Hidden from the documented API: it is a harness door, not a contract.
+#[doc(hidden)]
+pub use ui::MainTui;

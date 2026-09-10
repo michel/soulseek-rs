@@ -6,7 +6,7 @@
 //! ([`run_login_flow`]) drives it against a real terminal and client.
 
 use crate::ui::{
-    GLYPH_CURSOR, accent_style, dimmed_style, error_style, info_style,
+    GLYPH_CURSOR, accent_style, dimmed_style, error_style, info_style, mask,
     pane_block, primary_style, title_style, warning_style,
 };
 use color_eyre::Result;
@@ -281,7 +281,7 @@ fn render(frame: &mut Frame, form: &LoginForm) {
     frame.render_widget(
         field(
             "Password:",
-            "•".repeat(form.password.chars().count()),
+            mask(&form.password),
             editing && form.focused == LoginField::Password,
         ),
         rows[1],

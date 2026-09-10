@@ -59,8 +59,33 @@ impl BitReader {
 
 use crate::error::{Result, SoulseekRs};
 
+/// The most a peer payload may inflate to unless the caller says otherwise.
+///
+/// Nicotine+ passes this ceiling to its decompressor for a search or folder
+/// reply, and a larger one only for a browse listing.
+pub const MAX_INFLATED: usize = 128 * 1024 * 1024;
+
+/// The ceiling for a whole browse listing, which a large sharer legitimately
+/// fills. The same number Nicotine+ allows.
+pub const MAX_INFLATED_LISTING: usize = 2 * 1024 * 1024 * 1024;
+
+/// What a payload that outgrows its ceiling is refused with.
+const TOO_BIG: &str = "compressed payload expands past its limit";
+
 /// Inflate a zlib stream, checking its adler32 trailer.
+///
+/// Bounded by [`MAX_INFLATED`]; use [`inflate_limited`] for a payload with a
+/// different ceiling.
 pub fn inflate(input: &[u8]) -> Result<Vec<u8>> {
+    inflate_limited(input, MAX_INFLATED)
+}
+
+/// Inflate a zlib stream, refusing to grow the output past `max_out`.
+///
+/// The ceiling is the point: deflate reaches roughly 1000:1, so a few
+/// kilobytes from a peer we have never met can otherwise expand into
+/// gigabytes and take the process with it.
+pub fn inflate_limited(input: &[u8], max_out: usize) -> Result<Vec<u8>> {
     let mut r = BitReader::new(input.to_vec());
     let cmf = r.read_byte()?;
     let cm = cmf & 15; // Compression method
@@ -84,7 +109,8 @@ pub fn inflate(input: &[u8]) -> Result<Vec<u8>> {
             "preset dictionary not supported".to_string(),
         ));
     }
-    let out = inflate_blocks(&mut r).map_err(SoulseekRs::CompressionError)?;
+    let out = inflate_blocks(&mut r, max_out)
+        .map_err(SoulseekRs::CompressionError)?;
     // `read_bytes` assembles little-endian; the zlib trailer is big-endian.
     if r.read_bytes(4)?.swap_bytes() != adler32(&out) {
         return Err(SoulseekRs::CompressionError(
@@ -105,17 +131,23 @@ fn adler32(data: &[u8]) -> u32 {
     (b << 16) | a
 }
 
-fn inflate_blocks(r: &mut BitReader) -> std::result::Result<Vec<u8>, String> {
+fn inflate_blocks(
+    r: &mut BitReader,
+    max_out: usize,
+) -> std::result::Result<Vec<u8>, String> {
     let mut bfinal = 0;
     let mut out = Vec::new();
     while bfinal == 0 {
         bfinal = r.read_bit()?;
         let btype = r.read_bits(2)?;
         match btype {
-            0 => inflate_block_no_compression(r, &mut out)?,
-            1 => inflate_block_fixed(r, &mut out)?,
-            2 => inflate_block_dynamic(r, &mut out)?,
+            0 => inflate_block_no_compression(r, &mut out, max_out)?,
+            1 => inflate_block_fixed(r, &mut out, max_out)?,
+            2 => inflate_block_dynamic(r, &mut out, max_out)?,
             _ => return Err("invalid BTYPE".to_string()),
+        }
+        if out.len() > max_out {
+            return Err(TOO_BIG.to_string());
         }
     }
     Ok(out)
@@ -124,9 +156,13 @@ fn inflate_blocks(r: &mut BitReader) -> std::result::Result<Vec<u8>, String> {
 fn inflate_block_no_compression(
     r: &mut BitReader,
     o: &mut Vec<u8>,
+    max_out: usize,
 ) -> std::result::Result<(), String> {
     let len = r.read_bytes(2)?;
     let _nlen = r.read_bytes(2)?;
+    if o.len().saturating_add(len as usize) > max_out {
+        return Err(TOO_BIG.to_string());
+    }
     for _ in 0..len {
         o.push(r.read_byte()?);
     }
@@ -214,8 +250,14 @@ fn inflate_block_data(
     literal_length_tree: &HuffmanTree,
     distance_tree: &HuffmanTree,
     out: &mut Vec<u8>,
+    max_out: usize,
 ) -> std::result::Result<(), String> {
     loop {
+        // Checked per symbol, not per block: a single block can emit output
+        // without bound, which is exactly how a bomb is built.
+        if out.len() > max_out {
+            return Err(TOO_BIG.to_string());
+        }
         let sym = decode_symbol(r, literal_length_tree)?;
         if sym <= 255 {
             // Literal byte
@@ -347,14 +389,16 @@ fn decode_trees(
 fn inflate_block_dynamic(
     r: &mut BitReader,
     o: &mut Vec<u8>,
+    max_out: usize,
 ) -> std::result::Result<(), String> {
     let (literal_length_tree, distance_tree) = decode_trees(r)?;
-    inflate_block_data(r, &literal_length_tree, &distance_tree, o)
+    inflate_block_data(r, &literal_length_tree, &distance_tree, o, max_out)
 }
 
 fn inflate_block_fixed(
     r: &mut BitReader,
     o: &mut Vec<u8>,
+    max_out: usize,
 ) -> std::result::Result<(), String> {
     let mut bl = Vec::new();
     bl.extend(vec![8; 144]); // 0-143: 8 bits
@@ -369,7 +413,7 @@ fn inflate_block_fixed(
     let distance_alphabet: Vec<u32> = (0..30).collect();
     let distance_tree = bl_list_to_tree(&bl_dist, &distance_alphabet);
 
-    inflate_block_data(r, &literal_length_tree, &distance_tree, o)
+    inflate_block_data(r, &literal_length_tree, &distance_tree, o, max_out)
 }
 
 struct BitWriter {
@@ -532,6 +576,31 @@ pub fn deflate(data: &[u8]) -> Vec<u8> {
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn a_payload_that_expands_past_its_ceiling_is_refused() {
+        // Deflate reaches ~1000:1, so a few kilobytes from an unknown peer can
+        // become gigabytes. The ceiling is what stops that being our problem.
+        let bomb = deflate(&vec![0u8; 1024 * 1024]);
+        assert!(
+            bomb.len() < 8 * 1024,
+            "the test needs a payload that expands hugely, got {} bytes",
+            bomb.len()
+        );
+
+        let error = inflate_limited(&bomb, 64 * 1024)
+            .expect_err("a payload past the ceiling must be refused");
+        assert!(
+            format!("{error}").contains("expands past its limit"),
+            "unexpected error: {error}"
+        );
+
+        // The same bytes are fine when they fit.
+        assert_eq!(
+            inflate_limited(&bomb, 2 * 1024 * 1024).unwrap().len(),
+            1024 * 1024
+        );
+    }
 
     #[test]
     fn a_corrupt_adler32_trailer_is_rejected() {

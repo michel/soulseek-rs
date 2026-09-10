@@ -48,6 +48,42 @@ pub fn fetch_listing(
         })
 }
 
+/// Emit `user`'s listing one file per record, keeping only the paths that
+/// contain `needle` (already lowercased; `None` keeps all). Returns how many
+/// were emitted.
+///
+/// Shared with `shares files`, which prints this session's own index: the two
+/// are only comparable while they are built the same way, and a field added
+/// here has to reach both.
+pub fn emit_listing(
+    ctx: &Ctx,
+    user: &str,
+    directories: &[SharedDirectory],
+    needle: Option<&str>,
+) -> usize {
+    let mut emitted = 0usize;
+    for directory in directories {
+        for file in &directory.files {
+            let path = full_path(&directory.name, &file.name);
+            if needle
+                .is_some_and(|needle| !path.to_lowercase().contains(needle))
+            {
+                continue;
+            }
+            emitted += 1;
+            ctx.out.emit(&BrowseRecord {
+                user: user.to_string(),
+                directory: directory.name.clone(),
+                path,
+                size: file.size,
+                bitrate: file.attribute(super::transfer::ATTR_BITRATE),
+                duration: file.attribute(super::transfer::ATTR_DURATION),
+            });
+        }
+    }
+    emitted
+}
+
 pub fn browse(ctx: &Ctx, args: &BrowseArgs) -> CliResult {
     let session = Session::open(ctx)?;
     ctx.out
@@ -59,22 +95,7 @@ pub fn browse(ctx: &Ctx, args: &BrowseArgs) -> CliResult {
         Duration::from_secs(args.timeout),
     )?;
 
-    let mut files = 0usize;
-    for directory in &directories {
-        for file in &directory.files {
-            files += 1;
-            ctx.out.emit(&BrowseRecord {
-                user: args.user.clone(),
-                directory: directory.name.clone(),
-                path: full_path(&directory.name, &file.name),
-                size: file.size,
-                bitrate: file.attribute(super::transfer::ATTR_BITRATE),
-                duration: file.attribute(super::transfer::ATTR_DURATION),
-            });
-        }
-    }
-
-    if files == 0 {
+    if emit_listing(ctx, &args.user, &directories, None) == 0 {
         return Err(CliError::no_results(format!(
             "{} shares no files",
             args.user

@@ -373,6 +373,79 @@ pub enum RoomEventDto {
         room: String,
         username: String,
     },
+    /// The ticker board of a room, sent on join.
+    Tickers {
+        room: String,
+        tickers: Vec<RoomTickerDto>,
+    },
+    TickerAdded {
+        room: String,
+        username: String,
+        ticker: String,
+    },
+    TickerRemoved {
+        room: String,
+        username: String,
+    },
+    /// A message from the global room feed; `room` names where it was said.
+    GlobalMessage {
+        room: String,
+        username: String,
+        message: String,
+    },
+    /// Who may enter a private room.
+    PrivateMembers {
+        room: String,
+        users: Vec<String>,
+    },
+    /// Who runs a private room.
+    PrivateOperators {
+        room: String,
+        users: Vec<String>,
+    },
+    /// A private room's member (`members` true) or operator roster changed.
+    PrivateRosterChanged {
+        room: String,
+        username: String,
+        members: bool,
+        added: bool,
+    },
+    /// Our own membership or operatorship of a private room changed.
+    OwnStandingChanged {
+        room: String,
+        members: bool,
+        granted: bool,
+    },
+    /// The room we asked to join could not be created.
+    CantCreate {
+        room: String,
+    },
+}
+
+/// One user's ticker in a room.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct RoomTickerDto {
+    pub username: String,
+    pub ticker: String,
+}
+
+impl From<&soulseek_rs::RoomTicker> for RoomTickerDto {
+    fn from(ticker: &soulseek_rs::RoomTicker) -> Self {
+        Self {
+            username: ticker.username.clone(),
+            ticker: ticker.ticker.clone(),
+        }
+    }
+}
+
+impl From<RoomTickerDto> for soulseek_rs::RoomTicker {
+    fn from(dto: RoomTickerDto) -> Self {
+        Self {
+            username: dto.username,
+            ticker: dto.ticker,
+        }
+    }
 }
 
 impl From<&RoomEvent> for RoomEventDto {
@@ -403,6 +476,67 @@ impl From<&RoomEvent> for RoomEventDto {
                 room: room.clone(),
                 username: username.clone(),
             },
+            RoomEvent::Tickers { room, tickers } => Self::Tickers {
+                room: room.clone(),
+                tickers: tickers.iter().map(RoomTickerDto::from).collect(),
+            },
+            RoomEvent::TickerAdded {
+                room,
+                username,
+                ticker,
+            } => Self::TickerAdded {
+                room: room.clone(),
+                username: username.clone(),
+                ticker: ticker.clone(),
+            },
+            RoomEvent::TickerRemoved { room, username } => {
+                Self::TickerRemoved {
+                    room: room.clone(),
+                    username: username.clone(),
+                }
+            }
+            RoomEvent::GlobalMessage {
+                room,
+                username,
+                message,
+            } => Self::GlobalMessage {
+                room: room.clone(),
+                username: username.clone(),
+                message: message.clone(),
+            },
+            RoomEvent::PrivateMembers { room, users } => Self::PrivateMembers {
+                room: room.clone(),
+                users: users.clone(),
+            },
+            RoomEvent::PrivateOperators { room, users } => {
+                Self::PrivateOperators {
+                    room: room.clone(),
+                    users: users.clone(),
+                }
+            }
+            RoomEvent::PrivateRosterChanged {
+                room,
+                username,
+                members,
+                added,
+            } => Self::PrivateRosterChanged {
+                room: room.clone(),
+                username: username.clone(),
+                members: *members,
+                added: *added,
+            },
+            RoomEvent::OwnStandingChanged {
+                room,
+                members,
+                granted,
+            } => Self::OwnStandingChanged {
+                room: room.clone(),
+                members: *members,
+                granted: *granted,
+            },
+            RoomEvent::CantCreate { room } => {
+                Self::CantCreate { room: room.clone() }
+            }
         }
     }
 }
@@ -432,6 +566,58 @@ impl From<RoomEventDto> for RoomEvent {
             RoomEventDto::UserLeft { room, username } => {
                 Self::UserLeft { room, username }
             }
+            RoomEventDto::Tickers { room, tickers } => Self::Tickers {
+                room,
+                tickers: tickers.into_iter().map(Into::into).collect(),
+            },
+            RoomEventDto::TickerAdded {
+                room,
+                username,
+                ticker,
+            } => Self::TickerAdded {
+                room,
+                username,
+                ticker,
+            },
+            RoomEventDto::TickerRemoved { room, username } => {
+                Self::TickerRemoved { room, username }
+            }
+            RoomEventDto::GlobalMessage {
+                room,
+                username,
+                message,
+            } => Self::GlobalMessage {
+                room,
+                username,
+                message,
+            },
+            RoomEventDto::PrivateMembers { room, users } => {
+                Self::PrivateMembers { room, users }
+            }
+            RoomEventDto::PrivateOperators { room, users } => {
+                Self::PrivateOperators { room, users }
+            }
+            RoomEventDto::PrivateRosterChanged {
+                room,
+                username,
+                members,
+                added,
+            } => Self::PrivateRosterChanged {
+                room,
+                username,
+                members,
+                added,
+            },
+            RoomEventDto::OwnStandingChanged {
+                room,
+                members,
+                granted,
+            } => Self::OwnStandingChanged {
+                room,
+                members,
+                granted,
+            },
+            RoomEventDto::CantCreate { room } => Self::CantCreate { room },
         }
     }
 }
@@ -578,6 +764,26 @@ impl From<&SharedDirectory> for SharedDirectoryDto {
                     name: file.name.clone(),
                     size: file.size,
                     attributes: file.attributes.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// The same, consuming the listing. The daemon owns what `shared_listing`
+/// hands it and drops it straight after, so copying every name and attribute
+/// out of it would double the cost of answering `shares.files`.
+impl From<SharedDirectory> for SharedDirectoryDto {
+    fn from(directory: SharedDirectory) -> Self {
+        Self {
+            name: directory.name,
+            files: directory
+                .files
+                .into_iter()
+                .map(|file| SharedFileEntryDto {
+                    name: file.name,
+                    size: file.size,
+                    attributes: file.attributes,
                 })
                 .collect(),
         }

@@ -17,6 +17,7 @@ import { LINKS } from '@/lib/links'
 
 const GLOBAL_KEYS: readonly (readonly [string, string])[] = [
   ['s', 'search the network'],
+  ['S', 'run the highlighted search again'],
   ['Space', 'select a result'],
   ['Enter', 'download / send'],
   ['b', "browse the owner's files"],
@@ -34,10 +35,11 @@ const PANE_KEYS: readonly (readonly [string, string])[] = [
   ['1–3', 'focus a pane, and bring it back if hidden'],
   ['z', 'zoom the focused pane to the whole window'],
   ['w', 'hide the focused pane; the others widen'],
+  ['W', 'every pane back on screen, zoom off'],
   ['↑ ↓ · j k', 'move a row in any list'],
   ['Home End · g G', 'first / last row'],
   ['PgUp PgDn · ^u ^d', 'a page, or half a page; in a chat, back through the log'],
-  ['h l · ← →', 'scroll a long name or query sideways, 0 and $ to either end'],
+  ['h l · ← →', 'scroll a long name, folder or query sideways, 0 and $ to either end'],
 ]
 
 const ROOM_KEYS: readonly (readonly [string, string])[] = [
@@ -46,6 +48,8 @@ const ROOM_KEYS: readonly (readonly [string, string])[] = [
   ['x', 'leave the active room'],
   ['l', 'back to the room list'],
   ['↑ ↓', 'select a member'],
+  ['/', 'search the chat log; in the inbox, the conversation'],
+  ['u', 'filter the member list'],
   ['b', "browse the member's files"],
   ['m', 'message the member'],
 ]
@@ -54,7 +58,7 @@ const PANES: readonly { num?: number; title: string; body: string }[] = [
   {
     num: 2,
     title: 'Results',
-    body: 'Files from the network across the whole width: size, user, bitrate, speed, free slots. Space selects, Enter queues a download. h/l or ←/→ scroll a long name, 0 and $ jump to either end.',
+    body: 'Files from the network across the whole width, each name in a column of its own with its folder beside it, then size, user, bitrate, speed, free slots. Space selects, Enter queues a download. h/l or ←/→ scroll a long name and folder, 0 and $ jump to either end.',
   },
   {
     num: 1,

@@ -29,9 +29,35 @@ Releases are automated by [release-plz](https://release-plz.dev). You do not run
      | `soulseek-rs-vX.Y.Z-aarch64-pc-windows-msvc.zip`       |                          |
 
    - rewrites `Formula/soulseek-rs.rb` in the `michel/homebrew-tap` repository so
-     `brew install michel/tap/soulseek-rs` picks up the new macOS and Linux archives.
+     `brew install michel/tap/soulseek-rs` picks up the new macOS and Linux archives,
+   - merges `master` back into `develop`, so the branch the work happens on carries the
+     new version and changelog rather than drifting behind them.
 
 Both crates always share one version, one tag, and one changelog — see `release-plz.toml`.
+
+The version lives in one place, `[workspace.package]` in the root `Cargo.toml`, and
+release-plz owns it. Do not edit it by hand on `develop`: the back-merge relies on
+`develop` never touching that line, and an edit there turns every release into a
+conflict.
+
+## Nightly builds
+
+`.github/workflows/nightly.yml` builds the tip of `develop` at 02:17 UTC every
+day. It resolves the commit once, builds the same six targets as a numbered
+release, verifies all twelve archives and checksum files as one set, then
+replaces the mutable `nightly` prerelease and tag. The published release is
+smoke-tested through both the curl and wget installer paths.
+
+Use **Actions → Nightly → Run workflow** to force a build. The workflow always
+checks out `develop`, regardless of the ref selected in the dispatch form. The
+equivalent command is:
+
+```bash
+gh workflow run nightly.yml --ref develop
+```
+
+Nightly does not publish crates or update Homebrew. If a target fails, the
+previous nightly release stays available; use a manual run to retry.
 
 ## One-time repository setup
 
@@ -78,7 +104,6 @@ verify it against the adjacent `.sha256`, and extract the binary.
 
 ## Using the library
 
-```toml
-[dependencies]
-soulseek-rs-lib = "6"
+```bash
+cargo add soulseek-rs-lib
 ```

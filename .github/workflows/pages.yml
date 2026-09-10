@@ -1,9 +1,15 @@
 name: Pages
 
+# The site stamps its footer version out of the root Cargo.toml at build time
+# (website/vite.config.ts reads it into __APP_VERSION__), so a release that only
+# touches Cargo.toml has to redeploy or the footer keeps advertising the previous
+# version until someone happens to edit the site. Cargo.toml is deliberately not
+# in the pull_request paths: a dependency bump there changes nothing the site
+# renders, and the deploy is what needs the trigger.
 on:
   push:
     branches: [master]
-    paths: ['website/**', '.github/workflows/pages.yml']
+    paths: ['website/**', '.github/workflows/pages.yml', 'Cargo.toml']
   pull_request:
     branches: ['**']
     paths: ['website/**', '.github/workflows/pages.yml']
@@ -29,6 +35,9 @@ jobs:
 
       - name: Install
         run: bun install --frozen-lockfile
+
+      - name: Test installer
+        run: bun run test:install
 
       - name: Typecheck
         run: bun run typecheck

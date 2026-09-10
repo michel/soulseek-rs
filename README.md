@@ -10,12 +10,19 @@
 Search the network, share your files, browse someone's collection, join a room.
 It runs over ssh on the machine where your music already lives.
 
+
+
+
 Soulseek is a closed-source P2P network from the 2000s, still used by music
 enthusiasts to share niche music. This repository is that client plus
-[`soulseek-rs-lib`](./soulseek-rs-lib), the protocol library under it.
+[`soulseek-rs-lib`](./soulseek-rs-lib), the protocol library under it. Check the website: **[re-invention.nl/soulseek-rs](https://re-invention.nl/soulseek-rs/)** for more information/documentation.
 
-**[re-invention.nl/soulseek-rs](https://re-invention.nl/soulseek-rs/)**: what it
-does, how to install it, and every `config.toml` setting.
+
+***Quick install:***
+
+`curl -fsSL https://re-invention.nl/soulseek-rs/install.sh | sh`
+
+
 
 ## Demo
 
@@ -23,6 +30,10 @@ does, how to install it, and every `config.toml` setting.
 
 ## Features
 
+- **Full protocol coverage**: 100% of the modern Soulseek protocol's message
+  set — every code the reference clients do not mark obsolete — implemented in
+  `soulseek-rs-lib` and driven end to end against a real server, not a mock.
+  See the [coverage table](docs/protocol-coverage.md)
 - **Search & download**: queue from the TUI or fetch in one command with `get`;
   filter by bitrate, size, file type, free slots, or terms to exclude
 - **Wishlist**: `wish add` what nobody has today; `wish run` and
@@ -58,6 +69,13 @@ implementation for anyone building their own client, and **soulseek-rs**, the
 client built on it. The library stays lean on dependencies and has none today;
 the client takes them freely.
 
+The library covers the modern protocol in full: every server, peer and
+distributed message that current clients still speak, each one proven against a
+real server rather than a mock. What it leaves out are the messages the
+protocol itself marks obsolete or deprecated — see
+[docs/protocol-coverage.md](docs/protocol-coverage.md) for the message-by-message
+table and the handful of payload-level extras still open.
+
 ### Projects using soulseek-rs-lib
 
 - [seakarr](https://github.com/binhex/seakarr) — automated Soulseek music
@@ -69,7 +87,27 @@ project is identifiable on the network.
 
 ## Installation
 
-Homebrew ships a prebuilt binary, so no Rust toolchain:
+The installer picks the right macOS or Linux binary, verifies its sha256, and
+installs the latest stable release (through Homebrew when it is available):
+
+```bash
+curl -fsSL https://re-invention.nl/soulseek-rs/install.sh | sh
+```
+
+To install the current successful build from `develop` instead, pass the
+installer's `--nightly` option through to `sh`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/michel/soulseek-rs/develop/website/public/install.sh | sh -s -- --nightly
+```
+
+Nightly is a mutable prerelease rebuilt every day and whenever the **Nightly**
+workflow is run by hand. It bypasses Homebrew, and may be less stable than a
+numbered release. A failed download, checksum, or startup check leaves an
+existing binary untouched. Windows archives for both channels are on the
+[releases page](https://github.com/michel/soulseek-rs/releases).
+
+The other stable routes need no installer script:
 
 ```bash
 brew install michel/tap/soulseek-rs   # macOS and Linux
@@ -78,7 +116,7 @@ cargo install soulseek-rs             # or from crates.io
 
 From source, `cargo build --release` leaves the binary at
 `target/release/soulseek-rs`. To build your own client on the protocol library,
-add `soulseek-rs-lib = "8"` to your `Cargo.toml`.
+run `cargo add soulseek-rs-lib`.
 
 ## Usage
 
@@ -92,14 +130,23 @@ Everything else is a one-shot command that runs headless.
 
 ### The TUI
 
-Results run across the top, with the whole width for long file names;
-Searches, Downloads and Info share the row underneath. `Tab`/`Shift-Tab` or
-`1`–`3` move the focus between panes, `z` zooms the focused pane to the whole
-window, and `w` hides it so the others widen (its number brings it back).
-Every list takes `↑`/`↓`, `Home`/`End`, `PgUp`/`PgDn` and the vim keys, and
-`h`/`l` or `←`/`→` scroll a long file name or query sideways, `0` and `$` to
+Results run across the top, each file name in a column of its own with the
+folder it came from beside it; Searches, Downloads and Info share the row
+underneath. `Tab`/`Shift-Tab` or `1`–`3` move the focus between panes, `z`
+zooms the focused pane to the whole window, `w` hides it so the others widen
+(its number brings it back), and `W` puts the whole layout back. Every list
+takes `↑`/`↓`, `Home`/`End`, `PgUp`/`PgDn` and the vim keys, and `h`/`l` or
+`←`/`→` scroll a long file name, folder or query sideways, `0` and `$` to
 either end. `PgUp`/`PgDn` scroll a chat log back through its history, and `?`
-shows every key for where you are.
+shows every key for where you are. `s` starts a search, and `S` runs the
+highlighted one again.
+
+`o` opens settings: who this session is logged in as and how much it shares,
+then the download and shared folders. `Enter` on a row acts on it — change the
+password (typed twice, so a typo cannot leave the account with one nobody
+knows) or log out, which forgets the stored password and comes back to the
+login screen. Attached to a daemon the login is the daemon's, so the popup
+offers no logout and a password change goes to the daemon.
 
 ### Daemon mode
 
@@ -277,6 +324,8 @@ soulseek-rs serve [--follow]              # stay online sharing, stream uploads
 soulseek-rs daemon [--bind ADDR]          # run as a service others share
 soulseek-rs daemon token|status|stop      # control a running one
 soulseek-rs whoami                        # confirm credentials and connection
+soulseek-rs account password              # change the account's password
+soulseek-rs account logout                # forget the stored password
 soulseek-rs user <NAME>                   # a peer's status and share counts
 soulseek-rs shares list|add|remove|status|reindex
 soulseek-rs config path|list|get|set
@@ -294,10 +343,10 @@ download folder. `--no-daemon` tests this machine's own login instead.
 `shares list` reads the config file either way, while `shares status` and
 `shares reindex` ask the session and report what peers can see.
 
-Nineteen need no credentials: `config path|list|get|set`,
+Twenty need no credentials: `config path|list|get|set`,
 `shares list|add|remove`, `wish add|remove|list`, `portmap`,
-`skills install|uninstall|list`, `completions install|uninstall` and
-`daemon token|status|stop`. Most never touch the network; `daemon status` and
+`skills install|uninstall|list`, `completions install|uninstall`,
+`account logout` and `daemon token|status|stop`. Most never touch the network; `daemon status` and
 `daemon stop` talk to a daemon that is already logged in, so a machine with no
 account of its own can still ask whether one is running. `shares status` and
 `shares reindex` are not among them, because reporting what the network sees
@@ -328,6 +377,7 @@ daemon status    user   server  clients         uptime-secs
 daemon token     token
 user             user   status  average-speed   shared-files
 whoami           user   server  shared-folders  shared-files
+account          action user
 shares list      ok|missing     directory
 shares status    folders        files
 config get|set|list|path        key             value
@@ -504,6 +554,7 @@ file, in that order of precedence. Flags work before or after the subcommand.
 | `--shared-dir` (repeatable)    | `SOULSEEK_SHARED_DIR`               | `shared_dir` / `shared_dirs` | the download dir          |
 | `--listener-port`              | `SOULSEEK_LISTENER_PORT`            | `listener_port`              | `2234`                    |
 | `--no-listener` / `--listener` | `SOULSEEK_NO_LISTENER`              | `disable_listener`           | listener on               |
+| —                              | —                                   | `accept_children`            | off                       |
 | `--max-concurrent-downloads`   | `SOULSEEK_MAX_CONCURRENT_DOWNLOADS` | `max_concurrent_downloads`   | `20`                      |
 | `--search-timeout`             | `SOULSEEK_SEARCH_TIMEOUT`           | `search_timeout`             | `10`                      |
 | `--daemon ADDR`                | `SOULSEEK_DAEMON`                   | `daemon`                     | local socket if one is up |
@@ -519,10 +570,17 @@ the config and state directories wholesale. The file lives at
 also read from a `.env` in the working directory, usually the tidiest way to
 hand a container its credentials.
 
-`config get` and `config set` cover the eleven settings the file holds
-(`username`, `server`, `listener_port`, `disable_listener`, `download_dir`,
-`shared_dirs`, `max_concurrent_downloads`, `search_timeout`, `password_cmd`,
-`daemon`, `daemon_token`), and list them back at you when you name something
+`accept_children` makes this client carry part of the distributed search
+network: other peers hang from it and every search it receives is passed down
+to them. It is off by default — each child costs a socket and a copy of the
+network's whole search stream — and it needs the listener, since a child has to
+be able to dial in.
+
+`config get` and `config set` cover the twelve settings the file holds
+(`username`, `server`, `listener_port`, `disable_listener`, `accept_children`,
+`download_dir`, `shared_dirs`, `max_concurrent_downloads`, `search_timeout`,
+`password_cmd`, `daemon`, `daemon_token`), and list them back at you when you
+name something
 else. An empty string clears a key, and `shared_dirs` takes a comma-separated
 list. Waits expressed in seconds (`--search-timeout`, `--timeout`,
 `--duration`) are bounded to one day, so a mistyped flag is rejected rather
@@ -546,6 +604,19 @@ Four ways to supply a password, in the order they are consulted:
 pass show soulseek | soulseek-rs --username alice --password-stdin get "some track"
 ```
 
+Changing the password goes through the server; forgetting one is local:
+
+```bash
+pass show soulseek-new | soulseek-rs account password --new-password-stdin
+soulseek-rs account logout          # drop this machine's stored password
+```
+
+The server sends no verdict on a password change, so exit 0 means the request
+went out. The new password replaces the stored one — the daemon's, when the
+run is routed to a daemon, since that is the login that has to work after a
+restart. `account logout` leaves the account untouched and only clears what
+this machine kept, so the next start asks again.
+
 Logging stays at errors only unless you ask for more: `-v` through `-vvvv`
 raise it, and `LOG_LEVEL`/`RUST_LOG` are honoured when no `-v` is given.
 `NO_COLOR` and a non-terminal stderr both disable colour.
@@ -565,7 +636,13 @@ unread counter. `c` opens the chat-rooms popup: a `/`-filterable room list
 busiest first, `Enter` to join, several rooms open at once as tabs
 (`Tab`/`Shift-Tab` to switch, `x` to leave, `l` back to the list), and `↑`/`↓`
 through the member list with `b` to browse someone or `m` to message them.
-Unread counts appear on the tabs and on the `c chat (n)` shortcut.
+`/` searches the open room's log and `u` its member list; the inbox takes `/`
+too. Unread counts appear on the tabs and on the `c chat (n)` shortcut.
+
+`b` browses a user's shared files as a tree: `←`/`→` close and open a folder,
+`J`/`K` jump between folders, `H`/`L` close or open every folder, `/` filters
+the whole tree by path, and `Enter` or `d` downloads a file or a folder's
+files (under a filter, only the ones it shows).
 
 ### Connectivity
 
@@ -606,18 +683,19 @@ cargo fmt
 
 ### End-to-end tests
 
-Two suites run against [soulfind](https://github.com/soulfind-dev/soulfind), a
-local Soulseek server: `soulseek-rs-lib/tests/e2e.rs` covers the protocol
-library, and `soulseek-rs/tests/cli_e2e.rs` drives the binary the way a script
-would. Both are **server-optional**, running when a server is available and
-skipping otherwise, so `cargo test` stays green everywhere.
+Four suites run against [soulfind](https://github.com/soulfind-dev/soulfind),
+a local Soulseek server: `soulseek-rs-lib/tests/e2e.rs` covers the protocol
+library, `soulseek-rs/tests/cli_e2e.rs` drives the binary the way a script
+would, `soulseek-rs/tests/daemon_protocol_e2e.rs` meets the daemon's control
+protocol as a third party would, and `soulseek-rs/tests/tui_e2e.rs` drives the
+window with key presses and reads the screen back. All are
+**server-optional**, running when a server is available and skipping
+otherwise, so `cargo test` stays green everywhere.
 
-They locate a server in this order:
-
-1. `SOULSEEK_TEST_SERVER=host:port`: connect to an already-running server, or
-2. `SOULFIND_BIN=/path/to/soulfind` (or a `soulfind/bin/soulfind` checkout in a
-   parent directory), which spawns soulfind on an ephemeral port with a
-   throwaway database.
+Every suite spawns soulfind from `SOULFIND_BIN=/path/to/soulfind` (or a
+`soulfind/bin/soulfind` checkout in a parent directory) on an ephemeral port
+with a throwaway database. The library and CLI suites take
+`SOULSEEK_TEST_SERVER=host:port` first, to run against a server already up.
 
 ```bash
 # Build soulfind once (see its BUILDING.md), then:
@@ -643,8 +721,8 @@ soulfind instead of skipping.
   `cargo clippy --workspace --all-targets -- -D warnings`.
 - **Test**: `cargo test --verbose` on Linux, macOS, and Windows.
 - **End-to-end**: builds soulfind from source (LDC + `dub build :server`),
-  points `SOULFIND_BIN` at it, and runs both the library and CLI e2e suites
-  with `SOULSEEK_E2E_REQUIRED=1`, so a missing server fails instead of skipping.
+  points `SOULFIND_BIN` at it, and runs all four e2e suites with
+  `SOULSEEK_E2E_REQUIRED=1`, so a missing server fails instead of skipping.
 
 ## Contributing
 

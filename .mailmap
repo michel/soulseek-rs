@@ -1,0 +1,6 @@
+# Identities that should appear as the person who owns the work, whatever
+# name the machine that ran `git commit` happened to be configured with.
+# Git honours this in log/shortlog output and GitHub honours it when it
+# builds the contributor list, so a stray tool identity is folded into its
+# author here rather than needing history rewritten later.
+Michel de Graaf <michel@re-invention.nl> <noreply@anthropic.com>

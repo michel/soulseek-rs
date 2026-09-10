@@ -2,6 +2,7 @@ export const LINKS = {
   gh: 'https://github.com/michel/soulseek-rs',
   issues: 'https://github.com/michel/soulseek-rs/issues',
   releases: 'https://github.com/michel/soulseek-rs/releases',
+  nightlyRelease: 'https://github.com/michel/soulseek-rs/releases/tag/nightly',
   changelog: 'https://github.com/michel/soulseek-rs/blob/master/CHANGELOG.md',
   contributing: 'https://github.com/michel/soulseek-rs/blob/master/CONTRIBUTING.md',
   license: 'https://github.com/michel/soulseek-rs/blob/master/LICENSE',
@@ -25,3 +26,6 @@ export const VERSION = __APP_VERSION__
 export const SITE_URL = 'https://re-invention.nl/soulseek-rs/'
 
 export const INSTALL_CMD = `curl -fsSL ${SITE_URL}install.sh | sh`
+
+export const NIGHTLY_INSTALL_CMD =
+  'curl -fsSL https://raw.githubusercontent.com/michel/soulseek-rs/develop/website/public/install.sh | sh -s -- --nightly'
