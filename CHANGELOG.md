@@ -7,6 +7,115 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [18.0.0](https://github.com/michel/soulseek-rs/compare/v17.0.0...v18.0.0) - 2026-09-08
+
+### Added
+
+- *(lib)* carry audio attributes in browse and folder listings
+- *(lib)* read audio attributes from shared files at scan time
+- *(lib)* join the distributed search network as a leaf
+- *(lib)* decode distributed frames and announce a parentless stance
+
+### Fixed
+
+- *(lib)* free a silent parent's slot and pace the moves we report
+- *(lib)* harden the distributed leaf against hostile and slow parents
+- *(lib)* count the ID3 tag once and honour CRC frames when probing an MP3
+- *(lib)* parse what a peer sent before acting on its close
+- *(lib)* retire a dialling actor at once and drain the socket while retired
+- *(stress)* serve a browse that lands while an offer awaits its answer
+- *(lib)* keep a replaced peer connection open for the reply in flight
+- *(lib)* let an unanswered upload offer expire
+
+### Other
+
+- Merge branch 'develop'
+- *(lib)* keep the actors inside the crate and mark the growing enums
+- *(lib)* export the ConnectionType parse error and document what hosts can still match
+- *(lib)* move the peer actor's tests to their own file
+- gate pull requests on the stress benchmark losing no work
+
+## [17.0.0](https://github.com/michel/soulseek-rs/compare/v16.0.0...v17.0.0) - 2026-09-07
+
+### Added
+
+- *(lib)* report each finished upload's rate to the server
+- *(lib)* surface server announcements as messages from "server"
+- *(lib)* answer UserInfoRequest with our slots and queue
+- *(lib)* answer FolderContentsRequest with the folder's listing
+
+### Fixed
+
+- *(lib)* keep the log level in an atomic and let hosts change it
+- *(lib)* compress peer listings and reject a bad zlib checksum
+- *(lib)* report a download's rate from the bytes actually read
+- *(lib)* keep the server connection alive with TCP keepalive
+- *(lib)* advertise real slot, speed and queue figures in search replies
+- *(lib)* route on the full four-byte message code
+- *(lib)* give each search its own token
+- *(lib)* cap a search reply at 150 files
+
+### Other
+
+- *(lib)* split the server actor's value types and tests out
+- *(lib)* lowercase each shared path once at scan time
+- *(lib)* read downloads in 64 KiB slices
+- Merge pull request #69 from michel/lib/user-info
+
+## [16.0.0](https://github.com/michel/soulseek-rs/compare/v15.0.0...v16.0.0) - 2026-09-07
+
+### Added
+
+- *(tui)* scroll long names in every list and page through popups and chat
+- *(tui)* results across the top, with panes you can hide, zoom and Tab through
+
+### Other
+
+- Merge remote-tracking branch 'origin/develop'
+- *(tui)* fold the keys overlay onto LogView and dedupe the pane lookups
+
+## [15.0.0](https://github.com/michel/soulseek-rs/compare/v14.2.1...v15.0.0) - 2026-09-06
+
+### Added
+
+- *(tui)* scroll long result names and page through results
+- cancel a download from the TUI, the CLI, and the daemon
+
+### Other
+
+- Merge branch 'develop'
+- Merge branch 'develop' into feat/tui-results-navigation
+- *(tui)* bound the name scroll walk by the column width
+
+## [14.2.1](https://github.com/michel/soulseek-rs/compare/v14.2.0...v14.2.1) - 2026-09-03
+
+### Fixed
+
+- *(daemon)* reconnect after the server session drops
+
+### Other
+
+- Merge branch 'develop'
+
+## [14.2.0](https://github.com/michel/soulseek-rs/compare/v14.1.2...v14.2.0) - 2026-09-01
+
+### Added
+
+- *(daemon)* publish room member statistics over RPC and the CLI
+- *(tui)* dismiss a finished download with d
+- *(lib)* watch and unwatch users (WatchUser 5 / UnwatchUser 6)
+
+### Fixed
+
+- *(cli)* keep `room users` text output a bare roster
+- slotsfull is occupancy, not free slots, and cover it end to end
+
+### Other
+
+- release v14.1.2
+- Merge remote-tracking branch 'origin/develop' into feat/room-member-stats
+- *(e2e)* cover watching against soulfind, and read the reply as written
+
 ## [14.1.2](https://github.com/michel/soulseek-rs/compare/v14.1.1...v14.1.2) - 2026-08-18
 
 ### Other
