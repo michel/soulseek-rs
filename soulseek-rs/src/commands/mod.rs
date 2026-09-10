@@ -5,6 +5,7 @@
 //! first; the ones that only read the config file or the local machine are
 //! dispatched by `main::run` before any credentials are demanded.
 
+pub mod account;
 pub mod completions;
 pub mod daemon;
 pub mod peer;
@@ -15,7 +16,9 @@ pub mod transfer;
 pub mod wish;
 
 use crate::api::SessionApi;
-use crate::cli::{Commands, MessageCommand, RoomCommand, TransferCommand};
+use crate::cli::{
+    AccountCommand, Commands, MessageCommand, RoomCommand, TransferCommand,
+};
 use crate::output::{CliError, CliResult, Exit, Out, PortmapRecord};
 use crate::port_mapping::{self, PortMapper};
 use crate::remote::{Endpoint, RemoteSession};
@@ -314,9 +317,13 @@ fn dispatch(ctx: &Ctx, command: Commands) -> CliResult {
         Commands::User(args) => peer::user(ctx, &args),
         Commands::Watch(command) => peer::watch(ctx, &command),
         Commands::Whoami => peer::whoami(ctx),
+        Commands::Account(AccountCommand::Password(args)) => {
+            account::password(ctx, &args)
+        }
         // main.rs runs these itself: some need no account, the rest need the
         // config store in scope. The arms only keep the match exhaustive.
-        Commands::Portmap
+        Commands::Account(AccountCommand::Logout)
+        | Commands::Portmap
         | Commands::Serve(_)
         | Commands::Daemon(_)
         | Commands::Wish(_)

@@ -82,6 +82,15 @@ pub struct DirectoriesParams {
     pub directories: Vec<String>,
 }
 
+/// A new password for the account the daemon is logged in as. Plain text on
+/// the wire, like the token: the transport is the local socket, or TCP behind
+/// an SSH tunnel (see docs/daemon-protocol.md).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct PasswordParams {
+    pub password: String,
+}
+
 /// Where the daemon should land transfers from now on, on *its* filesystem.
 /// The same trust as `shares.set`: an authenticated caller is the owner.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

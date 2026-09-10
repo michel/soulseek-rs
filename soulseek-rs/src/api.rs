@@ -178,6 +178,13 @@ pub trait SessionApi: Send + Sync {
     /// store and accepts silently.
     // aislop-ignore-next-line complexity/function-too-long -- same scanner bug: bodyless signature measured to EOF. One line.
     fn set_download_directory(&self, directory: String) -> Result<()>;
+
+    /// Make `password` this account's password on the server.
+    ///
+    /// `Ok(())` means the request reached the server, not that it took it:
+    /// the protocol's own reply to a password change is not read back.
+    // aislop-ignore-next-line complexity/function-too-long -- same scanner bug: bodyless signature measured to EOF. One line.
+    fn change_password(&self, password: &str) -> Result<()>;
 }
 
 /// The local session: the library client itself, so `Arc<Client>` is already an
@@ -415,5 +422,9 @@ impl SessionApi for Client {
 
     fn set_download_directory(&self, _directory: String) -> Result<()> {
         Ok(())
+    }
+
+    fn change_password(&self, password: &str) -> Result<()> {
+        Self::change_password(self, password)
     }
 }

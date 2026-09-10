@@ -13,9 +13,9 @@ use crate::daemon::proto::{
     DaemonStatus, DirectoriesParams, DirectoryParams, DownloadDto,
     DownloadStartParams, DownloadStarted, Downloads, Event, IntervalSeconds,
     MemberStats, Members, MessageParams, Messages, Method, PROTOCOL_VERSION,
-    QueryParams, Request, Response, RoomRef, RpcError, SayParams,
-    SearchResults, Searches, Seconds, SharesStatus, SlotsParams, TransferRef,
-    Uploads, UserRef, UserResult, Watched,
+    PasswordParams, QueryParams, Request, Response, RoomRef, RpcError,
+    SayParams, SearchResults, Searches, Seconds, SharesStatus, SlotsParams,
+    TransferRef, Uploads, UserRef, UserResult, Watched,
 };
 use mirror::Mirror;
 use serde::de::DeserializeOwned;
@@ -829,6 +829,15 @@ impl SessionApi for RemoteSession {
 
     fn set_download_directory(&self, directory: String) -> Result<()> {
         self.tell(Method::DownloadSetDir, DirectoryParams { directory })
+    }
+
+    fn change_password(&self, password: &str) -> Result<()> {
+        self.tell(
+            Method::AccountPassword,
+            PasswordParams {
+                password: password.to_string(),
+            },
+        )
     }
 }
 

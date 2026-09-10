@@ -72,7 +72,7 @@ impl MainTui {
         // Global shortcuts
         match key.code {
             KeyCode::Char('q') => {
-                self.state.should_exit = true;
+                self.state.exit = Some(crate::models::TuiExit::Quit);
                 return;
             }
             KeyCode::Char('?') => {

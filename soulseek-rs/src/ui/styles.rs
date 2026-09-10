@@ -38,6 +38,12 @@ pub const GLYPH_DONE: &str = "✓";
 pub const GLYPH_FAILED: &str = "✗";
 pub const GLYPH_TIMED_OUT: &str = "⧗";
 pub const GLYPH_CURSOR: &str = "▮";
+
+/// What a password looks like on screen: one bullet per character.
+#[must_use]
+pub fn mask(secret: &str) -> String {
+    "•".repeat(secret.chars().count())
+}
 pub const HIGHLIGHT_SYMBOL: &str = "›";
 /// Between a key and its action in the legend, spaced.
 pub const SHORTCUT_ARROW: &str = " → ";

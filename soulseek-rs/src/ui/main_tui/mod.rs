@@ -7,7 +7,7 @@ mod search;
 mod settings;
 
 use crate::api::SessionApi;
-use crate::models::AppState;
+use crate::models::{AppState, TuiExit};
 use crate::persist::{
     snapshot::{Snapshot, restore_messages, restore_searches},
     state::{PersistedMessage, StateStore},
@@ -182,7 +182,7 @@ impl MainTui {
         self.saved_snapshot = snapshot;
     }
 
-    pub fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
+    pub fn run(mut self, mut terminal: DefaultTerminal) -> Result<TuiExit> {
         use ratatui::crossterm::{event::DisableMouseCapture, execute};
 
         // Run the event loop, then restore the terminal unconditionally: if the
@@ -196,7 +196,7 @@ impl MainTui {
         ratatui::restore();
         soulseek_rs::utils::logger::disable_buffering();
 
-        result
+        result.map(|()| self.state.exit.unwrap_or(TuiExit::Quit))
     }
 
     /// What the window holds, for a test to read back after driving it.
@@ -219,7 +219,7 @@ impl MainTui {
     }
 
     fn run_event_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        while !self.state.should_exit {
+        while self.state.exit.is_none() {
             terminal.draw(|frame| self.render(frame))?;
 
             self.poll_session();
@@ -239,7 +239,7 @@ impl MainTui {
                         }
                         _ => {}
                     }
-                    if self.state.should_exit || !poll(Duration::ZERO)? {
+                    if self.state.exit.is_some() || !poll(Duration::ZERO)? {
                         break;
                     }
                 }
@@ -257,7 +257,7 @@ pub fn launch_main_tui(
     search_timeout: Duration,
     store: Option<StateStore>,
     config_path: Option<std::path::PathBuf>,
-) -> Result<()> {
+) -> Result<TuiExit> {
     let tui =
         MainTui::new(client, download_dir, search_timeout, store, config_path);
     tui.run(terminal)
@@ -295,6 +295,8 @@ mod tests {
         download_dir_set: std::sync::Mutex<Option<String>>,
         /// What `set_shared_directories` was last asked for, if anything.
         shares_set: std::sync::Mutex<Option<Vec<String>>>,
+        /// What `change_password` was last asked for, if anything.
+        password_set: std::sync::Mutex<Option<String>>,
         download_cancelled: std::sync::Mutex<Vec<(String, String)>>,
         upload_cancelled: std::sync::Mutex<Vec<(String, String)>>,
         download_removed: std::sync::Mutex<Vec<(String, String)>>,
@@ -550,7 +552,12 @@ mod tests {
             None
         }
         fn shared_counts(&self) -> (u32, u32) {
-            (0, 0)
+            (3, 12)
+        }
+        fn change_password(&self, password: &str) -> soulseek_rs::Result<()> {
+            *self.password_set.lock().expect("not poisoned") =
+                Some(password.to_string());
+            Ok(())
         }
         fn shared_directories(&self) -> Vec<String> {
             Vec::new()
@@ -1276,6 +1283,100 @@ mod tests {
         assert_eq!(tui.download_dir, downloads_dir);
     }
 
+    /// The account block answers "who is this session, and what is it
+    /// offering" without a trip to another screen.
+    #[test]
+    fn the_settings_popup_names_the_account_and_its_shares() {
+        let mut tui = with_session(TalkativeSession::default());
+        press(&mut tui, KeyCode::Char('o'));
+
+        let screen = screen_sized(&mut tui, 100, 30);
+        assert!(screen.contains("tester"), "{screen}");
+        assert!(screen.contains("12 files in 3 folders"), "{screen}");
+    }
+
+    /// Typed twice the same way, the new password reaches the session — and
+    /// attached to a daemon it is the daemon that stores it.
+    #[test]
+    fn a_password_typed_twice_reaches_the_session() {
+        let session = Arc::new(TalkativeSession {
+            shared: true,
+            ..TalkativeSession::default()
+        });
+        let mut tui = attach(session.clone());
+        press(&mut tui, KeyCode::Char('o'));
+        press(&mut tui, KeyCode::Enter); // the change-password row is first
+        for _ in 0..2 {
+            for c in "hunter2".chars() {
+                press(&mut tui, KeyCode::Char(c));
+            }
+            press(&mut tui, KeyCode::Enter);
+        }
+
+        assert_eq!(
+            *session.password_set.lock().expect("not poisoned"),
+            Some("hunter2".to_string())
+        );
+        let settings = tui.state.settings.as_ref().expect("still open");
+        assert_eq!(settings.status.as_deref(), Some("Password changed"));
+    }
+
+    /// A mistyped repeat is caught here rather than on the server, where the
+    /// account would be left with a password nobody knows.
+    #[test]
+    fn a_password_typed_two_different_ways_is_not_sent() {
+        let session = Arc::new(TalkativeSession {
+            shared: true,
+            ..TalkativeSession::default()
+        });
+        let mut tui = attach(session.clone());
+        press(&mut tui, KeyCode::Char('o'));
+        press(&mut tui, KeyCode::Enter);
+        for typed in ["hunter2", "hunter3"] {
+            for c in typed.chars() {
+                press(&mut tui, KeyCode::Char(c));
+            }
+            press(&mut tui, KeyCode::Enter);
+        }
+
+        assert_eq!(*session.password_set.lock().expect("not poisoned"), None);
+    }
+
+    /// Logging out ends the window, but as a log-out: the caller brings the
+    /// login screen back rather than returning to the shell.
+    #[test]
+    fn logging_out_asks_first_and_then_closes_the_window() {
+        let mut tui = with_session(TalkativeSession::default());
+        press(&mut tui, KeyCode::Char('o'));
+        press(&mut tui, KeyCode::Down); // change password -> log out
+        press(&mut tui, KeyCode::Enter);
+        assert!(tui.state.exit.is_none(), "the confirm comes first");
+
+        press(&mut tui, KeyCode::Char('y'));
+        assert_eq!(tui.state.exit, Some(TuiExit::Logout));
+    }
+
+    /// Attached, the login is the daemon's: there is no logout row to land
+    /// on, so the row below the password is the download folder.
+    #[test]
+    fn an_attached_window_offers_no_logout() {
+        let session = Arc::new(TalkativeSession {
+            shared: true,
+            ..TalkativeSession::default()
+        });
+        let mut tui = attach(session);
+        press(&mut tui, KeyCode::Char('o'));
+        press(&mut tui, KeyCode::Down);
+        press(&mut tui, KeyCode::Enter);
+
+        let settings = tui.state.settings.as_ref().expect("still open");
+        assert_eq!(
+            settings.mode,
+            crate::models::SettingsMode::EditingDownloadDir
+        );
+        assert!(tui.state.exit.is_none());
+    }
+
     fn results(n: usize) -> Vec<crate::models::FileDisplayData> {
         (0..n)
             .map(|i| crate::models::FileDisplayData {
@@ -1448,7 +1549,7 @@ mod tests {
         ctrl(&mut tui, 'b');
         assert!(!tui.state.command_bar_active, "ctrl-b is not b");
         ctrl(&mut tui, 'q');
-        assert!(!tui.state.should_exit, "ctrl-q is not q");
+        assert!(tui.state.exit.is_none(), "ctrl-q is not q");
     }
 
     #[test]
@@ -1682,7 +1783,7 @@ mod tests {
 
         // Other keys are swallowed while it is open.
         press(&mut tui, KeyCode::Char('q'));
-        assert!(!tui.state.should_exit, "q closes the list, not the app");
+        assert!(tui.state.exit.is_none(), "q closes the list, not the app");
         assert!(!tui.state.show_help);
 
         press(&mut tui, KeyCode::Char('?'));

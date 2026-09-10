@@ -222,6 +222,10 @@ pub enum Commands {
     /// Confirm the credentials and connection work
     Whoami,
 
+    /// This account: its password, and what this machine stores for it
+    #[command(subcommand)]
+    Account(AccountCommand),
+
     /// The folders this client shares
     #[command(subcommand)]
     Shares(SharesCommand),
@@ -268,6 +272,34 @@ pub enum DaemonCommand {
 
     /// Ask a running daemon to shut down
     Stop,
+}
+
+#[derive(Subcommand, Debug)]
+#[non_exhaustive]
+pub enum AccountCommand {
+    /// Change the account's password on the server
+    Password(PasswordArgs),
+
+    /// Forget the password stored on this machine, so the next start asks
+    /// for it again
+    Logout,
+}
+
+#[derive(Args, Debug)]
+pub struct PasswordArgs {
+    /// The new password (visible in `ps`; prefer --new-password-stdin)
+    #[arg(
+        long,
+        value_name = "PASSWORD",
+        env = "SOULSEEK_NEW_PASSWORD",
+        hide_env_values = true
+    )]
+    pub new_password: Option<String>,
+
+    /// Read the new password from the first line of stdin (takes precedence
+    /// over --new-password)
+    #[arg(long, action = ArgAction::SetTrue)]
+    pub new_password_stdin: bool,
 }
 
 #[derive(Subcommand, Debug)]

@@ -1,11 +1,18 @@
+use crate::api::SessionApi;
 use color_eyre::Result;
 
 /// Where passwords live. The real implementation is the OS keychain
 /// ([`KeyringStore`]); tests use an in-memory fake. Passwords are never
 /// written to config.toml.
-pub trait SecretStore {
+///
+/// `Send + Sync` because the daemon holds one behind an `Arc` and answers
+/// requests on a thread per connection.
+pub trait SecretStore: Send + Sync {
     fn get(&self, username: &str) -> Result<Option<String>>;
     fn set(&self, username: &str, password: &str) -> Result<()>;
+    /// Forget this account's password. Succeeds when there was nothing
+    /// stored: the caller wants it gone, and it is.
+    fn delete(&self, username: &str) -> Result<()>;
 }
 
 /// OS keychain (macOS Keychain / Windows Credential Manager / Linux Secret
@@ -30,6 +37,40 @@ impl SecretStore for KeyringStore {
             .and_then(|entry| entry.set_password(password))
             .map_err(|e| color_eyre::eyre::eyre!("keyring: {e}"))
     }
+
+    fn delete(&self, username: &str) -> Result<()> {
+        match keyring::Entry::new(SERVICE, username)
+            .and_then(|entry| entry.delete_credential())
+        {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(color_eyre::eyre::eyre!("keyring: {e}")),
+        }
+    }
+}
+
+/// Change the account's password and keep the local copy in step, so the next
+/// start still logs in.
+///
+/// One rule in one place: whoever owns the login owns the stored copy. A
+/// window or a command borrowing a daemon's session owns neither, and the
+/// daemon writes its own host's store when it serves the request.
+///
+/// `Ok` means the request reached the server, not that the server took it —
+/// Soulseek answers a password change with nothing at all — and carries the
+/// store's complaint when the change went out but the local copy did not.
+pub fn change_password(
+    session: &dyn SessionApi,
+    secrets: &dyn SecretStore,
+    password: &str,
+) -> soulseek_rs::Result<Option<String>> {
+    session.change_password(password)?;
+    if session.daemon_endpoint().is_some() {
+        return Ok(None);
+    }
+    Ok(secrets
+        .set(&session.username(), password)
+        .err()
+        .map(|e| e.to_string()))
 }
 
 /// Resolve the password with precedence: CLI/env > keychain > `password_cmd`.
@@ -72,33 +113,48 @@ fn run_password_cmd(cmd: &str) -> Option<String> {
     (!password.is_empty()).then(|| password.to_string())
 }
 
+/// An in-memory store for tests, so no test touches the machine's keychain.
+#[cfg(test)]
+#[derive(Default)]
+pub struct MemoryStore {
+    secrets: std::sync::Mutex<std::collections::HashMap<String, String>>,
+    /// Answer every read as if there were no secret service at all.
+    pub fail: bool,
+}
+
+#[cfg(test)]
+impl SecretStore for MemoryStore {
+    fn get(&self, username: &str) -> Result<Option<String>> {
+        if self.fail {
+            return Err(color_eyre::eyre::eyre!("no secret service"));
+        }
+        Ok(self
+            .secrets
+            .lock()
+            .expect("not poisoned")
+            .get(username)
+            .cloned())
+    }
+
+    fn set(&self, username: &str, password: &str) -> Result<()> {
+        self.secrets
+            .lock()
+            .expect("not poisoned")
+            .insert(username.into(), password.into());
+        Ok(())
+    }
+
+    fn delete(&self, username: &str) -> Result<()> {
+        self.secrets.lock().expect("not poisoned").remove(username);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
-    use std::collections::HashMap;
 
-    #[derive(Default)]
-    struct FakeStore {
-        secrets: RefCell<HashMap<String, String>>,
-        fail: bool,
-    }
-
-    impl SecretStore for FakeStore {
-        fn get(&self, username: &str) -> Result<Option<String>> {
-            if self.fail {
-                return Err(color_eyre::eyre::eyre!("no secret service"));
-            }
-            Ok(self.secrets.borrow().get(username).cloned())
-        }
-
-        fn set(&self, username: &str, password: &str) -> Result<()> {
-            self.secrets
-                .borrow_mut()
-                .insert(username.into(), password.into());
-            Ok(())
-        }
-    }
+    type FakeStore = MemoryStore;
 
     #[test]
     fn cli_password_wins_over_everything() {
@@ -154,6 +210,16 @@ mod tests {
     fn none_when_no_source_has_a_password() {
         let store = FakeStore::default();
         assert_eq!(resolve_password(None, Some("alice"), None, &store), None);
+    }
+
+    #[test]
+    fn a_deleted_password_is_no_longer_resolved() {
+        let store = FakeStore::default();
+        store.set("alice", "from-keyring").unwrap();
+        store.delete("alice").unwrap();
+        assert_eq!(resolve_password(None, Some("alice"), None, &store), None);
+        // Deleting again is not an error: the password is gone either way.
+        store.delete("alice").unwrap();
     }
 
     #[test]

@@ -345,6 +345,20 @@ impl Record for WhoamiRecord {
     }
 }
 
+/// What happened to this account.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AccountRecord {
+    pub user: String,
+    /// `password-changed` or `logged-out`.
+    pub action: String,
+}
+
+impl Record for AccountRecord {
+    fn text(&self) -> String {
+        format!("{}\t{}", sanitize(&self.action), sanitize(&self.user))
+    }
+}
+
 /// What the server knows about another user.
 /// Each field is `None` when the server has not answered that half yet, so a
 /// consumer never reads "offline" or "shares nothing" from a missing reply.

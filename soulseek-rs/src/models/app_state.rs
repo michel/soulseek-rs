@@ -222,6 +222,15 @@ impl WrappedLog {
     }
 }
 
+/// Why the window closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TuiExit {
+    /// The program is done.
+    Quit,
+    /// The account was logged out: the caller shows the login screen again.
+    Logout,
+}
+
 /// What the shared command bar is currently capturing input for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandBarMode {
@@ -286,7 +295,8 @@ pub struct AppState {
     /// Where the keys overlay is being read, for a terminal too short to
     /// show it whole.
     pub help_view: LogView,
-    pub should_exit: bool,
+    /// Set once, when the window is closing, to why.
+    pub exit: Option<TuiExit>,
     pub command_bar_active: bool,
     pub command_bar_input: String,
     pub command_bar_cursor_position: usize,
@@ -382,7 +392,7 @@ impl AppState {
             layout: PaneLayout::default(),
             show_help: false,
             help_view: LogView::default(),
-            should_exit: false,
+            exit: None,
             command_bar_active: false,
             command_bar_input: String::new(),
             command_bar_cursor_position: 0,

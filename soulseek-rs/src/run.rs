@@ -6,7 +6,9 @@ use crate::cli::{
     parse_server_address,
 };
 use crate::commands::Ctx;
+use crate::models::TuiExit;
 use crate::output::{CliError, CliResult, Exit, Out};
+use crate::persist::secret::SecretStore;
 use crate::ui::launch_main_tui;
 use soulseek_rs::{ClientSettings, ClientVersion, PeerAddress};
 use std::io::{BufRead, IsTerminal};
@@ -57,7 +59,7 @@ pub fn run(mut cli: Cli, out: &Out) -> CliResult {
         if let Some(endpoint) = daemon_endpoint(&cli, &resolved) {
             return run_attached_tui(&resolved, &endpoint, config_path);
         }
-        return run_default_tui(&cli, &resolved, config_path, &file_config);
+        return run_default_tui(&cli, &resolved, config_path);
     };
 
     // Anything that only reads the network stack or the config file runs
@@ -73,6 +75,14 @@ pub fn run(mut cli: Cli, out: &Out) -> CliResult {
         }
         Commands::Skills(ref command) => {
             return crate::commands::skills::run(out, command);
+        }
+        // Forgetting a password needs no session — least of all the one it is
+        // about to make unusable.
+        Commands::Account(crate::cli::AccountCommand::Logout) => {
+            return crate::commands::account::logout(
+                out,
+                resolved.username.as_deref(),
+            );
         }
         Commands::Completions(ref command) => {
             return crate::commands::completions::run(out, command);
@@ -211,12 +221,7 @@ fn context(
         (String::new(), String::new())
     } else {
         (
-            resolved.username.clone().ok_or_else(|| {
-                CliError::usage(
-                    "no username: pass --username, set SOULSEEK_USERNAME, or \
-                     put one in config.toml",
-                )
-            })?,
+            resolved.username.clone().ok_or_else(missing_username)?,
             password(cli, resolved)?.ok_or_else(|| {
                 CliError::usage(
                     "no password: pass --password/--password-stdin, set \
@@ -325,16 +330,7 @@ fn password(
     resolved: &crate::persist::config::Resolved,
 ) -> CliResult<Option<String>> {
     if cli.password_stdin {
-        let mut line = String::new();
-        io::stdin()
-            .lock()
-            .read_line(&mut line)
-            .map_err(|e| CliError::usage(format!("cannot read stdin: {e}")))?;
-        let line = line.trim_end_matches(['\r', '\n']);
-        if line.is_empty() {
-            return Err(CliError::usage("no password on stdin"));
-        }
-        return Ok(Some(line.to_string()));
+        return password_from_stdin().map(Some);
     }
     Ok(crate::persist::secret::resolve_password(
         cli.password.as_deref(),
@@ -342,6 +338,29 @@ fn password(
         resolved.password_cmd.as_deref(),
         &crate::persist::secret::KeyringStore,
     ))
+}
+
+/// Read a password from the first line of stdin, the way `docker login` does.
+pub fn password_from_stdin() -> CliResult<String> {
+    let mut line = String::new();
+    io::stdin()
+        .lock()
+        .read_line(&mut line)
+        .map_err(|e| CliError::usage(format!("cannot read stdin: {e}")))?;
+    let line = line.trim_end_matches(['\r', '\n']);
+    if line.is_empty() {
+        return Err(CliError::usage("no password on stdin"));
+    }
+    Ok(line.to_string())
+}
+
+/// What to say when nothing supplied a username.
+#[must_use]
+pub fn missing_username() -> CliError {
+    CliError::usage(
+        "no username: pass --username, set SOULSEEK_USERNAME, or put one in \
+         config.toml",
+    )
 }
 
 /// Validate the configured shares. A bad entry is a warning, not a failure:
@@ -403,12 +422,11 @@ fn enter_terminal() -> ratatui::DefaultTerminal {
 /// Run the interactive TUI (the default no-subcommand path): bring the
 /// terminal up first, run the login/registration screen (skipped past when
 /// stored credentials work), persist whatever logged in, then enter the
-/// main UI.
+/// main UI. Logging out from the settings popup starts the round again.
 fn run_default_tui(
     cli: &Cli,
     resolved: &crate::persist::config::Resolved,
     config_path: Option<PathBuf>,
-    file_config: &crate::persist::config::FileConfig,
 ) -> CliResult {
     let out = Out::new(false, false);
     let (server_host, server_port) =
@@ -426,10 +444,7 @@ fn run_default_tui(
 
     let shared_directories = shared_directories(resolved, &out);
     let secret_store = crate::persist::secret::KeyringStore;
-    let initial_password = password(cli, resolved)?;
-
-    // Enable logger buffering BEFORE connection to prevent log artifacts
-    soulseek_rs::utils::logger::enable_buffering();
+    let mut initial_password = password(cli, resolved)?;
 
     let enable_listen = !resolved.disable_listener;
     let listen_port = resolved.listener_port;
@@ -446,57 +461,80 @@ fn run_default_tui(
             version: ClientVersion::REFERENCE_CLIENT,
         };
 
-    let mut terminal = enter_terminal();
+    // Logging out closes the window and comes straight back to the login
+    // screen, so one pass of this loop is one session: terminal, credentials,
+    // main UI. The port mapping and the state store are dropped at the end of
+    // the pass; the client goes with the last worker thread still holding it,
+    // so a search or browse in flight can keep the old session open a little
+    // past the logout.
+    let mut username = resolved.username.clone();
+    loop {
+        // Enable logger buffering BEFORE connection to prevent log artifacts.
+        // The window turns it off again when it gives the terminal back.
+        soulseek_rs::utils::logger::enable_buffering();
+        let mut terminal = enter_terminal();
 
-    let outcome = crate::ui::login::run_login_flow(
-        &mut terminal,
-        &make_settings,
-        resolved.username.clone(),
-        initial_password,
-    );
+        let outcome = crate::ui::login::run_login_flow(
+            &mut terminal,
+            &make_settings,
+            username.clone(),
+            initial_password.take(),
+        );
 
-    let outcome = match outcome {
-        Ok(Some(outcome)) => outcome,
-        Ok(None) => {
-            // User cancelled at the login screen.
-            ratatui::restore();
-            soulseek_rs::utils::logger::disable_buffering();
+        let outcome = match outcome {
+            Ok(Some(outcome)) => outcome,
+            // The user cancelled at the login screen.
+            Ok(None) => return leave_terminal(Ok(())),
+            Err(e) => {
+                return leave_terminal(Err(CliError::new(
+                    Exit::Failure,
+                    e.to_string(),
+                )));
+            }
+        };
+
+        persist_credentials(&outcome, config_path.as_deref(), &secret_store);
+        username = Some(outcome.username.clone());
+
+        // Best-effort: make ourselves reachable behind a home router so
+        // firewalled peers can connect back. Mapped only once the listener is
+        // up, and for the port it really bound. Kept alive for the session.
+        let _port_mapper = outcome
+            .client
+            .listen_port()
+            .map(crate::port_mapping::PortMapper::spawn);
+
+        let store = crate::persist::paths::state_dir()
+            .map(crate::persist::state::StateStore::new);
+
+        let exit = launch_main_tui(
+            terminal,
+            Arc::new(outcome.client),
+            resolved.download_dir.clone(),
+            Duration::from_secs(resolved.search_timeout),
+            store,
+            config_path.clone(),
+        )
+        .map_err(|e| CliError::new(Exit::Failure, e.to_string()))?;
+
+        if exit == TuiExit::Quit {
             return Ok(());
         }
-        Err(e) => {
-            ratatui::restore();
-            soulseek_rs::utils::logger::disable_buffering();
-            return Err(CliError::new(Exit::Failure, e.to_string()));
+
+        // Logged out, so the stored password goes with the session: this pass
+        // is already asking for one, but the next start must ask too rather
+        // than walk straight back in.
+        if let Err(e) = secret_store.delete(&outcome.username) {
+            out.warn(&format!("could not clear the stored password: {e}"));
         }
-    };
+    }
+}
 
-    persist_credentials(
-        &outcome,
-        config_path.as_deref(),
-        file_config,
-        &secret_store,
-    );
-
-    // Best-effort: make ourselves reachable behind a home router so firewalled
-    // peers can connect back. Mapped only once the listener is up, and for the
-    // port it really bound. Kept alive for the session.
-    let _port_mapper = outcome
-        .client
-        .listen_port()
-        .map(crate::port_mapping::PortMapper::spawn);
-
-    let store = crate::persist::paths::state_dir()
-        .map(crate::persist::state::StateStore::new);
-
-    launch_main_tui(
-        terminal,
-        Arc::new(outcome.client),
-        resolved.download_dir.clone(),
-        Duration::from_secs(resolved.search_timeout),
-        store,
-        config_path,
-    )
-    .map_err(|e| CliError::new(Exit::Failure, e.to_string()))
+/// Give the terminal back and let logging through again, on the way out.
+fn leave_terminal(result: CliResult) -> CliResult {
+    ratatui::restore();
+    soulseek_rs::utils::logger::disable_buffering();
+    result
 }
 
 /// Run the TUI against a daemon's session.
@@ -542,6 +580,8 @@ fn run_attached_tui(
 
     // No StateStore: the daemon owns what survives a restart, so a second
     // writer here would fight it for the same files.
+    // The daemon owns the login, so this window has no logout to come back
+    // from: however it closed, the run is over.
     launch_main_tui(
         terminal,
         Arc::new(session),
@@ -550,6 +590,7 @@ fn run_attached_tui(
         None,
         config_path,
     )
+    .map(|_| ())
     .map_err(|e| CliError::new(Exit::Failure, e.to_string()))
 }
 
@@ -559,22 +600,34 @@ fn run_attached_tui(
 fn persist_credentials(
     outcome: &crate::ui::login::LoginOutcome,
     config_path: Option<&Path>,
-    file_config: &crate::persist::config::FileConfig,
     secret_store: &dyn crate::persist::secret::SecretStore,
 ) {
-    if let Some(path) = config_path
-        && file_config.username.as_deref() != Some(&outcome.username)
-    {
-        let mut updated = file_config.clone();
-        updated.username = Some(outcome.username.clone());
-        if let Err(e) = updated.save(path) {
-            eprintln!("⚠️  Could not save config: {e}");
-        }
+    if let Some(path) = config_path {
+        save_username(path, &outcome.username);
     }
     if outcome.entered_via_form
         && let Err(e) = secret_store.set(&outcome.username, &outcome.password)
     {
         eprintln!("⚠️  Could not store password in keychain: {e}");
+    }
+}
+
+/// Remember who logged in, for the next start to offer.
+///
+/// Read back from disk rather than from the copy this run started with: the
+/// settings popup writes the same file, and a second login after a logout
+/// would otherwise save a snapshot taken before those edits.
+fn save_username(path: &Path, username: &str) {
+    let mut config = match crate::persist::config::FileConfig::load(path) {
+        Ok(config) => config,
+        Err(e) => return eprintln!("⚠️  Could not read config: {e}"),
+    };
+    if config.username.as_deref() == Some(username) {
+        return;
+    }
+    config.username = Some(username.to_string());
+    if let Err(e) = config.save(path) {
+        eprintln!("⚠️  Could not save config: {e}");
     }
 }
 

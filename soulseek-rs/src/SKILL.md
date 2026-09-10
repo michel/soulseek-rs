@@ -152,6 +152,17 @@ cheapest way to prove the credentials and connection work.
 `privilege_seconds` is 0 for an ordinary account and `null` only when the
 server did not answer — those are different facts, so do not treat null as 0.
 
+**`account password --new-password <PASSWORD>`** (or
+`--new-password-stdin`, which reads the first line of stdin and keeps the
+password out of `ps`) — one object: `user`, `action` (`password-changed`).
+The server never confirms a password change, so exit 0 means the request went
+out. The new password is stored in this machine's keychain, or the daemon's
+when the run is routed to one.
+
+**`account logout`** — one object: `user`, `action` (`logged-out`). Forgets
+the password stored on this machine; the account itself is untouched, and the
+next start asks for it again.
+
 **`room list`** — `room`, `users`.
 **`room users <room>`** — `room`, `user`, `status`, `average_speed`,
 `shared_files`, `shared_folders`, `slots_full`, `country`. Everything but

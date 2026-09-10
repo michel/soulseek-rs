@@ -6,9 +6,9 @@ use crate::ui::panes::{
     render_rooms_pane, render_searches_pane, selected_transfer,
 };
 use crate::ui::{
-    accent_style, body_style, dimmed_style, info_style, pack_shortcuts,
-    pane_block, plain_title, primary_style, render_download_stats,
-    warning_style,
+    GLYPH_CURSOR, accent_style, body_style, dimmed_style, info_style, mask,
+    pack_shortcuts, pane_block, plain_title, primary_style,
+    render_download_stats, warning_style,
 };
 use ratatui::{
     Frame,
@@ -55,6 +55,14 @@ const HELP_LEFT: &[(&str, &[(&str, &str)])] = &[
             ("^u ^d", "half a page"),
             ("h l / ← →", "scroll a long name sideways"),
             ("0 / $", "its start / its end"),
+        ],
+    ),
+    (
+        "Settings popup",
+        &[
+            ("Enter", "change the password, log out, edit the folder"),
+            ("a / d", "add / remove a shared folder"),
+            ("r", "re-index the shares"),
         ],
     ),
 ];
@@ -127,6 +135,48 @@ fn filter_keys(
     keys.extend_from_slice(moves);
     keys.extend([("Enter", "keep filter"), ("Esc", "clear filter")]);
     keys
+}
+
+/// What the bar offers in the settings popup: the keys that always apply,
+/// plus what Enter does on the row the selection rests on.
+fn settings_shortcuts(
+    settings: &crate::models::SettingsState,
+) -> Vec<(&'static str, &'static str)> {
+    use crate::models::{SettingsMode, SettingsRow};
+    match settings.mode {
+        SettingsMode::ConfirmingLogout => {
+            vec![("y", "log out"), ("n/Esc", "stay")]
+        }
+        SettingsMode::NewPassword => {
+            vec![
+                ("Type", "password"),
+                ("Enter", "repeat it"),
+                ("Esc", "cancel"),
+            ]
+        }
+        SettingsMode::RepeatPassword(_) => {
+            vec![
+                ("Type", "password"),
+                ("Enter", "change it"),
+                ("Esc", "cancel"),
+            ]
+        }
+        SettingsMode::EditingDownloadDir | SettingsMode::AddingShare => {
+            vec![("Type", "path"), ("Enter", "save"), ("Esc", "cancel")]
+        }
+        SettingsMode::Navigate => vec![
+            ("↑↓", "move"),
+            match settings.selected_row() {
+                SettingsRow::ChangePassword => ("Enter", "change password"),
+                SettingsRow::Logout => ("Enter", "log out"),
+                SettingsRow::DownloadDir => ("Enter", "edit folder"),
+                SettingsRow::Share(_) => ("d", "remove share"),
+            },
+            ("a", "add share"),
+            ("r", "re-index"),
+            ("Esc", "close"),
+        ],
+    }
 }
 
 impl MainTui {
@@ -450,44 +500,101 @@ impl MainTui {
     }
 
     fn render_settings_popup(&self, frame: &mut Frame) {
-        use crate::models::SettingsMode;
+        use crate::models::{SettingsMode, SettingsRow};
         let Some(settings) = self.state.settings.as_ref() else {
             return;
         };
         let area = centered_rect(70, 60, frame.area());
         frame.render_widget(ratatui::widgets::Clear, area);
 
+        let selected = settings.selected_row();
         let mut lines: Vec<Line> = Vec::new();
-        let marker = |selected: bool| if selected { "> " } else { "  " };
-        let entry = |selected: bool, label: &str, value: String| {
+        let entry = |on: bool, label: &str, value: String| {
             Line::from(vec![
-                Span::styled(marker(selected).to_string(), accent_style()),
+                Span::styled(if on { "> " } else { "  " }, accent_style()),
                 Span::styled(label.to_string(), dimmed_style()),
                 Span::styled(value, primary_style()),
             ])
         };
-
-        lines.push(if settings.mode == SettingsMode::EditingDownloadDir {
+        let typing = |label: &str, value: String| {
             Line::from(vec![
                 Span::styled("> ", accent_style()),
-                Span::styled("Download folder: ", dimmed_style()),
-                Span::styled(settings.input.clone(), primary_style()),
-                Span::styled("▏", accent_style()),
+                Span::styled(label.to_string(), dimmed_style()),
+                Span::styled(value, primary_style()),
+                Span::styled(GLYPH_CURSOR, accent_style()),
             ])
+        };
+        let section = |name: &str| Line::styled(name.to_string(), info_style());
+
+        // One column of labels, padded here rather than by hand in each
+        // string.
+        let field = |label: &str, value: String| {
+            entry(false, &format!("  {label:<14}"), value)
+        };
+        let account = &settings.account;
+        lines.push(section("Account"));
+        lines.push(field("Signed in as", account.username.clone()));
+        lines.push(field("Sharing", account.shares.clone()));
+        lines.push(field(
+            "Reachable on",
+            account.listen_port.map_or_else(
+                || "not accepting connections".to_string(),
+                |port| format!("port {port}"),
+            ),
+        ));
+        if let Some(daemon) = &account.daemon {
+            lines.push(field("Daemon", daemon.clone()));
+        }
+        lines.push(Line::from(""));
+
+        lines.push(match settings.mode {
+            SettingsMode::NewPassword => {
+                typing("New password: ", mask(&settings.input))
+            }
+            SettingsMode::RepeatPassword(_) => {
+                typing("Repeat it: ", mask(&settings.input))
+            }
+            _ => entry(
+                selected == SettingsRow::ChangePassword,
+                "Change password…",
+                String::new(),
+            ),
+        });
+        if settings.mode == SettingsMode::ConfirmingLogout {
+            lines.push(entry(
+                true,
+                &format!("Log out of {}? ", account.username),
+                "y / n".to_string(),
+            ));
+        } else if settings.can_log_out() {
+            lines.push(entry(
+                selected == SettingsRow::Logout,
+                "Log out…",
+                String::new(),
+            ));
+        }
+        lines.push(Line::from(""));
+
+        lines.push(section("Folders"));
+        lines.push(if settings.mode == SettingsMode::EditingDownloadDir {
+            typing("Download folder: ", settings.input.clone())
         } else {
             entry(
-                settings.selected == 0,
+                selected == SettingsRow::DownloadDir,
                 "Download folder: ",
                 settings.download_dir.clone(),
             )
         });
-        lines.push(Line::from(""));
         lines.push(Line::styled(
             format!("Shared folders ({}):", settings.share_dirs.len()),
             dimmed_style(),
         ));
         for (i, dir) in settings.share_dirs.iter().enumerate() {
-            lines.push(entry(settings.selected == i + 1, "", dir.clone()));
+            lines.push(entry(
+                selected == SettingsRow::Share(i),
+                "",
+                dir.clone(),
+            ));
         }
         if settings.share_dirs.is_empty() {
             lines.push(Line::styled(
@@ -496,11 +603,7 @@ impl MainTui {
             ));
         }
         if settings.mode == SettingsMode::AddingShare {
-            lines.push(Line::from(vec![
-                Span::styled("  Add share: ", dimmed_style()),
-                Span::styled(settings.input.clone(), primary_style()),
-                Span::styled("▏", accent_style()),
-            ]));
+            lines.push(typing("  Add share: ", settings.input.clone()));
         }
         if let Some(status) = &settings.status {
             lines.push(Line::from(""));
@@ -599,15 +702,8 @@ impl MainTui {
     fn shortcuts(&self) -> Vec<(&'static str, &'static str)> {
         if self.state.show_help {
             vec![("?/Esc", "close")]
-        } else if self.state.settings.is_some() {
-            vec![
-                ("↑↓", "move"),
-                ("Enter/e", "edit download dir"),
-                ("a", "add share"),
-                ("d", "remove share"),
-                ("r", "re-index"),
-                ("Esc", "close"),
-            ]
+        } else if let Some(settings) = self.state.settings.as_ref() {
+            settings_shortcuts(settings)
         } else if self.state.show_messages {
             if self.state.chat_composing {
                 vec![

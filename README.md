@@ -141,6 +141,13 @@ either end. `PgUp`/`PgDn` scroll a chat log back through its history, and `?`
 shows every key for where you are. `s` starts a search, and `S` runs the
 highlighted one again.
 
+`o` opens settings: who this session is logged in as and how much it shares,
+then the download and shared folders. `Enter` on a row acts on it — change the
+password (typed twice, so a typo cannot leave the account with one nobody
+knows) or log out, which forgets the stored password and comes back to the
+login screen. Attached to a daemon the login is the daemon's, so the popup
+offers no logout and a password change goes to the daemon.
+
 ### Daemon mode
 
 A one-shot command logs in, does its job, and exits. Run a daemon instead and
@@ -317,6 +324,8 @@ soulseek-rs serve [--follow]              # stay online sharing, stream uploads
 soulseek-rs daemon [--bind ADDR]          # run as a service others share
 soulseek-rs daemon token|status|stop      # control a running one
 soulseek-rs whoami                        # confirm credentials and connection
+soulseek-rs account password              # change the account's password
+soulseek-rs account logout                # forget the stored password
 soulseek-rs user <NAME>                   # a peer's status and share counts
 soulseek-rs shares list|add|remove|status|reindex
 soulseek-rs config path|list|get|set
@@ -334,10 +343,10 @@ download folder. `--no-daemon` tests this machine's own login instead.
 `shares list` reads the config file either way, while `shares status` and
 `shares reindex` ask the session and report what peers can see.
 
-Nineteen need no credentials: `config path|list|get|set`,
+Twenty need no credentials: `config path|list|get|set`,
 `shares list|add|remove`, `wish add|remove|list`, `portmap`,
-`skills install|uninstall|list`, `completions install|uninstall` and
-`daemon token|status|stop`. Most never touch the network; `daemon status` and
+`skills install|uninstall|list`, `completions install|uninstall`,
+`account logout` and `daemon token|status|stop`. Most never touch the network; `daemon status` and
 `daemon stop` talk to a daemon that is already logged in, so a machine with no
 account of its own can still ask whether one is running. `shares status` and
 `shares reindex` are not among them, because reporting what the network sees
@@ -368,6 +377,7 @@ daemon status    user   server  clients         uptime-secs
 daemon token     token
 user             user   status  average-speed   shared-files
 whoami           user   server  shared-folders  shared-files
+account          action user
 shares list      ok|missing     directory
 shares status    folders        files
 config get|set|list|path        key             value
@@ -593,6 +603,19 @@ Four ways to supply a password, in the order they are consulted:
 # Nothing sensitive on the command line or in the environment
 pass show soulseek | soulseek-rs --username alice --password-stdin get "some track"
 ```
+
+Changing the password goes through the server; forgetting one is local:
+
+```bash
+pass show soulseek-new | soulseek-rs account password --new-password-stdin
+soulseek-rs account logout          # drop this machine's stored password
+```
+
+The server sends no verdict on a password change, so exit 0 means the request
+went out. The new password replaces the stored one — the daemon's, when the
+run is routed to a daemon, since that is the login that has to work after a
+restart. `account logout` leaves the account untouched and only clears what
+this machine kept, so the next start asks again.
 
 Logging stays at errors only unless you ask for more: `-v` through `-vvvv`
 raise it, and `LOG_LEVEL`/`RUST_LOG` are honoured when no `-v` is given.

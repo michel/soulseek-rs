@@ -595,6 +595,18 @@
         ],
         "type": "object"
       },
+      "PasswordParams": {
+        "description": "A new password for the account the daemon is logged in as. Plain text on\nthe wire, like the token: the transport is the local socket, or TCP behind\nan SSH tunnel (see docs/daemon-protocol.md).",
+        "properties": {
+          "password": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "password"
+        ],
+        "type": "object"
+      },
       "QueryParams": {
         "properties": {
           "query": {
@@ -2316,6 +2328,26 @@
         }
       },
       "summary": "Everyone this session is watching."
+    },
+    {
+      "name": "account.password",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "password",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Change the password of the account the daemon is logged in as, and store it on the daemon's host so a restart still logs in."
     },
     {
       "name": "shares.status",

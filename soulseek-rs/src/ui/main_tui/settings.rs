@@ -3,12 +3,21 @@
 //! socket when the session is a daemon's).
 
 use super::MainTui;
-use crate::models::{SettingsAction, SettingsState};
+use crate::models::{AccountInfo, SettingsAction, SettingsState};
+use crate::persist::secret::KeyringStore;
 use ratatui::crossterm::event::KeyEvent;
 
 impl MainTui {
     pub(super) fn open_settings(&mut self) {
+        // Read once here, not while drawing: see `AccountInfo`.
+        let account = AccountInfo {
+            username: self.client.username(),
+            shares: self.share_counts(),
+            listen_port: self.client.listen_port(),
+            daemon: self.client.daemon_endpoint(),
+        };
         self.state.settings = Some(SettingsState::new(
+            account,
             self.download_dir.clone(),
             self.client.shared_directories(),
         ));
@@ -23,7 +32,26 @@ impl MainTui {
             SettingsAction::Close => self.state.settings = None,
             SettingsAction::Apply => self.apply_settings(),
             SettingsAction::Reindex => self.reindex_shares(),
+            SettingsAction::ChangePassword(password) => {
+                self.change_password(&password);
+            }
+            SettingsAction::Logout => {
+                self.state.exit = Some(crate::models::TuiExit::Logout);
+            }
         }
+    }
+
+    fn change_password(&mut self, password: &str) {
+        let status = match crate::persist::secret::change_password(
+            self.client.as_ref(),
+            &KeyringStore,
+            password,
+        ) {
+            Ok(None) => "Password changed".into(),
+            Ok(Some(e)) => format!("Password changed, but not stored: {e}"),
+            Err(e) => format!("Could not change it: {e}"),
+        };
+        self.set_settings_status(status);
     }
 
     /// Persist the edited settings and apply them live.
@@ -71,9 +99,10 @@ impl MainTui {
         let mut status = if !refused.is_empty() {
             format!("Could not apply {}", refused.join("; "))
         } else if dropped > 0 {
+            self.refresh_share_counts();
             format!("Applied ({dropped} invalid path(s) ignored)")
         } else {
-            format!("Applied · sharing {}", self.share_counts())
+            format!("Applied · sharing {}", self.refresh_share_counts())
         };
         if dir_applied {
             self.download_dir.clone_from(&download_dir);
@@ -101,6 +130,16 @@ impl MainTui {
         self.set_settings_status(status);
     }
 
+    /// Bring the account block's share count back in step, and hand the same
+    /// count to the caller: counting is a round trip worth making once.
+    fn refresh_share_counts(&mut self) -> String {
+        let counts = self.share_counts();
+        if let Some(settings) = self.state.settings.as_mut() {
+            settings.account.shares.clone_from(&counts);
+        }
+        counts
+    }
+
     fn set_settings_status(&mut self, status: String) {
         if let Some(settings) = self.state.settings.as_mut() {
             settings.status = Some(status);
@@ -111,13 +150,11 @@ impl MainTui {
     fn reindex_shares(&mut self) {
         let dirs = self.client.shared_directories();
         let result = self.client.set_shared_directories(dirs);
-        let counts = self.share_counts();
-        if let Some(settings) = self.state.settings.as_mut() {
-            settings.status = Some(match result {
-                Ok(()) => format!("Re-indexed · sharing {counts}"),
-                Err(e) => format!("Re-index failed: {e}"),
-            });
-        }
+        let counts = self.refresh_share_counts();
+        self.set_settings_status(match result {
+            Ok(()) => format!("Re-indexed · sharing {counts}"),
+            Err(e) => format!("Re-index failed: {e}"),
+        });
     }
 
     fn share_counts(&self) -> String {

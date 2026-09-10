@@ -197,6 +197,7 @@ pub fn run(
 
     let daemon = Arc::new(Daemon {
         session: Arc::clone(&session.client),
+        secrets: Arc::new(crate::persist::secret::KeyringStore),
         hub: Arc::clone(&hub),
         browses: Arc::clone(&browses),
         downloads: Arc::clone(&downloads),

@@ -11,13 +11,14 @@ use super::proto::{
     DaemonStatus, DirectoriesParams, DirectoryParams, DownloadDto,
     DownloadStartParams, DownloadStarted, Downloads, IntervalSeconds,
     MemberStats, Members, MessageParams, Messages, Method, OPENRPC,
-    PROTOCOL_VERSION, QueryParams, RoomRef, RoomUserStatsDto, RpcError,
-    SayParams, SearchResultDto, SearchResults, SearchSummary, Searches,
-    Seconds, SharesStatus, SlotsParams, TransferRef, UploadInfoDto, Uploads,
-    UserInfoDto, UserRef, UserResult, Watched,
+    PROTOCOL_VERSION, PasswordParams, QueryParams, RoomRef, RoomUserStatsDto,
+    RpcError, SayParams, SearchResultDto, SearchResults, SearchSummary,
+    Searches, Seconds, SharesStatus, SlotsParams, TransferRef, UploadInfoDto,
+    Uploads, UserInfoDto, UserRef, UserResult, Watched,
 };
 use crate::api::SessionApi;
 use crate::output::Exit;
+use crate::persist::secret::SecretStore;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,6 +28,9 @@ use std::time::{Duration, Instant};
 /// Everything a connection needs to answer a request.
 pub struct Daemon {
     pub session: Arc<dyn SessionApi>,
+    /// Where this host keeps the account's password. The daemon owns the
+    /// login, so a password it changes it also has to store.
+    pub secrets: Arc<dyn SecretStore>,
     pub hub: Arc<Hub>,
     pub browses: Arc<PendingBrowses>,
     pub downloads: Arc<Mutex<Vec<PendingDownload>>>,
@@ -346,6 +350,27 @@ impl Daemon {
                 users: self.session.watched_users(),
             }),
 
+            Method::AccountPassword => {
+                let params: PasswordParams = parse(params)?;
+                // The daemon logs in again from this host's store when it
+                // restarts, so a password it changed but never stored would
+                // lock it out of its own account.
+                let stored = crate::persist::secret::change_password(
+                    self.session.as_ref(),
+                    self.secrets.as_ref(),
+                    &params.password,
+                )
+                .map_err(|e| {
+                    RpcError::application(Exit::Connection, e.to_string())
+                })?;
+                if let Some(e) = stored {
+                    soulseek_rs::warn!(
+                        "Password changed, but not stored on this host: {e}"
+                    );
+                }
+                ok(Ack::OK)
+            }
+
             Method::SharesStatusOf => ok(self.shares()),
             Method::SharesSet => {
                 let directories: DirectoriesParams = parse(params)?;
@@ -656,6 +681,32 @@ mod tests {
         assert_eq!(stats["members"], json!([]));
     }
 
+    /// The daemon owns the login, so a password it changes it also stores —
+    /// its next start logs in from that store, not from the client that
+    /// asked.
+    #[test]
+    fn a_password_change_reaches_the_session_and_this_hosts_store() {
+        let session = Arc::new(SilentSession::default());
+        let daemon = daemon_with("t", Arc::clone(&session));
+
+        daemon
+            .call(Method::AccountPassword, json!({ "password": "hunter2" }))
+            .expect("the password change is served");
+
+        assert_eq!(
+            *session.password.lock().expect("not poisoned"),
+            Some("hunter2".to_string())
+        );
+        assert_eq!(
+            daemon
+                .secrets
+                .get(&session.username())
+                .expect("the store answers")
+                .as_deref(),
+            Some("hunter2")
+        );
+    }
+
     #[test]
     fn a_watch_is_readable_back_and_survives_until_unwatched() {
         // The three methods are only useful together: what `user.watch`
@@ -719,14 +770,23 @@ mod tests {
     #[derive(Default)]
     struct SilentSession {
         watched: Mutex<Vec<String>>,
+        /// What `account.password` asked the session to set, if anything.
+        password: Mutex<Option<String>>,
     }
 
     /// The one room `SilentSession` claims to have joined.
     const STUB_ROOM: &str = "jazz";
 
     fn daemon_with_token(token: &str) -> Daemon {
+        daemon_with(token, Arc::new(SilentSession::default()))
+    }
+
+    /// A daemon over a session the caller can read back, with an in-memory
+    /// secret store: no test may touch the machine's keychain.
+    fn daemon_with(token: &str, session: Arc<SilentSession>) -> Daemon {
         Daemon {
-            session: Arc::new(SilentSession::default()),
+            session,
+            secrets: Arc::new(crate::persist::secret::MemoryStore::default()),
             hub: Arc::new(Hub::new()),
             browses: Arc::new(PendingBrowses::default()),
             downloads: Arc::new(Mutex::new(Vec::new())),
@@ -744,6 +804,11 @@ mod tests {
     impl SessionApi for SilentSession {
         fn username(&self) -> String {
             "tester".to_string()
+        }
+        fn change_password(&self, password: &str) -> soulseek_rs::Result<()> {
+            *self.password.lock().expect("not poisoned") =
+                Some(password.to_string());
+            Ok(())
         }
         fn listen_port(&self) -> Option<u16> {
             None
