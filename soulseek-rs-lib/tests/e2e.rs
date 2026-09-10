@@ -2955,9 +2955,9 @@ fn a_joined_room_reports_its_members_statistics() {
     assert!(sharer.login().expect("sharer login"));
     sharer.join_room(room).expect("sharer joins room");
 
-    // Let the server register the sharer's membership and share counts, so
-    // the observer's own join reply describes a room that already has them.
-    std::thread::sleep(Duration::from_millis(750));
+    // The sharer's membership and share counts have to land first, so the
+    // observer's own join reply describes a room that already has them.
+    fence(&sharer, "e2e_stats_observer");
 
     let mut observer =
         Client::with_settings(server.settings("e2e_stats_observer", "pw"));
@@ -3038,9 +3038,9 @@ fn watching_a_user_returns_their_status_and_share_counts() {
     watcher.connect().expect("watcher connect");
     assert!(watcher.login().expect("watcher login"));
 
-    // Let the subject's share counts reach the server before watching, so
-    // the reply describes a user it already knows the statistics for.
-    std::thread::sleep(Duration::from_millis(750));
+    // The subject's share counts have to reach the server before watching,
+    // so the reply describes a user it already knows the statistics for.
+    fence(&subject, "e2e_watch_watcher");
 
     watcher
         .watch_user("e2e_watch_subject")
@@ -3814,6 +3814,18 @@ fn await_room_event<T>(
     None
 }
 
+/// Wait until the server has handled everything `client` has sent, including
+/// requests it never answers: soulfind takes a connection's messages in order,
+/// so the answer to a question about `other` asked now comes after them.
+fn fence(client: &Client, other: &str) {
+    client.request_user_info(other).expect("ask about a user");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while client.user_info(other).is_none() {
+        assert!(Instant::now() < deadline, "the server should answer");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 #[test]
 fn a_ticker_set_in_a_room_reaches_the_other_members() {
     use soulseek_rs::types::RoomEvent;
@@ -3830,7 +3842,12 @@ fn a_ticker_set_in_a_room_reaches_the_other_members() {
 
     alice.join_room(room).expect("alice joins");
     bob.join_room(room).expect("bob joins");
-    std::thread::sleep(Duration::from_millis(500));
+    // A ticker reaches only who is in the room when it is set.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while bob.room_members(room).is_empty() {
+        assert!(Instant::now() < deadline, "bob should get into the room");
+        std::thread::sleep(Duration::from_millis(50));
+    }
     let _ = bob.take_room_events();
 
     alice
@@ -3874,11 +3891,15 @@ fn a_client_joining_later_receives_the_whole_ticker_board() {
     alice.connect().expect("alice connect");
     assert!(alice.login().expect("alice login"));
     alice.join_room(room).expect("alice joins");
-    std::thread::sleep(Duration::from_millis(300));
     alice
         .set_room_ticker(room, "standing message")
         .expect("set ticker");
-    std::thread::sleep(Duration::from_millis(500));
+    // The room, alice included, is told once the board holds it.
+    await_room_event(&alice, Duration::from_secs(5), |event| {
+        matches!(event, RoomEvent::TickerAdded { room: r, .. } if r == room)
+            .then_some(())
+    })
+    .expect("alice should see her ticker go up");
 
     // Carol joins afterwards and must be handed the board that already exists.
     let mut carol =
@@ -3919,7 +3940,7 @@ fn the_global_room_feed_carries_a_room_we_never_joined() {
 
     watcher.join_global_room().expect("join global room");
     talker.join_room(room).expect("talker joins a room");
-    std::thread::sleep(Duration::from_millis(500));
+    fence(&watcher, "e2e_global_talk");
     let _ = watcher.take_room_events();
 
     let body = "spoken where nobody is watching";
@@ -3943,7 +3964,7 @@ fn the_global_room_feed_carries_a_room_we_never_joined() {
 
     // And leaving the feed stops it: the next message must not arrive.
     watcher.leave_global_room().expect("leave global room");
-    std::thread::sleep(Duration::from_millis(500));
+    fence(&watcher, "e2e_global_talk");
     let _ = watcher.take_room_events();
     talker
         .say_in_room(room, "after leaving")
@@ -4009,7 +4030,16 @@ fn a_room_search_is_answered_by_the_rooms_members() {
     );
     sharer.join_room(room).expect("sharer joins");
     searcher.join_room(room).expect("searcher joins");
-    std::thread::sleep(Duration::from_millis(750));
+    // A room search goes to whoever is in the room when it is sent.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !searcher
+        .room_members(room)
+        .iter()
+        .any(|member| member == "e2e_rs_sharer")
+    {
+        assert!(Instant::now() < deadline, "both should get into the room");
+        std::thread::sleep(Duration::from_millis(50));
+    }
 
     let query = "relic";
     searcher.search_room(room, query).expect("room search");
@@ -4046,7 +4076,7 @@ fn shared_interests_make_two_users_similar() {
     alice
         .add_dislike("e2e_interest_muzak")
         .expect("alice dislikes something");
-    std::thread::sleep(Duration::from_millis(500));
+    fence(&bob, "e2e_like_alice");
 
     // Who else likes this item (code 112).
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -4140,7 +4170,7 @@ fn recommendations_are_returned_for_our_interests() {
     alice.add_interest(shared).expect("alice likes shared");
     bob.add_interest(shared).expect("bob likes shared");
     bob.add_interest(other).expect("bob likes other");
-    std::thread::sleep(Duration::from_millis(500));
+    fence(&bob, "e2e_rec_alice");
 
     let deadline = Instant::now() + Duration::from_secs(8);
     let mut recommended = Vec::new();
@@ -4635,7 +4665,8 @@ fn a_private_room_is_owned_granted_and_revoked() {
     owner
         .join_private_room(room)
         .expect("owner creates the room");
-    std::thread::sleep(Duration::from_millis(750));
+    // An invite reaches only a user already accepting invitations.
+    fence(&guest, "e2e_priv_owner");
 
     // The guest is invited, and hears about it (code 139).
     owner
@@ -4754,7 +4785,7 @@ fn a_private_room_someone_else_owns_cannot_be_taken() {
     owner
         .join_private_room(room)
         .expect("owner creates the room");
-    std::thread::sleep(Duration::from_millis(750));
+    fence(&owner, "e2e_taken_outsider");
 
     // An outsider asking for the same name must be refused (code 1003), not
     // handed the room.
@@ -4807,7 +4838,7 @@ fn an_acknowledged_offline_message_is_not_delivered_twice() {
     sender
         .send_private_message("e2e_ack_recipient", body)
         .expect("send to an offline user");
-    std::thread::sleep(Duration::from_millis(500));
+    fence(&sender, "e2e_ack_recipient");
 
     let received_once = |label: &str| -> bool {
         let mut client =
@@ -4825,7 +4856,9 @@ fn an_acknowledged_offline_message_is_not_delivered_twice() {
                 std::thread::sleep(Duration::from_millis(100));
             }
         }
-        std::thread::sleep(Duration::from_millis(500));
+        // The acknowledgement goes out ahead of the message it answers, so
+        // once the server has handled what followed, it has the ack too.
+        fence(&client, "e2e_ack_sender");
         got
     };
 
@@ -5379,7 +5412,7 @@ fn a_member_can_give_up_a_private_room_and_an_owner_can_disband_it() {
     owner
         .join_private_room(room)
         .expect("owner creates the room");
-    std::thread::sleep(Duration::from_millis(750));
+    fence(&guest, "e2e_leave_owner");
     owner
         .add_room_member(room, "e2e_leave_guest")
         .expect("owner invites the guest");
