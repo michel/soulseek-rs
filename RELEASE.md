@@ -29,9 +29,16 @@ Releases are automated by [release-plz](https://release-plz.dev). You do not run
      | `soulseek-rs-vX.Y.Z-aarch64-pc-windows-msvc.zip`       |                          |
 
    - rewrites `Formula/soulseek-rs.rb` in the `michel/homebrew-tap` repository so
-     `brew install michel/tap/soulseek-rs` picks up the new macOS and Linux archives.
+     `brew install michel/tap/soulseek-rs` picks up the new macOS and Linux archives,
+   - merges `master` back into `develop`, so the branch the work happens on carries the
+     new version and changelog rather than drifting behind them.
 
 Both crates always share one version, one tag, and one changelog — see `release-plz.toml`.
+
+The version lives in one place, `[workspace.package]` in the root `Cargo.toml`, and
+release-plz owns it. Do not edit it by hand on `develop`: the back-merge relies on
+`develop` never touching that line, and an edit there turns every release into a
+conflict.
 
 ## Nightly builds
 

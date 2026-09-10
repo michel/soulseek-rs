@@ -222,3 +222,47 @@ jobs:
             exit 1
           }
           gh workflow run formula.yml --repo michel/homebrew-tap
+
+  # release-plz writes the version bump and the changelog on master, and until
+  # now nothing carried them back: develop was still declaring 14.1.2 five
+  # releases after v14.1.2 shipped. Nightly builds the tip of develop, so every
+  # nightly binary reported a version that had not been current for weeks, and
+  # the changelog on the branch the work happens on stopped at v14.1.2.
+  #
+  # Hangs off `release` rather than `binaries` so the sync does not wait on six
+  # binary builds, and merges master whole rather than cherry-picking the bump
+  # so that the changelog comes along with it. develop never edits those lines
+  # itself, which is what keeps the merge clean; on the day it does conflict
+  # this job fails loudly and the merge wants doing by hand.
+  #
+  # Nothing in this repository triggers on a push to develop, so pushing here
+  # neither loops back into this workflow nor spends a CI run.
+  backmerge:
+    name: Back-merge into develop
+    needs: release
+    if: ${{ !cancelled() && needs.release.outputs.tag != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: develop
+          token: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Merge master into develop
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          # Spelled out rather than read from master's tip: this history carries
+          # one person's attribution, and whoever happened to click merge on the
+          # release PR is not the right source for it.
+          git config user.name "Michel de Graaf"
+          git config user.email "michel@re-invention.nl"
+          # checkout was pointed at develop, and which other tracking refs it
+          # leaves behind is its own business — ask for master by name.
+          git fetch origin master
+          # A manual binary rebuild reaches this job with develop already
+          # containing master; git says "Already up to date" and the push is a
+          # no-op, so the dispatch path needs no guard of its own.
+          git merge --no-ff origin/master -m "merge: back-merge $TAG into develop"
+          git push origin develop
