@@ -216,6 +216,11 @@ config file; they print nothing. With a daemon running they also update it in
 place, so the folder is on the network at once rather than after a restart.
 **`shares status`** and **`shares reindex`** — `folders`, `files`,
 `directories`, counted by logging in and scanning.
+**`shares files [--filter <text>]`** — the index file by file, in the same
+records `browse` emits for a peer (`user`, `directory`, `path`, `size`,
+`bitrate`, `duration`), so what the network sees of this account can be diffed
+against what it sees of anyone else. Use it to check that a folder is really
+being served before blaming the network.
 
 **`config path`**, **`config list`**, **`config get <key>`**, and
 **`config set <key> <value>`** — `key`, `value`.

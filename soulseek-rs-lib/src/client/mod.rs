@@ -1474,6 +1474,17 @@ impl Client {
             .unwrap_or_default()
     }
 
+    /// The share index as a peer receives it: the same directory listing
+    /// `GetShareFileList` answers with, so what this returns is what the
+    /// network sees.
+    #[must_use]
+    pub fn shared_listing(&self) -> Vec<crate::message::peer::SharedDirectory> {
+        self.context
+            .read_safe()
+            .map(|ctx| ctx.shares.directories())
+            .unwrap_or_default()
+    }
+
     /// `(folders, files)` currently shared with peers.
     #[must_use]
     pub fn shared_counts(&self) -> (u32, u32) {

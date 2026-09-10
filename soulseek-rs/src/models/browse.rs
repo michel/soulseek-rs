@@ -332,6 +332,9 @@ pub enum BrowseStatus {
 /// UI state for browsing one user.
 pub struct BrowseState {
     pub username: String,
+    /// This session's own share index rather than a peer's: filled from the
+    /// local index, re-indexed rather than re-requested, and not downloadable.
+    pub own: bool,
     pub status: BrowseStatus,
     pub tree: Vec<BrowseNode>,
     expanded: HashSet<String>,
@@ -356,6 +359,7 @@ impl BrowseState {
     pub fn loading(username: String) -> Self {
         Self {
             username,
+            own: false,
             status: BrowseStatus::Loading,
             tree: Vec::new(),
             expanded: HashSet::new(),
@@ -367,6 +371,15 @@ impl BrowseState {
             file_count: 0,
             folder_count: 0,
             requested_at: Instant::now(),
+        }
+    }
+
+    /// An empty view of this session's own shares, waiting for the index.
+    #[must_use]
+    pub fn loading_own(username: String) -> Self {
+        Self {
+            own: true,
+            ..Self::loading(username)
         }
     }
 
@@ -528,7 +541,10 @@ impl BrowseTabs {
     /// `true` if the caller should (re)issue a browse request — i.e. the tab is
     /// new or was retried after a timeout.
     pub fn open(&mut self, username: &str) -> bool {
-        if let Some(idx) = self.tabs.iter().position(|t| t.username == username)
+        if let Some(idx) = self
+            .tabs
+            .iter()
+            .position(|t| !t.own && t.username == username)
         {
             self.active = idx;
             // Re-request only if the previous attempt gave up.
@@ -543,6 +559,40 @@ impl BrowseTabs {
             self.active = self.tabs.len() - 1;
             true
         }
+    }
+
+    /// Where this session's own share tab sits, if it is open.
+    #[must_use]
+    pub fn own_index(&self) -> Option<usize> {
+        self.tabs.iter().position(|tab| tab.own)
+    }
+
+    /// Focus the tab showing this session's own shares, opening it if it is
+    /// not there yet. Returns `true` when it still needs its listing.
+    pub fn open_own(&mut self, username: &str) -> bool {
+        if let Some(idx) = self.own_index() {
+            self.active = idx;
+            return false;
+        }
+        self.tabs
+            .push(BrowseState::loading_own(username.to_string()));
+        self.active = self.tabs.len() - 1;
+        true
+    }
+
+    /// Whether the focused tab is this session's own share index.
+    #[must_use]
+    pub fn active_is_own(&self) -> bool {
+        self.active_tab().is_some_and(|tab| tab.own)
+    }
+
+    /// Who the active tab's files would be downloaded from, if anyone. The
+    /// own tab names nobody: its files are already on this disk.
+    #[must_use]
+    pub fn download_target(&self) -> Option<&str> {
+        self.active_tab()
+            .filter(|tab| !tab.own)
+            .map(|tab| tab.username.as_str())
     }
 
     /// Retry the active tab if it timed out: reset it to loading and return the
@@ -738,6 +788,29 @@ mod tests {
         assert_eq!(tabs.tabs.len(), 1);
         assert!(!tabs.close_active());
         assert!(tabs.is_empty());
+    }
+
+    #[test]
+    fn the_own_tab_is_opened_once_and_is_not_a_peer_of_the_same_name() {
+        let mut tabs = BrowseTabs::new();
+        // The first open needs a listing; focusing it again does not.
+        assert!(tabs.open_own("tester"));
+        assert!(!tabs.open_own("tester"));
+        assert_eq!(tabs.tabs.len(), 1);
+        assert_eq!(tabs.own_index(), Some(0));
+        assert!(tabs.active_tab().expect("tab").own);
+
+        // Browsing the account's own name over the network is a separate
+        // tab: the own tab holds the local index, not a peer's answer.
+        assert!(tabs.open("tester"));
+        assert_eq!(tabs.tabs.len(), 2);
+        assert!(!tabs.active_tab().expect("tab").own);
+        assert_eq!(tabs.own_index(), Some(0));
+
+        // The peer of that name is downloadable; we are not.
+        assert_eq!(tabs.download_target(), Some("tester"));
+        tabs.active = 0;
+        assert_eq!(tabs.download_target(), None);
     }
 
     #[test]

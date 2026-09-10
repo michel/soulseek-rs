@@ -163,6 +163,28 @@ pub fn shares_status(ctx: &Ctx) -> CliResult {
     Ok(())
 }
 
+/// List the share index file by file, in the same records `browse` emits for
+/// a peer — so what the network sees of us can be read, and diffed, exactly
+/// the way it is read of anyone else.
+pub fn shares_files(ctx: &Ctx, filter: Option<&str>) -> CliResult {
+    let session = Session::open(ctx)?;
+    let needle = filter.map(str::to_lowercase);
+    let found = super::social::emit_listing(
+        ctx,
+        &session.client.username(),
+        &session.client.shared_listing(),
+        needle.as_deref(),
+    );
+
+    if found == 0 {
+        return Err(CliError::no_results(match filter {
+            Some(filter) => format!("no shared file matches '{filter}'"),
+            None => "no files are indexed".to_string(),
+        }));
+    }
+    Ok(())
+}
+
 /// Re-scan the configured folders in a live session, so files added since the
 /// last run become visible without waiting for the next one.
 pub fn shares_reindex(ctx: &Ctx) -> CliResult {

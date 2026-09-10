@@ -113,6 +113,7 @@ wire_vocabulary! {
         UserWatched => "user.watched",
         AccountPassword => "account.password",
         SharesStatusOf => "shares.status",
+        SharesFiles => "shares.files",
         SharesSet => "shares.set",
         SharesReindex => "shares.reindex",
     }

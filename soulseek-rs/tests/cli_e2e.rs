@@ -2299,6 +2299,87 @@ fn shares_status_reports_what_the_network_will_see() {
     assert!(record["folders"].as_u64().is_some_and(|n| n >= 1));
 }
 
+/// The index, file by file, in the records `browse` gives for a peer — the
+/// point being that the two are comparable: what the network sees of us
+/// reads exactly like what it sees of anyone else.
+#[test]
+fn shares_files_lists_the_index_as_a_peer_would_receive_it() {
+    let server = server_or_skip!();
+    let share = Scratch::new("share");
+    std::fs::create_dir_all(share.path().join("album")).expect("subfolder");
+    std::fs::write(share.path().join("top.bin"), probe_bytes())
+        .expect("share file");
+    std::fs::write(share.path().join("album").join("deep.bin"), probe_bytes())
+        .expect("share file");
+
+    let listed = cli(
+        &server,
+        "cli_e2e_share_files",
+        &[
+            "--shared-dir",
+            &share.display(),
+            "--json",
+            "shares",
+            "files",
+        ],
+    );
+    assert_eq!(code(&listed), EXIT_OK, "stderr: {}", stderr(&listed));
+
+    let paths: Vec<String> = records(&listed)
+        .iter()
+        .map(|line| {
+            serde_json::from_str::<serde_json::Value>(line).expect("JSON")
+                ["path"]
+                .as_str()
+                .expect("a path")
+                .to_string()
+        })
+        .collect();
+    assert_eq!(paths.len(), 2, "both files, got {paths:?}");
+    assert!(
+        paths.iter().any(|p| p.ends_with("album\\deep.bin")),
+        "the nested file carries the backslash path peers download by: \
+         {paths:?}"
+    );
+
+    let first = json_record(&listed);
+    assert_eq!(first["user"], "cli_e2e_share_files");
+    assert!(first["size"].as_u64().is_some_and(|size| size > 0));
+
+    // The filter narrows to matching paths, and finding nothing is exit 4
+    // rather than an empty success.
+    let narrowed = cli(
+        &server,
+        "cli_e2e_share_files",
+        &[
+            "--shared-dir",
+            &share.display(),
+            "--json",
+            "shares",
+            "files",
+            "--filter",
+            "DEEP",
+        ],
+    );
+    assert_eq!(code(&narrowed), EXIT_OK, "stderr: {}", stderr(&narrowed));
+    assert_eq!(records(&narrowed).len(), 1, "case-insensitively");
+
+    let missing = cli(
+        &server,
+        "cli_e2e_share_files",
+        &[
+            "--shared-dir",
+            &share.display(),
+            "--json",
+            "shares",
+            "files",
+            "--filter",
+            "nothing-like-this",
+        ],
+    );
+    assert_eq!(code(&missing), EXIT_NO_RESULTS);
+}
+
 #[test]
 fn shares_reindex_picks_up_a_file_added_after_startup() {
     let server = server_or_skip!();

@@ -144,6 +144,12 @@ impl MainTui {
                 self.open_settings();
                 return;
             }
+            // The same tree a peer gets, from our own index: what we look
+            // like to the network, rather than what we meant to share.
+            KeyCode::Char('B') => {
+                self.show_own_shares();
+                return;
+            }
             KeyCode::Char('b') => {
                 // From a highlighted search result, browse its owner directly;
                 // otherwise prompt for a username.

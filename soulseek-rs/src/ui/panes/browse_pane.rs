@@ -63,7 +63,8 @@ fn render_browse_tabs(frame: &mut Frame, area: Rect, tabs: &BrowseTabs) {
         } else {
             dimmed_style()
         };
-        spans.push(Span::styled(format!(" {} ", tab.username), style));
+        let you = if tab.own { " (you)" } else { "" };
+        spans.push(Span::styled(format!(" {}{you} ", tab.username), style));
         spans.push(Span::raw(" "));
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -78,24 +79,33 @@ fn render_browse_one(
     spinner_state: usize,
     downloads: &[DownloadEntry],
 ) {
+    // Our own index is not downloadable and re-scans instead of re-asking,
+    // so it names itself and offers its own keys.
+    let heading = if browse.own {
+        "My shares".to_string()
+    } else {
+        format!("Browse {}", browse.username)
+    };
     let title = match browse.status {
         BrowseStatus::Loaded => {
+            let keys = if browse.own {
+                "/: filter, r: re-index, o: folders, w: close, Esc: hide"
+            } else {
+                "Enter/d: download, /: filter, Tab: user, w: close, Esc: hide"
+            };
             let shown =
                 browse.rows().iter().filter(|row| !row.is_folder).count();
             filter_title(
-                &format!(
-                    "Browse {} — {shown}/{} files",
-                    browse.username, browse.file_count
-                ),
+                &format!("{heading} — {shown}/{} files", browse.file_count),
                 browse.filter(),
                 browse.filtering,
                 &format!(
-                    " Browse {} — {} files, {} folders  (Enter/d: download, /: filter, Tab: user, w: close, Esc: hide) ",
-                    browse.username, browse.file_count, browse.folder_count
+                    " {heading} — {} files, {} folders  ({keys}) ",
+                    browse.file_count, browse.folder_count
                 ),
             )
         }
-        _ => format!(" Browse {} ", browse.username),
+        _ => format!(" {heading} "),
     };
     let block = pane_block(true).title(title);
 
@@ -112,7 +122,12 @@ fn render_browse_one(
             );
         }
         BrowseStatus::Empty => {
-            let text = format!("{} is not sharing any files.", browse.username);
+            let text = if browse.own {
+                "You are not sharing any files. Press o to add a folder."
+                    .to_string()
+            } else {
+                format!("{} is not sharing any files.", browse.username)
+            };
             frame.render_widget(
                 Paragraph::new(text).style(dimmed_style()).block(block),
                 area,
@@ -333,14 +348,17 @@ mod tests {
         }
     }
 
-    fn screen_with(downloads: &[DownloadEntry]) -> String {
-        let mut browse = BrowseState::loading("bob".to_string());
-        browse.load(&[share()]);
+    /// One tab drawn onto a `width`-wide buffer.
+    fn screen(
+        browse: BrowseState,
+        downloads: &[DownloadEntry],
+        width: u16,
+    ) -> String {
         let mut tabs = BrowseTabs::default();
         tabs.tabs.push(browse);
         let mut state = TableState::default();
         let mut terminal =
-            Terminal::new(TestBackend::new(60, 8)).expect("backend");
+            Terminal::new(TestBackend::new(width, 8)).expect("backend");
         terminal
             .draw(|frame| {
                 render_browse_pane(
@@ -354,6 +372,12 @@ mod tests {
             })
             .expect("draw");
         terminal.backend().to_string()
+    }
+
+    fn screen_with(downloads: &[DownloadEntry]) -> String {
+        let mut browse = BrowseState::loading("bob".to_string());
+        browse.load(&[share()]);
+        screen(browse, downloads, 60)
     }
 
     #[test]
@@ -422,6 +446,34 @@ mod tests {
             "{screen}"
         );
         assert!(!screen.contains(GLYPH_ACTIVE), "{screen}");
+    }
+
+    /// The own tab, rendered with `directories` as its index. Wider than the
+    /// peer screens because the title carries the keys it offers.
+    fn own_screen(directories: &[SharedDirectory]) -> String {
+        let mut browse = BrowseState::loading_own("tester".to_string());
+        browse.load(directories);
+        screen(browse, &[], 90)
+    }
+
+    #[test]
+    fn the_own_tab_names_itself_and_offers_no_download() {
+        let screen = own_screen(&[share()]);
+        assert!(screen.contains("My shares"), "{screen}");
+        assert!(!screen.contains("Browse tester"), "{screen}");
+        assert!(screen.contains("re-index"), "r re-scans instead: {screen}");
+        assert!(
+            !screen.contains("download"),
+            "nothing here is downloadable from ourselves: {screen}"
+        );
+        assert!(screen.contains("plain.mp3"), "the tree still shows");
+    }
+
+    #[test]
+    fn sharing_nothing_says_how_to_start() {
+        let screen = own_screen(&[]);
+        assert!(screen.contains("not sharing any files"), "{screen}");
+        assert!(screen.contains("Press o to add a folder"), "{screen}");
     }
 
     #[test]

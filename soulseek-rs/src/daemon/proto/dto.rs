@@ -770,6 +770,26 @@ impl From<&SharedDirectory> for SharedDirectoryDto {
     }
 }
 
+/// The same, consuming the listing. The daemon owns what `shared_listing`
+/// hands it and drops it straight after, so copying every name and attribute
+/// out of it would double the cost of answering `shares.files`.
+impl From<SharedDirectory> for SharedDirectoryDto {
+    fn from(directory: SharedDirectory) -> Self {
+        Self {
+            name: directory.name,
+            files: directory
+                .files
+                .into_iter()
+                .map(|file| SharedFileEntryDto {
+                    name: file.name,
+                    size: file.size,
+                    attributes: file.attributes,
+                })
+                .collect(),
+        }
+    }
+}
+
 impl From<SharedDirectoryDto> for SharedDirectory {
     fn from(dto: SharedDirectoryDto) -> Self {
         Self {

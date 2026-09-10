@@ -126,6 +126,41 @@ fn finished(tui: &MainTui, _: &str) -> bool {
     tui.state().searches[0].status == SearchStatus::Completed
 }
 
+/// The window's answer to "am I actually sharing that?", against a real
+/// scan of a real folder rather than a stand-in listing.
+#[test]
+fn shift_b_shows_the_scanned_index_the_way_a_peer_would_get_it() {
+    let server = server_or_skip!();
+
+    let share = tempfile::tempdir().expect("share dir");
+    std::fs::create_dir_all(share.path().join("album")).expect("subfolder");
+    std::fs::write(
+        share.path().join("album").join("tui_probe_own.bin"),
+        [3u8; 32],
+    )
+    .expect("share file");
+
+    let state = tempfile::tempdir().expect("state dir");
+    let downloads = tempfile::tempdir().expect("download dir");
+    let me = Arc::new(server.client(
+        "tui_e2e_own_shares",
+        vec![share.path().display().to_string()],
+    ));
+    let mut window = Window::open(me, state.path(), downloads.path());
+
+    window.press(KeyCode::Char('B'));
+    window.press(KeyCode::Char('L'));
+    let screen = window.frame();
+    assert!(screen.contains("My shares"), "{screen}");
+    assert!(
+        screen.contains("album") && screen.contains("tui_probe_own.bin"),
+        "the scanned tree, folder by folder:\n{screen}"
+    );
+
+    window.press(KeyCode::Esc);
+    assert!(!window.tui.state().show_browse, "Esc hides the popup");
+}
+
 #[test]
 fn shift_s_runs_a_restored_query_again_and_the_answers_land_on_screen() {
     let server = server_or_skip!();

@@ -168,6 +168,10 @@ pub trait SessionApi: Send + Sync {
     fn shared_counts(&self) -> (u32, u32);
     // aislop-ignore-next-line complexity/function-too-long -- same scanner bug: bodyless signature measured to EOF. One line.
     fn shared_directories(&self) -> Vec<String>;
+    /// The share index in the shape a peer receives it, for showing this
+    /// session's own files exactly as the network sees them.
+    // aislop-ignore-next-line complexity/function-too-long -- same scanner bug: bodyless signature measured to EOF. One line.
+    fn shared_listing(&self) -> Vec<SharedDirectory>;
     // aislop-ignore-next-line complexity/function-too-long -- same scanner bug: bodyless signature measured to EOF. One line.
     fn set_shared_directories(&self, directories: Vec<String>) -> Result<()>;
 
@@ -414,6 +418,10 @@ impl SessionApi for Client {
 
     fn shared_directories(&self) -> Vec<String> {
         Self::shared_directories(self)
+    }
+
+    fn shared_listing(&self) -> Vec<SharedDirectory> {
+        Self::shared_listing(self)
     }
 
     fn set_shared_directories(&self, directories: Vec<String>) -> Result<()> {

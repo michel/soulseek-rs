@@ -14,8 +14,8 @@ use super::proto::{
     Downloads, Event, IntervalSeconds, MemberStats, Members, MessageParams,
     Messages, Method, PasswordParams, QueryParams, RoomEventDto, RoomRef,
     SayParams, SearchResults, Searches, Seconds, SessionLossEvent,
-    SharesStatus, SlotsParams, TransferRef, UploadInfoDto, Uploads,
-    UserMessageDto, UserRef, UserResult, Watched,
+    SharedListing, SharesStatus, SlotsParams, TransferRef, UploadInfoDto,
+    Uploads, UserMessageDto, UserRef, UserResult, Watched,
 };
 use schemars::{JsonSchema, SchemaGenerator, generate::SchemaSettings};
 use serde_json::{Value, json};
@@ -74,6 +74,7 @@ fn params_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         | Method::MessageHistory
         | Method::SearchList
         | Method::SharesStatusOf
+        | Method::SharesFiles
         | Method::SharesReindex
         | Method::UserWatched => json!({ "type": "null" }),
     }
@@ -102,6 +103,7 @@ fn result_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         Method::SharesStatusOf | Method::SharesSet | Method::SharesReindex => {
             schema_of::<SharesStatus>(generator)
         }
+        Method::SharesFiles => schema_of::<SharedListing>(generator),
         // Everything else acknowledges and says nothing more.
         Method::DaemonStop
         | Method::SearchStart
@@ -212,6 +214,9 @@ fn summary(method: Method) -> &'static str {
         }
         Method::UserInfoOf => "What the server has said about a user so far.",
         Method::SharesStatusOf => "What the share index currently holds.",
+        Method::SharesFiles => {
+            "Every indexed file, in the listing a browsing peer receives."
+        }
         Method::SharesSet => "Replace the shared folders and re-index.",
         Method::SharesReindex => "Re-scan the configured folders.",
     }

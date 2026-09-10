@@ -407,6 +407,13 @@ pub enum SharesCommand {
         directory: String,
     },
 
+    /// List every indexed file, the way `browse` lists a peer's
+    Files {
+        /// Only paths containing this text, case-insensitively
+        #[arg(long)]
+        filter: Option<String>,
+    },
+
     /// Re-index the shares and report what the network will see
     Reindex,
 

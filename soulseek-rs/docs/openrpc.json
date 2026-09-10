@@ -1243,6 +1243,21 @@
         ],
         "type": "object"
       },
+      "SharedListing": {
+        "description": "This session's own share index, as a peer receives it — what\n`shares.files` answers with.",
+        "properties": {
+          "directories": {
+            "items": {
+              "$ref": "#/components/schemas/SharedDirectoryDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "directories"
+        ],
+        "type": "object"
+      },
       "SharesStatus": {
         "description": "What the share index holds, from `shares.status` / `shares.reindex`.",
         "properties": {
@@ -2360,6 +2375,18 @@
         }
       },
       "summary": "What the share index currently holds."
+    },
+    {
+      "name": "shares.files",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SharedListing"
+        }
+      },
+      "summary": "Every indexed file, in the listing a browsing peer receives."
     },
     {
       "name": "shares.set",

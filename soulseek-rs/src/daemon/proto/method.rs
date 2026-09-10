@@ -212,6 +212,14 @@ pub struct BrowseEvent {
     pub directories: Vec<SharedDirectoryDto>,
 }
 
+/// This session's own share index, as a peer receives it — what
+/// `shares.files` answers with.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct SharedListing {
+    pub directories: Vec<SharedDirectoryDto>,
+}
+
 /// One step in a transfer this client started.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]

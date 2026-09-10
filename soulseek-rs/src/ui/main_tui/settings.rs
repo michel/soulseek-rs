@@ -128,6 +128,7 @@ impl MainTui {
             }
         }
         self.set_settings_status(status);
+        self.load_own_shares();
     }
 
     /// Bring the account block's share count back in step, and hand the same
@@ -147,14 +148,22 @@ impl MainTui {
     }
 
     /// Re-scan the current share paths (picks up files changed on disk).
-    fn reindex_shares(&mut self) {
+    // ponytail: the scan runs on the UI thread, so a very large share set
+    // freezes the window for its duration. Move it to a worker if that bites.
+    pub(super) fn reindex_shares(&mut self) {
         let dirs = self.client.shared_directories();
         let result = self.client.set_shared_directories(dirs);
-        let counts = self.refresh_share_counts();
-        self.set_settings_status(match result {
-            Ok(()) => format!("Re-indexed · sharing {counts}"),
-            Err(e) => format!("Re-index failed: {e}"),
-        });
+        // Only the settings pane shows these, and `r` in the share view
+        // calls us with the pane closed — where the counts would be a
+        // round-trip against the daemon for a string nobody reads.
+        if self.state.settings.is_some() {
+            let counts = self.refresh_share_counts();
+            self.set_settings_status(match result {
+                Ok(()) => format!("Re-indexed · sharing {counts}"),
+                Err(e) => format!("Re-index failed: {e}"),
+            });
+        }
+        self.load_own_shares();
     }
 
     fn share_counts(&self) -> String {

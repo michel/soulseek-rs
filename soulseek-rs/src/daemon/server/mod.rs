@@ -13,8 +13,9 @@ use super::proto::{
     MemberStats, Members, MessageParams, Messages, Method, OPENRPC,
     PROTOCOL_VERSION, PasswordParams, QueryParams, RoomRef, RoomUserStatsDto,
     RpcError, SayParams, SearchResultDto, SearchResults, SearchSummary,
-    Searches, Seconds, SharesStatus, SlotsParams, TransferRef, UploadInfoDto,
-    Uploads, UserInfoDto, UserRef, UserResult, Watched,
+    Searches, Seconds, SharedDirectoryDto, SharedListing, SharesStatus,
+    SlotsParams, TransferRef, UploadInfoDto, Uploads, UserInfoDto, UserRef,
+    UserResult, Watched,
 };
 use crate::api::SessionApi;
 use crate::output::Exit;
@@ -372,6 +373,14 @@ impl Daemon {
             }
 
             Method::SharesStatusOf => ok(self.shares()),
+            Method::SharesFiles => ok(SharedListing {
+                directories: self
+                    .session
+                    .shared_listing()
+                    .into_iter()
+                    .map(SharedDirectoryDto::from)
+                    .collect(),
+            }),
             Method::SharesSet => {
                 let directories: DirectoriesParams = parse(params)?;
                 self.session
@@ -1017,6 +1026,9 @@ mod tests {
         }
         fn shared_counts(&self) -> (u32, u32) {
             (0, 0)
+        }
+        fn shared_listing(&self) -> Vec<soulseek_rs::SharedDirectory> {
+            Vec::new()
         }
         fn shared_directories(&self) -> Vec<String> {
             Vec::new()

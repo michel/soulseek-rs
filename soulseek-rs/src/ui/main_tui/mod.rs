@@ -297,6 +297,8 @@ mod tests {
         shares_set: std::sync::Mutex<Option<Vec<String>>>,
         /// What `change_password` was last asked for, if anything.
         password_set: std::sync::Mutex<Option<String>>,
+        /// The share index this session serves to peers.
+        listing: std::sync::Mutex<Vec<soulseek_rs::SharedDirectory>>,
         download_cancelled: std::sync::Mutex<Vec<(String, String)>>,
         upload_cancelled: std::sync::Mutex<Vec<(String, String)>>,
         download_removed: std::sync::Mutex<Vec<(String, String)>>,
@@ -558,6 +560,9 @@ mod tests {
             *self.password_set.lock().expect("not poisoned") =
                 Some(password.to_string());
             Ok(())
+        }
+        fn shared_listing(&self) -> Vec<soulseek_rs::SharedDirectory> {
+            self.listing.lock().expect("not poisoned").clone()
         }
         fn shared_directories(&self) -> Vec<String> {
             Vec::new()
@@ -1900,6 +1905,68 @@ mod tests {
             .load(&listing);
         tui.state.show_browse = true;
         let _ = screen_of(tui);
+    }
+
+    #[test]
+    fn shift_b_shows_what_this_session_shares_and_r_re_indexes_it() {
+        let session = Arc::new(TalkativeSession::default());
+        *session.listing.lock().expect("not poisoned") =
+            vec![soulseek_rs::SharedDirectory {
+                name: "Music\\Album".to_string(),
+                files: vec![soulseek_rs::SharedFileEntry {
+                    name: "track.mp3".to_string(),
+                    size: 4096,
+                    attributes: Vec::new(),
+                }],
+            }];
+        let mut tui = attach(session.clone());
+
+        press(&mut tui, KeyCode::Char('B'));
+        assert!(tui.state.show_browse, "the popup opens");
+        let tab = tui.state.browse.active_tab().expect("tab");
+        assert!(tab.own, "on this session's own index");
+        assert_eq!(tab.username, "tester");
+        assert_eq!(tab.file_count, 1);
+        let screen = screen_of(&mut tui);
+        assert!(screen.contains("My shares"), "{screen}");
+        press(&mut tui, KeyCode::Char('L'));
+        let screen = screen_of(&mut tui);
+        assert!(
+            screen.contains("Album") && screen.contains("track.mp3"),
+            "the virtual path a peer would see, folder by folder: {screen}"
+        );
+
+        // Nothing here is downloadable from ourselves.
+        press(&mut tui, KeyCode::Char('d'));
+        assert!(tui.state.downloads.is_empty());
+
+        // `r` re-scans the disk rather than re-asking a peer, and the tab
+        // picks up what the fresh scan found.
+        session.listing.lock().expect("not poisoned").clear();
+        press(&mut tui, KeyCode::Char('r'));
+        assert!(
+            session.shares_set.lock().expect("not poisoned").is_some(),
+            "the session was asked to re-index"
+        );
+        assert_eq!(
+            tui.state.browse.active_tab().expect("tab").file_count,
+            0,
+            "the view follows the new index"
+        );
+
+        // A second B focuses the tab it already opened.
+        press(&mut tui, KeyCode::Esc);
+        press(&mut tui, KeyCode::Char('B'));
+        assert_eq!(tui.state.browse.tabs.len(), 1);
+    }
+
+    #[test]
+    fn o_leaves_the_share_view_for_the_folders_that_feed_it() {
+        let mut tui = attach(Arc::new(TalkativeSession::default()));
+        press(&mut tui, KeyCode::Char('B'));
+        press(&mut tui, KeyCode::Char('o'));
+        assert!(!tui.state.show_browse, "the popup steps aside");
+        assert!(tui.state.settings.is_some(), "for the settings pane");
     }
 
     #[test]

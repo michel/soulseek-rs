@@ -167,6 +167,9 @@ pub fn run(mut cli: Cli, out: &Out) -> CliResult {
         Commands::Shares(SharesCommand::Status) => {
             crate::commands::settings::shares_status(&ctx)
         }
+        Commands::Shares(SharesCommand::Files { ref filter }) => {
+            crate::commands::settings::shares_files(&ctx, filter.as_deref())
+        }
         Commands::Shares(SharesCommand::Reindex) => {
             crate::commands::settings::shares_reindex(&ctx)
         }

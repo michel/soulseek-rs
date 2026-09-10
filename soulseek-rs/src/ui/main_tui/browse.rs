@@ -54,11 +54,26 @@ impl MainTui {
                 self.sync_browse_selection();
                 return;
             }
+            KeyCode::Char('B') => {
+                self.show_own_shares();
+                return;
+            }
+            KeyCode::Char('r') if self.state.browse.active_is_own() => {
+                self.reindex_shares();
+                return;
+            }
             KeyCode::Char('r') => {
                 // Retry a timed-out browse.
                 if let Some(username) = self.state.browse.retry_active() {
                     let _ = self.client.browse_user(&username);
                 }
+                return;
+            }
+            // The shared folders themselves are the settings pane's business,
+            // so adding or dropping one is a keystroke away from seeing it.
+            KeyCode::Char('o') if self.state.browse.active_is_own() => {
+                self.state.show_browse = false;
+                self.open_settings();
                 return;
             }
             _ => {}
@@ -192,9 +207,11 @@ impl MainTui {
     }
 
     /// Queue downloads of `files` (path, size) from the active browse tab's user.
+    ///
+    /// Our own shares are already on this disk, so the own tab queues nothing.
     fn queue_browse_files(&mut self, files: Vec<(String, u64)>) {
         let Some(username) =
-            self.state.browse.active_tab().map(|b| b.username.clone())
+            self.state.browse.download_target().map(str::to_string)
         else {
             return;
         };
@@ -237,6 +254,31 @@ impl MainTui {
             let _ = self.client.browse_user(&username);
         }
         self.state.show_browse = true;
+        self.sync_browse_selection();
+    }
+
+    /// Open (or focus) the view of what this session shares, filled from the
+    /// index the network is served from.
+    pub(super) fn show_own_shares(&mut self) {
+        if self.state.browse.open_own(&self.client.username()) {
+            self.load_own_shares();
+        }
+        self.state.show_browse = true;
+        self.sync_browse_selection();
+    }
+
+    /// Put a fresh copy of the share index into the own tab, if it is open.
+    /// A re-index or an added folder would otherwise leave it showing what
+    /// the network saw a scan ago.
+    pub(super) fn load_own_shares(&mut self) {
+        // The early return matters: without an own tab there is nothing to
+        // fill, and against a daemon asking anyway is a whole index over the
+        // socket for nobody.
+        let Some(idx) = self.state.browse.own_index() else {
+            return;
+        };
+        let listing = self.client.shared_listing();
+        self.state.browse.tabs[idx].load(&listing);
         self.sync_browse_selection();
     }
 

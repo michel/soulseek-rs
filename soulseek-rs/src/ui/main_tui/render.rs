@@ -39,6 +39,7 @@ const HELP_LEFT: &[(&str, &[(&str, &str)])] = &[
         &[
             ("s", "search the network"),
             ("b", "browse a user's files"),
+            ("B", "browse what you share yourself"),
             ("m", "compose a private message"),
             ("i", "inbox"),
             ("o", "settings"),
@@ -121,7 +122,8 @@ const HELP_RIGHT: &[(&str, &[(&str, &str)])] = &[
             ("/", "filter by path, Enter keeps it, Esc clears"),
             ("Enter", "open a folder, or download a file"),
             ("d", "download a file, or a folder's files"),
-            ("r", "ask again after a timeout"),
+            ("r", "ask again after a timeout, re-index your own"),
+            ("o", "shared folders (your own tab)"),
         ],
     ),
 ];
@@ -730,19 +732,35 @@ impl MainTui {
                 // Typing goes to the filter, so no letter keys are on offer.
                 filter_keys(&[("↑/↓", "navigate"), ("PgUp/PgDn", "page")])
             } else {
-                vec![
+                // Nothing of ours is downloadable from ourselves, and `r`
+                // re-scans the disk instead of re-asking a peer.
+                let acts = if self.state.browse.active_is_own() {
+                    [
+                        ("Enter", "open folder"),
+                        ("r", "re-index"),
+                        ("o", "shared folders"),
+                    ]
+                } else {
+                    [
+                        ("Enter", "open/download"),
+                        ("d", "download folder"),
+                        ("r", "retry"),
+                    ]
+                };
+                let mut keys = vec![
                     ("↑↓", "move"),
                     ("J/K", "next/prev folder"),
                     ("→←", "expand/collapse"),
                     ("H/L", "collapse/expand all"),
                     ("/", "filter"),
-                    ("Enter", "open/download"),
-                    ("d", "download folder"),
+                ];
+                keys.extend(acts);
+                keys.extend([
                     ("Tab", "switch user"),
-                    ("r", "retry"),
                     ("w", "close tab"),
                     ("Esc", "hide"),
-                ]
+                ]);
+                keys
             }
         } else if self.state.command_bar_active {
             match self.state.command_bar_mode {
