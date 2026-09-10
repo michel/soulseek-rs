@@ -40,6 +40,25 @@ fn the_room_roster_follows_the_joins_and_leaves_the_server_reports() {
 }
 
 #[test]
+fn a_join_announced_before_the_member_list_does_not_start_a_roster() {
+    // soulfind tells a room about a joiner, the joiner included, before it
+    // sends them the member list. A roster started from that echo reads as a
+    // room holding nobody else.
+    let mut context = ClientContext::new();
+    context.apply_room_event(RoomEvent::UserJoined {
+        room: "lobby".to_string(),
+        username: "me".to_string(),
+    });
+    assert!(context.room_members("lobby").is_empty());
+
+    context.apply_room_event(RoomEvent::Joined {
+        room: "lobby".to_string(),
+        users: vec!["me".to_string(), "alice".to_string()],
+    });
+    assert_eq!(context.room_members("lobby"), ["alice", "me"]);
+}
+
+#[test]
 fn a_user_joining_twice_is_listed_once() {
     let mut context = ClientContext::new();
     context.apply_room_event(RoomEvent::Joined {

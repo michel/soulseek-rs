@@ -2418,7 +2418,12 @@ fn room_users_lists_who_is_in_the_room() {
     let server = server_or_skip!();
     let resident = server.client("cli_e2e_resident", Vec::new());
     resident.join_room("cli_e2e_roster").expect("join");
-    settle();
+    // The member list reaches the resident once the server has them in.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while resident.room_members("cli_e2e_roster").is_empty() {
+        assert!(Instant::now() < deadline, "the resident never got in");
+        std::thread::sleep(Duration::from_millis(50));
+    }
 
     let output = cli(
         &server,
