@@ -76,38 +76,51 @@ impl TestServer {
     }
 
     /// Spawn a local soulfind on an ephemeral port with a throwaway database.
+    ///
+    /// soulfind exits if its port is taken between `free_port()` handing it
+    /// out and soulfind binding it, so a child that dies is retried on a
+    /// fresh port rather than read as a missing server.
     fn spawn(gate: std::sync::MutexGuard<'static, ()>) -> Option<Self> {
         let bin = soulfind_binary()?;
-        let port = free_port()?;
-        let db = std::env::temp_dir().join(format!("soulfind-e2e-{port}.db"));
-        let _ = std::fs::remove_file(&db);
+        for _ in 0..3 {
+            let port = free_port()?;
+            let db =
+                std::env::temp_dir().join(format!("soulfind-e2e-{port}.db"));
+            let _ = std::fs::remove_file(&db);
 
-        let mut child = Command::new(&bin)
-            .arg("-p")
-            .arg(port.to_string())
-            .arg("-d")
-            .arg(&db)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
+            let mut child = Command::new(&bin)
+                .arg("-p")
+                .arg(port.to_string())
+                .arg("-d")
+                .arg(&db)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .ok()?;
 
-        if wait_until_listening("127.0.0.1", port, Duration::from_secs(5))
-            .is_none()
-        {
-            // Server never came up (e.g. a toolchain/SQLite issue); skip.
+            // A child that has exited is never taken as up: soulfind exits
+            // when its port is gone, and whoever took it may answer instead.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < deadline
+                && child.try_wait().ok().flatten().is_none()
+            {
+                if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                    return Some(Self {
+                        host: "127.0.0.1".to_string(),
+                        port,
+                        child: Some(child),
+                        db: Some(db),
+                        _gate: gate,
+                    });
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            // Never came up (e.g. a toolchain/SQLite issue) or died.
             let _ = child.kill();
             let _ = child.wait();
-            return None;
+            let _ = std::fs::remove_file(&db);
         }
-
-        Some(Self {
-            host: "127.0.0.1".to_string(),
-            port,
-            child: Some(child),
-            db: Some(db),
-            _gate: gate,
-        })
+        None
     }
 
     fn settings(&self, username: &str, password: &str) -> ClientSettings {
@@ -4449,6 +4462,11 @@ fn phrases_the_server_excludes_are_kept_for_our_replies() {
     // network (code 160). Nicotine+ applies them to the files it offers in a
     // search reply, not to the searches it sends, and so do we — this pins
     // that the announced list arrives and is kept for that use.
+    // It binds listeners, so it waits for the server tests: a port handed
+    // to a soulfind that is still starting is otherwise up for grabs.
+    let _gate = SERVER_GATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut phrases = Message::new();
     phrases
         .write_int32(160)
@@ -5472,6 +5490,11 @@ fn a_disconnected_client_gives_its_listener_port_back() {
     // next one has to be able to advertise the port it was configured with,
     // not fall back to an ephemeral one nobody was told about. No server is
     // needed — binding the listener happens in connect(), before the dial.
+    // It binds listeners, so it waits for the server tests: a port handed
+    // to a soulfind that is still starting is otherwise up for grabs.
+    let _gate = SERVER_GATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let port = free_port().expect("a port to hold");
     let settings = |port: u16| ClientSettings {
         username: "e2e_port_release".to_string(),

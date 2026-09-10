@@ -60,12 +60,16 @@ pub struct Soulfind {
 }
 
 impl Soulfind {
+    /// soulfind exits if its port is taken between `free_port()` handing it
+    /// out and soulfind binding it, so a start that fails gets a fresh port.
     pub fn start() -> Option<Self> {
-        let port = free_port()?;
-        let db = std::env::temp_dir().join(format!("soulfind-{port}.db"));
-        let _ = std::fs::remove_file(&db);
-        let child = Self::spawn(port, &db)?;
-        Some(Self { child, db, port })
+        (0..3).find_map(|_| {
+            let port = free_port()?;
+            let db = std::env::temp_dir().join(format!("soulfind-{port}.db"));
+            let _ = std::fs::remove_file(&db);
+            let child = Self::spawn(port, &db)?;
+            Some(Self { child, db, port })
+        })
     }
 
     fn spawn(port: u16, db: &Path) -> Option<Child> {
@@ -78,8 +82,8 @@ impl Soulfind {
 
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline {
-            // Whoever answers on the port has to be this child: one that
-            // lost the port and died would otherwise pass as up.
+            // A child that has exited is never taken as up: soulfind exits
+            // when its port is gone, and whoever took it may answer instead.
             if child.try_wait().ok().flatten().is_some() {
                 return None;
             }
