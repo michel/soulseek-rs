@@ -419,6 +419,7 @@ impl MainTui {
                 &self.state.browse,
                 &mut self.state.browse_table_state,
                 self.spinner_state,
+                &self.state.downloads,
             );
         }
 
