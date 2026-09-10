@@ -4534,7 +4534,7 @@ fn a_queued_download_can_ask_where_it_sits() {
     ready_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("mock peer P connection");
-    std::thread::sleep(Duration::from_millis(1000));
+    std::thread::sleep(Duration::from_secs(1));
 
     let download_dir = unique_download_dir();
     let (_download, _status_rx) = client

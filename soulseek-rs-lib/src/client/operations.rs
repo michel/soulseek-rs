@@ -14,7 +14,7 @@ const CONNECT_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 /// (peer code 51). Five minutes is what Nicotine+ uses: often enough that a
 /// queue position on screen means something, rare enough that a peer with a
 /// long queue is not pestered.
-const QUEUE_POSITION_INTERVAL: Duration = Duration::from_secs(300);
+const QUEUE_POSITION_INTERVAL: Duration = Duration::from_mins(5);
 
 /// How long a write to a child may block. The relay runs under the client
 /// context lock, so an unbounded write would freeze every other operation
