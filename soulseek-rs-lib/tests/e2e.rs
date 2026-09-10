@@ -533,7 +533,14 @@ fn open_control_and_await_queue(
     let mut p = connect_retry(&cfg.listen_addr, Duration::from_secs(5))?;
     p.set_read_timeout(Some(Duration::from_secs(10)))?;
     p.write_all(&peer_init_bytes(&cfg.peer_username, "P", 0))?;
+    // The client answers a user-info request through the peer it registered
+    // for this connection, so the answer means a download queues on it
+    // rather than dialling a peer the server has never heard of.
+    p.write_all(
+        &soulseek_rs::message::peer::build_user_info_request().get_buffer(),
+    )?;
     p.flush()?;
+    expect_code(&mut p, 16, Duration::from_secs(10))?;
     let _ = cfg.ready.send(());
 
     loop {
@@ -867,10 +874,6 @@ fn file_downloads_over_p_and_f(
         .recv_timeout(Duration::from_secs(5))
         .expect("mock uploader P connection");
 
-    // The listener registers an incoming peer under its plain username; give
-    // that registration a moment to complete before queuing the download.
-    std::thread::sleep(Duration::from_millis(1500));
-
     let (_download, status_rx) = client
         .download(
             filename.to_string(),
@@ -950,7 +953,6 @@ fn cancel_mid_transfer(peer_username: &str, stall_after: Option<usize>) {
     ready_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("mock uploader P connection");
-    std::thread::sleep(Duration::from_millis(1500));
 
     let (_download, status_rx) = client
         .download(
@@ -1050,7 +1052,6 @@ fn a_cancelled_queued_download_declines_the_peers_offer() {
     ready_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("mock uploader P connection");
-    std::thread::sleep(Duration::from_millis(1500));
 
     let download_dir = unique_download_dir();
     let (_download, status_rx) = client
@@ -1124,7 +1125,6 @@ fn refusal_fails_the_download_quickly(
     ready_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("mock uploader P connection");
-    std::thread::sleep(Duration::from_millis(1500));
 
     let download_dir = unique_download_dir();
     let (_download, status_rx) = client
@@ -1224,7 +1224,6 @@ fn an_interrupted_download_resumes_from_its_partial_file() {
     ready_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("mock uploader P connection");
-    std::thread::sleep(Duration::from_millis(1500));
 
     let (_download, status_rx) = client
         .download(
@@ -3359,7 +3358,6 @@ fn download_progress_reports_the_rate_actually_received() {
     ready_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("mock uploader P connection");
-    std::thread::sleep(Duration::from_millis(1500));
 
     let (_download, status_rx) = client
         .download(
