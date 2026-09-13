@@ -14,6 +14,12 @@ impl Client {
             .unwrap_or_default()
     }
 
+    pub fn set_download_speed_limit(&self, bytes_per_second: u64) {
+        if let Ok(ctx) = self.context.read_safe() {
+            ctx.download_speed_limit.set(bytes_per_second);
+        }
+    }
+
     #[must_use]
     pub fn pause_download(&self, username: &str, filename: &str) -> bool {
         match self.context.write_safe() {

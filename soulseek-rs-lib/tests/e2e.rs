@@ -936,6 +936,82 @@ fn a_download_completes_when_the_f_connection_beats_token_registration() {
     );
 }
 
+#[test]
+fn a_download_speed_limit_paces_a_transfer_until_it_is_lifted() {
+    let server = server_or_skip!();
+    let listen_port = free_port().expect("free listen port");
+    let mut client = Client::with_settings(server.listening_settings(
+        "e2e_cappedpeer_dl",
+        "pw",
+        listen_port,
+    ));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login"));
+    client.set_download_speed_limit(64 * 1024);
+
+    let filename = "capped.mp3";
+    let content: Vec<u8> =
+        (0..1024 * 1024u32).map(|i| (i % 251) as u8).collect();
+    let download_dir = unique_download_dir();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let cfg = MockUpload {
+        listen_addr: format!("127.0.0.1:{listen_port}"),
+        peer_username: "e2e_cappedpeer".to_string(),
+        filename: filename.to_string(),
+        content: content.clone(),
+        token: 434_343,
+        ready: ready_tx,
+        token_delay: Duration::ZERO,
+    };
+    let uploader = std::thread::spawn(move || {
+        if let Err(e) = run_mock_uploader(&cfg) {
+            eprintln!("[mock uploader] {e}");
+        }
+    });
+    ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("mock uploader P connection");
+
+    let started = Instant::now();
+    let (_download, status_rx) = client
+        .download(
+            filename.to_string(),
+            "e2e_cappedpeer".to_string(),
+            content.len() as u64,
+            download_dir.display().to_string(),
+        )
+        .expect("start download");
+    let in_progress = || {
+        client
+            .get_all_downloads()
+            .iter()
+            .any(|d| matches!(d.status, DownloadStatus::InProgress { .. }))
+    };
+    assert!(wait_for(in_progress), "the download should start");
+    std::thread::sleep(Duration::from_secs(1));
+    assert!(
+        in_progress(),
+        "1 MiB at 64 KiB/s must still be arriving a second in"
+    );
+
+    client.set_download_speed_limit(0);
+    assert!(
+        wait_for_completion(&client, &status_rx, Duration::from_secs(20)),
+        "the download should reach Completed"
+    );
+    let elapsed = started.elapsed();
+    let _ = uploader.join();
+    assert!(
+        elapsed < Duration::from_secs(8),
+        "capped for the whole file this takes 16s; lifted it took {elapsed:?}"
+    );
+    assert_eq!(
+        std::fs::read(download_dir.join(filename)).expect("downloaded file"),
+        content
+    );
+    let _ = std::fs::remove_dir_all(&download_dir);
+}
+
 fn cancel_mid_transfer(peer_username: &str, stall_after: Option<usize>) {
     let server = server_or_skip!();
 

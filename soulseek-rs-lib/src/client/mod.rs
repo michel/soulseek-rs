@@ -9,6 +9,7 @@ use crate::types::{
     SimilarUser, UserInfo, UserInterests, UserPresence, UserStats, UserStatus,
 };
 use crate::utils::logger;
+use crate::utils::rate_limit::RateLimit;
 use crate::{
     Transfer,
     actor::{ActorSystem, peer_registry::PeerRegistry},
@@ -486,6 +487,7 @@ pub struct ClientContext {
     /// a token we sent in a ConnectToPeer to the peer we expect back.
     pending_connect_tokens: HashMap<u32, (String, Instant)>,
     max_peers: Arc<AtomicUsize>,
+    pub(crate) download_speed_limit: Arc<RateLimit>,
     /// Files we share with peers (read-only after connect).
     pub shares: Arc<Shares>,
     /// The directories the current share index was built from.

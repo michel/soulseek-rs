@@ -42,6 +42,7 @@ impl ClientContext {
             private_messages: Vec::new(),
             pending_connect_tokens: HashMap::new(),
             max_peers: Arc::new(AtomicUsize::new(DEFAULT_MAX_PEERS)),
+            download_speed_limit: Arc::default(),
             shares: Arc::new(Shares::empty()),
             shared_directories: Vec::new(),
             peer_addresses: HashMap::new(),

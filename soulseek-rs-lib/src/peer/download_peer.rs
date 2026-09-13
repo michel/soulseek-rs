@@ -363,6 +363,11 @@ impl DownloadPeer {
         stream
             .set_read_timeout(Some(CANCEL_POLL))
             .map_err(DownloadError::ConnectionFailed)?;
+        let speed_limit = client_context
+            .read()
+            .map_err(|_| DownloadError::LockPoisoned)?
+            .download_speed_limit
+            .clone();
         let mut last_data = Instant::now();
 
         loop {
@@ -384,7 +389,10 @@ impl DownloadPeer {
                 break;
             }
 
-            match stream.read(&mut read_buffer) {
+            let allowance = speed_limit.take(READ_BUFFER_SIZE);
+            let read = stream.read(&mut read_buffer[..allowance]);
+            speed_limit.give_back(allowance - read.as_ref().map_or(0, |&n| n));
+            match read {
                 Ok(0) => {
                     trace!(
                         "[download_peer:{}] connection closed by peer",
