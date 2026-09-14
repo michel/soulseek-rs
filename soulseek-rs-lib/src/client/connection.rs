@@ -5,9 +5,11 @@ use super::{
     TcpStream, error, info, mpsc, thread, trace, warn,
 };
 use std::sync::atomic::Ordering;
+use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
 
 const LISTENER_RELEASE_TIMEOUT: Duration = Duration::from_secs(2);
+const LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Ceiling on the wait for a login verdict. Generous enough for a slow server
 /// and a retrying connect, short enough that an unattended caller ends.
@@ -90,6 +92,10 @@ impl Client {
         ctx.shares = shares;
         ctx.shared_directories.clone_from(&self.shared_directories);
 
+        if self.cancel.is_cancelled() {
+            return Err(SoulseekRs::NotConnected);
+        }
+
         // Bind before logging in: the port we advertise has to be the port we
         // hold, and a bind that fails outright is the caller's to see rather
         // than a panic on a thread nobody is watching.
@@ -111,6 +117,7 @@ impl Client {
             shared_file_count,
         );
         server_actor.set_session_watch(self.session.clone());
+        server_actor.set_cancel(self.cancel.clone());
 
         self.server_handle = Some(ctx.actor_system.spawn_with_handle(
             server_actor,
@@ -202,7 +209,9 @@ impl Client {
     /// control.
     pub fn login(&self) -> Result<bool> {
         info!("Logging in as {}", self.username);
-        if let Some(handle) = &self.server_handle {
+        if let Some(handle) = &self.server_handle
+            && !self.cancel.is_cancelled()
+        {
             let (tx, rx) = std::sync::mpsc::channel();
             let _ = handle.send(ServerMessage::Login {
                 username: self.username.clone(),
@@ -211,9 +220,19 @@ impl Client {
                 response: tx,
             });
 
-            match rx.recv_timeout(LOGIN_RESPONSE_TIMEOUT) {
-                Ok(result) => result,
-                Err(_) => Err(SoulseekRs::Timeout),
+            let deadline = Instant::now() + LOGIN_RESPONSE_TIMEOUT;
+            loop {
+                match rx.recv_timeout(LOGIN_POLL_INTERVAL) {
+                    Ok(result) => return result,
+                    Err(RecvTimeoutError::Timeout)
+                        if self.cancel.is_cancelled() =>
+                    {
+                        return Err(SoulseekRs::NotConnected);
+                    }
+                    Err(RecvTimeoutError::Timeout)
+                        if Instant::now() < deadline => {}
+                    Err(_) => return Err(SoulseekRs::Timeout),
+                }
             }
         } else {
             Err(SoulseekRs::NotConnected)

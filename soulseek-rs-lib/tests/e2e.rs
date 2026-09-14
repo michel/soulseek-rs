@@ -5621,3 +5621,74 @@ fn a_dropped_client_has_released_its_listener_port_when_drop_returns() {
         );
     }
 }
+
+#[test]
+fn a_cancelled_client_never_binds_its_port() {
+    let _gate = SERVER_GATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let port = free_port().expect("a port to hold");
+    let mut client = Client::with_settings(ClientSettings {
+        username: "e2e_cancelled_bind".to_string(),
+        password: "pw".to_string(),
+        server_address: PeerAddress::new("127.0.0.1".to_string(), 1),
+        enable_listen: true,
+        listen_port: port,
+        shared_directories: Vec::new(),
+        accept_children: false,
+        version: ClientVersion::default(),
+    });
+
+    client.cancel_handle().cancel();
+
+    assert!(client.connect().is_err());
+    assert_eq!(client.listen_port(), None);
+    assert!(std::net::TcpListener::bind(("0.0.0.0", port)).is_ok());
+}
+
+#[test]
+fn a_cancel_ends_a_login_waiting_for_its_verdict_and_nothing_follows_it() {
+    let server =
+        std::net::TcpListener::bind("127.0.0.1:0").expect("a silent server");
+    let mut client = Client::with_settings(ClientSettings {
+        username: "e2e_cancelled_login".to_string(),
+        password: "pw".to_string(),
+        server_address: PeerAddress::new(
+            "127.0.0.1".to_string(),
+            server.local_addr().expect("server address").port(),
+        ),
+        enable_listen: false,
+        listen_port: 0,
+        shared_directories: Vec::new(),
+        accept_children: false,
+        version: ClientVersion::default(),
+    });
+    client.connect().expect("start the session");
+    let (mut conn, _) = server.accept().expect("the client dials the server");
+    conn.set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("read timeout");
+    let cancel = client.cancel_handle();
+
+    std::thread::scope(|scope| {
+        let login = scope.spawn(|| client.login());
+        let frame =
+            read_framed(&mut conn).expect("the login reaches the server");
+        assert_eq!(frame.get_message_code(), 1);
+
+        let cancelled_at = Instant::now();
+        cancel.cancel();
+        assert!(login.join().expect("the login thread").is_err());
+        assert!(cancelled_at.elapsed() < Duration::from_secs(5));
+    });
+    client
+        .connect_peer("e2e_nobody")
+        .expect("the actor takes a request");
+    drop(client);
+
+    let mut rest = Vec::new();
+    assert_eq!(
+        conn.read_to_end(&mut rest)
+            .expect("the server sees the session end"),
+        0
+    );
+}

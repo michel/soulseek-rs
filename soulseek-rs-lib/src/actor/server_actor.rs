@@ -1,5 +1,5 @@
 use crate::actor::{Actor, ActorHandle, ConnectionState};
-use crate::client::ClientOperation;
+use crate::client::{CancelHandle, ClientOperation};
 use crate::dispatcher::MessageDispatcher;
 use crate::message::server::AdminMessageHandler;
 use crate::message::server::CantConnectToPeerHandler;
@@ -288,6 +288,7 @@ pub struct ServerActor {
     shared_folder_count: u32,
     shared_file_count: u32,
     session: SessionWatch,
+    cancel: CancelHandle,
 }
 
 /// The messages a client sends right after a successful login: its shared-file
@@ -340,12 +341,17 @@ impl ServerActor {
             shared_folder_count,
             shared_file_count,
             session: SessionWatch::default(),
+            cancel: CancelHandle::new(),
         }
     }
 
     /// Share the client's view of whether this session is still alive.
     pub fn set_session_watch(&mut self, session: SessionWatch) {
         self.session = session;
+    }
+
+    pub fn set_cancel(&mut self, cancel: CancelHandle) {
+        self.cancel = cancel;
     }
 
     fn initiate_connection(&mut self) -> bool {
@@ -563,6 +569,10 @@ impl ServerActor {
     }
 
     fn send_message(&mut self, message: Message) {
+        let cancel = self.cancel.clone();
+        let Some(_live) = cancel.live() else {
+            return;
+        };
         let Some(stream) = self.stream.as_mut() else {
             error!("[server] Cannot send message: stream is None");
             return;

@@ -649,6 +649,7 @@ pub struct Client {
     /// port it bound.
     listener_stopped: Arc<AtomicBool>,
     listener_released: Arc<AtomicBool>,
+    cancel: CancelHandle,
 }
 
 impl Drop for Client {
@@ -684,6 +685,7 @@ impl Client {
             session: SessionWatch::default(),
             listener_stopped: Arc::new(AtomicBool::new(false)),
             listener_released: Arc::new(AtomicBool::new(false)),
+            cancel: CancelHandle::new(),
         }
     }
 
@@ -722,6 +724,11 @@ impl Client {
     #[must_use]
     pub fn session_loss(&self) -> Option<SessionLoss> {
         self.session.loss()
+    }
+
+    #[must_use]
+    pub fn cancel_handle(&self) -> CancelHandle {
+        self.cancel.clone()
     }
 
     /// The directories whose files are currently shared with other peers.
@@ -849,6 +856,7 @@ impl Client {
     }
 }
 
+mod cancel;
 mod children;
 mod connection;
 mod context;
@@ -860,6 +868,8 @@ mod search;
 mod social;
 mod upload_queue;
 mod uploads;
+
+pub use cancel::CancelHandle;
 
 #[cfg(test)]
 mod tests;

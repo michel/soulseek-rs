@@ -189,6 +189,44 @@ fn a_login_with_nobody_listening_is_refused_at_once() {
 }
 
 #[test]
+fn a_cancelled_actor_never_writes_the_login_it_queued() {
+    use std::io::Read;
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let client = TcpStream::connect(addr).unwrap();
+    let (mut server_side, _) = listener.accept().unwrap();
+    client.set_nonblocking(true).unwrap();
+
+    let cancel = CancelHandle::new();
+    let mut actor = parked_actor(addr.port());
+    actor.set_cancel(cancel.clone());
+    actor.stream = Some(client);
+    actor.connection_state = ConnectionState::Connecting {
+        since: Instant::now(),
+    };
+    let (response, _verdict) = std::sync::mpsc::channel();
+    actor.handle_login(
+        "u".into(),
+        "p".into(),
+        ClientVersion::default(),
+        response,
+    );
+    assert_eq!(actor.queued_messages.len(), 1);
+
+    cancel.cancel();
+    actor.tick();
+    assert!(matches!(actor.connection_state, ConnectionState::Connected));
+    actor.on_stop();
+
+    server_side
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut written = Vec::new();
+    assert_eq!(server_side.read_to_end(&mut written).unwrap(), 0);
+}
+
+#[test]
 fn a_successful_login_marks_the_session_live_again() {
     let mut actor = parked_actor(1);
     actor.session.record(SessionLoss::Disconnected);
