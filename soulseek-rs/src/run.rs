@@ -502,13 +502,16 @@ fn run_default_tui(
         // Best-effort: make ourselves reachable behind a home router so
         // firewalled peers can connect back. Mapped only once the listener is
         // up, and for the port it really bound. Kept alive for the session.
-        let _port_mapper = outcome
-            .client
-            .listen_port()
-            .map(crate::port_mapping::PortMapper::spawn);
+        let bound_port = outcome.client.listen_port();
+        let _port_mapper =
+            bound_port.map(crate::port_mapping::PortMapper::spawn);
 
         let store = crate::persist::paths::state_dir()
             .map(crate::persist::state::StateStore::new);
+
+        let listener_fallback = bound_port
+            .filter(|&bound| listen_port != 0 && bound != listen_port)
+            .map(|bound| (listen_port, bound));
 
         let exit = launch_main_tui(
             terminal,
@@ -517,6 +520,7 @@ fn run_default_tui(
             Duration::from_secs(resolved.search_timeout),
             store,
             config_path.clone(),
+            listener_fallback,
         )
         .map_err(|e| CliError::new(Exit::Failure, e.to_string()))?;
 
@@ -592,6 +596,7 @@ fn run_attached_tui(
         Duration::from_secs(resolved.search_timeout),
         None,
         config_path,
+        None,
     )
     .map(|_| ())
     .map_err(|e| CliError::new(Exit::Failure, e.to_string()))

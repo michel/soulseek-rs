@@ -33,6 +33,7 @@ pub struct MainTui {
     saved_snapshot: Snapshot,
     /// Which divider the left mouse button is holding, if any.
     resize_drag: Option<input::ResizeDrag>,
+    listener_fallback: Option<(u16, u16)>,
 }
 
 impl MainTui {
@@ -53,6 +54,7 @@ impl MainTui {
             config_path,
             saved_snapshot: Snapshot::default(),
             resize_drag: None,
+            listener_fallback: None,
         };
         tui.restore_persisted_state();
         tui
@@ -257,9 +259,11 @@ pub fn launch_main_tui(
     search_timeout: Duration,
     store: Option<StateStore>,
     config_path: Option<std::path::PathBuf>,
+    listener_fallback: Option<(u16, u16)>,
 ) -> Result<TuiExit> {
-    let tui =
+    let mut tui =
         MainTui::new(client, download_dir, search_timeout, store, config_path);
+    tui.listener_fallback = listener_fallback;
     tui.run(terminal)
 }
 

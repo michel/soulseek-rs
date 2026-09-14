@@ -40,6 +40,7 @@ impl MainTui {
             &self.state.downloads,
             self.state.active_downloads_count,
             daemon.as_deref(),
+            self.listener_fallback,
         );
 
         self.render_content(frame, main_chunks[1]);

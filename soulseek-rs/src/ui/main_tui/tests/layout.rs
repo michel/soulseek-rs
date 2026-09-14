@@ -22,6 +22,19 @@ fn the_results_pane_has_the_whole_width_to_itself() {
 }
 
 #[test]
+fn a_listener_that_fell_back_says_so_in_the_status_bar() {
+    let mut tui = furnished_tui();
+    tui.listener_fallback = Some((2234, 50123));
+
+    let screen = screen_of(&mut tui);
+
+    assert!(
+        screen.contains("port 2234 in use, listening on 50123"),
+        "{screen}"
+    );
+}
+
+#[test]
 fn tab_and_shift_tab_walk_the_panes_in_legend_order() {
     let mut tui = furnished_tui();
     tui.state.focused_pane = FocusedPane::Searches;
