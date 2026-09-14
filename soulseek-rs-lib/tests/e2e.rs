@@ -5594,50 +5594,30 @@ fn privileges_can_be_handed_to_another_user() {
 }
 
 #[test]
-fn a_disconnected_client_gives_its_listener_port_back() {
-    // A client that goes out of scope must release the port it bound: the
-    // next one has to be able to advertise the port it was configured with,
-    // not fall back to an ephemeral one nobody was told about. No server is
-    // needed — binding the listener happens in connect(), before the dial.
-    // It binds listeners, so it waits for the server tests: a port handed
-    // to a soulfind that is still starting is otherwise up for grabs.
+fn a_dropped_client_has_released_its_listener_port_when_drop_returns() {
     let _gate = SERVER_GATE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let port = free_port().expect("a port to hold");
-    let settings = |port: u16| ClientSettings {
-        username: "e2e_port_release".to_string(),
-        password: "pw".to_string(),
-        server_address: PeerAddress::new("127.0.0.1".to_string(), 1),
-        enable_listen: true,
-        listen_port: port,
-        shared_directories: Vec::new(),
-        accept_children: false,
-        version: ClientVersion::default(),
-    };
 
-    let mut first = Client::with_settings(settings(port));
-    first.connect().expect("bind the listener");
-    assert_eq!(first.listen_port(), Some(port));
-    drop(first);
+    for round in 0..25 {
+        let mut client = Client::with_settings(ClientSettings {
+            username: "e2e_port_release_now".to_string(),
+            password: "pw".to_string(),
+            server_address: PeerAddress::new("127.0.0.1".to_string(), 1),
+            enable_listen: true,
+            listen_port: port,
+            shared_directories: Vec::new(),
+            accept_children: false,
+            version: ClientVersion::default(),
+        });
+        client.connect().expect("bind the listener");
+        assert_eq!(client.listen_port(), Some(port), "round {round}");
+        drop(client);
 
-    // The listener thread notices the stop the moment it is woken, which the
-    // disconnect does by dialling it; give it a beat to unwind.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut second_port = None;
-    while Instant::now() < deadline && second_port != Some(port) {
-        let mut second = Client::with_settings(settings(port));
-        second.connect().expect("bind again");
-        second_port = second.listen_port();
-        if second_port == Some(port) {
-            break;
-        }
-        drop(second);
-        std::thread::sleep(Duration::from_millis(200));
+        assert!(
+            std::net::TcpListener::bind(("0.0.0.0", port)).is_ok(),
+            "round {round}: the port is still held once drop has returned"
+        );
     }
-    assert_eq!(
-        second_port,
-        Some(port),
-        "the port should be free again once the first client is dropped"
-    );
 }

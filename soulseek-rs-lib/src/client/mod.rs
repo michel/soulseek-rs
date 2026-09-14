@@ -648,6 +648,7 @@ pub struct Client {
     /// Tells the peer listener to stop, so a disconnected client releases the
     /// port it bound.
     listener_stopped: Arc<AtomicBool>,
+    listener_released: Arc<AtomicBool>,
 }
 
 impl Drop for Client {
@@ -682,6 +683,7 @@ impl Client {
             server_handle: None,
             session: SessionWatch::default(),
             listener_stopped: Arc::new(AtomicBool::new(false)),
+            listener_released: Arc::new(AtomicBool::new(false)),
         }
     }
 
