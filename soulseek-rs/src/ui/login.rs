@@ -20,8 +20,9 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Clear, Paragraph},
 };
-use soulseek_rs::{Client, ClientSettings, SoulseekRs};
+use soulseek_rs::{CancelHandle, Client, ClientSettings, SoulseekRs};
 use std::sync::mpsc::{Receiver, channel};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 const RESTART_FLOOR: Duration = Duration::from_secs(1);
@@ -181,26 +182,39 @@ pub fn run_login_flow(
     initial_username: Option<String>,
     initial_password: Option<String>,
 ) -> Result<Option<LoginOutcome>> {
-    let start = |form: &LoginForm| {
-        spawn_attempt(make_settings(
+    let start = |form: &LoginForm, previous: Option<Attempt<Client>>| {
+        let mut client = Client::with_settings(make_settings(
             form.username.clone(),
             form.password.clone(),
-        ))
+        ));
+        let cancel = client.cancel_handle();
+        Attempt::spawn(previous, cancel, move || {
+            let outcome = client
+                .connect()
+                .map_err(|e| {
+                    LoginPhase::Failed(format!("Failed to connect: {e}"))
+                })
+                .and_then(|()| verdict(client.login()));
+            outcome.map(|()| client)
+        })
     };
     let mut form = LoginForm::new(initial_username.clone());
     let mut attempt = match &initial_password {
         Some(password) if !form.username.is_empty() => {
             form.password.clone_from(password);
             form.phase = LoginPhase::Connecting;
-            Some(start(&form))
+            Some(start(&form, None))
         }
         _ => None,
     };
     let mut started = Instant::now();
 
     loop {
-        if let Some(rx) = &attempt {
-            match rx.try_recv() {
+        if let Some(current) = &attempt {
+            let connecting = form.phase == LoginPhase::Connecting;
+            match current.result.try_recv() {
+                Ok(_) | Err(std::sync::mpsc::TryRecvError::Disconnected)
+                    if !connecting => {}
                 Ok(Ok(client)) => {
                     let entered_via_form = initial_username.as_deref()
                         != Some(form.username.as_str())
@@ -213,15 +227,11 @@ pub fn run_login_flow(
                         entered_via_form,
                     }));
                 }
-                Ok(Err(failure)) => {
-                    form.phase = failure;
-                    attempt = None;
-                }
+                Ok(Err(failure)) => form.phase = failure,
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     form.phase =
                         LoginPhase::Failed("Connection thread died".into());
-                    attempt = None;
                 }
             }
         }
@@ -234,36 +244,62 @@ pub fn run_login_flow(
             && let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
         {
+            let restarting = form.phase == LoginPhase::Connecting;
             match form.handle_key(key) {
                 LoginAction::Cancel => return Ok(None),
                 LoginAction::Submit
-                    if attempt.is_some()
-                        && started.elapsed() < RESTART_FLOOR => {}
+                    if restarting && started.elapsed() < RESTART_FLOOR => {}
                 LoginAction::Submit => {
-                    attempt = Some(start(&form));
+                    attempt = Some(start(&form, attempt.take()));
                     started = Instant::now();
                 }
-                LoginAction::Stop => attempt = None,
+                LoginAction::Stop => {
+                    if let Some(current) = &attempt {
+                        current.cancel.cancel();
+                    }
+                }
                 LoginAction::None => {}
             }
         }
     }
 }
 
-/// Connect and log in on a background thread so the UI stays responsive.
-fn spawn_attempt(
-    settings: ClientSettings,
-) -> Receiver<Result<Client, LoginPhase>> {
-    let (tx, rx) = channel();
-    std::thread::spawn(move || {
-        let mut client = Client::with_settings(settings);
-        let result = client
-            .connect()
-            .map_err(|e| LoginPhase::Failed(format!("Failed to connect: {e}")))
-            .and_then(|()| verdict(client.login()));
-        let _ = tx.send(result.map(|()| client));
-    });
-    rx
+/// One login attempt, run on a background thread so the UI stays responsive.
+struct Attempt<T> {
+    cancel: CancelHandle,
+    thread: JoinHandle<()>,
+    result: Receiver<Result<T, LoginPhase>>,
+}
+
+impl<T: Send + 'static> Attempt<T> {
+    fn spawn(
+        previous: Option<Self>,
+        cancel: CancelHandle,
+        work: impl FnOnce() -> Result<T, LoginPhase> + Send + 'static,
+    ) -> Self {
+        if let Some(previous) = &previous {
+            previous.cancel.cancel();
+        }
+        let (tx, result) = channel();
+        let own = cancel.clone();
+        let thread = std::thread::spawn(move || {
+            if let Some(previous) = previous {
+                let _ = previous.thread.join();
+            }
+            if own.is_cancelled() {
+                return;
+            }
+            let outcome = work();
+            if !own.is_cancelled() {
+                let _ = tx.send(outcome);
+            }
+        });
+        Self {
+            cancel,
+            thread,
+            result,
+        }
+    }
 }
 
 fn verdict(login: soulseek_rs::Result<bool>) -> Result<(), LoginPhase> {
@@ -570,5 +606,107 @@ mod tests {
         {
             assert!(matches!(verdict(failed), Err(LoginPhase::Failed(_))));
         }
+    }
+
+    struct Held(&'static str, std::sync::mpsc::Sender<String>);
+
+    impl Drop for Held {
+        fn drop(&mut self) {
+            let _ = self.1.send(format!("released {}", self.0));
+        }
+    }
+
+    fn cancel_handle() -> CancelHandle {
+        Client::new("attempt", "pw").cancel_handle()
+    }
+
+    fn next(seen: &Receiver<String>) -> String {
+        seen.recv_timeout(Duration::from_secs(5))
+            .expect("an attempt event")
+    }
+
+    #[test]
+    fn a_restart_builds_nothing_until_the_attempt_it_replaces_has_let_go() {
+        let (events, seen) = channel();
+        let first_events = events.clone();
+        let first = Attempt::spawn(None, cancel_handle(), move || {
+            let _ = first_events.send("started first".to_string());
+            std::thread::sleep(Duration::from_millis(100));
+            Ok(Held("first", first_events))
+        });
+        assert_eq!(next(&seen), "started first");
+
+        let _second = Attempt::spawn(Some(first), cancel_handle(), move || {
+            let _ = events.send("started second".to_string());
+            Err(LoginPhase::Failed("second".into()))
+        });
+
+        assert_eq!(next(&seen), "released first");
+        assert_eq!(next(&seen), "started second");
+    }
+
+    #[test]
+    fn a_finished_attempt_is_let_go_before_its_replacement_starts() {
+        let (events, seen) = channel();
+        let first_events = events.clone();
+        let first = Attempt::spawn(None, cancel_handle(), move || {
+            Ok(Held("first", first_events))
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !first.thread.is_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(first.thread.is_finished());
+
+        let _second = Attempt::spawn(Some(first), cancel_handle(), move || {
+            let _ = events.send("started second".to_string());
+            Err(LoginPhase::Failed("second".into()))
+        });
+
+        assert_eq!(next(&seen), "released first");
+        assert_eq!(next(&seen), "started second");
+    }
+
+    #[test]
+    fn an_attempt_superseded_before_it_began_never_runs() {
+        let (events, seen) = channel();
+        let (release, gate) = channel::<()>();
+        let first_events = events.clone();
+        let first = Attempt::spawn(None, cancel_handle(), move || {
+            let _ = first_events.send("started first".to_string());
+            let _ = gate.recv();
+            Err::<Held, _>(LoginPhase::Failed("first".into()))
+        });
+        assert_eq!(next(&seen), "started first");
+
+        let second_events = events.clone();
+        let second = Attempt::spawn(Some(first), cancel_handle(), move || {
+            let _ = second_events.send("started second".to_string());
+            Err(LoginPhase::Failed("second".into()))
+        });
+        let _third = Attempt::spawn(Some(second), cancel_handle(), move || {
+            let _ = events.send("started third".to_string());
+            Err(LoginPhase::Failed("third".into()))
+        });
+        release.send(()).expect("release the first attempt");
+
+        assert_eq!(next(&seen), "started third");
+    }
+
+    #[test]
+    fn a_result_that_lands_after_a_stop_is_let_go_on_the_attempts_thread() {
+        let (events, seen) = channel();
+        let (release, gate) = channel::<()>();
+        let attempt = Attempt::spawn(None, cancel_handle(), move || {
+            let _ = events.send("started late".to_string());
+            let _ = gate.recv();
+            Ok(Held("late", events))
+        });
+        assert_eq!(next(&seen), "started late");
+
+        attempt.cancel.cancel();
+        release.send(()).expect("release the attempt");
+
+        assert_eq!(next(&seen), "released late");
     }
 }
