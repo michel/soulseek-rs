@@ -200,6 +200,16 @@ jobs:
           ref: refs/tags/${{ needs.release.outputs.tag }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Build and upload .deb and .rpm
+        if: endsWith(matrix.target, '-musl') && hashFiles('scripts/package-linux.sh') != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          sh scripts/package-linux.sh "target/$TARGET/release/soulseek-rs" "${TAG#v}" "$TARGET" dist
+          gh release upload "$TAG" dist/* --clobber
+
   # The tap regenerates its formula from whatever `gh release view` calls latest,
   # so it only needs a nudge once every archive and .sha256 is on the release —
   # hence `needs: binaries` rather than firing alongside it. The tap also polls

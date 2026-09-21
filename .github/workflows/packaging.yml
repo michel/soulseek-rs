@@ -1,0 +1,67 @@
+name: Packaging
+
+on:
+  pull_request:
+    paths:
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - 'packaging/**'
+      - 'scripts/package-linux.sh'
+      - 'soulseek-rs/src/cli.rs'
+      - 'soulseek-rs/src/run.rs'
+      - 'soulseek-rs/src/commands/**'
+      - '.github/workflows/packaging.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packaging-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  VERSION: 0.0.0+git202601010000.0000000
+
+jobs:
+  packages:
+    name: .deb and .rpm
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install musl toolchain
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build the packages
+        env:
+          SOULSEEK_RS_VERSION: ${{ env.VERSION }}
+          TARGET: x86_64-unknown-linux-musl
+        run: |
+          cargo build --locked --release --target "$TARGET" --package soulseek-rs
+          sh scripts/package-linux.sh "target/$TARGET/release/soulseek-rs" "$VERSION" "$TARGET" . soulseek-rs-nightly
+
+      - name: Install the .deb
+        run: |
+          sudo apt-get install -y ./soulseek-rs-nightly-amd64.deb
+          soulseek-rs --version | grep -F "$VERSION"
+          dpkg -L soulseek-rs | grep -Fx /usr/share/man/man1/soulseek-rs.1.gz
+          dpkg -L soulseek-rs | grep -Fx /usr/share/zsh/vendor-completions/_soulseek-rs
+
+      - name: Install the .rpm
+        run: |
+          docker run --rm -v "$PWD:/packages:ro" fedora:latest sh -ec "
+            dnf install -y /packages/soulseek-rs-nightly-x86_64.rpm
+            soulseek-rs --version | grep -F '$VERSION'
+            rpm -ql soulseek-rs | grep -Fx /usr/share/man/man1/soulseek-rs.1.gz
+            rpm -ql soulseek-rs | grep -Fx /usr/share/zsh/site-functions/_soulseek-rs
+          "

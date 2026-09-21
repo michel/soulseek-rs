@@ -28,6 +28,11 @@ Releases are automated by [release-plz](https://release-plz.dev). You do not run
      | `soulseek-rs-vX.Y.Z-x86_64-pc-windows-msvc.zip`        |                          |
      | `soulseek-rs-vX.Y.Z-aarch64-pc-windows-msvc.zip`       |                          |
 
+   - packages the two Linux binaries as `soulseek-rs-amd64.deb`, `soulseek-rs-arm64.deb`,
+     `soulseek-rs-x86_64.rpm` and `soulseek-rs-aarch64.rpm`, with the man page and the
+     bash, zsh and fish completions. The names carry no version, so
+     `releases/latest/download/soulseek-rs-amd64.deb` is a link that keeps working,
+
    - rewrites `Formula/soulseek-rs.rb` in the `michel/homebrew-tap` repository so
      `brew install michel/tap/soulseek-rs` picks up the new macOS and Linux archives,
    - merges `master` back into `develop`, so the branch the work happens on carries the
@@ -44,9 +49,15 @@ conflict.
 
 `.github/workflows/nightly.yml` builds the tip of `develop` at 02:17 UTC every
 day. It resolves the commit once, builds the same six targets as a numbered
-release, verifies all twelve archives and checksum files as one set, then
-replaces the mutable `nightly` prerelease and tag. The published release is
-smoke-tested through both the curl and wget installer paths.
+release, packages the two Linux ones as `soulseek-rs-nightly-*.deb` and `.rpm`,
+verifies all sixteen files as one set, then replaces the mutable `nightly`
+prerelease and tag. Every nightly binary reports `X.Y.Z+git<commit time, UTC>.<sha>`
+instead of the crate version. The published release is smoke-tested through the
+curl and wget installer paths, and by installing the `.deb` and the `.rpm`.
+
+Never enable GitHub's Immutable Releases on this repository: nightly replaces
+its assets and moves its tag, and a tag name burnt by that setting cannot be
+reused.
 
 Use **Actions → Nightly → Run workflow** to force a build. The workflow always
 checks out `develop`, regardless of the ref selected in the dispatch form. The
