@@ -463,6 +463,8 @@ const Uninstall = () => (
           { t: 'cmd', text: 'cargo uninstall soulseek-rs' },
           { t: 'cmd', text: 'sudo apt remove soulseek-rs' },
           { t: 'cmd', text: 'sudo dnf remove soulseek-rs' },
+          { t: 'cmd', text: 'sudo pacman -R soulseek-rs-bin' },
+          { t: 'cmd', text: 'sudo pacman -R soulseek-rs-git' },
           { t: 'cm', text: '# script install without brew: the binary itself' },
           { t: 'cmd', text: 'rm -f /usr/local/bin/soulseek-rs ~/.local/bin/soulseek-rs' },
           { t: 'cm', text: '# brew only: drop the tap it came from' },

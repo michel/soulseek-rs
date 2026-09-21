@@ -1,0 +1,30 @@
+# Maintainer: Michel de Graaf <michel at re-invention dot nl>
+pkgname=soulseek-rs-bin
+pkgver=19.0.0
+pkgrel=1
+pkgdesc='Soulseek client for the terminal, with a scriptable CLI and daemon'
+arch=('x86_64' 'aarch64')
+url='https://re-invention.nl/soulseek-rs/'
+license=('MIT')
+optdepends=('gnome-keyring: keep the account password in a Secret Service keyring')
+provides=("soulseek-rs=$pkgver")
+conflicts=('soulseek-rs')
+options=('!strip' '!debug')
+source_x86_64=("https://github.com/michel/soulseek-rs/releases/download/v$pkgver/soulseek-rs-v$pkgver-x86_64-unknown-linux-musl.tar.gz")
+source_aarch64=("https://github.com/michel/soulseek-rs/releases/download/v$pkgver/soulseek-rs-v$pkgver-aarch64-unknown-linux-musl.tar.gz")
+sha256sums_x86_64=('acc249baee506231a9a32b7da3dd0e5fafbd93f775bfe3532aa88a0a6d421713')
+sha256sums_aarch64=('d14e07865c8555b4787065361ee1f2f93ae3b1ba9d0d89ea2d21f71b61839de5')
+
+package() {
+  install -Dm755 soulseek-rs -t "$pkgdir/usr/bin/"
+  install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname/"
+  install -Dm644 README.md -t "$pkgdir/usr/share/doc/$pkgname/"
+  ./soulseek-rs completions print bash > soulseek-rs.bash
+  ./soulseek-rs completions print zsh > _soulseek-rs
+  ./soulseek-rs completions print fish > soulseek-rs.fish
+  ./soulseek-rs man > soulseek-rs.1
+  install -Dm644 soulseek-rs.bash "$pkgdir/usr/share/bash-completion/completions/soulseek-rs"
+  install -Dm644 _soulseek-rs -t "$pkgdir/usr/share/zsh/site-functions/"
+  install -Dm644 soulseek-rs.fish -t "$pkgdir/usr/share/fish/vendor_completions.d/"
+  install -Dm644 soulseek-rs.1 -t "$pkgdir/usr/share/man/man1/"
+}

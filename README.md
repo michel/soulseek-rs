@@ -117,6 +117,9 @@ sudo apt install ./soulseek-rs-amd64.deb
 # Fedora, RHEL (on ARM: aarch64 for x86_64)
 sudo dnf install https://github.com/michel/soulseek-rs/releases/latest/download/soulseek-rs-x86_64.rpm
 
+# Arch, from the AUR
+yay -S soulseek-rs-bin
+
 # Nix
 nix run github:michel/soulseek-rs/master
 
@@ -130,14 +133,16 @@ cargo binstall soulseek-rs
 cargo install --locked soulseek-rs
 ```
 
-Nightly is the tip of `develop`. The `.deb` and `.rpm` are downloads; Nix,
-Homebrew and cargo build it from source:
+Nightly is the tip of `develop`. The `.deb` and `.rpm` are downloads; the AUR
+package, Nix, Homebrew and cargo build it from source:
 
 ```bash
 curl -fsSLO https://github.com/michel/soulseek-rs/releases/download/nightly/soulseek-rs-nightly-amd64.deb
 sudo apt install ./soulseek-rs-nightly-amd64.deb
 
 sudo dnf install https://github.com/michel/soulseek-rs/releases/download/nightly/soulseek-rs-nightly-x86_64.rpm
+
+yay -S soulseek-rs-git
 
 nix run github:michel/soulseek-rs/develop
 
@@ -153,7 +158,8 @@ goes ahead. Both carry the man page and completions for bash, zsh and fish.
 A release download prints the plain number, `19.0.0`. Any Nix build, and a
 nightly download, reads `19.0.0+git202609141144.deb846b`: the last release, the
 commit's time in UTC, and the commit. A Homebrew `--HEAD` build reports
-`HEAD-deb846b`. A `cargo install` from git sets no version, so it prints
+`HEAD-deb846b` and `soulseek-rs-git` its package version, such as
+`19.0.0.r27.gdeb846b`. A `cargo install` from git sets no version, so it prints
 `19.0.0` too.
 
 From source, `cargo build --release` leaves the binary at

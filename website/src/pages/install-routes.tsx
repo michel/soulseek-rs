@@ -41,7 +41,7 @@ const INSTALLS: readonly InstallRoute[] = [
     ],
     alt: (
       <>
-        Fedora, Nix, Homebrew and cargo are{' '}
+        Fedora, Arch, Nix, Homebrew and cargo are{' '}
         <a href="#linux-packages" className="text-link hover:text-link-hover">
           listed below
         </a>
@@ -111,6 +111,19 @@ const LINUX_ROUTES: readonly LinuxRoute[] = [
         On ARM, <code>aarch64</code> takes the place of <code>x86_64</code>. Run the same
         command again to update. dnf fetches the file each time, so a newer nightly at the same
         address is picked up. An older file downgrades without asking.
+      </>
+    ),
+  },
+  {
+    id: 'aur',
+    name: 'Arch, from the AUR',
+    stable: [{ t: 'cmd', text: 'yay -S soulseek-rs-bin' }],
+    nightly: [{ t: 'cmd', text: 'yay -S soulseek-rs-git' }],
+    note: (
+      <>
+        <code>soulseek-rs-bin</code> installs the release binary. <code>soulseek-rs-git</code>{' '}
+        builds <code>develop</code> from source, so it pulls in a Rust toolchain, and reports its
+        package version, such as <code>19.0.0.r27.gdeb846b</code>.
       </>
     ),
   },
