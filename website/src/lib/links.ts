@@ -29,3 +29,7 @@ export const INSTALL_CMD = `curl -fsSL ${SITE_URL}install.sh | sh`
 
 export const NIGHTLY_INSTALL_CMD =
   'curl -fsSL https://raw.githubusercontent.com/michel/soulseek-rs/develop/website/public/install.sh | sh -s -- --nightly'
+
+export const STABLE_DOWNLOAD = `${LINKS.releases}/latest/download`
+
+export const NIGHTLY_DOWNLOAD = `${LINKS.releases}/download/nightly`

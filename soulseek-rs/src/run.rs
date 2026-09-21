@@ -35,6 +35,14 @@ pub fn run(mut cli: Cli, out: &Out) -> CliResult {
         }
     }
 
+    match &cli.command {
+        Some(Commands::Completions(command)) => {
+            return crate::commands::completions::run(out, command);
+        }
+        Some(Commands::Man) => return crate::commands::completions::man(),
+        _ => {}
+    }
+
     let config_path = config_path(&cli);
     let file_config = match &config_path {
         Some(path) => crate::persist::config::FileConfig::load(path)
@@ -83,9 +91,6 @@ pub fn run(mut cli: Cli, out: &Out) -> CliResult {
                 out,
                 resolved.username.as_deref(),
             );
-        }
-        Commands::Completions(ref command) => {
-            return crate::commands::completions::run(out, command);
         }
         Commands::Config(ConfigCommand::Path) => {
             return crate::commands::settings::config_path(out, &store);

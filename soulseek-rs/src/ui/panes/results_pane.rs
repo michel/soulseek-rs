@@ -1,4 +1,5 @@
 use super::name_scroll::{column_width, end_offset, scroll_text};
+use crate::cli::VERSION;
 use crate::models::FileDisplayData;
 use crate::ui::{
     BYTES_PER_MB, HIGHLIGHT_SYMBOL, body_style, dimmed_style, format_bytes,
@@ -12,8 +13,6 @@ use ratatui::{
     widgets::{Cell, HighlightSpacing, Paragraph, Row, Table, TableState},
 };
 use std::collections::HashSet;
-
-const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // The file name and its folder share whatever width the fixed columns leave,
 // the name getting the larger part: it is what a search is after, and a

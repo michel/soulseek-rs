@@ -107,16 +107,65 @@ numbered release. A failed download, checksum, or startup check leaves an
 existing binary untouched. Windows archives for both channels are on the
 [releases page](https://github.com/michel/soulseek-rs/releases).
 
-The other stable routes need no installer script:
+Or install it with a package manager. Stable follows the latest release:
 
 ```bash
-brew install michel/tap/soulseek-rs   # macOS and Linux
-cargo install soulseek-rs             # or from crates.io
+# Debian, Ubuntu, Mint (on ARM: arm64 for amd64)
+curl -fsSLO https://github.com/michel/soulseek-rs/releases/latest/download/soulseek-rs-amd64.deb
+sudo apt install ./soulseek-rs-amd64.deb
+
+# Fedora, RHEL (on ARM: aarch64 for x86_64)
+sudo dnf install https://github.com/michel/soulseek-rs/releases/latest/download/soulseek-rs-x86_64.rpm
+
+# Nix
+nix run github:michel/soulseek-rs/master
+
+# Homebrew, on macOS and Linux
+brew install michel/tap/soulseek-rs
+
+# cargo-binstall fetches the release binary and compiles nothing
+cargo binstall soulseek-rs
+
+# From source: Rust 1.91 or newer. Debian 13 and Ubuntu 24.04 default to an older one
+cargo install --locked soulseek-rs
 ```
+
+Nightly is the tip of `develop`. The `.deb` and `.rpm` are downloads; Nix,
+Homebrew and cargo build it from source:
+
+```bash
+curl -fsSLO https://github.com/michel/soulseek-rs/releases/download/nightly/soulseek-rs-nightly-amd64.deb
+sudo apt install ./soulseek-rs-nightly-amd64.deb
+
+sudo dnf install https://github.com/michel/soulseek-rs/releases/download/nightly/soulseek-rs-nightly-x86_64.rpm
+
+nix run github:michel/soulseek-rs/develop
+
+brew install --HEAD michel/tap/soulseek-rs
+
+cargo install --locked --git https://github.com/michel/soulseek-rs --branch develop soulseek-rs
+```
+
+A `.deb` or `.rpm` does not update itself. Install the newer file over it. A
+nightly sorts above the release it follows, so going back to stable is a
+downgrade. In a script apt refuses one without `--allow-downgrades`, while dnf
+goes ahead. Both carry the man page and completions for bash, zsh and fish.
+A release download prints the plain number, `19.0.0`. Any Nix build, and a
+nightly download, reads `19.0.0+git202609141144.deb846b`: the last release, the
+commit's time in UTC, and the commit. A Homebrew `--HEAD` build reports
+`HEAD-deb846b`. A `cargo install` from git sets no version, so it prints
+`19.0.0` too.
 
 From source, `cargo build --release` leaves the binary at
 `target/release/soulseek-rs`. To build your own client on the protocol library,
 run `cargo add soulseek-rs-lib`.
+
+To package it for a distribution: a musl build is static, a glibc build links
+only libc, libm and libgcc_s,
+`soulseek-rs completions print <shell>` and `soulseek-rs man` write the
+completion scripts and the man page to stdout, and a build with
+`SOULSEEK_RS_VERSION` set reports that instead of the crate version. The nfpm
+recipe behind the `.deb` and `.rpm` is in [`packaging/`](packaging).
 
 ## Usage
 
@@ -332,6 +381,8 @@ soulseek-rs config path|list|get|set
 soulseek-rs portmap                       # test automatic port mapping
 soulseek-rs skills install|uninstall|list # teach a coding agent this CLI
 soulseek-rs completions install|uninstall # tab completion for bash/zsh/fish
+soulseek-rs completions print <SHELL>     # the script on stdout, for packaging
+soulseek-rs man                           # the man page on stdout
 ```
 
 A script usually starts with `whoami`, which answers "are these credentials
@@ -343,9 +394,9 @@ download folder. `--no-daemon` tests this machine's own login instead.
 `shares list` reads the config file either way, while `shares status` and
 `shares reindex` ask the session and report what peers can see.
 
-Twenty need no credentials: `config path|list|get|set`,
+Twenty-two need no credentials: `config path|list|get|set`,
 `shares list|add|remove`, `wish add|remove|list`, `portmap`,
-`skills install|uninstall|list`, `completions install|uninstall`,
+`skills install|uninstall|list`, `completions install|uninstall|print`, `man`,
 `account logout` and `daemon token|status|stop`. Most never touch the network; `daemon status` and
 `daemon stop` talk to a daemon that is already logged in, so a machine with no
 account of its own can still ask whether one is running. `shares status` and

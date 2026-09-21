@@ -1,3 +1,4 @@
+use crate::cli::VERSION;
 use crate::models::DownloadEntry;
 use crate::ui::{
     BYTES_PER_MB, accent_style, dimmed_style, error_style,
@@ -13,8 +14,6 @@ use ratatui::{
 };
 use soulseek_rs::DownloadStatus;
 use std::fmt::Write as _;
-
-const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Bytes transferred, bytes expected and combined speed across the downloads
 /// that are actually running — or `None` when none are, so the caller can hide

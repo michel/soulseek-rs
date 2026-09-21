@@ -8,10 +8,10 @@
 
 use super::{unwritable, xdg};
 use crate::cli::{Cli, CompletionsArgs, CompletionsCommand, Shell};
-use crate::output::{CliError, CliResult, CompletionRecord, Out};
+use crate::output::{CliError, CliResult, CompletionRecord, Exit, Out};
 use clap::CommandFactory;
 use directories::UserDirs;
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 /// The command being completed, and the file name the scripts are written as.
@@ -65,6 +65,27 @@ pub fn run(out: &Out, command: &CompletionsCommand) -> CliResult {
     match command {
         CompletionsCommand::Install(args) => install(out, &targets(args)?),
         CompletionsCommand::Uninstall(args) => uninstall(out, &targets(args)?),
+        CompletionsCommand::Print { shell } => print(&script(*shell)),
+    }
+}
+
+pub fn man() -> CliResult {
+    let mut page = Vec::new();
+    clap_mangen::Man::new(Cli::command().about("Soulseek client in Rust"))
+        .render(&mut page)
+        .expect("a Vec accepts every write");
+    print(&page)
+}
+
+fn print(bytes: &[u8]) -> CliResult {
+    match std::io::stdout().write_all(bytes) {
+        Err(error) if error.kind() != ErrorKind::BrokenPipe => {
+            Err(CliError::new(
+                Exit::Failure,
+                format!("cannot write stdout: {error}"),
+            ))
+        }
+        _ => Ok(()),
     }
 }
 

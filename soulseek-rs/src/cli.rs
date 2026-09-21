@@ -34,11 +34,16 @@ Exit codes:
   0 success   2 usage/config   3 connect or login   4 no results
   5 timed out   6 transfer failed   7 session lost   1 unexpected error";
 
+pub const VERSION: &str = match option_env!("SOULSEEK_RS_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
 #[derive(Parser, Debug, Default)]
 #[command(
     name = "soulseek-rs",
     author,
-    version,
+    version = VERSION,
     about = "Soulseek client in Rust 🦀",
     long_about = "Soulseek client in Rust.\n\nRun without a subcommand for the \
                   interactive TUI, or use a subcommand for a scriptable \
@@ -244,6 +249,9 @@ pub enum Commands {
     /// Tab completion for bash, zsh, and fish
     #[command(subcommand)]
     Completions(CompletionsCommand),
+
+    /// Print the man page to stdout, for packaging
+    Man,
 }
 
 #[derive(Args, Debug, Default)]
@@ -310,6 +318,12 @@ pub enum CompletionsCommand {
 
     /// Remove the completion script again
     Uninstall(CompletionsArgs),
+
+    /// Print the completion script to stdout, for packaging
+    Print {
+        #[arg(value_enum)]
+        shell: Shell,
+    },
 }
 
 #[derive(Args, Debug)]
