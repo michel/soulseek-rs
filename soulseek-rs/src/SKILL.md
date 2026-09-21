@@ -236,6 +236,9 @@ this skill file into the local agent directories, or remove it: `agent`,
 completion script where bash, zsh, or fish looks for it, or take it back
 again: `shell`, `path`, `action`. For a human at a prompt, not for you.
 
+**`completions print <shell>`** and **`man`** — the completion script or the
+man page on stdout, raw rather than records. For whoever builds a package.
+
 ## Idioms
 
 ```bash

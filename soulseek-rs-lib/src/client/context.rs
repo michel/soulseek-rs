@@ -42,6 +42,7 @@ impl ClientContext {
             private_messages: Vec::new(),
             pending_connect_tokens: HashMap::new(),
             max_peers: Arc::new(AtomicUsize::new(DEFAULT_MAX_PEERS)),
+            download_speed_limit: Arc::default(),
             shares: Arc::new(Shares::empty()),
             shared_directories: Vec::new(),
             peer_addresses: HashMap::new(),
@@ -100,10 +101,12 @@ impl ClientContext {
                 // the whole board again on the next join.
                 self.room_tickers.remove(room);
             }
+            // Only a roster the server has sent in full is kept current: the
+            // joiner hears of their own arrival before the member list.
             RoomEvent::UserJoined { room, username } => {
-                let members =
-                    self.room_members.entry(room.clone()).or_default();
-                if let Err(at) = members.binary_search(username) {
+                if let Some(members) = self.room_members.get_mut(room)
+                    && let Err(at) = members.binary_search(username)
+                {
                     members.insert(at, username.clone());
                 }
             }

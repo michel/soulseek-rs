@@ -4,6 +4,7 @@ pub(crate) mod keepalive;
 pub mod lock;
 pub mod md5;
 pub mod path;
+pub(crate) mod rate_limit;
 pub(crate) mod semaphore;
 pub mod zlib;
 

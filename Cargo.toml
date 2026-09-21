@@ -6,6 +6,7 @@ resolver = "2"
 version = "19.0.0"
 authors = ["Michel de Graaf"]
 edition = "2024"
+rust-version = "1.91"
 license = "MIT"
 repository = "https://github.com/michel/soulseek-rs"
 homepage = "https://re-invention.nl/soulseek-rs/"

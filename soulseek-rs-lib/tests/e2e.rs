@@ -76,38 +76,51 @@ impl TestServer {
     }
 
     /// Spawn a local soulfind on an ephemeral port with a throwaway database.
+    ///
+    /// soulfind exits if its port is taken between `free_port()` handing it
+    /// out and soulfind binding it, so a child that dies is retried on a
+    /// fresh port rather than read as a missing server.
     fn spawn(gate: std::sync::MutexGuard<'static, ()>) -> Option<Self> {
         let bin = soulfind_binary()?;
-        let port = free_port()?;
-        let db = std::env::temp_dir().join(format!("soulfind-e2e-{port}.db"));
-        let _ = std::fs::remove_file(&db);
+        for _ in 0..3 {
+            let port = free_port()?;
+            let db =
+                std::env::temp_dir().join(format!("soulfind-e2e-{port}.db"));
+            let _ = std::fs::remove_file(&db);
 
-        let mut child = Command::new(&bin)
-            .arg("-p")
-            .arg(port.to_string())
-            .arg("-d")
-            .arg(&db)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
+            let mut child = Command::new(&bin)
+                .arg("-p")
+                .arg(port.to_string())
+                .arg("-d")
+                .arg(&db)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .ok()?;
 
-        if wait_until_listening("127.0.0.1", port, Duration::from_secs(5))
-            .is_none()
-        {
-            // Server never came up (e.g. a toolchain/SQLite issue); skip.
+            // A child that has exited is never taken as up: soulfind exits
+            // when its port is gone, and whoever took it may answer instead.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < deadline
+                && child.try_wait().ok().flatten().is_none()
+            {
+                if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                    return Some(Self {
+                        host: "127.0.0.1".to_string(),
+                        port,
+                        child: Some(child),
+                        db: Some(db),
+                        _gate: gate,
+                    });
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            // Never came up (e.g. a toolchain/SQLite issue) or died.
             let _ = child.kill();
             let _ = child.wait();
-            return None;
+            let _ = std::fs::remove_file(&db);
         }
-
-        Some(Self {
-            host: "127.0.0.1".to_string(),
-            port,
-            child: Some(child),
-            db: Some(db),
-            _gate: gate,
-        })
+        None
     }
 
     fn settings(&self, username: &str, password: &str) -> ClientSettings {
@@ -327,8 +340,15 @@ fn a_chat_room_message_is_delivered_between_users() {
     alice.join_room(room).expect("alice joins room");
     bob.join_room(room).expect("bob joins room");
 
-    // Give both joins time to register on the server before speaking.
-    std::thread::sleep(Duration::from_millis(500));
+    // Each is in once the server has sent them the member list; a line said
+    // before bob is in never reaches him.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while alice.room_members(room).is_empty()
+        || bob.room_members(room).is_empty()
+    {
+        assert!(Instant::now() < deadline, "both should get into the room");
+        std::thread::sleep(Duration::from_millis(50));
+    }
     let _ = alice.take_room_events();
     let _ = bob.take_room_events();
 
@@ -526,7 +546,14 @@ fn open_control_and_await_queue(
     let mut p = connect_retry(&cfg.listen_addr, Duration::from_secs(5))?;
     p.set_read_timeout(Some(Duration::from_secs(10)))?;
     p.write_all(&peer_init_bytes(&cfg.peer_username, "P", 0))?;
+    // The client answers a user-info request through the peer it registered
+    // for this connection, so the answer means a download queues on it
+    // rather than dialling a peer the server has never heard of.
+    p.write_all(
+        &soulseek_rs::message::peer::build_user_info_request().get_buffer(),
+    )?;
     p.flush()?;
+    expect_code(&mut p, 16, Duration::from_secs(10))?;
     let _ = cfg.ready.send(());
 
     loop {
@@ -860,10 +887,6 @@ fn file_downloads_over_p_and_f(
         .recv_timeout(Duration::from_secs(5))
         .expect("mock uploader P connection");
 
-    // The listener registers an incoming peer under its plain username; give
-    // that registration a moment to complete before queuing the download.
-    std::thread::sleep(Duration::from_millis(1500));
-
     let (_download, status_rx) = client
         .download(
             filename.to_string(),
@@ -913,6 +936,82 @@ fn a_download_completes_when_the_f_connection_beats_token_registration() {
     );
 }
 
+#[test]
+fn a_download_speed_limit_paces_a_transfer_until_it_is_lifted() {
+    let server = server_or_skip!();
+    let listen_port = free_port().expect("free listen port");
+    let mut client = Client::with_settings(server.listening_settings(
+        "e2e_cappedpeer_dl",
+        "pw",
+        listen_port,
+    ));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login"));
+    client.set_download_speed_limit(64 * 1024);
+
+    let filename = "capped.mp3";
+    let content: Vec<u8> =
+        (0..1024 * 1024u32).map(|i| (i % 251) as u8).collect();
+    let download_dir = unique_download_dir();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let cfg = MockUpload {
+        listen_addr: format!("127.0.0.1:{listen_port}"),
+        peer_username: "e2e_cappedpeer".to_string(),
+        filename: filename.to_string(),
+        content: content.clone(),
+        token: 434_343,
+        ready: ready_tx,
+        token_delay: Duration::ZERO,
+    };
+    let uploader = std::thread::spawn(move || {
+        if let Err(e) = run_mock_uploader(&cfg) {
+            eprintln!("[mock uploader] {e}");
+        }
+    });
+    ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("mock uploader P connection");
+
+    let started = Instant::now();
+    let (_download, status_rx) = client
+        .download(
+            filename.to_string(),
+            "e2e_cappedpeer".to_string(),
+            content.len() as u64,
+            download_dir.display().to_string(),
+        )
+        .expect("start download");
+    let in_progress = || {
+        client
+            .get_all_downloads()
+            .iter()
+            .any(|d| matches!(d.status, DownloadStatus::InProgress { .. }))
+    };
+    assert!(wait_for(in_progress), "the download should start");
+    std::thread::sleep(Duration::from_secs(1));
+    assert!(
+        in_progress(),
+        "1 MiB at 64 KiB/s must still be arriving a second in"
+    );
+
+    client.set_download_speed_limit(0);
+    assert!(
+        wait_for_completion(&client, &status_rx, Duration::from_secs(20)),
+        "the download should reach Completed"
+    );
+    let elapsed = started.elapsed();
+    let _ = uploader.join();
+    assert!(
+        elapsed < Duration::from_secs(8),
+        "capped for the whole file this takes 16s; lifted it took {elapsed:?}"
+    );
+    assert_eq!(
+        std::fs::read(download_dir.join(filename)).expect("downloaded file"),
+        content
+    );
+    let _ = std::fs::remove_dir_all(&download_dir);
+}
+
 fn cancel_mid_transfer(peer_username: &str, stall_after: Option<usize>) {
     let server = server_or_skip!();
 
@@ -943,7 +1042,6 @@ fn cancel_mid_transfer(peer_username: &str, stall_after: Option<usize>) {
     ready_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("mock uploader P connection");
-    std::thread::sleep(Duration::from_millis(1500));
 
     let (_download, status_rx) = client
         .download(
@@ -1043,7 +1141,6 @@ fn a_cancelled_queued_download_declines_the_peers_offer() {
     ready_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("mock uploader P connection");
-    std::thread::sleep(Duration::from_millis(1500));
 
     let download_dir = unique_download_dir();
     let (_download, status_rx) = client
@@ -1117,7 +1214,6 @@ fn refusal_fails_the_download_quickly(
     ready_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("mock uploader P connection");
-    std::thread::sleep(Duration::from_millis(1500));
 
     let download_dir = unique_download_dir();
     let (_download, status_rx) = client
@@ -1217,7 +1313,6 @@ fn an_interrupted_download_resumes_from_its_partial_file() {
     ready_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("mock uploader P connection");
-    std::thread::sleep(Duration::from_millis(1500));
 
     let (_download, status_rx) = client
         .download(
@@ -2936,9 +3031,9 @@ fn a_joined_room_reports_its_members_statistics() {
     assert!(sharer.login().expect("sharer login"));
     sharer.join_room(room).expect("sharer joins room");
 
-    // Let the server register the sharer's membership and share counts, so
-    // the observer's own join reply describes a room that already has them.
-    std::thread::sleep(Duration::from_millis(750));
+    // The sharer's membership and share counts have to land first, so the
+    // observer's own join reply describes a room that already has them.
+    fence(&sharer, "e2e_stats_observer");
 
     let mut observer =
         Client::with_settings(server.settings("e2e_stats_observer", "pw"));
@@ -3019,9 +3114,9 @@ fn watching_a_user_returns_their_status_and_share_counts() {
     watcher.connect().expect("watcher connect");
     assert!(watcher.login().expect("watcher login"));
 
-    // Let the subject's share counts reach the server before watching, so
-    // the reply describes a user it already knows the statistics for.
-    std::thread::sleep(Duration::from_millis(750));
+    // The subject's share counts have to reach the server before watching,
+    // so the reply describes a user it already knows the statistics for.
+    fence(&subject, "e2e_watch_watcher");
 
     watcher
         .watch_user("e2e_watch_subject")
@@ -3352,7 +3447,6 @@ fn download_progress_reports_the_rate_actually_received() {
     ready_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("mock uploader P connection");
-    std::thread::sleep(Duration::from_millis(1500));
 
     let (_download, status_rx) = client
         .download(
@@ -3796,6 +3890,18 @@ fn await_room_event<T>(
     None
 }
 
+/// Wait until the server has handled everything `client` has sent, including
+/// requests it never answers: soulfind takes a connection's messages in order,
+/// so the answer to a question about `other` asked now comes after them.
+fn fence(client: &Client, other: &str) {
+    client.request_user_info(other).expect("ask about a user");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while client.user_info(other).is_none() {
+        assert!(Instant::now() < deadline, "the server should answer");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 #[test]
 fn a_ticker_set_in_a_room_reaches_the_other_members() {
     use soulseek_rs::types::RoomEvent;
@@ -3812,7 +3918,12 @@ fn a_ticker_set_in_a_room_reaches_the_other_members() {
 
     alice.join_room(room).expect("alice joins");
     bob.join_room(room).expect("bob joins");
-    std::thread::sleep(Duration::from_millis(500));
+    // A ticker reaches only who is in the room when it is set.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while bob.room_members(room).is_empty() {
+        assert!(Instant::now() < deadline, "bob should get into the room");
+        std::thread::sleep(Duration::from_millis(50));
+    }
     let _ = bob.take_room_events();
 
     alice
@@ -3856,11 +3967,15 @@ fn a_client_joining_later_receives_the_whole_ticker_board() {
     alice.connect().expect("alice connect");
     assert!(alice.login().expect("alice login"));
     alice.join_room(room).expect("alice joins");
-    std::thread::sleep(Duration::from_millis(300));
     alice
         .set_room_ticker(room, "standing message")
         .expect("set ticker");
-    std::thread::sleep(Duration::from_millis(500));
+    // The room, alice included, is told once the board holds it.
+    await_room_event(&alice, Duration::from_secs(5), |event| {
+        matches!(event, RoomEvent::TickerAdded { room: r, .. } if r == room)
+            .then_some(())
+    })
+    .expect("alice should see her ticker go up");
 
     // Carol joins afterwards and must be handed the board that already exists.
     let mut carol =
@@ -3901,7 +4016,7 @@ fn the_global_room_feed_carries_a_room_we_never_joined() {
 
     watcher.join_global_room().expect("join global room");
     talker.join_room(room).expect("talker joins a room");
-    std::thread::sleep(Duration::from_millis(500));
+    fence(&watcher, "e2e_global_talk");
     let _ = watcher.take_room_events();
 
     let body = "spoken where nobody is watching";
@@ -3925,7 +4040,7 @@ fn the_global_room_feed_carries_a_room_we_never_joined() {
 
     // And leaving the feed stops it: the next message must not arrive.
     watcher.leave_global_room().expect("leave global room");
-    std::thread::sleep(Duration::from_millis(500));
+    fence(&watcher, "e2e_global_talk");
     let _ = watcher.take_room_events();
     talker
         .say_in_room(room, "after leaving")
@@ -3991,7 +4106,16 @@ fn a_room_search_is_answered_by_the_rooms_members() {
     );
     sharer.join_room(room).expect("sharer joins");
     searcher.join_room(room).expect("searcher joins");
-    std::thread::sleep(Duration::from_millis(750));
+    // A room search goes to whoever is in the room when it is sent.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !searcher
+        .room_members(room)
+        .iter()
+        .any(|member| member == "e2e_rs_sharer")
+    {
+        assert!(Instant::now() < deadline, "both should get into the room");
+        std::thread::sleep(Duration::from_millis(50));
+    }
 
     let query = "relic";
     searcher.search_room(room, query).expect("room search");
@@ -4028,7 +4152,7 @@ fn shared_interests_make_two_users_similar() {
     alice
         .add_dislike("e2e_interest_muzak")
         .expect("alice dislikes something");
-    std::thread::sleep(Duration::from_millis(500));
+    fence(&bob, "e2e_like_alice");
 
     // Who else likes this item (code 112).
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -4122,7 +4246,7 @@ fn recommendations_are_returned_for_our_interests() {
     alice.add_interest(shared).expect("alice likes shared");
     bob.add_interest(shared).expect("bob likes shared");
     bob.add_interest(other).expect("bob likes other");
-    std::thread::sleep(Duration::from_millis(500));
+    fence(&bob, "e2e_rec_alice");
 
     let deadline = Instant::now() + Duration::from_secs(8);
     let mut recommended = Vec::new();
@@ -4256,7 +4380,23 @@ fn a_changed_password_is_what_the_next_login_needs() {
     client
         .change_password("second-pw")
         .expect("change password");
-    std::thread::sleep(Duration::from_millis(500));
+    // soulfind stores the new password once it has hashed it, and forgets the
+    // change if our session closes first. The session stays until a login
+    // with the new password shows it landed; a refused one leaves it alone.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let mut fresh =
+            Client::with_settings(server.settings(user, "second-pw"));
+        fresh.connect().expect("connect with the new password");
+        if matches!(fresh.login(), Ok(true)) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the new password must be accepted"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
     drop(client);
 
     let mut stale = Client::with_settings(server.settings(user, "first-pw"));
@@ -4264,14 +4404,6 @@ fn a_changed_password_is_what_the_next_login_needs() {
     assert!(
         !matches!(stale.login(), Ok(true)),
         "the old password must stop working"
-    );
-    drop(stale);
-
-    let mut fresh = Client::with_settings(server.settings(user, "second-pw"));
-    fresh.connect().expect("connect with the new password");
-    assert!(
-        fresh.login().expect("login with the new password"),
-        "the new password must be accepted"
     );
 }
 
@@ -4436,6 +4568,11 @@ fn phrases_the_server_excludes_are_kept_for_our_replies() {
     // network (code 160). Nicotine+ applies them to the files it offers in a
     // search reply, not to the searches it sends, and so do we — this pins
     // that the announced list arrives and is kept for that use.
+    // It binds listeners, so it waits for the server tests: a port handed
+    // to a soulfind that is still starting is otherwise up for grabs.
+    let _gate = SERVER_GATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut phrases = Message::new();
     phrases
         .write_int32(160)
@@ -4604,7 +4741,8 @@ fn a_private_room_is_owned_granted_and_revoked() {
     owner
         .join_private_room(room)
         .expect("owner creates the room");
-    std::thread::sleep(Duration::from_millis(750));
+    // An invite reaches only a user already accepting invitations.
+    fence(&guest, "e2e_priv_owner");
 
     // The guest is invited, and hears about it (code 139).
     owner
@@ -4723,7 +4861,7 @@ fn a_private_room_someone_else_owns_cannot_be_taken() {
     owner
         .join_private_room(room)
         .expect("owner creates the room");
-    std::thread::sleep(Duration::from_millis(750));
+    fence(&owner, "e2e_taken_outsider");
 
     // An outsider asking for the same name must be refused (code 1003), not
     // handed the room.
@@ -4776,7 +4914,7 @@ fn an_acknowledged_offline_message_is_not_delivered_twice() {
     sender
         .send_private_message("e2e_ack_recipient", body)
         .expect("send to an offline user");
-    std::thread::sleep(Duration::from_millis(500));
+    fence(&sender, "e2e_ack_recipient");
 
     let received_once = |label: &str| -> bool {
         let mut client =
@@ -4794,7 +4932,9 @@ fn an_acknowledged_offline_message_is_not_delivered_twice() {
                 std::thread::sleep(Duration::from_millis(100));
             }
         }
-        std::thread::sleep(Duration::from_millis(500));
+        // The acknowledgement goes out ahead of the message it answers, so
+        // once the server has handled what followed, it has the ack too.
+        fence(&client, "e2e_ack_sender");
         got
     };
 
@@ -5348,7 +5488,7 @@ fn a_member_can_give_up_a_private_room_and_an_owner_can_disband_it() {
     owner
         .join_private_room(room)
         .expect("owner creates the room");
-    std::thread::sleep(Duration::from_millis(750));
+    fence(&guest, "e2e_leave_owner");
     owner
         .add_room_member(room, "e2e_leave_guest")
         .expect("owner invites the guest");
@@ -5454,14 +5594,42 @@ fn privileges_can_be_handed_to_another_user() {
 }
 
 #[test]
-fn a_disconnected_client_gives_its_listener_port_back() {
-    // A client that goes out of scope must release the port it bound: the
-    // next one has to be able to advertise the port it was configured with,
-    // not fall back to an ephemeral one nobody was told about. No server is
-    // needed — binding the listener happens in connect(), before the dial.
+fn a_dropped_client_has_released_its_listener_port_when_drop_returns() {
+    let _gate = SERVER_GATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let port = free_port().expect("a port to hold");
-    let settings = |port: u16| ClientSettings {
-        username: "e2e_port_release".to_string(),
+
+    for round in 0..25 {
+        let mut client = Client::with_settings(ClientSettings {
+            username: "e2e_port_release_now".to_string(),
+            password: "pw".to_string(),
+            server_address: PeerAddress::new("127.0.0.1".to_string(), 1),
+            enable_listen: true,
+            listen_port: port,
+            shared_directories: Vec::new(),
+            accept_children: false,
+            version: ClientVersion::default(),
+        });
+        client.connect().expect("bind the listener");
+        assert_eq!(client.listen_port(), Some(port), "round {round}");
+        drop(client);
+
+        assert!(
+            std::net::TcpListener::bind(("0.0.0.0", port)).is_ok(),
+            "round {round}: the port is still held once drop has returned"
+        );
+    }
+}
+
+#[test]
+fn a_cancelled_client_never_binds_its_port() {
+    let _gate = SERVER_GATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let port = free_port().expect("a port to hold");
+    let mut client = Client::with_settings(ClientSettings {
+        username: "e2e_cancelled_bind".to_string(),
         password: "pw".to_string(),
         server_address: PeerAddress::new("127.0.0.1".to_string(), 1),
         enable_listen: true,
@@ -5469,30 +5637,58 @@ fn a_disconnected_client_gives_its_listener_port_back() {
         shared_directories: Vec::new(),
         accept_children: false,
         version: ClientVersion::default(),
-    };
+    });
 
-    let mut first = Client::with_settings(settings(port));
-    first.connect().expect("bind the listener");
-    assert_eq!(first.listen_port(), Some(port));
-    drop(first);
+    client.cancel_handle().cancel();
 
-    // The listener thread notices the stop the moment it is woken, which the
-    // disconnect does by dialling it; give it a beat to unwind.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut second_port = None;
-    while Instant::now() < deadline && second_port != Some(port) {
-        let mut second = Client::with_settings(settings(port));
-        second.connect().expect("bind again");
-        second_port = second.listen_port();
-        if second_port == Some(port) {
-            break;
-        }
-        drop(second);
-        std::thread::sleep(Duration::from_millis(200));
-    }
+    assert!(client.connect().is_err());
+    assert_eq!(client.listen_port(), None);
+    assert!(std::net::TcpListener::bind(("0.0.0.0", port)).is_ok());
+}
+
+#[test]
+fn a_cancel_ends_a_login_waiting_for_its_verdict_and_nothing_follows_it() {
+    let server =
+        std::net::TcpListener::bind("127.0.0.1:0").expect("a silent server");
+    let mut client = Client::with_settings(ClientSettings {
+        username: "e2e_cancelled_login".to_string(),
+        password: "pw".to_string(),
+        server_address: PeerAddress::new(
+            "127.0.0.1".to_string(),
+            server.local_addr().expect("server address").port(),
+        ),
+        enable_listen: false,
+        listen_port: 0,
+        shared_directories: Vec::new(),
+        accept_children: false,
+        version: ClientVersion::default(),
+    });
+    client.connect().expect("start the session");
+    let (mut conn, _) = server.accept().expect("the client dials the server");
+    conn.set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("read timeout");
+    let cancel = client.cancel_handle();
+
+    std::thread::scope(|scope| {
+        let login = scope.spawn(|| client.login());
+        let frame =
+            read_framed(&mut conn).expect("the login reaches the server");
+        assert_eq!(frame.get_message_code(), 1);
+
+        let cancelled_at = Instant::now();
+        cancel.cancel();
+        assert!(login.join().expect("the login thread").is_err());
+        assert!(cancelled_at.elapsed() < Duration::from_secs(5));
+    });
+    client
+        .connect_peer("e2e_nobody")
+        .expect("the actor takes a request");
+    drop(client);
+
+    let mut rest = Vec::new();
     assert_eq!(
-        second_port,
-        Some(port),
-        "the port should be free again once the first client is dropped"
+        conn.read_to_end(&mut rest)
+            .expect("the server sees the session end"),
+        0
     );
 }

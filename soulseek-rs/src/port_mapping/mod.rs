@@ -418,7 +418,18 @@ mod tests {
         thread::spawn(move || {
             let mut buf = [0u8; 64];
             // Answer many requests (initial map + cleanup unmap + any renews).
-            while let Ok((n, from)) = socket.recv_from(&mut buf) {
+            loop {
+                let (n, from) = match socket.recv_from(&mut buf) {
+                    Ok(received) => received,
+                    // Windows reports a reply that met an already-closed
+                    // client socket on the next receive; the gateway is fine.
+                    Err(e)
+                        if e.kind() == std::io::ErrorKind::ConnectionReset =>
+                    {
+                        continue;
+                    }
+                    Err(_) => break,
+                };
                 let request = buf[..n].to_vec();
                 let internal = u16::from_be_bytes([request[4], request[5]]);
                 let lifetime = u32::from_be_bytes([
@@ -465,20 +476,21 @@ mod tests {
         );
 
         // Dropping the mapper must remove the mapping (a lifetime-0 request).
+        // A map the gateway was slow to answer is sent again, and that resend
+        // can arrive first.
         drop(mapper);
-        let unmap_req = requests
-            .recv_timeout(StdDuration::from_secs(3))
-            .expect("dropping the mapper should send an unmap request");
-        assert_eq!(
+        let unmapped = std::iter::from_fn(|| {
+            requests.recv_timeout(StdDuration::from_secs(3)).ok()
+        })
+        .any(|request| {
             u32::from_be_bytes([
-                unmap_req[8],
-                unmap_req[9],
-                unmap_req[10],
-                unmap_req[11]
-            ]),
-            0,
-            "cleanup should request lifetime 0"
-        );
+                request[8],
+                request[9],
+                request[10],
+                request[11],
+            ]) == 0
+        });
+        assert!(unmapped, "cleanup should request lifetime 0");
     }
 
     /// A minimal in-process UPnP IGD: an HTTP server that answers every SOAP

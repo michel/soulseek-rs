@@ -32,7 +32,7 @@ pub mod prelude {
 
 // Re-export commonly used types
 pub use actor::server_actor::{PeerAddress, UserMessage};
-pub use client::{Client, ClientSettings};
+pub use client::{CancelHandle, Client, ClientSettings};
 pub use error::{Result, SoulseekRs};
 pub use message::peer::{SharedDirectory, SharedFileEntry};
 pub use peer::{ConnectionType, ParseConnectionTypeError};

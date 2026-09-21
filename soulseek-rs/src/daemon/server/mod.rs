@@ -522,7 +522,7 @@ impl Daemon {
     fn identify(&self) -> AuthResult {
         AuthResult {
             protocol: PROTOCOL_VERSION,
-            daemon_version: env!("CARGO_PKG_VERSION").to_string(),
+            daemon_version: crate::cli::VERSION.to_string(),
             username: self.session.username(),
         }
     }
@@ -532,7 +532,7 @@ impl Daemon {
         DaemonStatus {
             username: self.session.username(),
             server: self.server.clone(),
-            daemon_version: env!("CARGO_PKG_VERSION").to_string(),
+            daemon_version: crate::cli::VERSION.to_string(),
             protocol: PROTOCOL_VERSION,
             listen_port: self.session.listen_port(),
             shared_folders: folders,

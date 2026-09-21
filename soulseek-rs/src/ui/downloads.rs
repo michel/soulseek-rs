@@ -1,3 +1,4 @@
+use crate::cli::VERSION;
 use crate::models::DownloadEntry;
 use crate::ui::{
     BYTES_PER_MB, accent_style, dimmed_style, error_style,
@@ -12,8 +13,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 use soulseek_rs::DownloadStatus;
-
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+use std::fmt::Write as _;
 
 /// Bytes transferred, bytes expected and combined speed across the downloads
 /// that are actually running — or `None` when none are, so the caller can hide
@@ -54,6 +54,7 @@ pub fn render_download_stats(
     downloads: &[DownloadEntry],
     active_count: usize,
     daemon: Option<&str>,
+    listener_fallback: Option<(u16, u16)>,
 ) {
     let completed = downloads
         .iter()
@@ -79,10 +80,14 @@ pub fn render_download_stats(
 
     let active = active_progress(downloads);
 
-    let title = match daemon {
+    let mut title = match daemon {
         Some(endpoint) => format!("Status · daemon {endpoint}"),
         None => "Status".to_string(),
     };
+    if let Some((configured, bound)) = listener_fallback {
+        let _ =
+            write!(title, " · port {configured} in use, listening on {bound}");
+    }
     let block = pane_block(false).title(plain_title(&title, false));
 
     let inner_area = block.inner(area);

@@ -9,6 +9,7 @@ use crate::types::{
     SimilarUser, UserInfo, UserInterests, UserPresence, UserStats, UserStatus,
 };
 use crate::utils::logger;
+use crate::utils::rate_limit::RateLimit;
 use crate::{
     Transfer,
     actor::{ActorSystem, peer_registry::PeerRegistry},
@@ -486,6 +487,7 @@ pub struct ClientContext {
     /// a token we sent in a ConnectToPeer to the peer we expect back.
     pending_connect_tokens: HashMap<u32, (String, Instant)>,
     max_peers: Arc<AtomicUsize>,
+    pub(crate) download_speed_limit: Arc<RateLimit>,
     /// Files we share with peers (read-only after connect).
     pub shares: Arc<Shares>,
     /// The directories the current share index was built from.
@@ -646,6 +648,8 @@ pub struct Client {
     /// Tells the peer listener to stop, so a disconnected client releases the
     /// port it bound.
     listener_stopped: Arc<AtomicBool>,
+    listener_released: Arc<AtomicBool>,
+    cancel: CancelHandle,
 }
 
 impl Drop for Client {
@@ -680,6 +684,8 @@ impl Client {
             server_handle: None,
             session: SessionWatch::default(),
             listener_stopped: Arc::new(AtomicBool::new(false)),
+            listener_released: Arc::new(AtomicBool::new(false)),
+            cancel: CancelHandle::new(),
         }
     }
 
@@ -718,6 +724,11 @@ impl Client {
     #[must_use]
     pub fn session_loss(&self) -> Option<SessionLoss> {
         self.session.loss()
+    }
+
+    #[must_use]
+    pub fn cancel_handle(&self) -> CancelHandle {
+        self.cancel.clone()
     }
 
     /// The directories whose files are currently shared with other peers.
@@ -845,6 +856,7 @@ impl Client {
     }
 }
 
+mod cancel;
 mod children;
 mod connection;
 mod context;
@@ -856,6 +868,8 @@ mod search;
 mod social;
 mod upload_queue;
 mod uploads;
+
+pub use cancel::CancelHandle;
 
 #[cfg(test)]
 mod tests;

@@ -1,0 +1,55 @@
+name: soulseek-rs
+arch: ${PKG_ARCH}
+platform: linux
+version: ${PKG_VERSION}
+version_schema: none
+release: "1"
+section: net
+priority: optional
+maintainer: Michel de Graaf <michel@re-invention.nl>
+description: |
+  Soulseek client for the terminal
+  A TUI, a scriptable command line and a daemon for the Soulseek
+  peer-to-peer network.
+vendor: Michel de Graaf
+homepage: https://re-invention.nl/soulseek-rs/
+license: MIT
+suggests:
+  - gnome-keyring
+contents:
+  - src: target/nfpm/soulseek-rs
+    dst: /usr/bin/soulseek-rs
+    file_info:
+      mode: 0755
+  - src: target/nfpm/soulseek-rs.1.gz
+    dst: /usr/share/man/man1/soulseek-rs.1.gz
+  - src: target/nfpm/soulseek-rs.bash
+    dst: /usr/share/bash-completion/completions/soulseek-rs
+  - src: target/nfpm/soulseek-rs.fish
+    dst: /usr/share/fish/vendor_completions.d/soulseek-rs.fish
+  - src: target/nfpm/_soulseek-rs
+    dst: /usr/share/zsh/vendor-completions/_soulseek-rs
+    packager: deb
+  - src: target/nfpm/_soulseek-rs
+    dst: /usr/share/zsh/site-functions/_soulseek-rs
+    packager: rpm
+  - dst: /usr/share/doc/soulseek-rs
+    type: dir
+    packager: rpm
+  - dst: /usr/share/licenses/soulseek-rs
+    type: dir
+    packager: rpm
+  - src: README.md
+    dst: /usr/share/doc/soulseek-rs/README.md
+    packager: deb
+  - src: README.md
+    dst: /usr/share/doc/soulseek-rs/README.md
+    packager: rpm
+    type: doc
+  - src: LICENSE
+    dst: /usr/share/doc/soulseek-rs/copyright
+    packager: deb
+  - src: LICENSE
+    dst: /usr/share/licenses/soulseek-rs/LICENSE
+    packager: rpm
+    type: license

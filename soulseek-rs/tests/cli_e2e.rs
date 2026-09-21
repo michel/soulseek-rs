@@ -412,6 +412,28 @@ fn installing_completions_is_repeatable_and_reversible() {
     assert_eq!(action(&again), "absent");
 }
 
+#[test]
+fn a_package_build_reads_completions_and_the_man_page_from_stdout() {
+    let dir = Scratch::new("package-build");
+    let config = dir.path().join("config.toml");
+    std::fs::write(&config, "not = [toml").expect("a config file");
+    let broken = config.display().to_string();
+
+    for (shell, marker) in [
+        ("bash", "complete -F"),
+        ("zsh", "#compdef soulseek-rs"),
+        ("fish", "complete -c soulseek-rs"),
+    ] {
+        let output = run(&["--config", &broken, "completions", "print", shell]);
+        assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+        assert!(stdout(&output).contains(marker), "{shell} script");
+    }
+
+    let man = run(&["--config", &broken, "man"]);
+    assert_eq!(code(&man), EXIT_OK, "stderr: {}", stderr(&man));
+    assert!(stdout(&man).contains(".TH soulseek-rs 1"));
+}
+
 // --- wishlist, the half that only touches the config file ------------------
 
 #[test]
@@ -884,21 +906,28 @@ fn split_session_flags(args: &[&str]) -> (Vec<String>, Vec<String>) {
 ///
 /// `--no-config` is dropped for the obvious reason, and `--quiet` with it:
 /// these commands report the schedule the *server* chose on stderr, which is
-/// the only place a test can see it.
+/// the only place a test can see it. Session flags go to the daemon, as in
+/// [`cli`].
 fn cli_with_config(
     server: &TestServer,
     user: &str,
     config: &Path,
     args: &[&str],
 ) -> Output {
+    let (session_flags, command_args) = match mode() {
+        Mode::Local => {
+            (Vec::new(), args.iter().map(|a| (*a).to_string()).collect())
+        }
+        Mode::Daemon => split_session_flags(args),
+    };
     let mut all: Vec<String> = server
-        .args(user)
+        .args_with(user, &session_flags)
         .into_iter()
         .filter(|arg| arg != "--no-config" && arg != "--quiet")
         .collect();
     all.push("--config".to_string());
     all.push(config.to_str().expect("utf-8 path").to_string());
-    all.extend(args.iter().map(|a| (*a).to_string()));
+    all.extend(command_args);
     let refs: Vec<&str> = all.iter().map(String::as_str).collect();
     run(&refs)
 }
@@ -1888,8 +1917,19 @@ fn room_listen_streams_what_is_said_in_the_room() {
         .spawn()
         .expect("the binary should run");
 
-    // Give the listener time to join before saying anything.
-    std::thread::sleep(Duration::from_secs(3));
+    // The room announces the listener once the server has it in; a line
+    // said before that never reaches it.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !speaker.take_room_events().iter().any(|event| {
+        matches!(
+            event,
+            soulseek_rs::types::RoomEvent::UserJoined { room, username }
+                if room == "cli_e2e_lobby_b" && username == "cli_e2e_room_reader"
+        )
+    }) {
+        assert!(Instant::now() < deadline, "the listener never joined");
+        std::thread::sleep(Duration::from_millis(50));
+    }
     speaker
         .say_in_room("cli_e2e_lobby_b", "streamed line")
         .expect("say");
@@ -1958,6 +1998,11 @@ fn a_private_message_reaches_its_recipient() {
 fn message_read_streams_incoming_private_messages() {
     let server = server_or_skip!();
     let sender = server.client("cli_e2e_pm_sender", Vec::new());
+    // soulfind drops a message to a name it has never seen but keeps one for
+    // a known user until they log in, so however long the reader takes to
+    // get online, the line below reaches it. Registered before the reader's
+    // own session exists: a later login as them would take its place.
+    drop(server.client("cli_e2e_pm_reader", Vec::new()));
     settle();
 
     let mut args = server.args("cli_e2e_pm_reader");
@@ -2418,7 +2463,12 @@ fn room_users_lists_who_is_in_the_room() {
     let server = server_or_skip!();
     let resident = server.client("cli_e2e_resident", Vec::new());
     resident.join_room("cli_e2e_roster").expect("join");
-    settle();
+    // The member list reaches the resident once the server has them in.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while resident.room_members("cli_e2e_roster").is_empty() {
+        assert!(Instant::now() < deadline, "the resident never got in");
+        std::thread::sleep(Duration::from_millis(50));
+    }
 
     let output = cli(
         &server,
