@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [19.1.0](https://github.com/michel/soulseek-rs/compare/v19.0.0...v19.1.0) - 2026-09-21
+
+### Added
+
+- *(cli)* print completion scripts and the man page to stdout
+- *(cli)* let a build name its own version
+- *(tui)* say so in the status bar when the listener took another port
+- *(lib)* let another thread cancel a client's connect and login
+- *(lib)* cap the combined download speed
+
+### Fixed
+
+- *(tui)* cancel a replaced login attempt and wait for it to let go
+- *(tui)* keep the login screen responsive while connecting
+- *(rooms)* start a room's roster from the member list, not the join echo
+- *(lib)* give the listener port back before a dropped client returns
+- *(client)* record a watch before the server can answer it
+
+### Other
+
+- declare Rust 1.91 as the minimum version
+- Merge pull request #97 from michel/test/event-synced-e2e
+- *(e2e)* give a soulfind that dies on startup a fresh port
+- *(portmap)* find the unmap among resent maps
+- *(cli)* wait for the listener to be in the room, and keep an early PM
+- *(cli)* hand a config command's session flags to the daemon
+- *(e2e)* fence on the server where a test slept for another client
+- *(e2e)* start a mock uploader once the client has registered it
+- *(e2e)* wait for the join and the password change, not a sleep
+- *(resume)* bound what a paused transfer may still take, not when
+
 ## [19.0.0](https://github.com/michel/soulseek-rs/compare/v18.0.0...v19.0.0) - 2026-09-10
 
 ### Added
