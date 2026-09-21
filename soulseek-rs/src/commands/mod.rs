@@ -330,7 +330,8 @@ fn dispatch(ctx: &Ctx, command: Commands) -> CliResult {
         | Commands::Config(_)
         | Commands::Shares(_)
         | Commands::Skills(_)
-        | Commands::Completions(_) => {
+        | Commands::Completions(_)
+        | Commands::Man => {
             Err(CliError::usage("handled without a session; see main::run"))
         }
     }

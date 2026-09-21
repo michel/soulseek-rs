@@ -249,6 +249,9 @@ pub enum Commands {
     /// Tab completion for bash, zsh, and fish
     #[command(subcommand)]
     Completions(CompletionsCommand),
+
+    /// Print the man page to stdout, for packaging
+    Man,
 }
 
 #[derive(Args, Debug, Default)]
@@ -315,6 +318,12 @@ pub enum CompletionsCommand {
 
     /// Remove the completion script again
     Uninstall(CompletionsArgs),
+
+    /// Print the completion script to stdout, for packaging
+    Print {
+        #[arg(value_enum)]
+        shell: Shell,
+    },
 }
 
 #[derive(Args, Debug)]

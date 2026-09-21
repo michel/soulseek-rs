@@ -412,6 +412,28 @@ fn installing_completions_is_repeatable_and_reversible() {
     assert_eq!(action(&again), "absent");
 }
 
+#[test]
+fn a_package_build_reads_completions_and_the_man_page_from_stdout() {
+    let dir = Scratch::new("package-build");
+    let config = dir.path().join("config.toml");
+    std::fs::write(&config, "not = [toml").expect("a config file");
+    let broken = config.display().to_string();
+
+    for (shell, marker) in [
+        ("bash", "complete -F"),
+        ("zsh", "#compdef soulseek-rs"),
+        ("fish", "complete -c soulseek-rs"),
+    ] {
+        let output = run(&["--config", &broken, "completions", "print", shell]);
+        assert_eq!(code(&output), EXIT_OK, "stderr: {}", stderr(&output));
+        assert!(stdout(&output).contains(marker), "{shell} script");
+    }
+
+    let man = run(&["--config", &broken, "man"]);
+    assert_eq!(code(&man), EXIT_OK, "stderr: {}", stderr(&man));
+    assert!(stdout(&man).contains(".TH soulseek-rs 1"));
+}
+
 // --- wishlist, the half that only touches the config file ------------------
 
 #[test]
