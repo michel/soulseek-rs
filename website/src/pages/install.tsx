@@ -3,10 +3,10 @@ import { FeatureCard } from '@/components/ui/feature-card'
 import { ExtLink } from '@/components/ui/ext-link'
 import { Code } from '@/components/ui/inline-code'
 import { Cols, PageHead, Prose, Section, SectionHead } from '@/components/ui/layout'
-import { OsIcon, type OsName } from '@/components/ui/os-icon'
 import { Callout } from '@/components/ui/panel'
 import { Terminal, type TermLine } from '@/components/ui/terminal'
 import { INSTALL_CMD, LINKS, NIGHTLY_INSTALL_CMD, SITE_URL } from '@/lib/links'
+import { InstallCards, LinuxRoutes } from '@/pages/install-routes'
 
 const INSTALL_SCRIPT_LINES: readonly TermLine[] = [
   { t: 'cm', text: '# latest stable release' },
@@ -35,66 +35,6 @@ const LIB_LINES: TermLine[] = LIB_SRC.split('\n').map((text) => ({
   t: 'code' as const,
   text,
 }))
-
-interface InstallRoute {
-  id: string
-  os: OsName
-  best: string
-  lines: readonly TermLine[]
-  alt: React.ReactNode
-}
-
-// aislop-ignore-file code-quality/duplicate-block -- three findings here, all data tables: the INSTALLS records repeat the field names InstallRoute requires, and the two uninstall `lines` arrays repeat the `{ t, text }` shape around different commands. The rule matches punctuation, not logic.
-const INSTALLS: readonly InstallRoute[] = [
-  {
-    id: 'macos',
-    os: 'macOS',
-    best: 'Homebrew',
-    lines: [
-      { t: 'cmd', text: 'brew install michel/tap/soulseek-rs' },
-      { t: 'cmd', text: 'soulseek-rs' },
-    ],
-    alt: (
-      <>
-        A prebuilt binary for Apple silicon and Intel, no Rust toolchain needed. With a
-        toolchain, <Code>cargo install soulseek-rs</Code> builds from crates.io instead.
-      </>
-    ),
-  },
-  {
-    id: 'linux',
-    os: 'Linux',
-    best: 'cargo',
-    lines: [
-      { t: 'cmd', text: 'cargo install soulseek-rs' },
-      { t: 'cmd', text: 'soulseek-rs' },
-    ],
-    alt: (
-      <>
-        Homebrew on Linux works the same as on macOS. Without either, the{' '}
-        <ExtLink href={LINKS.releases}>releases page</ExtLink> has static musl archives for x86-64 and
-        arm64 that run on any distribution.
-      </>
-    ),
-  },
-  {
-    id: 'windows',
-    os: 'Windows',
-    best: 'cargo or a prebuilt .exe',
-    lines: [
-      { t: 'cmd', text: 'cargo install soulseek-rs' },
-      { t: 'cmd', text: 'soulseek-rs.exe' },
-    ],
-    alt: (
-      <>
-        Cargo needs the MSVC build tools. To skip both, take the{' '}
-        <code>pc-windows-msvc</code> zip from the{' '}
-        <ExtLink href={LINKS.releases}>releases page</ExtLink>, unpack it, and put{' '}
-        <code>soulseek-rs.exe</code> on your PATH.
-      </>
-    ),
-  },
-]
 
 interface PlatformNote {
   id: string
@@ -291,32 +231,12 @@ const Steps = () => (
           place.
         </p>
         <p className="text-secondary">
-          Or pick a route per platform. Cargo needs a Rust toolchain from{' '}
-          <ExtLink href={LINKS.rustup}>rustup.rs</ExtLink>; the other routes don&rsquo;t.
+          Or pick a route per platform. Cargo needs Rust 1.91 or newer from{' '}
+          <ExtLink href={LINKS.rustup}>rustup.rs</ExtLink>. Nix and Homebrew{' '}
+          <Code>--HEAD</Code> also build from source, but bring their own Rust.
         </p>
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          {INSTALLS.map((route) => (
-            <div
-              key={route.id}
-              id={route.id}
-              className="flex scroll-mt-20 flex-col gap-3.5 rounded-md border border-hairline bg-panel p-[18px] sm:p-[22px]"
-            >
-              <div className="flex items-center gap-2.5">
-                <OsIcon name={route.os} />
-                <h3 className="text-heading leading-[var(--text-heading--line-height)] font-medium">
-                  {route.os}
-                </h3>
-              </div>
-              <span className="text-[11px] uppercase tracking-[var(--tracking-label)] text-secondary">
-                {route.best}
-              </span>
-              <Terminal lines={route.lines} wrap />
-              <p className="text-[12.5px] leading-5 text-secondary [&_code]:font-mono [&_code]:text-primary">
-                {route.alt}
-              </p>
-            </div>
-          ))}
-        </div>
+        <InstallCards />
+        <LinuxRoutes />
         <p className="text-[13px] text-muted">
           Every route puts the same binary on your PATH. Run <Code>soulseek-rs</Code> in
           a terminal and the TUI opens, in a script or a pipe it wants a subcommand
@@ -522,11 +442,13 @@ const Config = () => (
     </Cols>
   </Section>
 )
+// aislop-ignore-file code-quality/duplicate-block -- the two uninstall `lines` arrays repeat the `{ t, text }` shape around different commands. The rule matches punctuation, not logic.
 const Uninstall = () => (
   <Section band>
     <SectionHead eyebrow="uninstall" title="Removing it completely.">
       Three things exist on disk: the binary, the config, and the state, plus the completion
-      scripts and the agent skill if you asked for those. Nothing else, unless you point{' '}
+      scripts and the agent skill if you asked for those. A .deb or .rpm also brings a man page
+      and its own completions, and takes them back when removed. Nothing else, unless you point{' '}
       <Code>--log-file</Code> somewhere. No telemetry to opt out of.
     </SectionHead>
     <Cols start>
@@ -539,6 +461,8 @@ const Uninstall = () => (
           { t: 'cm', text: '# whichever way you installed it' },
           { t: 'cmd', text: 'brew uninstall soulseek-rs' },
           { t: 'cmd', text: 'cargo uninstall soulseek-rs' },
+          { t: 'cmd', text: 'sudo apt remove soulseek-rs' },
+          { t: 'cmd', text: 'sudo dnf remove soulseek-rs' },
           { t: 'cm', text: '# script install without brew: the binary itself' },
           { t: 'cmd', text: 'rm -f /usr/local/bin/soulseek-rs ~/.local/bin/soulseek-rs' },
           { t: 'cm', text: '# brew only: drop the tap it came from' },
@@ -581,7 +505,7 @@ const Uninstall = () => (
 export const Install = () => (
   <>
     <PageHead eyebrow="install" title="Three ways in.">
-      One command with the install script, Homebrew or cargo. Build from source if
+      One command with the install script, your package manager, Homebrew or cargo. Build from source if
       you&rsquo;d rather. Or depend on the library and write your own client.
     </PageHead>
     <Steps />
