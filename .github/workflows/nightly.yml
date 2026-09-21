@@ -24,6 +24,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       sha: ${{ steps.commit.outputs.sha }}
+      version: ${{ steps.commit.outputs.version }}
     steps:
       # workflow_dispatch has a branch selector, but a Nightly run always means
       # develop. Resolve it once so every target builds the identical commit
@@ -36,13 +37,22 @@ jobs:
       - name: Record source commit
         id: commit
         shell: bash
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          base=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          stamp=$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M)
+          [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$stamp" =~ ^[0-9]{12}$ ]]
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "version=$base+git$stamp.${sha:0:7}" >> "$GITHUB_OUTPUT"
 
   binaries:
     name: ${{ matrix.target }}
     needs: source
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    env:
+      SOULSEEK_RS_VERSION: ${{ needs.source.outputs.version }}
     strategy:
       fail-fast: false
       matrix:
@@ -219,9 +229,11 @@ jobs:
 
   smoke-test:
     name: Install published nightly
-    needs: publish
+    needs: [source, publish]
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      VERSION: ${{ needs.source.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -233,7 +245,7 @@ jobs:
           SOULSEEK_RS_INSTALL_DIR: ${{ runner.temp }}/curl-install
         run: |
           sh website/public/install.sh --nightly
-          "$SOULSEEK_RS_INSTALL_DIR/soulseek-rs" --version
+          "$SOULSEEK_RS_INSTALL_DIR/soulseek-rs" --version | grep -F "$VERSION"
 
       - name: Install with wget and no curl on PATH
         env:
@@ -246,4 +258,5 @@ jobs:
             ln -s "$(command -v "$tool")" "$RUNNER_TEMP/wget-path/$tool"
           done
           PATH="$RUNNER_TEMP/wget-path" /bin/sh website/public/install.sh --nightly
-          "$SOULSEEK_RS_INSTALL_DIR/soulseek-rs" --version
+          "$SOULSEEK_RS_INSTALL_DIR/soulseek-rs" --version | grep -F "$VERSION"
+
