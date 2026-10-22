@@ -38,6 +38,7 @@ pub struct Daemon {
     /// Where transfers land, on *this* machine. A caller may point it at a
     /// different folder with `download.set_dir`, but never per download.
     pub download_dir: Mutex<String>,
+    pub use_username_dirs: bool,
     pub server: String,
     pub token: String,
     pub started: Instant,
@@ -428,7 +429,11 @@ impl Daemon {
         // per download would scatter transfers in ways `daemon.status` cannot
         // report; changing the folder is a deliberate session-wide act,
         // `download.set_dir`.
-        let directory = self.download_dir();
+        let directory = crate::directories::download_dir_for(
+            &self.download_dir(),
+            &params.username,
+            self.use_username_dirs,
+        );
         let (download, updates) = self
             .session
             .download_with_metadata(
@@ -800,6 +805,7 @@ mod tests {
             browses: Arc::new(PendingBrowses::default()),
             downloads: Arc::new(Mutex::new(Vec::new())),
             download_dir: Mutex::new("/tmp".to_string()),
+            use_username_dirs: false,
             server: "server.invalid:2416".to_string(),
             token: token.to_string(),
             started: Instant::now(),

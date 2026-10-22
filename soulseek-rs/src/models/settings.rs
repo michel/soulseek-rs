@@ -38,6 +38,7 @@ impl SettingsMode {
 pub enum SettingsRow {
     ChangePassword,
     Logout,
+    UseUsernameDirs,
     DownloadDir,
     /// Share path at this index.
     Share(usize),
@@ -79,6 +80,7 @@ pub struct SettingsState {
     pub account: AccountInfo,
     pub download_dir: String,
     pub share_dirs: Vec<String>,
+    pub use_username_dirs: bool,
     /// Index into [`Self::rows`].
     pub selected: usize,
     pub mode: SettingsMode,
@@ -94,11 +96,13 @@ impl SettingsState {
         account: AccountInfo,
         download_dir: String,
         share_dirs: Vec<String>,
+        use_username_dirs: bool,
     ) -> Self {
         Self {
             account,
             download_dir,
             share_dirs,
+            use_username_dirs,
             selected: 0,
             mode: SettingsMode::Navigate,
             input: String::new(),
@@ -119,6 +123,7 @@ impl SettingsState {
         if self.can_log_out() {
             rows.push(SettingsRow::Logout);
         }
+        rows.push(SettingsRow::UseUsernameDirs);
         rows.push(SettingsRow::DownloadDir);
         rows.extend((0..self.share_dirs.len()).map(SettingsRow::Share));
         rows
@@ -191,6 +196,10 @@ impl SettingsState {
                 self.input.clear();
             }
             SettingsRow::Logout => self.mode = SettingsMode::ConfirmingLogout,
+            SettingsRow::UseUsernameDirs => {
+                self.use_username_dirs = !self.use_username_dirs;
+                return SettingsAction::Apply;
+            }
             SettingsRow::DownloadDir => {
                 self.mode = SettingsMode::EditingDownloadDir;
                 self.input.clone_from(&self.download_dir);
@@ -300,6 +309,7 @@ mod tests {
             account(),
             "/dl".into(),
             vec!["/dl".into(), "/music".into()],
+            false,
         )
     }
 
@@ -493,17 +503,21 @@ mod tests {
             },
             "/dl".into(),
             vec!["/music".into()],
+            false,
         );
         assert_eq!(
             s.rows(),
             vec![
                 SettingsRow::ChangePassword,
+                SettingsRow::UseUsernameDirs,
                 SettingsRow::DownloadDir,
                 SettingsRow::Share(0),
             ]
         );
         // The row below "change password" is the download folder, not a
         // logout the window cannot perform.
+        s.handle_key(key(KeyCode::Down));
+        assert_eq!(s.selected_row(), SettingsRow::UseUsernameDirs);
         s.handle_key(key(KeyCode::Down));
         assert_eq!(s.selected_row(), SettingsRow::DownloadDir);
     }

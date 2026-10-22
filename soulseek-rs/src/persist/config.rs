@@ -40,6 +40,7 @@ pub struct FileConfig {
     /// A TOML array rather than a `config set` key, because a query may itself
     /// contain a comma.
     pub wishlist: Option<Vec<String>>,
+    pub use_username_dirs: Option<bool>,
 }
 
 impl FileConfig {
@@ -59,6 +60,7 @@ impl FileConfig {
         "password_cmd",
         "daemon",
         "daemon_token",
+        "use_username_dirs",
     ];
 
     /// The value of `key`, or `None` when it is unset or unknown. Lists are
@@ -83,6 +85,9 @@ impl FileConfig {
             "password_cmd" => self.password_cmd.clone(),
             "daemon" => self.daemon.clone(),
             "daemon_token" => self.daemon_token.clone(),
+            "use_username_dirs" => {
+                self.use_username_dirs.map(|v| v.to_string())
+            }
             _ => None,
         }
     }
@@ -161,6 +166,17 @@ impl FileConfig {
                 });
                 // The single-folder spelling would otherwise shadow the list.
                 self.shared_dir = None;
+            }
+            "use_username_dirs" => {
+                self.use_username_dirs = Some(match value {
+                    "true" | "1" | "yes" => true,
+                    "false" | "0" | "no" => false,
+                    other => {
+                        return Err(format!(
+                            "use_username_dirs wants true or false, got '{other}'"
+                        ));
+                    }
+                });
             }
             other => {
                 return Err(format!(
@@ -277,6 +293,7 @@ pub struct Resolved {
     pub accept_children: bool,
     pub download_dir: String,
     pub shared_dirs: Vec<String>,
+    pub use_username_dirs: bool,
     pub max_concurrent_downloads: usize,
     pub search_timeout: u64,
     pub password_cmd: Option<String>,
@@ -330,6 +347,7 @@ pub fn resolve(cli: &crate::cli::Cli, file: &FileConfig) -> Resolved {
             && !disable_listener,
         download_dir: download_dir.clone(),
         shared_dirs: resolve_shared_dirs(cli, file, &download_dir),
+        use_username_dirs: file.use_username_dirs.unwrap_or(false),
         max_concurrent_downloads: cli
             .max_concurrent_downloads
             .or(file.max_concurrent_downloads)
@@ -573,6 +591,7 @@ mod tests {
             daemon: Some("nas.local:5030".into()),
             daemon_token: Some("deadbeef".into()),
             wishlist: None,
+            use_username_dirs: Some(false),
         };
         let resolved = resolve(&bare_cli(), &file);
         assert_eq!(resolved.username.as_deref(), Some("alice"));

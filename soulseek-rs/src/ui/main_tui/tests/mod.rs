@@ -349,6 +349,7 @@ fn attach(session: Arc<TalkativeSession>) -> MainTui {
     MainTui::new(
         session,
         "/tmp".to_string(),
+        false,
         Duration::from_secs(1),
         None,
         None,

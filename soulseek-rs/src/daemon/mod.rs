@@ -202,6 +202,7 @@ pub fn run(
         browses: Arc::clone(&browses),
         downloads: Arc::clone(&downloads),
         download_dir: Mutex::new(ctx.download_dir.clone()),
+        use_username_dirs: ctx.use_username_dirs,
         server: ctx.settings.server_address.to_string(),
         token: token.clone(),
         started: Instant::now(),

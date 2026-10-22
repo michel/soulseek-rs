@@ -130,6 +130,11 @@ const SETTINGS: readonly Setting[] = [
     ),
   },
   {
+    key: 'use_username_dirs',
+    fallback: 'false',
+    body: <>Save each peer's files in a subfolder named after them.</>,
+  },
+  {
     key: 'max_concurrent_downloads',
     fallback: '20',
     body: <>Transfers allowed to run at once. The rest queue.</>,

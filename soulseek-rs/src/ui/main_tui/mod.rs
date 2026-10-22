@@ -23,6 +23,7 @@ pub struct MainTui {
     client: Arc<dyn SessionApi>,
     state: AppState,
     download_dir: String,
+    use_username_dirs: bool,
     search_timeout: Duration,
     spinner_state: usize,
     store: Option<StateStore>,
@@ -40,6 +41,7 @@ impl MainTui {
     pub fn new(
         client: Arc<dyn SessionApi>,
         download_dir: String,
+        use_username_dirs: bool,
         search_timeout: Duration,
         store: Option<StateStore>,
         config_path: Option<std::path::PathBuf>,
@@ -49,6 +51,7 @@ impl MainTui {
             state: AppState::new(),
             download_dir,
             search_timeout,
+            use_username_dirs,
             spinner_state: 0,
             store,
             config_path,
@@ -252,17 +255,25 @@ impl MainTui {
     }
 }
 
+#[expect(clippy::too_many_arguments, reason = "one call site per mode")]
 pub fn launch_main_tui(
     terminal: DefaultTerminal,
     client: Arc<dyn SessionApi>,
     download_dir: String,
+    use_username_dirs: bool,
     search_timeout: Duration,
     store: Option<StateStore>,
     config_path: Option<std::path::PathBuf>,
     listener_fallback: Option<(u16, u16)>,
 ) -> Result<TuiExit> {
-    let mut tui =
-        MainTui::new(client, download_dir, search_timeout, store, config_path);
+    let mut tui = MainTui::new(
+        client,
+        download_dir,
+        use_username_dirs,
+        search_timeout,
+        store,
+        config_path,
+    );
     tui.listener_fallback = listener_fallback;
     tui.run(terminal)
 }
