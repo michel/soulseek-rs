@@ -108,6 +108,30 @@ fn applying_settings_locally_stays_on_this_machine() {
     assert_eq!(tui.download_dir, downloads_dir);
 }
 
+#[test]
+fn toggling_username_folders_applies_live_and_persists() {
+    let session = Arc::new(TalkativeSession::default());
+    let scratch = tempfile::tempdir().expect("a temp dir");
+    let config_path = scratch.path().join("config.toml");
+    let mut tui = MainTui::new(
+        session,
+        scratch.path().to_str().expect("utf-8").to_string(),
+        false,
+        Duration::from_secs(1),
+        None,
+        Some(config_path.clone()),
+    );
+
+    tui.open_settings();
+    tui.state.settings.as_mut().expect("open").use_username_dirs = true;
+    tui.apply_settings();
+
+    assert!(tui.use_username_dirs, "the next download uses it");
+    let saved = crate::persist::config::FileConfig::load(&config_path)
+        .expect("config saved");
+    assert_eq!(saved.use_username_dirs, Some(true));
+}
+
 /// The account block answers "who is this session, and what is it
 /// offering" without a trip to another screen.
 #[test]

@@ -109,6 +109,7 @@ impl MainTui {
         if dir_applied {
             self.download_dir.clone_from(&download_dir);
         }
+        self.use_username_dirs = use_username_dirs;
 
         // Persist to config.toml so the change survives a restart. What was
         // refused live is not written either: the file must not promise a

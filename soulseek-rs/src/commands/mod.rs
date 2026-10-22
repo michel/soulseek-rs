@@ -34,6 +34,8 @@ pub struct Ctx {
     pub out: Out,
     pub settings: ClientSettings,
     pub download_dir: String,
+    /// Save each peer's files under `download_dir/<username>`.
+    pub use_username_dirs: bool,
     pub max_concurrent_downloads: usize,
     pub search_timeout: Duration,
     /// Where to find a daemon, when this run should use one rather than open
@@ -47,6 +49,16 @@ pub struct Ctx {
 }
 
 impl Ctx {
+    /// Where a download from `username` lands.
+    #[must_use]
+    pub fn dir_for(&self, username: &str) -> String {
+        crate::directories::download_dir_for(
+            &self.download_dir,
+            username,
+            self.use_username_dirs,
+        )
+    }
+
     /// Re-read a "found nothing", "timed out" or "transfer failed" verdict
     /// against the session that produced it.
     ///

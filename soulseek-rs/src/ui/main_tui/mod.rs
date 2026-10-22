@@ -12,13 +12,11 @@ use crate::persist::{
     snapshot::{Snapshot, restore_messages, restore_searches},
     state::{PersistedMessage, StateStore},
 };
-use crate::ui::sanitize_path_component;
 use color_eyre::Result;
 use ratatui::{
     DefaultTerminal,
     crossterm::event::{self, Event, KeyEventKind, poll},
 };
-use std::path::Path;
 use std::{sync::Arc, time::Duration};
 
 pub struct MainTui {
@@ -134,23 +132,12 @@ impl MainTui {
             } else {
                 let client = self.client.clone();
                 let sender = sender.clone();
-                let use_username_dirs = self.use_username_dirs;
                 std::thread::spawn(move || {
-                    let sanitized_username =
-                        sanitize_path_component(entry.username.as_str());
-                    let download_dir = if use_username_dirs {
-                        Path::new(entry.download_directory.as_str())
-                            .join(sanitized_username.as_str())
-                            .display()
-                            .to_string()
-                    } else {
-                        entry.download_directory
-                    };
                     match client.download(
                         entry.filename.clone(),
                         entry.username,
                         entry.size,
-                        download_dir,
+                        entry.download_directory,
                     ) {
                         Ok((download, rx)) => {
                             let _ = sender.send((download, rx));
@@ -268,6 +255,7 @@ impl MainTui {
     }
 }
 
+#[expect(clippy::too_many_arguments, reason = "one call site per mode")]
 pub fn launch_main_tui(
     terminal: DefaultTerminal,
     client: Arc<dyn SessionApi>,

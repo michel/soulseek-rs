@@ -276,6 +276,7 @@ fn context(
             version: ClientVersion::REFERENCE_CLIENT,
         },
         download_dir,
+        use_username_dirs: resolved.use_username_dirs,
         max_concurrent_downloads: resolved.max_concurrent_downloads,
         search_timeout: Duration::from_secs(resolved.search_timeout),
         daemon,

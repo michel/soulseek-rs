@@ -176,7 +176,7 @@ impl FileConfig {
                             "use_username_dirs wants true or false, got '{other}'"
                         ));
                     }
-                })
+                });
             }
             other => {
                 return Err(format!(

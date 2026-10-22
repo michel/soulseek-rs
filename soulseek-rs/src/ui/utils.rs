@@ -72,41 +72,6 @@ pub const fn get_spinner_char(state: usize) -> &'static str {
     SPINNER_CHARS[state % SPINNER_CHARS.len()]
 }
 
-#[must_use]
-pub fn sanitize_path_component(name: &str) -> String {
-    let mut out = name
-        .chars()
-        .map(|c| match c {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            c if c.is_control() => '_',
-            c => c,
-        })
-        .collect::<String>();
-    if out.is_empty() || out.ends_with(['.', ' ']) {
-        out.push('_');
-    }
-    if is_reserved(out.as_str()) {
-        out.insert(0, '_');
-    }
-    out
-}
-
-#[cfg(target_os = "windows")]
-fn is_reserved(name: &str) -> bool {
-    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
-    if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL") {
-        true
-    } else {
-        matches!(stem.get(..3), Some("COM" | "LPT"))
-            && matches!(stem.as_bytes().get(3..), Some([b'1'..=b'9']))
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn is_reserved(name: &str) -> bool {
-    false
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

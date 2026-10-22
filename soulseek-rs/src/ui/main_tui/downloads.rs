@@ -1,10 +1,9 @@
 use super::MainTui;
+use crate::directories::download_dir_for;
 use crate::models::{DownloadEntry, FileDisplayData};
 use crate::ui::panes::{InfoSubject, selected_transfer};
-use crate::ui::sanitize_path_component;
 use soulseek_rs::types::UploadStatus;
 use soulseek_rs::{DownloadStatus, types::Download};
-use std::path::Path;
 use std::{sync::mpsc, thread};
 
 impl MainTui {
@@ -209,21 +208,15 @@ impl MainTui {
                     peer_upload_speed: Some(file.speed),
                     peer_free_slots: Some(file.slots),
                 };
-                let download_dir = if use_username_dirs {
-                    let sanitized_username =
-                        sanitize_path_component(file.username.as_str());
-                    Path::new(download_dir.as_str())
-                        .join(sanitized_username.as_str())
-                        .display()
-                        .to_string()
-                } else {
-                    download_dir.clone()
-                };
                 match client.download_with_metadata(
                     file.filename.clone(),
                     file.username.clone(),
                     file.size,
-                    download_dir,
+                    download_dir_for(
+                        &download_dir,
+                        &file.username,
+                        use_username_dirs,
+                    ),
                     metadata,
                 ) {
                     Ok((download, rx)) => {
