@@ -53,6 +53,9 @@ significant_drop_tightening = "allow"
 # Subjective nursery lint: the suggested map_or/map_or_else rewrites read worse
 # than the explicit if let/match they replace.
 option_if_let_else = "allow"
+# `assert!(x.is_empty())` in tests is fine; the suggested
+# `assert_eq!(x, [] as [T; 0])` only trades a clear check for a type-cast chore.
+assert_is_empty = "allow"
 # The MD5 round functions use the conventional a/b/c/d register names from the
 # RFC 1321 reference implementation.
 many_single_char_names = "allow"
