@@ -114,6 +114,24 @@ struct UploadJob {
     offered: Option<Instant>,
 }
 
+/// An upload waiting for its downloader to connect back to our listener while
+/// we also dial them. Whichever socket arrives first claims the transfer.
+pub(crate) struct BrokeredUpload {
+    pub(crate) token: u32,
+    pub(crate) real_path: std::path::PathBuf,
+    deadline: Instant,
+    claimed: Arc<AtomicBool>,
+}
+
+impl BrokeredUpload {
+    /// Take the transfer for this route; false if another route already did.
+    pub(crate) fn claim(&self) -> bool {
+        self.claimed
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+}
+
 /// Live bookkeeping for an upload being served (or recently finished).
 struct ActiveUpload {
     username: String,
@@ -504,6 +522,10 @@ pub struct ClientContext {
     active_uploads: HashMap<u32, ActiveUpload>,
     /// Upload tokens waiting for the downloader's address to be resolved.
     pending_serves: HashMap<String, Vec<u32>>,
+    /// Uploads whose downloader we could not dial, keyed by the correlation
+    /// token we sent in `ConnectToPeer(F)`; the peer quotes it back in a
+    /// `PierceFirewall` and we serve over that socket instead.
+    brokered_uploads: HashMap<u32, BrokeredUpload>,
     /// Shared-file listings received from peers we browsed.
     browse_results: HashMap<String, Vec<SharedDirectory>>,
     /// One-folder listings received from peers, keyed by peer and folder.

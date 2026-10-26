@@ -261,7 +261,18 @@ fn handle_pierce_firewall(
     let token = message.read_int32();
 
     let username = match context.client_context.write_safe() {
-        Ok(mut ctx) => ctx.take_pending_connect(token),
+        Ok(mut ctx) => {
+            if let Some(upload) = ctx.take_brokered_upload(token) {
+                drop(ctx);
+                crate::client::Client::serve_pierced(
+                    &context.client_context,
+                    upload,
+                    stream,
+                );
+                return;
+            }
+            ctx.take_pending_connect(token)
+        }
         Err(e) => {
             error!("[listener] pierce firewall lock: {}", e);
             return;

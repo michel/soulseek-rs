@@ -24,6 +24,7 @@ use crate::trace;
 ///
 /// # Errors
 /// Returns any I/O error opening the file or talking to the peer.
+#[cfg(test)]
 pub fn serve_file(
     host: &str,
     port: u32,
@@ -33,16 +34,28 @@ pub fn serve_file(
     bytes_sent: &AtomicU64,
     cancel: &AtomicBool,
 ) -> io::Result<u64> {
-    let mut file = File::open(path)?;
+    let stream = dial(host, port)?;
+    serve_direct(stream, own_username, token, path, bytes_sent, cancel)
+}
 
+/// Connect to `host:port` with the transfer deadlines applied.
+///
+/// # Errors
+/// Returns the connect error, or `InvalidInput` for an unresolvable address.
+pub fn dial(host: &str, port: u32) -> io::Result<TcpStream> {
     let socket = format!("{host}:{port}")
         .to_socket_addrs()?
         .next()
         .ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "no address")
         })?;
-    let mut stream =
-        TcpStream::connect_timeout(&socket, Duration::from_secs(20))?;
+    with_deadlines(TcpStream::connect_timeout(
+        &socket,
+        Duration::from_secs(20),
+    )?)
+}
+
+fn with_deadlines(stream: TcpStream) -> io::Result<TcpStream> {
     // A downloader that connects and then goes silent must cost seconds, not
     // the rest of the session: without deadlines a wedged `read_exact` (or a
     // zero-window `write_all`) holds this thread, the socket, the open file,
@@ -55,7 +68,23 @@ pub fn serve_file(
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;
     stream.set_write_timeout(Some(Duration::from_secs(30)))?;
     stream.set_nodelay(true).ok();
+    Ok(stream)
+}
 
+/// Stream `path` over a connection we dialled: announce with `PeerInit(F)`
+/// and the token, then hand over to [`stream_file`].
+///
+/// # Errors
+/// Returns any I/O error opening the file or talking to the peer.
+pub fn serve_direct(
+    mut stream: TcpStream,
+    own_username: &str,
+    token: u32,
+    path: &Path,
+    bytes_sent: &AtomicU64,
+    cancel: &AtomicBool,
+) -> io::Result<u64> {
+    let file = File::open(path)?;
     // PeerInit(F) + the 4-byte token in a single write so they coalesce.
     let mut init = MessageFactory::build_peer_init_message(
         own_username,
@@ -66,7 +95,36 @@ pub fn serve_file(
     init.extend_from_slice(&token.to_le_bytes());
     stream.write_all(&init)?;
     stream.flush()?;
+    stream_file(stream, file, path, bytes_sent, cancel)
+}
 
+/// Stream `path` over a connection the downloader opened to us after the
+/// server brokered it: it has already sent `PierceFirewall`, so only the
+/// 4-byte transfer token precedes the offset exchange.
+///
+/// # Errors
+/// Returns any I/O error opening the file or talking to the peer.
+pub fn serve_pierced(
+    stream: TcpStream,
+    token: u32,
+    path: &Path,
+    bytes_sent: &AtomicU64,
+    cancel: &AtomicBool,
+) -> io::Result<u64> {
+    let file = File::open(path)?;
+    let mut stream = with_deadlines(stream)?;
+    stream.write_all(&token.to_le_bytes())?;
+    stream.flush()?;
+    stream_file(stream, file, path, bytes_sent, cancel)
+}
+
+fn stream_file(
+    mut stream: TcpStream,
+    mut file: File,
+    path: &Path,
+    bytes_sent: &AtomicU64,
+    cancel: &AtomicBool,
+) -> io::Result<u64> {
     // The downloader replies with an 8-byte START_DOWNLOAD offset first. A
     // non-zero offset means it is resuming and already holds that prefix, so
     // seek past it and count it as sent to keep progress absolute.
@@ -104,7 +162,11 @@ pub fn serve_file(
     // and a peer that leaves the socket open, or whose FIN a NAT swallows,
     // would hold it for the whole wait. Nicotine+ finishes the transfer at
     // delivery for the same reason; the close below is ours to make.
-    trace!("[upload] served {} to {}:{}", path.display(), host, port);
+    trace!(
+        "[upload] served {} to {:?}",
+        path.display(),
+        stream.peer_addr()
+    );
     Ok(streamed)
 }
 
