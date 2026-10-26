@@ -5,7 +5,7 @@
 //! of them having to be widened for the move.
 
 use super::{
-    ActorSystem, Arc, AtomicUsize, BROKER_CONNECT_TIMEOUT,
+    ActorSystem, Arc, AtomicBool, AtomicUsize, BROKER_CONNECT_TIMEOUT,
     BROWSE_PROTECT_WINDOW, ClientContext, DEFAULT_MAX_PEERS,
     DEFAULT_UPLOAD_SLOTS, DownloadStatus, DownloadStore, HashMap, HashSet,
     Instant, PENDING_PEER_TTL, Recommendation, RoomEvent, RoomInfo, RoomTicker,
@@ -50,6 +50,7 @@ impl ClientContext {
             uploads: HashMap::new(),
             active_uploads: HashMap::new(),
             pending_serves: HashMap::new(),
+            brokered_uploads: HashMap::new(),
             browse_results: HashMap::new(),
             folder_contents: HashMap::new(),
             peer_infos: HashMap::new(),
@@ -705,6 +706,45 @@ impl ClientContext {
         self.pending_connect_tokens
             .remove(&token)
             .map(|(username, _)| username)
+    }
+
+    /// Returns the claim flag the dialling route races against.
+    pub(crate) fn add_brokered_upload(
+        &mut self,
+        connect_token: u32,
+        token: u32,
+        real_path: std::path::PathBuf,
+    ) -> Arc<AtomicBool> {
+        let claimed = Arc::new(AtomicBool::new(false));
+        self.brokered_uploads.insert(
+            connect_token,
+            super::BrokeredUpload {
+                token,
+                real_path,
+                deadline: Instant::now() + BROKER_CONNECT_TIMEOUT,
+                claimed: claimed.clone(),
+            },
+        );
+        claimed
+    }
+
+    pub(crate) fn take_brokered_upload(
+        &mut self,
+        connect_token: u32,
+    ) -> Option<super::BrokeredUpload> {
+        self.brokered_uploads.remove(&connect_token)
+    }
+
+    /// Uploads whose downloader never connected back in time.
+    pub(crate) fn take_expired_brokered_uploads(
+        &mut self,
+        now: Instant,
+    ) -> Vec<super::BrokeredUpload> {
+        let (expired, live) = std::mem::take(&mut self.brokered_uploads)
+            .into_iter()
+            .partition(|(_, upload)| now >= upload.deadline);
+        self.brokered_uploads = live;
+        expired.into_values().collect()
     }
 
     pub fn take_expired_connects(&mut self, now: Instant) -> Vec<String> {

@@ -482,8 +482,8 @@ fn registered_username_can_relogin_with_same_password() {
 // ---------------------------------------------------------------------------
 // Peer-to-peer download coverage.
 //
-// The client cannot serve files (the upload side is not implemented), so a real
-// download is exercised with a minimal in-process "mock uploader" that speaks
+// To exercise the download path on its own, the peer is a minimal in-process
+// "mock uploader" rather than a second client. It speaks
 // the peer protocol using the library's own public `Message` wire format. It
 // drives the same path a real peer would after a search: a `P` control
 // connection to our listener, a `QueueUpload` → `TransferRequest` →
@@ -5691,4 +5691,66 @@ fn a_cancel_ends_a_login_waiting_for_its_verdict_and_nothing_follows_it() {
             .expect("the server sees the session end"),
         0
     );
+}
+
+#[test]
+fn a_firewalled_downloader_still_receives_the_upload() {
+    // Issue #102: the leecher cannot be dialled (no listener, as behind a NAT),
+    // so the sharer must ask the server to broker the F connection and serve
+    // the file over the leecher's PierceFirewall connection.
+    let server = server_or_skip!();
+
+    let share_dir = unique_download_dir();
+    let content: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+    let filename = "e2e_probe_fwleech.bin";
+    std::fs::write(share_dir.join(filename), &content).unwrap();
+
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share_dir.display().to_string()],
+        ..server.listening_settings(
+            "e2e_fw_sharer",
+            "pw",
+            free_port().expect("sharer port"),
+        )
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+
+    let mut leecher =
+        Client::with_settings(server.settings("e2e_fw_leecher", "pw"));
+    leecher.connect().expect("leecher connect");
+    assert!(leecher.login().expect("leecher login"));
+    std::thread::sleep(Duration::from_secs(1));
+
+    let query = "fwleech";
+    let _ = leecher.search(query, Duration::from_secs(3));
+    let (result_path, size) = reply_from(&leecher, query, "e2e_fw_sharer")
+        .and_then(|reply| reply.files.into_iter().next())
+        .map(|file| (file.name, file.size))
+        .expect("leecher should find the sharer's file");
+
+    let download_dir = unique_download_dir();
+    let (_download, status_rx) = leecher
+        .download(
+            result_path.clone(),
+            "e2e_fw_sharer".to_string(),
+            size,
+            download_dir.display().to_string(),
+        )
+        .expect("start download");
+
+    let completed =
+        wait_for_completion(&leecher, &status_rx, Duration::from_secs(40));
+    assert!(
+        completed,
+        "the download to a firewalled leecher should complete"
+    );
+
+    let basename = result_path.rsplit(['\\', '/']).next().unwrap();
+    assert_eq!(
+        std::fs::read(download_dir.join(basename)).expect("downloaded file"),
+        content
+    );
+    let _ = std::fs::remove_dir_all(&download_dir);
+    let _ = std::fs::remove_dir_all(&share_dir);
 }
