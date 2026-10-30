@@ -20,6 +20,7 @@ impl MainTui {
             account,
             self.download_dir.clone(),
             self.client.shared_directories(),
+            self.use_username_dirs,
         ));
     }
 
@@ -66,6 +67,7 @@ impl MainTui {
         };
         let download_dir = settings.download_dir.clone();
         let share_dirs = settings.share_dirs.clone();
+        let use_username_dirs = settings.use_username_dirs;
 
         let shares = if self.client.daemon_endpoint().is_some() {
             share_dirs.clone()
@@ -107,6 +109,7 @@ impl MainTui {
         if dir_applied {
             self.download_dir.clone_from(&download_dir);
         }
+        self.use_username_dirs = use_username_dirs;
 
         // Persist to config.toml so the change survives a restart. What was
         // refused live is not written either: the file must not promise a
@@ -121,6 +124,7 @@ impl MainTui {
                     // load, so leaving it would resurrect a removed folder.
                     config.shared_dir = None;
                     config.shared_dirs = Some(share_dirs);
+                    config.use_username_dirs = Some(use_username_dirs);
                     config.save(&path)
                 });
             if let Err(e) = result {

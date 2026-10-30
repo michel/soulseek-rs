@@ -1,4 +1,5 @@
 use super::MainTui;
+use crate::directories::download_dir_for;
 use crate::models::{DownloadEntry, FileDisplayData};
 use crate::ui::panes::{InfoSubject, selected_transfer};
 use soulseek_rs::types::UploadStatus;
@@ -197,6 +198,7 @@ impl MainTui {
         let sender = self.downloads_sender();
         let client = self.client.clone();
         let download_dir = self.download_dir.clone();
+        let use_username_dirs = self.use_username_dirs;
 
         thread::spawn(move || {
             for file in selected_files {
@@ -210,7 +212,11 @@ impl MainTui {
                     file.filename.clone(),
                     file.username.clone(),
                     file.size,
-                    download_dir.clone(),
+                    download_dir_for(
+                        &download_dir,
+                        &file.username,
+                        use_username_dirs,
+                    ),
                     metadata,
                 ) {
                     Ok((download, rx)) => {

@@ -87,16 +87,10 @@ impl Client {
                     }
                 };
 
-                let download_to_update =
-                    context.get_downloads().iter().find_map(|d| {
-                        if d.username == username
-                            && d.filename == transfer.filename
-                        {
-                            Some((d.token, d.clone()))
-                        } else {
-                            None
-                        }
-                    });
+                let download_to_update = context
+                    .downloads
+                    .get_by_file(&username, &transfer.filename)
+                    .map(|d| (d.token, d.clone()));
 
                 let cancelled =
                     download_to_update.as_ref().is_some_and(|(_, d)| {

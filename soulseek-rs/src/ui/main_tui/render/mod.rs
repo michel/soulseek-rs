@@ -369,6 +369,16 @@ impl MainTui {
         lines.push(Line::from(""));
 
         lines.push(section("Folders"));
+        lines.push(entry(
+            selected == SettingsRow::UseUsernameDirs,
+            "Use username directory ",
+            if settings.use_username_dirs {
+                "[x]"
+            } else {
+                "[ ]"
+            }
+            .to_string(),
+        ));
         lines.push(if settings.mode == SettingsMode::EditingDownloadDir {
             typing("Download folder: ", settings.input.clone())
         } else {

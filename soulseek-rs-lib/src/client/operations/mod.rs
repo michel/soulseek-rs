@@ -151,26 +151,26 @@ impl Client {
                         // its failure is exactly what makes an
                         // unreachable peer fall back to the
                         // server-brokered path.
-                        let waiting_serves = if port == 0 {
+                        if port == 0 {
                             warn!(
                                 "[client] server reports no listening port for {}",
                                 username
                             );
-                            Vec::new()
-                        } else {
-                            match client_context.write_safe() {
-                                Ok(mut ctx) => {
+                        }
+                        let waiting_serves = match client_context.write_safe() {
+                            Ok(mut ctx) => {
+                                if port != 0 {
                                     ctx.cache_peer_address(
                                         &username,
                                         host.clone(),
                                         port,
                                     );
-                                    ctx.pending_serves
-                                        .remove(&username)
-                                        .unwrap_or_default()
                                 }
-                                Err(_) => Vec::new(),
+                                ctx.pending_serves
+                                    .remove(&username)
+                                    .unwrap_or_default()
                             }
+                            Err(_) => Vec::new(),
                         };
                         for token in waiting_serves {
                             Self::spawn_serve(
@@ -622,16 +622,29 @@ impl Client {
                         // token is the correlation we sent, so it names the
                         // peer: end the wait now instead of letting every
                         // queued download for them sit until the timeout.
-                        let username = match client_context.write_safe() {
-                            Ok(mut ctx) => ctx.take_pending_connect(token),
-                            Err(e) => {
-                                error!(
-                                    "[client] CantConnectToPeer write: {}",
-                                    e
-                                );
-                                None
-                            }
-                        };
+                        let (username, upload) =
+                            match client_context.write_safe() {
+                                Ok(mut ctx) => (
+                                    ctx.take_pending_connect(token),
+                                    ctx.take_brokered_upload(token),
+                                ),
+                                Err(e) => {
+                                    error!(
+                                        "[client] CantConnectToPeer write: {}",
+                                        e
+                                    );
+                                    (None, None)
+                                }
+                            };
+                        if let Some(upload) = upload
+                            && upload.claim()
+                        {
+                            Self::fail_upload(
+                                &client_context,
+                                upload.token,
+                                "peer could not connect back",
+                            );
+                        }
                         if let Some(username) = username {
                             debug!(
                                 "[client] {} cannot connect back (token {})",
@@ -787,6 +800,17 @@ impl Client {
         };
         for username in expired {
             Self::fail_queued_downloads(client_context, &username);
+        }
+        let expired = match client_context.write_safe() {
+            Ok(mut ctx) => ctx.take_expired_brokered_uploads(Instant::now()),
+            Err(_) => return,
+        };
+        for upload in expired.iter().filter(|u| u.claim()) {
+            Self::fail_upload(
+                client_context,
+                upload.token,
+                "peer never connected back",
+            );
         }
     }
 }

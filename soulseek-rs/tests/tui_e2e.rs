@@ -56,6 +56,7 @@ impl Window {
         let tui = MainTui::new(
             client,
             downloads.display().to_string(),
+            false,
             SEARCH_WINDOW,
             Some(StateStore::new(state.to_path_buf())),
             None,

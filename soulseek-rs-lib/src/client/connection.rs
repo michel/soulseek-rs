@@ -209,33 +209,33 @@ impl Client {
     /// control.
     pub fn login(&self) -> Result<bool> {
         info!("Logging in as {}", self.username);
-        if let Some(handle) = &self.server_handle
-            && !self.cancel.is_cancelled()
-        {
-            let (tx, rx) = std::sync::mpsc::channel();
-            let _ = handle.send(ServerMessage::Login {
-                username: self.username.clone(),
-                password: self.password.clone(),
-                version: self.version,
-                response: tx,
-            });
+        let Some(handle) = &self.server_handle else {
+            return Err(SoulseekRs::NotConnected);
+        };
+        if self.cancel.is_cancelled() {
+            return Err(SoulseekRs::NotConnected);
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _ = handle.send(ServerMessage::Login {
+            username: self.username.clone(),
+            password: self.password.clone(),
+            version: self.version,
+            response: tx,
+        });
 
-            let deadline = Instant::now() + LOGIN_RESPONSE_TIMEOUT;
-            loop {
-                match rx.recv_timeout(LOGIN_POLL_INTERVAL) {
-                    Ok(result) => return result,
-                    Err(RecvTimeoutError::Timeout)
-                        if self.cancel.is_cancelled() =>
-                    {
-                        return Err(SoulseekRs::NotConnected);
-                    }
-                    Err(RecvTimeoutError::Timeout)
-                        if Instant::now() < deadline => {}
-                    Err(_) => return Err(SoulseekRs::Timeout),
+        let deadline = Instant::now() + LOGIN_RESPONSE_TIMEOUT;
+        loop {
+            match rx.recv_timeout(LOGIN_POLL_INTERVAL) {
+                Ok(result) => return result,
+                Err(RecvTimeoutError::Timeout)
+                    if self.cancel.is_cancelled() =>
+                {
+                    return Err(SoulseekRs::NotConnected);
                 }
+                Err(RecvTimeoutError::Timeout) if Instant::now() < deadline => {
+                }
+                Err(_) => return Err(SoulseekRs::Timeout),
             }
-        } else {
-            Err(SoulseekRs::NotConnected)
         }
     }
 

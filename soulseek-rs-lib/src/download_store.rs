@@ -33,6 +33,20 @@ impl DownloadStore {
         self.downloads.iter_mut().find(|d| d.token == token)
     }
 
+    /// The live entry for a file wins over a finished one, so queueing the
+    /// same file twice and cancelling once leaves the second request reachable.
+    #[must_use]
+    pub fn get_by_file(
+        &self,
+        username: &str,
+        filename: &str,
+    ) -> Option<&Download> {
+        self.downloads
+            .iter()
+            .filter(|d| d.username == username && d.filename == filename)
+            .min_by_key(|d| d.is_finished())
+    }
+
     pub fn get_by_file_mut(
         &mut self,
         username: &str,
@@ -40,7 +54,8 @@ impl DownloadStore {
     ) -> Option<&mut Download> {
         self.downloads
             .iter_mut()
-            .find(|d| d.username == username && d.filename == filename)
+            .filter(|d| d.username == username && d.filename == filename)
+            .min_by_key(|d| d.is_finished())
     }
 
     #[must_use]
@@ -276,6 +291,34 @@ mod tests {
 
         assert!(!store.update_queue_position("peer", "missing.mp3", 1));
         assert!(!store.update_queue_position("other", "song.mp3", 1));
+    }
+
+    #[test]
+    fn cancel_by_file_reaches_the_second_request_for_the_same_file() {
+        let mut store = DownloadStore::new();
+        let mut first = make_download(1, DownloadStatus::Queued);
+        first.filename = "song.mp3".to_string();
+        let mut second = make_download(2, DownloadStatus::Queued);
+        second.filename = "song.mp3".to_string();
+        store.add(first);
+        store.add(second);
+
+        assert_eq!(store.cancel_by_file("peer", "song.mp3").unwrap().token, 1);
+        assert_eq!(store.cancel_by_file("peer", "song.mp3").unwrap().token, 2);
+        assert!(store.cancel_by_file("peer", "song.mp3").is_none());
+    }
+
+    #[test]
+    fn get_by_file_prefers_the_live_entry_over_a_cancelled_one() {
+        let mut store = DownloadStore::new();
+        let mut cancelled = make_download(1, DownloadStatus::Cancelled);
+        cancelled.filename = "song.mp3".to_string();
+        let mut queued = make_download(2, DownloadStatus::Queued);
+        queued.filename = "song.mp3".to_string();
+        store.add(cancelled);
+        store.add(queued);
+
+        assert_eq!(store.get_by_file("peer", "song.mp3").unwrap().token, 2);
     }
 
     #[test]

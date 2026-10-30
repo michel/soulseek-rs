@@ -458,7 +458,7 @@ fn download_all(
                         client.as_ref(),
                         &ctx.out,
                         &request,
-                        &ctx.download_dir,
+                        &ctx.dir_for(&request.user),
                         timeout,
                     );
                     if sender.send((request, outcome)).is_err() {
