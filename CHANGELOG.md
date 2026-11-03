@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [20.0.0](https://github.com/michel/soulseek-rs/compare/v19.1.0...v20.0.0) - 2026-10-30
+
+### Added
+
+- *(tui)* added option for storing downloaded files in username directories
+
+### Fixed
+
+- *(tui)* apply username folders everywhere and resume in place
+- *(tui)* removed a ton of use_username_dirs references
+- *(lib)* reach the live download when a file is queued twice
+- *(lib)* serve uploads to downloaders we cannot dial
+
+### Other
+
+- *(tui)* cover username directories setting and regenerate openrpc doc
+- satisfy clippy 1.99
+
 ## [19.1.0](https://github.com/michel/soulseek-rs/compare/v19.0.0...v19.1.0) - 2026-09-21
 
 ### Added
