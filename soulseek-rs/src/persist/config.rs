@@ -41,7 +41,6 @@ pub struct FileConfig {
     /// contain a comma.
     pub wishlist: Option<Vec<String>>,
     pub use_username_dirs: Option<bool>,
-    #[serde(alias = "use_remote_dirs")]
     pub preserve_remote_dirs: Option<bool>,
 }
 
@@ -91,7 +90,7 @@ impl FileConfig {
             "use_username_dirs" => {
                 self.use_username_dirs.map(|v| v.to_string())
             }
-            "preserve_remote_dirs" | "use_remote_dirs" => {
+            "preserve_remote_dirs" => {
                 self.preserve_remote_dirs.map(|v| v.to_string())
             }
             _ => None,
@@ -173,7 +172,7 @@ impl FileConfig {
                 // The single-folder spelling would otherwise shadow the list.
                 self.shared_dir = None;
             }
-            "preserve_remote_dirs" | "use_remote_dirs" => {
+            "preserve_remote_dirs" => {
                 self.preserve_remote_dirs = Some(match value {
                     "true" | "1" | "yes" => true,
                     "false" | "0" | "no" => false,
@@ -597,18 +596,6 @@ mod tests {
             .expect("set false");
         assert!(!resolve(&bare_cli(), &file).preserve_remote_dirs);
         assert!(file.set("preserve_remote_dirs", "maybe").is_err());
-    }
-
-    #[test]
-    fn old_remote_dirs_config_key_remains_compatible() {
-        let config: FileConfig =
-            toml::from_str("use_remote_dirs = true").unwrap();
-        assert_eq!(config.preserve_remote_dirs, Some(true));
-        assert_eq!(config.get("preserve_remote_dirs").as_deref(), Some("true"));
-        assert_eq!(config.get("use_remote_dirs").as_deref(), Some("true"));
-        let serialized = toml::to_string(&config).unwrap();
-        assert!(serialized.contains("preserve_remote_dirs = true"));
-        assert!(!serialized.contains("use_remote_dirs ="));
     }
 
     #[test]
