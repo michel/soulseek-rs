@@ -239,7 +239,7 @@ fn logging_out_asks_first_and_then_closes_the_window() {
 }
 
 /// Attached, the login is the daemon's: there is no logout row to land
-/// on, so the row below the password is the download folder.
+/// on, so the download-folder row follows both directory toggles.
 #[test]
 fn an_attached_window_offers_no_logout() {
     let session = Arc::new(TalkativeSession {
@@ -248,6 +248,7 @@ fn an_attached_window_offers_no_logout() {
     });
     let mut tui = attach(session);
     press(&mut tui, KeyCode::Char('o'));
+    press(&mut tui, KeyCode::Down);
     press(&mut tui, KeyCode::Down);
     press(&mut tui, KeyCode::Down);
     press(&mut tui, KeyCode::Enter);
