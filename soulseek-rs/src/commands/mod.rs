@@ -36,6 +36,7 @@ pub struct Ctx {
     pub download_dir: String,
     /// Save each peer's files under `download_dir/<username>`.
     pub use_username_dirs: bool,
+    pub use_remote_dirs: bool,
     pub max_concurrent_downloads: usize,
     pub search_timeout: Duration,
     /// Where to find a daemon, when this run should use one rather than open
@@ -49,13 +50,15 @@ pub struct Ctx {
 }
 
 impl Ctx {
-    /// Where a download from `username` lands.
+    /// Destination file path after applying the configured directory options.
     #[must_use]
-    pub fn dir_for(&self, username: &str) -> String {
-        crate::directories::download_dir_for(
+    pub fn path_for(&self, username: &str, remote_path: &str) -> PathBuf {
+        crate::directories::download_path_for(
             &self.download_dir,
             username,
+            remote_path,
             self.use_username_dirs,
+            self.use_remote_dirs,
         )
     }
 

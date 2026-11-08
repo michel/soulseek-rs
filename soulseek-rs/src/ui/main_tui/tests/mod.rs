@@ -350,6 +350,7 @@ fn attach(session: Arc<TalkativeSession>) -> MainTui {
         session,
         "/tmp".to_string(),
         false,
+        false,
         Duration::from_secs(1),
         None,
         None,

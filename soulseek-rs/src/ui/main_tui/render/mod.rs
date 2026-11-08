@@ -379,6 +379,16 @@ impl MainTui {
             }
             .to_string(),
         ));
+        lines.push(entry(
+            selected == SettingsRow::UseRemoteDirs,
+            "Preserve remote folders ",
+            if settings.use_remote_dirs {
+                "[x]"
+            } else {
+                "[ ]"
+            }
+            .to_string(),
+        ));
         lines.push(if settings.mode == SettingsMode::EditingDownloadDir {
             typing("Download folder: ", settings.input.clone())
         } else {

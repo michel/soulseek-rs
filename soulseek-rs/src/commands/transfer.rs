@@ -328,12 +328,20 @@ fn collect(
 fn dedupe(
     requests: impl IntoIterator<Item = Request>,
     download_dir: &str,
+    use_username_dirs: bool,
+    use_remote_dirs: bool,
     out: &Out,
 ) -> Vec<Request> {
     let mut targets: HashMap<PathBuf, Request> = HashMap::new();
     let mut kept = Vec::new();
     for request in requests {
-        let target = local_path(download_dir, &request.path);
+        let target = crate::directories::download_path_for(
+            download_dir,
+            &request.user,
+            &request.path,
+            use_username_dirs,
+            use_remote_dirs,
+        );
         if let Some(queued) = targets.get(&target) {
             let collision = if queued.path == request.path {
                 format!("same remote path already queued from {}", queued.user)
@@ -441,7 +449,13 @@ fn download_all(
     requests: Vec<Request>,
     timeout: Duration,
 ) -> CliResult {
-    let requests = dedupe(requests, &ctx.download_dir, &ctx.out);
+    let requests = dedupe(
+        requests,
+        &ctx.download_dir,
+        ctx.use_username_dirs,
+        ctx.use_remote_dirs,
+        &ctx.out,
+    );
     let workers = ctx.max_concurrent_downloads.clamp(1, requests.len().max(1));
     let queue = Mutex::new(VecDeque::from(requests));
     let (sender, receiver) = channel();
@@ -458,7 +472,7 @@ fn download_all(
                         client.as_ref(),
                         &ctx.out,
                         &request,
-                        &ctx.dir_for(&request.user),
+                        ctx.path_for(&request.user, &request.path),
                         timeout,
                     );
                     if sender.send((request, outcome)).is_err() {
@@ -505,19 +519,24 @@ fn download_one(
     client: &dyn SessionApi,
     out: &Out,
     request: &Request,
-    download_dir: &str,
+    destination: PathBuf,
     timeout: Duration,
 ) -> CliResult<DownloadRecord> {
     // Clear any earlier attempt: entries are keyed by a hash of the remote
     // path, so a stale one would shadow this transfer.
     let _ = client.remove_download(&request.user, &request.path);
 
+    let directory = destination
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .display()
+        .to_string();
     let (_download, updates) = client
         .download(
             request.path.clone(),
             request.user.clone(),
             request.size,
-            download_dir.to_string(),
+            directory,
         )
         .map_err(|e| CliError::transfer(format!("cannot start: {e}")))?;
 
@@ -539,7 +558,7 @@ fn download_one(
         }
         match updates.recv_timeout(remaining.min(Duration::from_millis(250))) {
             Ok(DownloadStatus::Completed) => {
-                let file = local_path(download_dir, &request.path);
+                let file = destination;
                 return Ok(DownloadRecord {
                     user: request.user.clone(),
                     path: request.path.clone(),
@@ -1012,6 +1031,8 @@ mod tests {
                 request("c", "other.mp3"),
             ],
             "/music",
+            false,
+            false,
             &out,
         );
         assert_eq!(kept.len(), 2);
@@ -1030,10 +1051,38 @@ mod tests {
                 request("b", "@@two\\other\\track.mp3"),
             ],
             "/music",
+            false,
+            false,
             &out,
         );
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].user, "a");
+    }
+
+    #[test]
+    fn remote_directories_keep_same_basename_files_apart() {
+        let out = Out::new(false, true);
+        let kept = dedupe(
+            vec![
+                request("bob", "@@share\\Artist A\\Album\\track.flac"),
+                request("bob", "@@share\\Artist B\\Album\\track.flac"),
+            ],
+            "/music",
+            false,
+            true,
+            &out,
+        );
+        assert_eq!(kept.len(), 2);
+        assert_eq!(
+            crate::directories::download_path_for(
+                "/music",
+                "bob",
+                &kept[0].path,
+                false,
+                true,
+            ),
+            PathBuf::from("/music/@@share/Artist A/Album/track.flac")
+        );
     }
 
     #[test]

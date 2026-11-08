@@ -39,6 +39,7 @@ pub enum SettingsRow {
     ChangePassword,
     Logout,
     UseUsernameDirs,
+    UseRemoteDirs,
     DownloadDir,
     /// Share path at this index.
     Share(usize),
@@ -81,6 +82,7 @@ pub struct SettingsState {
     pub download_dir: String,
     pub share_dirs: Vec<String>,
     pub use_username_dirs: bool,
+    pub use_remote_dirs: bool,
     /// Index into [`Self::rows`].
     pub selected: usize,
     pub mode: SettingsMode,
@@ -97,12 +99,14 @@ impl SettingsState {
         download_dir: String,
         share_dirs: Vec<String>,
         use_username_dirs: bool,
+        use_remote_dirs: bool,
     ) -> Self {
         Self {
             account,
             download_dir,
             share_dirs,
             use_username_dirs,
+            use_remote_dirs,
             selected: 0,
             mode: SettingsMode::Navigate,
             input: String::new(),
@@ -198,6 +202,10 @@ impl SettingsState {
             SettingsRow::Logout => self.mode = SettingsMode::ConfirmingLogout,
             SettingsRow::UseUsernameDirs => {
                 self.use_username_dirs = !self.use_username_dirs;
+                return SettingsAction::Apply;
+            }
+            SettingsRow::UseRemoteDirs => {
+                self.use_remote_dirs = !self.use_remote_dirs;
                 return SettingsAction::Apply;
             }
             SettingsRow::DownloadDir => {
@@ -309,6 +317,7 @@ mod tests {
             account(),
             "/dl".into(),
             vec!["/dl".into(), "/music".into()],
+            false,
             false,
         )
     }
@@ -503,6 +512,7 @@ mod tests {
             },
             "/dl".into(),
             vec!["/music".into()],
+            false,
             false,
         );
         assert_eq!(
