@@ -48,6 +48,7 @@ struct TalkativeSession {
     password_set: std::sync::Mutex<Option<String>>,
     /// The share index this session serves to peers.
     listing: std::sync::Mutex<Vec<soulseek_rs::SharedDirectory>>,
+    download_dirs: std::sync::Mutex<Vec<String>>,
     download_cancelled: std::sync::Mutex<Vec<(String, String)>>,
     upload_cancelled: std::sync::Mutex<Vec<(String, String)>>,
     download_removed: std::sync::Mutex<Vec<(String, String)>>,
@@ -159,11 +160,15 @@ impl SessionApi for TalkativeSession {
         _filename: String,
         _username: String,
         _size: u64,
-        _directory: String,
+        directory: String,
     ) -> soulseek_rs::Result<(
         soulseek_rs::types::Download,
         std::sync::mpsc::Receiver<soulseek_rs::DownloadStatus>,
     )> {
+        self.download_dirs
+            .lock()
+            .expect("not poisoned")
+            .push(directory);
         Err(soulseek_rs::SoulseekRs::NotConnected)
     }
     fn download_with_metadata(
