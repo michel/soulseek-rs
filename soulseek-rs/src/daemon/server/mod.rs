@@ -39,7 +39,7 @@ pub struct Daemon {
     /// different folder with `download.set_dir`, but never per download.
     pub download_dir: Mutex<String>,
     pub use_username_dirs: bool,
-    pub use_remote_dirs: bool,
+    pub preserve_remote_dirs: bool,
     pub server: String,
     pub token: String,
     pub started: Instant,
@@ -435,7 +435,7 @@ impl Daemon {
             &params.username,
             &params.filename,
             self.use_username_dirs,
-            self.use_remote_dirs,
+            self.preserve_remote_dirs,
         );
         let directory = destination
             .parent()
@@ -814,7 +814,7 @@ mod tests {
             downloads: Arc::new(Mutex::new(Vec::new())),
             download_dir: Mutex::new("/tmp".to_string()),
             use_username_dirs: false,
-            use_remote_dirs: false,
+            preserve_remote_dirs: false,
             server: "server.invalid:2416".to_string(),
             token: token.to_string(),
             started: Instant::now(),

@@ -381,8 +381,8 @@ impl MainTui {
         ));
         lines.push(entry(
             selected == SettingsRow::UseRemoteDirs,
-            "Preserve remote folders ",
-            if settings.use_remote_dirs {
+            "Preserve remote directories ",
+            if settings.preserve_remote_dirs {
                 "[x]"
             } else {
                 "[ ]"

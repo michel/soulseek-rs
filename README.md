@@ -607,7 +607,7 @@ file, in that order of precedence. Flags work before or after the subcommand.
 | `--no-listener` / `--listener` | `SOULSEEK_NO_LISTENER`              | `disable_listener`           | listener on               |
 | —                              | —                                   | `accept_children`            | off                       |
 | —                              | —                                   | `use_username_dirs`          | off                       |
-| —                              | —                                   | `use_remote_dirs`            | off                       |
+| —                              | —                                   | `preserve_remote_dirs`            | off                       |
 | `--max-concurrent-downloads`   | `SOULSEEK_MAX_CONCURRENT_DOWNLOADS` | `max_concurrent_downloads`   | `20`                      |
 | `--search-timeout`             | `SOULSEEK_SEARCH_TIMEOUT`           | `search_timeout`             | `10`                      |
 | `--daemon ADDR`                | `SOULSEEK_DAEMON`                   | `daemon`                     | local socket if one is up |
@@ -630,15 +630,15 @@ network's whole search stream — and it needs the listener, since a child has t
 be able to dial in.
 
 `use_username_dirs` saves downloads under a peer-named folder. The opt-in
-`use_remote_dirs` setting preserves the full remote path beneath the download
-folder, including its share-root name. They compose independently: with both
+**Preserve remote directories** (`preserve_remote_dirs`) preserves the full remote path
+beneath the download folder, including its share-root name. They compose independently: with both
 enabled, `bob`'s `@@abc\Music\Artist\Album\track.flac` lands at
 `<download_dir>/bob/@@abc/Music/Artist/Album/track.flac`; with only
-`use_remote_dirs`, the username folder is omitted.
+`preserve_remote_dirs`, the username folder is omitted.
 
 `config get` and `config set` cover the fourteen settings the file holds
 (`username`, `server`, `listener_port`, `disable_listener`, `accept_children`,
-`download_dir`, `use_username_dirs`, `use_remote_dirs`, `shared_dirs`,
+`download_dir`, `use_username_dirs`, `preserve_remote_dirs`, `shared_dirs`,
 `max_concurrent_downloads`, `search_timeout`, `password_cmd`, `daemon`,
 `daemon_token`), and list them back at you when you
 name something

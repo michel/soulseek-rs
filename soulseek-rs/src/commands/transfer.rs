@@ -329,7 +329,7 @@ fn dedupe(
     requests: impl IntoIterator<Item = Request>,
     download_dir: &str,
     use_username_dirs: bool,
-    use_remote_dirs: bool,
+    preserve_remote_dirs: bool,
     out: &Out,
 ) -> Vec<Request> {
     let mut targets: HashMap<PathBuf, Request> = HashMap::new();
@@ -340,7 +340,7 @@ fn dedupe(
             &request.user,
             &request.path,
             use_username_dirs,
-            use_remote_dirs,
+            preserve_remote_dirs,
         );
         if let Some(queued) = targets.get(&target) {
             let collision = if queued.path == request.path {
@@ -453,7 +453,7 @@ fn download_all(
         requests,
         &ctx.download_dir,
         ctx.use_username_dirs,
-        ctx.use_remote_dirs,
+        ctx.preserve_remote_dirs,
         &ctx.out,
     );
     let workers = ctx.max_concurrent_downloads.clamp(1, requests.len().max(1));

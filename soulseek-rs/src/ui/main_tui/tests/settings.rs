@@ -126,13 +126,17 @@ fn toggling_remote_folders_applies_live_and_persists() {
     );
 
     tui.open_settings();
-    tui.state.settings.as_mut().expect("open").use_remote_dirs = true;
+    tui.state
+        .settings
+        .as_mut()
+        .expect("open")
+        .preserve_remote_dirs = true;
     tui.apply_settings();
 
-    assert!(tui.use_remote_dirs, "the next download uses it");
+    assert!(tui.preserve_remote_dirs, "the next download uses it");
     let saved = crate::persist::config::FileConfig::load(&config_path)
         .expect("config saved");
-    assert_eq!(saved.use_remote_dirs, Some(true));
+    assert_eq!(saved.preserve_remote_dirs, Some(true));
 }
 
 #[test]
@@ -170,6 +174,7 @@ fn the_settings_popup_names_the_account_and_its_shares() {
     let screen = screen_sized(&mut tui, 100, 30);
     assert!(screen.contains("tester"), "{screen}");
     assert!(screen.contains("12 files in 3 folders"), "{screen}");
+    assert!(screen.contains("Preserve remote directories"), "{screen}");
 }
 
 /// Typed twice the same way, the new password reaches the session — and

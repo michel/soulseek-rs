@@ -222,7 +222,7 @@ impl MainTui {
         let client = self.client.clone();
         let download_dir = self.download_dir.clone();
         let use_username_dirs = self.use_username_dirs;
-        let use_remote_dirs = self.use_remote_dirs;
+        let preserve_remote_dirs = self.preserve_remote_dirs;
         thread::spawn(move || {
             for (path, size) in files {
                 let directory = crate::directories::download_path_for(
@@ -230,7 +230,7 @@ impl MainTui {
                     &username,
                     &path,
                     use_username_dirs,
-                    use_remote_dirs,
+                    preserve_remote_dirs,
                 )
                 .parent()
                 .unwrap_or_else(|| std::path::Path::new("."))

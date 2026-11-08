@@ -203,7 +203,7 @@ pub fn run(
         downloads: Arc::clone(&downloads),
         download_dir: Mutex::new(ctx.download_dir.clone()),
         use_username_dirs: ctx.use_username_dirs,
-        use_remote_dirs: ctx.use_remote_dirs,
+        preserve_remote_dirs: ctx.preserve_remote_dirs,
         server: ctx.settings.server_address.to_string(),
         token: token.clone(),
         started: Instant::now(),

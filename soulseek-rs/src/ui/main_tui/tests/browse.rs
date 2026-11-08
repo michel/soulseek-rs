@@ -57,7 +57,7 @@ fn shift_b_shows_what_this_session_shares_and_r_re_indexes_it() {
 
 #[test]
 fn browse_downloads_use_the_username_and_remote_folder_options() {
-    for (use_username_dirs, use_remote_dirs, expected) in [
+    for (use_username_dirs, preserve_remote_dirs, expected) in [
         (false, false, "/tmp"),
         (true, false, "/tmp/bob"),
         (false, true, "/tmp/Music"),
@@ -68,7 +68,7 @@ fn browse_downloads_use_the_username_and_remote_folder_options() {
             session.clone(),
             "/tmp".to_string(),
             use_username_dirs,
-            use_remote_dirs,
+            preserve_remote_dirs,
             Duration::from_secs(1),
             None,
             None,
@@ -92,7 +92,7 @@ fn browse_downloads_use_the_username_and_remote_folder_options() {
         assert_eq!(
             *session.download_dirs.lock().expect("not poisoned"),
             vec![expected.to_string()],
-            "browse download with username={use_username_dirs}, remote={use_remote_dirs}"
+            "browse download with username={use_username_dirs}, remote={preserve_remote_dirs}"
         );
     }
 }

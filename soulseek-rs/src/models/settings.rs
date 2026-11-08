@@ -82,7 +82,7 @@ pub struct SettingsState {
     pub download_dir: String,
     pub share_dirs: Vec<String>,
     pub use_username_dirs: bool,
-    pub use_remote_dirs: bool,
+    pub preserve_remote_dirs: bool,
     /// Index into [`Self::rows`].
     pub selected: usize,
     pub mode: SettingsMode,
@@ -99,14 +99,14 @@ impl SettingsState {
         download_dir: String,
         share_dirs: Vec<String>,
         use_username_dirs: bool,
-        use_remote_dirs: bool,
+        preserve_remote_dirs: bool,
     ) -> Self {
         Self {
             account,
             download_dir,
             share_dirs,
             use_username_dirs,
-            use_remote_dirs,
+            preserve_remote_dirs,
             selected: 0,
             mode: SettingsMode::Navigate,
             input: String::new(),
@@ -206,7 +206,7 @@ impl SettingsState {
                 return SettingsAction::Apply;
             }
             SettingsRow::UseRemoteDirs => {
-                self.use_remote_dirs = !self.use_remote_dirs;
+                self.preserve_remote_dirs = !self.preserve_remote_dirs;
                 return SettingsAction::Apply;
             }
             SettingsRow::DownloadDir => {
@@ -533,7 +533,7 @@ mod tests {
         s.handle_key(key(KeyCode::Down));
         assert_eq!(s.selected_row(), SettingsRow::UseRemoteDirs);
         assert_eq!(s.handle_key(key(KeyCode::Enter)), SettingsAction::Apply);
-        assert!(s.use_remote_dirs);
+        assert!(s.preserve_remote_dirs);
         s.handle_key(key(KeyCode::Down));
         assert_eq!(s.selected_row(), SettingsRow::DownloadDir);
     }
