@@ -46,13 +46,22 @@ fn cli_command(state: &Path) -> Command {
 
 impl Daemon {
     fn start() -> Option<Self> {
+        Self::start_with_config(None)
+    }
+
+    /// Start against `config` in place of `--no-config`, for settings that
+    /// only a config file carries.
+    fn start_with_config(config: Option<&Path>) -> Option<Self> {
         let server = Soulfind::start()?;
         let state = tempfile::tempdir().ok()?;
         let port = free_port()?;
 
         let mut command = cli_command(state.path());
+        match config {
+            Some(file) => command.arg("--config").arg(file),
+            None => command.arg("--no-config"),
+        };
         command.args([
-            "--no-config",
             "--server",
             &server.address(),
             "--username",
@@ -796,6 +805,67 @@ fn the_download_folder_moves_when_asked_and_status_says_so() {
         )
         .expect("an answer");
     assert!(refused.contains("-32602"), "got {refused}");
+}
+
+/// `preserve_remote_dirs` keeps the sharer's folders under the download root.
+///
+/// The daemon resolves a destination for every `download.start`, so a client
+/// that only speaks the protocol gets the same layout the CLI and TUI do.
+#[test]
+fn a_download_keeps_the_remote_folders_when_configured_to() {
+    let config_dir = tempfile::tempdir().expect("config directory");
+    let config = config_dir.path().join("config.toml");
+    std::fs::write(&config, "preserve_remote_dirs = true\n").expect("config");
+    let Some(daemon) = Daemon::start_with_config(Some(&config)) else {
+        common::no_server("daemon protocol e2e");
+        return;
+    };
+
+    let share = tempfile::tempdir().expect("share");
+    let album = share.path().join("Some Album");
+    std::fs::create_dir_all(&album).expect("album folder");
+    let bytes: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(album.join("track.bin"), &bytes).expect("share file");
+    let root = share
+        .path()
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("share root name");
+    let _sharer = daemon.server.client(
+        "cli_e2e_preserve_sharer",
+        vec![share.path().display().to_string()],
+    );
+    common::settle();
+
+    let mut connection = daemon.connect_tcp().expect("tcp");
+    connection
+        .authenticate(Some(&daemon.token()))
+        .expect("an answer");
+    let params = serde_json::json!({
+        "username": "cli_e2e_preserve_sharer",
+        "filename": format!("{root}\\Some Album\\track.bin"),
+        "size": bytes.len(),
+    });
+    let started = connection
+        .call(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"download.start","params":{params}}}"#
+        ))
+        .expect("an answer");
+    assert!(!started.contains("error"), "got {started}");
+
+    let landed = daemon
+        .state
+        .path()
+        .join("downloads")
+        .join(root)
+        .join("Some Album")
+        .join("track.bin");
+    assert!(
+        wait_until(Duration::from_secs(30), || std::fs::read(&landed)
+            .is_ok_and(|got| got == bytes)),
+        "the file must land under its remote folders at {}",
+        landed.display()
+    );
 }
 
 /// A wishlist search must read as *running* to the other windows.
