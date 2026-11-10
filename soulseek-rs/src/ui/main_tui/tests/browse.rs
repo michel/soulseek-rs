@@ -58,11 +58,18 @@ fn shift_b_shows_what_this_session_shares_and_r_re_indexes_it() {
 #[test]
 fn browse_downloads_use_the_username_and_remote_folder_options() {
     for (use_username_dirs, preserve_remote_dirs, expected) in [
-        (false, false, "/tmp"),
-        (true, false, "/tmp/bob"),
-        (false, true, "/tmp/Music"),
-        (true, true, "/tmp/bob/Music"),
+        (false, false, &[][..]),
+        (true, false, &["bob"][..]),
+        (false, true, &["Music"][..]),
+        (true, true, &["bob", "Music"][..]),
     ] {
+        let expected = expected
+            .iter()
+            .fold(std::path::PathBuf::from("/tmp"), |path, part| {
+                path.join(part)
+            })
+            .display()
+            .to_string();
         let session = Arc::new(TalkativeSession::default());
         let mut tui = MainTui::new(
             session.clone(),
@@ -91,7 +98,7 @@ fn browse_downloads_use_the_username_and_remote_folder_options() {
         }
         assert_eq!(
             *session.download_dirs.lock().expect("not poisoned"),
-            vec![expected.to_string()],
+            vec![expected],
             "browse download with username={use_username_dirs}, remote={preserve_remote_dirs}"
         );
     }
