@@ -3922,3 +3922,111 @@ fn a_log_file_captures_what_verbose_would_print() {
         stderr(&output)
     );
 }
+
+/// Where a `get` with `--json` saved the probe, from a config file holding
+/// `extra` beside `download_dir`. The share nests the file in a folder whose
+/// name needs sanitising, so preserved directories are visibly rewritten.
+fn download_with_layout(
+    sharer: &str,
+    downloader: &str,
+    probe: &str,
+    extra: &str,
+) -> Option<(Scratch, serde_json::Value)> {
+    if mode() != Mode::Local {
+        println!("skipped: the daemon's folder layout wins in daemon mode");
+        return None;
+    }
+    let Some(server) = TestServer::resolve() else {
+        common::no_server("cli e2e");
+        return None;
+    };
+    let share = Scratch::new("layout-share");
+    let nested = share.path().join("Album: One");
+    std::fs::create_dir_all(&nested).expect("nested share folder");
+    std::fs::write(nested.join(format!("{probe}.bin")), probe_bytes())
+        .expect("share file");
+    let _sharer = server.client(sharer, vec![share.display()]);
+    settle();
+
+    let target = Scratch::new("layout-downloads");
+    let config = Scratch::new("layout-config");
+    let config_file = config.path().join("config.toml");
+    std::fs::write(
+        &config_file,
+        format!("download_dir = {:?}\n{extra}", target.display()),
+    )
+    .expect("config file");
+
+    let fetched = cli_with_config(
+        &server,
+        downloader,
+        &config_file,
+        &["--json", "get", probe, "--timeout", "40"],
+    );
+    assert_eq!(code(&fetched), EXIT_OK, "stderr: {}", stderr(&fetched));
+    Some((target, json_record(&fetched)))
+}
+
+/// The local path `download_path_for` should give the record's remote path.
+fn preserved(root: &Path, remote: &str) -> PathBuf {
+    let mut path = root.to_path_buf();
+    path.extend(
+        remote
+            .split(['/', '\\'])
+            .filter(|part| !part.is_empty())
+            .map(|part| part.replace(':', "_")),
+    );
+    path
+}
+
+fn assert_saved_at(record: &serde_json::Value, expected: &Path) {
+    let file = PathBuf::from(record["file"].as_str().expect("file field"));
+    assert_eq!(file, expected, "reported path, record {record}");
+    assert_eq!(
+        std::fs::read(&file).expect("the reported file exists"),
+        probe_bytes()
+    );
+}
+
+#[test]
+fn preserve_remote_dirs_mirrors_the_peers_folders() {
+    let Some((target, record)) = download_with_layout(
+        "cli_e2e_sharer_keep",
+        "cli_e2e_keep_fetcher",
+        "cli_probe_keepdirs",
+        "preserve_remote_dirs = true\n",
+    ) else {
+        return;
+    };
+    let remote = record["path"].as_str().expect("remote path");
+    assert!(remote.contains("Album: One"), "remote path was {remote}");
+    assert_saved_at(&record, &preserved(target.path(), remote));
+}
+
+#[test]
+fn preserve_remote_dirs_nests_under_the_username_folder() {
+    let Some((target, record)) = download_with_layout(
+        "cli_e2e_sharer_both",
+        "cli_e2e_both_fetcher",
+        "cli_probe_bothdirs",
+        "preserve_remote_dirs = true\nuse_username_dirs = true\n",
+    ) else {
+        return;
+    };
+    let remote = record["path"].as_str().expect("remote path");
+    let root = target.path().join("cli_e2e_sharer_both");
+    assert_saved_at(&record, &preserved(&root, remote));
+}
+
+#[test]
+fn without_preserve_remote_dirs_a_download_stays_flat() {
+    let Some((target, record)) = download_with_layout(
+        "cli_e2e_sharer_flat",
+        "cli_e2e_flat_fetcher",
+        "cli_probe_flatdirs",
+        "",
+    ) else {
+        return;
+    };
+    assert_saved_at(&record, &target.path().join("cli_probe_flatdirs.bin"));
+}

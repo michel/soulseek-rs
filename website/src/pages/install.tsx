@@ -135,6 +135,18 @@ const SETTINGS: readonly Setting[] = [
     body: <>Save each peer's files in a subfolder named after them.</>,
   },
   {
+    key: 'preserve_remote_dirs',
+    fallback: 'false',
+    body: (
+      <>
+        Keep the peer's folder path, so <code>@@share\Music\Album\track.flac</code> lands
+        at <code>@@share/Music/Album/track.flac</code> under the download folder. With{' '}
+        <code>use_username_dirs</code> it nests under the peer's name. Also a toggle in
+        the TUI Settings tab.
+      </>
+    ),
+  },
+  {
     key: 'max_concurrent_downloads',
     fallback: '20',
     body: <>Transfers allowed to run at once. The rest queue.</>,
@@ -405,7 +417,7 @@ const Platforms = () => (
 )
 const Config = () => (
   <Section id="config">
-    <SectionHead eyebrow="config.toml" title="Eleven settings, all optional.">
+    <SectionHead eyebrow="config.toml" title="Thirteen settings, all optional.">
       Every one has a working default, so an empty file, or no file at all, is valid.{' '}
       <Code>config list</Code> prints the effective value of each.
     </SectionHead>
