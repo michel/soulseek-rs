@@ -56,6 +56,48 @@ fn shift_b_shows_what_this_session_shares_and_r_re_indexes_it() {
 }
 
 #[test]
+fn browse_downloads_use_the_username_and_remote_folder_options() {
+    for (use_username_dirs, preserve_remote_dirs, expected) in [
+        (false, false, "/tmp"),
+        (true, false, "/tmp/bob"),
+        (false, true, "/tmp/Music"),
+        (true, true, "/tmp/bob/Music"),
+    ] {
+        let session = Arc::new(TalkativeSession::default());
+        let mut tui = MainTui::new(
+            session.clone(),
+            "/tmp".to_string(),
+            use_username_dirs,
+            preserve_remote_dirs,
+            Duration::from_secs(1),
+            None,
+            None,
+        );
+        browsed(&mut tui, 1);
+        press(&mut tui, KeyCode::Char('L'));
+        press(&mut tui, KeyCode::Down);
+        press(&mut tui, KeyCode::Char('d'));
+
+        for _ in 0..100 {
+            if !session
+                .download_dirs
+                .lock()
+                .expect("not poisoned")
+                .is_empty()
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            *session.download_dirs.lock().expect("not poisoned"),
+            vec![expected.to_string()],
+            "browse download with username={use_username_dirs}, remote={preserve_remote_dirs}"
+        );
+    }
+}
+
+#[test]
 fn o_leaves_the_share_view_for_the_folders_that_feed_it() {
     let mut tui = attach(Arc::new(TalkativeSession::default()));
     press(&mut tui, KeyCode::Char('B'));

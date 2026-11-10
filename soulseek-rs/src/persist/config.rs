@@ -41,6 +41,7 @@ pub struct FileConfig {
     /// contain a comma.
     pub wishlist: Option<Vec<String>>,
     pub use_username_dirs: Option<bool>,
+    pub preserve_remote_dirs: Option<bool>,
 }
 
 impl FileConfig {
@@ -61,6 +62,7 @@ impl FileConfig {
         "daemon",
         "daemon_token",
         "use_username_dirs",
+        "preserve_remote_dirs",
     ];
 
     /// The value of `key`, or `None` when it is unset or unknown. Lists are
@@ -87,6 +89,9 @@ impl FileConfig {
             "daemon_token" => self.daemon_token.clone(),
             "use_username_dirs" => {
                 self.use_username_dirs.map(|v| v.to_string())
+            }
+            "preserve_remote_dirs" => {
+                self.preserve_remote_dirs.map(|v| v.to_string())
             }
             _ => None,
         }
@@ -166,6 +171,17 @@ impl FileConfig {
                 });
                 // The single-folder spelling would otherwise shadow the list.
                 self.shared_dir = None;
+            }
+            "preserve_remote_dirs" => {
+                self.preserve_remote_dirs = Some(match value {
+                    "true" | "1" | "yes" => true,
+                    "false" | "0" | "no" => false,
+                    other => {
+                        return Err(format!(
+                            "preserve_remote_dirs wants true or false, got '{other}'"
+                        ));
+                    }
+                });
             }
             "use_username_dirs" => {
                 self.use_username_dirs = Some(match value {
@@ -284,6 +300,7 @@ fn parse_opt<T: std::str::FromStr>(
 
 /// Fully-resolved settings after layering CLI (which already includes env via
 /// clap) over the config file over built-in defaults.
+#[allow(clippy::struct_excessive_bools)] // Independent feature switches/config values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resolved {
     pub username: Option<String>,
@@ -294,6 +311,7 @@ pub struct Resolved {
     pub download_dir: String,
     pub shared_dirs: Vec<String>,
     pub use_username_dirs: bool,
+    pub preserve_remote_dirs: bool,
     pub max_concurrent_downloads: usize,
     pub search_timeout: u64,
     pub password_cmd: Option<String>,
@@ -348,6 +366,7 @@ pub fn resolve(cli: &crate::cli::Cli, file: &FileConfig) -> Resolved {
         download_dir: download_dir.clone(),
         shared_dirs: resolve_shared_dirs(cli, file, &download_dir),
         use_username_dirs: file.use_username_dirs.unwrap_or(false),
+        preserve_remote_dirs: file.preserve_remote_dirs.unwrap_or(false),
         max_concurrent_downloads: cli
             .max_concurrent_downloads
             .or(file.max_concurrent_downloads)
@@ -565,6 +584,21 @@ mod tests {
     }
 
     #[test]
+    fn preserve_remote_dirs_is_opt_in_and_settable() {
+        assert!(
+            !resolve(&bare_cli(), &FileConfig::default()).preserve_remote_dirs
+        );
+        let mut file = FileConfig::default();
+        file.set("preserve_remote_dirs", "true").expect("set");
+        assert_eq!(file.get("preserve_remote_dirs").as_deref(), Some("true"));
+        assert!(resolve(&bare_cli(), &file).preserve_remote_dirs);
+        file.set("preserve_remote_dirs", "false")
+            .expect("set false");
+        assert!(!resolve(&bare_cli(), &file).preserve_remote_dirs);
+        assert!(file.set("preserve_remote_dirs", "maybe").is_err());
+    }
+
+    #[test]
     fn accept_children_round_trips_through_get_and_set() {
         let mut file = FileConfig::default();
         file.set("accept_children", "true").expect("set");
@@ -592,6 +626,7 @@ mod tests {
             daemon_token: Some("deadbeef".into()),
             wishlist: None,
             use_username_dirs: Some(false),
+            preserve_remote_dirs: Some(false),
         };
         let resolved = resolve(&bare_cli(), &file);
         assert_eq!(resolved.username.as_deref(), Some("alice"));

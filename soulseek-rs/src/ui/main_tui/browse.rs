@@ -221,13 +221,26 @@ impl MainTui {
         let sender = self.downloads_sender();
         let client = self.client.clone();
         let download_dir = self.download_dir.clone();
+        let use_username_dirs = self.use_username_dirs;
+        let preserve_remote_dirs = self.preserve_remote_dirs;
         thread::spawn(move || {
             for (path, size) in files {
+                let directory = crate::directories::download_path_for(
+                    &download_dir,
+                    &username,
+                    &path,
+                    use_username_dirs,
+                    preserve_remote_dirs,
+                )
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .display()
+                .to_string();
                 match client.download(
                     path.clone(),
                     username.clone(),
                     size,
-                    download_dir.clone(),
+                    directory,
                 ) {
                     Ok((download, rx)) => {
                         let _ = sender.send((download, rx));

@@ -50,23 +50,6 @@ pub fn resolve_shared_directories(dirs: &[String]) -> Vec<String> {
     resolved
 }
 
-/// The folder a download from `username` lands in: `download_dir` itself, or
-/// a per-user subfolder of it when `per_user` is set, as SoulseekQt does.
-#[must_use]
-pub fn download_dir_for(
-    download_dir: &str,
-    username: &str,
-    per_user: bool,
-) -> String {
-    if !per_user {
-        return download_dir.to_string();
-    }
-    std::path::Path::new(download_dir)
-        .join(sanitize_path_component(username))
-        .display()
-        .to_string()
-}
-
 /// A peer-chosen name made safe as one path component: separators and
 /// characters Windows refuses become `_`, so `../..` cannot climb out.
 fn sanitize_path_component(name: &str) -> String {
@@ -87,6 +70,38 @@ fn sanitize_path_component(name: &str) -> String {
     out
 }
 
+/// Resolve the destination for a remote file, optionally adding its peer and
+/// path beneath the configured download root. Remote separators are normalized
+/// on every platform, and every peer-controlled component is sanitized.
+#[must_use]
+pub fn download_path_for(
+    download_dir: &str,
+    username: &str,
+    remote_path: &str,
+    per_user: bool,
+    preserve_remote_dirs: bool,
+) -> PathBuf {
+    let mut path = expand_tilde(download_dir);
+    if per_user {
+        path.push(sanitize_path_component(username));
+    }
+
+    let components: Vec<&str> = remote_path
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .collect();
+    if preserve_remote_dirs {
+        path.extend(
+            components.iter().map(|part| sanitize_path_component(part)),
+        );
+    } else if let Some(name) = components.last() {
+        path.push(sanitize_path_component(name));
+    } else {
+        path.push("_");
+    }
+    path
+}
+
 /// Windows device names (`CON`, `COM1`, …) that cannot be a folder name.
 fn is_reserved(name: &str) -> bool {
     let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
@@ -97,7 +112,7 @@ fn is_reserved(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{download_dir_for, resolve_shared_directory};
+    use super::{download_path_for, resolve_shared_directory};
     use std::sync::atomic::{AtomicU32, Ordering};
 
     fn unique_temp_dir() -> std::path::PathBuf {
@@ -143,22 +158,67 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    fn dl(name: &str) -> String {
-        std::path::Path::new("/dl").join(name).display().to_string()
+    #[test]
+    fn download_path_flags_compose_independently() {
+        let remote = "@@share\\Music\\Artist\\Album\\track.flac";
+        assert_eq!(
+            download_path_for("/dl", "bob", remote, false, false),
+            std::path::PathBuf::from("/dl/track.flac")
+        );
+        assert_eq!(
+            download_path_for("/dl", "bob", remote, true, false),
+            std::path::PathBuf::from("/dl/bob/track.flac")
+        );
+        assert_eq!(
+            download_path_for("/dl", "bob", remote, false, true),
+            std::path::PathBuf::from(
+                "/dl/@@share/Music/Artist/Album/track.flac"
+            )
+        );
+        assert_eq!(
+            download_path_for("/dl", "bob", remote, true, true),
+            std::path::PathBuf::from(
+                "/dl/bob/@@share/Music/Artist/Album/track.flac"
+            )
+        );
     }
 
     #[test]
-    fn per_user_folder_is_a_child_of_the_download_dir() {
-        assert_eq!(download_dir_for("/dl", "alice", false), "/dl");
-        assert_eq!(download_dir_for("/dl", "alice", true), dl("alice"));
+    fn remote_path_components_cannot_escape_download_root() {
+        let path = download_path_for(
+            "/dl",
+            "bob",
+            "../../outside\\\\CON\\\\track.mp3",
+            false,
+            true,
+        );
+        assert_eq!(
+            path,
+            std::path::PathBuf::from("/dl/.._/.._/outside/_CON/track.mp3")
+        );
     }
 
     #[test]
     fn a_hostile_username_cannot_leave_the_download_dir() {
-        assert_eq!(download_dir_for("/dl", "../..", true), dl(".._.._"));
-        assert_eq!(download_dir_for("/dl", "/tmp/x", true), dl("_tmp_x"));
-        assert_eq!(download_dir_for("/dl", "..", true), dl(".._"));
-        assert_eq!(download_dir_for("/dl", "", true), dl("_"));
-        assert_eq!(download_dir_for("/dl", "com1", true), dl("_com1"));
+        assert_eq!(
+            download_path_for("/dl", "../..", "track.mp3", true, false),
+            std::path::PathBuf::from("/dl/.._.._/track.mp3")
+        );
+        assert_eq!(
+            download_path_for("/dl", "/tmp/x", "track.mp3", true, false),
+            std::path::PathBuf::from("/dl/_tmp_x/track.mp3")
+        );
+        assert_eq!(
+            download_path_for("/dl", "..", "track.mp3", true, false),
+            std::path::PathBuf::from("/dl/.._/track.mp3")
+        );
+        assert_eq!(
+            download_path_for("/dl", "", "track.mp3", true, false),
+            std::path::PathBuf::from("/dl/_/track.mp3")
+        );
+        assert_eq!(
+            download_path_for("/dl", "com1", "track.mp3", true, false),
+            std::path::PathBuf::from("/dl/_com1/track.mp3")
+        );
     }
 }

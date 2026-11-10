@@ -643,6 +643,25 @@ mod tests {
     }
 
     #[test]
+    fn nested_download_directory_creates_parents_and_resumes_part_file() {
+        let dir = scratch_dir("nested").join("share").join("album");
+        let download = download_into(&dir, 8);
+        let mut first = PartFile::open(&download).unwrap();
+        first.write(b"data").unwrap();
+        drop(first);
+
+        let mut resumed = PartFile::open(&download).unwrap();
+        assert_eq!(resumed.written, 4);
+        resumed.write(b"1234").unwrap();
+        let final_path = resumed.finish().unwrap();
+        assert_eq!(std::fs::read(&final_path).unwrap(), b"data1234");
+        assert!(
+            !std::path::PathBuf::from(format!("{final_path}.part")).exists()
+        );
+        let _ = std::fs::remove_dir_all(dir.ancestors().nth(2).unwrap());
+    }
+
+    #[test]
     fn a_discarded_part_file_is_removed_from_disk() {
         let dir = scratch_dir("discard");
         let mut part = PartFile::open(&download_into(&dir, 8)).unwrap();

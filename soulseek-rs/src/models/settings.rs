@@ -39,6 +39,7 @@ pub enum SettingsRow {
     ChangePassword,
     Logout,
     UseUsernameDirs,
+    UseRemoteDirs,
     DownloadDir,
     /// Share path at this index.
     Share(usize),
@@ -81,6 +82,7 @@ pub struct SettingsState {
     pub download_dir: String,
     pub share_dirs: Vec<String>,
     pub use_username_dirs: bool,
+    pub preserve_remote_dirs: bool,
     /// Index into [`Self::rows`].
     pub selected: usize,
     pub mode: SettingsMode,
@@ -97,12 +99,14 @@ impl SettingsState {
         download_dir: String,
         share_dirs: Vec<String>,
         use_username_dirs: bool,
+        preserve_remote_dirs: bool,
     ) -> Self {
         Self {
             account,
             download_dir,
             share_dirs,
             use_username_dirs,
+            preserve_remote_dirs,
             selected: 0,
             mode: SettingsMode::Navigate,
             input: String::new(),
@@ -124,6 +128,7 @@ impl SettingsState {
             rows.push(SettingsRow::Logout);
         }
         rows.push(SettingsRow::UseUsernameDirs);
+        rows.push(SettingsRow::UseRemoteDirs);
         rows.push(SettingsRow::DownloadDir);
         rows.extend((0..self.share_dirs.len()).map(SettingsRow::Share));
         rows
@@ -198,6 +203,10 @@ impl SettingsState {
             SettingsRow::Logout => self.mode = SettingsMode::ConfirmingLogout,
             SettingsRow::UseUsernameDirs => {
                 self.use_username_dirs = !self.use_username_dirs;
+                return SettingsAction::Apply;
+            }
+            SettingsRow::UseRemoteDirs => {
+                self.preserve_remote_dirs = !self.preserve_remote_dirs;
                 return SettingsAction::Apply;
             }
             SettingsRow::DownloadDir => {
@@ -309,6 +318,7 @@ mod tests {
             account(),
             "/dl".into(),
             vec!["/dl".into(), "/music".into()],
+            false,
             false,
         )
     }
@@ -504,12 +514,14 @@ mod tests {
             "/dl".into(),
             vec!["/music".into()],
             false,
+            false,
         );
         assert_eq!(
             s.rows(),
             vec![
                 SettingsRow::ChangePassword,
                 SettingsRow::UseUsernameDirs,
+                SettingsRow::UseRemoteDirs,
                 SettingsRow::DownloadDir,
                 SettingsRow::Share(0),
             ]
@@ -518,6 +530,10 @@ mod tests {
         // logout the window cannot perform.
         s.handle_key(key(KeyCode::Down));
         assert_eq!(s.selected_row(), SettingsRow::UseUsernameDirs);
+        s.handle_key(key(KeyCode::Down));
+        assert_eq!(s.selected_row(), SettingsRow::UseRemoteDirs);
+        assert_eq!(s.handle_key(key(KeyCode::Enter)), SettingsAction::Apply);
+        assert!(s.preserve_remote_dirs);
         s.handle_key(key(KeyCode::Down));
         assert_eq!(s.selected_row(), SettingsRow::DownloadDir);
     }
