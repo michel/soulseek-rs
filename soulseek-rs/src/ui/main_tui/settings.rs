@@ -22,6 +22,7 @@ impl MainTui {
             self.client.shared_directories(),
             self.use_username_dirs,
             self.preserve_remote_dirs,
+            self.preserve_remote_folder,
         ));
     }
 
@@ -70,6 +71,7 @@ impl MainTui {
         let share_dirs = settings.share_dirs.clone();
         let use_username_dirs = settings.use_username_dirs;
         let preserve_remote_dirs = settings.preserve_remote_dirs;
+        let preserve_remote_folder = settings.preserve_remote_folder;
 
         let shares = if self.client.daemon_endpoint().is_some() {
             share_dirs.clone()
@@ -113,6 +115,7 @@ impl MainTui {
         }
         self.use_username_dirs = use_username_dirs;
         self.preserve_remote_dirs = preserve_remote_dirs;
+        self.preserve_remote_folder = preserve_remote_folder;
 
         // Persist to config.toml so the change survives a restart. What was
         // refused live is not written either: the file must not promise a
@@ -129,6 +132,7 @@ impl MainTui {
                     config.shared_dirs = Some(share_dirs);
                     config.use_username_dirs = Some(use_username_dirs);
                     config.preserve_remote_dirs = Some(preserve_remote_dirs);
+                    config.preserve_remote_folder = Some(preserve_remote_folder);
                     config.save(&path)
                 });
             if let Err(e) = result {

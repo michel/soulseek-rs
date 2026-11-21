@@ -868,6 +868,63 @@ fn a_download_keeps_the_remote_folders_when_configured_to() {
     );
 }
 
+/// `preserve_remote_folder` keeps only the immediate parent folder under the download root.
+#[test]
+fn a_download_keeps_only_the_remote_folder_when_configured_to() {
+    let config_dir = tempfile::tempdir().expect("config directory");
+    let config = config_dir.path().join("config.toml");
+    std::fs::write(&config, "preserve_remote_folder = true\n").expect("config");
+    let Some(daemon) = Daemon::start_with_config(Some(&config)) else {
+        common::no_server("daemon protocol e2e");
+        return;
+    };
+
+    let share = tempfile::tempdir().expect("share");
+    let album = share.path().join("Some Album");
+    std::fs::create_dir_all(&album).expect("album folder");
+    let bytes: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(album.join("track.bin"), &bytes).expect("share file");
+    let root = share
+        .path()
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("share root name");
+    let _sharer = daemon.server.client(
+        "cli_e2e_folder_sharer",
+        vec![share.path().display().to_string()],
+    );
+    common::settle();
+
+    let mut connection = daemon.connect_tcp().expect("tcp");
+    connection
+        .authenticate(Some(&daemon.token()))
+        .expect("an answer");
+    let params = serde_json::json!({
+        "username": "cli_e2e_folder_sharer",
+        "filename": format!("{root}\\Some Album\\track.bin"),
+        "size": bytes.len(),
+    });
+    let started = connection
+        .call(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"download.start","params":{params}}}"#
+        ))
+        .expect("an answer");
+    assert!(!started.contains("error"), "got {started}");
+
+    let landed = daemon
+        .state
+        .path()
+        .join("downloads")
+        .join("Some Album")
+        .join("track.bin");
+    assert!(
+        wait_until(Duration::from_secs(30), || std::fs::read(&landed)
+            .is_ok_and(|got| got == bytes)),
+        "the file must land under its immediate remote folder at {}",
+        landed.display()
+    );
+}
+
 /// A wishlist search must read as *running* to the other windows.
 ///
 /// The daemon can only tell a running search from a finished one by the start

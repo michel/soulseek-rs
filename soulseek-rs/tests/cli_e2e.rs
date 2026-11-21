@@ -4030,3 +4030,39 @@ fn without_preserve_remote_dirs_a_download_stays_flat() {
     };
     assert_saved_at(&record, &target.path().join("cli_probe_flatdirs.bin"));
 }
+
+#[test]
+fn preserve_remote_folder_saves_under_last_remote_directory() {
+    let Some((target, record)) = download_with_layout(
+        "cli_e2e_sharer_folder",
+        "cli_e2e_folder_fetcher",
+        "cli_probe_folderdirs",
+        "preserve_remote_folder = true\n",
+    ) else {
+        return;
+    };
+    let remote = record["path"].as_str().expect("remote path");
+    assert!(remote.contains("Album: One"), "remote path was {remote}");
+    let expected = target.path().join("Album_ One").join("cli_probe_folderdirs.bin");
+    assert_saved_at(&record, &expected);
+}
+
+#[test]
+fn preserve_remote_folder_nests_under_the_username_folder() {
+    let Some((target, record)) = download_with_layout(
+        "cli_e2e_sharer_both_folder",
+        "cli_e2e_both_folder_fetcher",
+        "cli_probe_bothfolderdirs",
+        "preserve_remote_folder = true\nuse_username_dirs = true\n",
+    ) else {
+        return;
+    };
+    let remote = record["path"].as_str().expect("remote path");
+    assert!(remote.contains("Album: One"), "remote path was {remote}");
+    let expected = target
+        .path()
+        .join("cli_e2e_sharer_both_folder")
+        .join("Album_ One")
+        .join("cli_probe_bothfolderdirs.bin");
+    assert_saved_at(&record, &expected);
+}

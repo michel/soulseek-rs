@@ -330,6 +330,7 @@ fn dedupe(
     download_dir: &str,
     use_username_dirs: bool,
     preserve_remote_dirs: bool,
+    preserve_remote_folder: bool,
     out: &Out,
 ) -> Vec<Request> {
     let mut targets: HashMap<PathBuf, Request> = HashMap::new();
@@ -341,6 +342,7 @@ fn dedupe(
             &request.path,
             use_username_dirs,
             preserve_remote_dirs,
+            preserve_remote_folder,
         );
         if let Some(queued) = targets.get(&target) {
             let collision = if queued.path == request.path {
@@ -454,6 +456,7 @@ fn download_all(
         &ctx.download_dir,
         ctx.use_username_dirs,
         ctx.preserve_remote_dirs,
+        ctx.preserve_remote_folder,
         &ctx.out,
     );
     let workers = ctx.max_concurrent_downloads.clamp(1, requests.len().max(1));
@@ -1033,6 +1036,7 @@ mod tests {
             "/music",
             false,
             false,
+            false,
             &out,
         );
         assert_eq!(kept.len(), 2);
@@ -1053,6 +1057,7 @@ mod tests {
             "/music",
             false,
             false,
+            false,
             &out,
         );
         assert_eq!(kept.len(), 1);
@@ -1070,6 +1075,7 @@ mod tests {
             "/music",
             false,
             true,
+            false,
             &out,
         );
         assert_eq!(kept.len(), 2);
@@ -1080,8 +1086,48 @@ mod tests {
                 &kept[0].path,
                 false,
                 true,
+                false,
             ),
             PathBuf::from("/music/@@share/Artist A/Album/track.flac")
+        );
+    }
+
+    #[test]
+    fn remote_folder_keeps_same_basename_files_in_different_folders_apart() {
+        let out = Out::new(false, true);
+        let kept = dedupe(
+            vec![
+                request("bob", "user/share/Album A/track.flac"),
+                request("bob", "user/share/Album B/track.flac"),
+            ],
+            "/music",
+            false,
+            false,
+            true,
+            &out,
+        );
+        assert_eq!(kept.len(), 2);
+        assert_eq!(
+            crate::directories::download_path_for(
+                "/music",
+                "bob",
+                &kept[0].path,
+                false,
+                false,
+                true,
+            ),
+            PathBuf::from("/music/Album A/track.flac")
+        );
+        assert_eq!(
+            crate::directories::download_path_for(
+                "/music",
+                "bob",
+                &kept[1].path,
+                false,
+                false,
+                true,
+            ),
+            PathBuf::from("/music/Album B/track.flac")
         );
     }
 

@@ -135,6 +135,18 @@ const SETTINGS: readonly Setting[] = [
     body: <>Save each peer's files in a subfolder named after them.</>,
   },
   {
+    key: 'preserve_remote_folder',
+    fallback: 'false',
+    body: (
+      <>
+        Keep only the remote file's immediate enclosing folder, so{' '}
+        <code>@@share\Music\Album\track.flac</code> lands at <code>Album/track.flac</code> under
+        the download folder. With <code>use_username_dirs</code> it nests under the peer's name.
+        Also a toggle in the TUI Settings tab.
+      </>
+    ),
+  },
+  {
     key: 'preserve_remote_dirs',
     fallback: 'false',
     body: (

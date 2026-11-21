@@ -380,6 +380,16 @@ impl MainTui {
             .to_string(),
         ));
         lines.push(entry(
+            selected == SettingsRow::UseRemoteFolder,
+            "Preserve remote folder ",
+            if settings.preserve_remote_folder {
+                "[x]"
+            } else {
+                "[ ]"
+            }
+            .to_string(),
+        ));
+        lines.push(entry(
             selected == SettingsRow::UseRemoteDirs,
             "Preserve remote directories ",
             if settings.preserve_remote_dirs {

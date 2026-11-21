@@ -19,6 +19,7 @@ fn applying_settings_attached_pushes_both_folders_to_the_daemon() {
         "/daemon/old".to_string(),
         false,
         false,
+        false,
         Duration::from_secs(1),
         None,
         Some(config_path.clone()),
@@ -77,6 +78,7 @@ fn applying_settings_locally_stays_on_this_machine() {
         "/tmp".to_string(),
         false,
         false,
+        false,
         Duration::from_secs(1),
         None,
         Some(config_path),
@@ -120,6 +122,7 @@ fn toggling_remote_folders_applies_live_and_persists() {
         scratch.path().to_str().expect("utf-8").to_string(),
         false,
         false,
+        false,
         Duration::from_secs(1),
         None,
         Some(config_path.clone()),
@@ -140,6 +143,36 @@ fn toggling_remote_folders_applies_live_and_persists() {
 }
 
 #[test]
+fn toggling_remote_folder_applies_live_and_persists() {
+    let session = Arc::new(TalkativeSession::default());
+    let scratch = tempfile::tempdir().expect("a temp dir");
+    let config_path = scratch.path().join("config.toml");
+    let mut tui = MainTui::new(
+        session,
+        scratch.path().to_str().expect("utf-8").to_string(),
+        false,
+        false,
+        false,
+        Duration::from_secs(1),
+        None,
+        Some(config_path.clone()),
+    );
+
+    tui.open_settings();
+    tui.state
+        .settings
+        .as_mut()
+        .expect("open")
+        .preserve_remote_folder = true;
+    tui.apply_settings();
+
+    assert!(tui.preserve_remote_folder, "the next download uses it");
+    let saved = crate::persist::config::FileConfig::load(&config_path)
+        .expect("config saved");
+    assert_eq!(saved.preserve_remote_folder, Some(true));
+}
+
+#[test]
 fn toggling_username_folders_applies_live_and_persists() {
     let session = Arc::new(TalkativeSession::default());
     let scratch = tempfile::tempdir().expect("a temp dir");
@@ -147,6 +180,7 @@ fn toggling_username_folders_applies_live_and_persists() {
     let mut tui = MainTui::new(
         session,
         scratch.path().to_str().expect("utf-8").to_string(),
+        false,
         false,
         false,
         Duration::from_secs(1),
@@ -174,6 +208,7 @@ fn the_settings_popup_names_the_account_and_its_shares() {
     let screen = screen_sized(&mut tui, 100, 30);
     assert!(screen.contains("tester"), "{screen}");
     assert!(screen.contains("12 files in 3 folders"), "{screen}");
+    assert!(screen.contains("Preserve remote folder"), "{screen}");
     assert!(screen.contains("Preserve remote directories"), "{screen}");
 }
 
@@ -239,7 +274,7 @@ fn logging_out_asks_first_and_then_closes_the_window() {
 }
 
 /// Attached, the login is the daemon's: there is no logout row to land
-/// on, so the download-folder row follows both directory toggles.
+/// on, so the download-folder row follows the directory toggles.
 #[test]
 fn an_attached_window_offers_no_logout() {
     let session = Arc::new(TalkativeSession {
@@ -248,6 +283,7 @@ fn an_attached_window_offers_no_logout() {
     });
     let mut tui = attach(session);
     press(&mut tui, KeyCode::Char('o'));
+    press(&mut tui, KeyCode::Down);
     press(&mut tui, KeyCode::Down);
     press(&mut tui, KeyCode::Down);
     press(&mut tui, KeyCode::Down);

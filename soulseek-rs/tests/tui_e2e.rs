@@ -58,6 +58,7 @@ impl Window {
             downloads.display().to_string(),
             false,
             false,
+            false,
             SEARCH_WINDOW,
             Some(StateStore::new(state.to_path_buf())),
             None,

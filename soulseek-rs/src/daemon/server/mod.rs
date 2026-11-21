@@ -40,6 +40,7 @@ pub struct Daemon {
     pub download_dir: Mutex<String>,
     pub use_username_dirs: bool,
     pub preserve_remote_dirs: bool,
+    pub preserve_remote_folder: bool,
     pub server: String,
     pub token: String,
     pub started: Instant,
@@ -436,6 +437,7 @@ impl Daemon {
             &params.filename,
             self.use_username_dirs,
             self.preserve_remote_dirs,
+            self.preserve_remote_folder,
         );
         let directory = destination
             .parent()
@@ -815,6 +817,7 @@ mod tests {
             download_dir: Mutex::new("/tmp".to_string()),
             use_username_dirs: false,
             preserve_remote_dirs: false,
+            preserve_remote_folder: false,
             server: "server.invalid:2416".to_string(),
             token: token.to_string(),
             started: Instant::now(),

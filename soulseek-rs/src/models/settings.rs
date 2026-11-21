@@ -39,6 +39,7 @@ pub enum SettingsRow {
     ChangePassword,
     Logout,
     UseUsernameDirs,
+    UseRemoteFolder,
     UseRemoteDirs,
     DownloadDir,
     /// Share path at this index.
@@ -83,6 +84,7 @@ pub struct SettingsState {
     pub share_dirs: Vec<String>,
     pub use_username_dirs: bool,
     pub preserve_remote_dirs: bool,
+    pub preserve_remote_folder: bool,
     /// Index into [`Self::rows`].
     pub selected: usize,
     pub mode: SettingsMode,
@@ -100,6 +102,7 @@ impl SettingsState {
         share_dirs: Vec<String>,
         use_username_dirs: bool,
         preserve_remote_dirs: bool,
+        preserve_remote_folder: bool,
     ) -> Self {
         Self {
             account,
@@ -107,6 +110,7 @@ impl SettingsState {
             share_dirs,
             use_username_dirs,
             preserve_remote_dirs,
+            preserve_remote_folder,
             selected: 0,
             mode: SettingsMode::Navigate,
             input: String::new(),
@@ -128,6 +132,7 @@ impl SettingsState {
             rows.push(SettingsRow::Logout);
         }
         rows.push(SettingsRow::UseUsernameDirs);
+        rows.push(SettingsRow::UseRemoteFolder);
         rows.push(SettingsRow::UseRemoteDirs);
         rows.push(SettingsRow::DownloadDir);
         rows.extend((0..self.share_dirs.len()).map(SettingsRow::Share));
@@ -205,8 +210,18 @@ impl SettingsState {
                 self.use_username_dirs = !self.use_username_dirs;
                 return SettingsAction::Apply;
             }
+            SettingsRow::UseRemoteFolder => {
+                self.preserve_remote_folder = !self.preserve_remote_folder;
+                if self.preserve_remote_folder {
+                    self.preserve_remote_dirs = false;
+                }
+                return SettingsAction::Apply;
+            }
             SettingsRow::UseRemoteDirs => {
                 self.preserve_remote_dirs = !self.preserve_remote_dirs;
+                if self.preserve_remote_dirs {
+                    self.preserve_remote_folder = false;
+                }
                 return SettingsAction::Apply;
             }
             SettingsRow::DownloadDir => {
@@ -318,6 +333,7 @@ mod tests {
             account(),
             "/dl".into(),
             vec!["/dl".into(), "/music".into()],
+            false,
             false,
             false,
         )
@@ -515,12 +531,14 @@ mod tests {
             vec!["/music".into()],
             false,
             false,
+            false,
         );
         assert_eq!(
             s.rows(),
             vec![
                 SettingsRow::ChangePassword,
                 SettingsRow::UseUsernameDirs,
+                SettingsRow::UseRemoteFolder,
                 SettingsRow::UseRemoteDirs,
                 SettingsRow::DownloadDir,
                 SettingsRow::Share(0),
@@ -531,9 +549,14 @@ mod tests {
         s.handle_key(key(KeyCode::Down));
         assert_eq!(s.selected_row(), SettingsRow::UseUsernameDirs);
         s.handle_key(key(KeyCode::Down));
+        assert_eq!(s.selected_row(), SettingsRow::UseRemoteFolder);
+        assert_eq!(s.handle_key(key(KeyCode::Enter)), SettingsAction::Apply);
+        assert!(s.preserve_remote_folder);
+        s.handle_key(key(KeyCode::Down));
         assert_eq!(s.selected_row(), SettingsRow::UseRemoteDirs);
         assert_eq!(s.handle_key(key(KeyCode::Enter)), SettingsAction::Apply);
         assert!(s.preserve_remote_dirs);
+        assert!(!s.preserve_remote_folder, "toggling remote dirs untoggles remote folder");
         s.handle_key(key(KeyCode::Down));
         assert_eq!(s.selected_row(), SettingsRow::DownloadDir);
     }

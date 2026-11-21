@@ -199,6 +199,7 @@ impl MainTui {
         let download_dir = self.download_dir.clone();
         let use_username_dirs = self.use_username_dirs;
         let preserve_remote_dirs = self.preserve_remote_dirs;
+        let preserve_remote_folder = self.preserve_remote_folder;
 
         thread::spawn(move || {
             for file in selected_files {
@@ -218,6 +219,7 @@ impl MainTui {
                         &file.filename,
                         use_username_dirs,
                         preserve_remote_dirs,
+                        preserve_remote_folder,
                     )
                     .parent()
                     .unwrap_or_else(|| std::path::Path::new("."))
