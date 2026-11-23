@@ -102,6 +102,78 @@ pub fn download_path_for(
     path
 }
 
+/// The last component of a remote path, unsanitized.
+///
+/// The library appends the filename itself (its `resolve_download_path` joins
+/// the configured directory with this), so this is the name that actually
+/// lands on disk; sanitizing it here would report a file that never exists.
+/// Splitting on both separators keeps it a single component, which is why the
+/// raw name cannot widen the path the sanitized directory chose.
+fn peer_filename(remote_path: &str) -> &str {
+    remote_path
+        .split(['/', '\\'])
+        .next_back()
+        .unwrap_or(remote_path)
+}
+
+/// The directory to hand the library for a remote file: [`download_path_for`]
+/// without its last component, in the `String` form its download API takes.
+#[must_use]
+pub fn download_dir_for(
+    download_dir: &str,
+    username: &str,
+    remote_path: &str,
+    per_user: bool,
+    preserve_remote_dirs: bool,
+) -> String {
+    download_path_for(
+        download_dir,
+        username,
+        remote_path,
+        per_user,
+        preserve_remote_dirs,
+    )
+    .parent()
+    .unwrap_or_else(|| std::path::Path::new("."))
+    .display()
+    .to_string()
+}
+
+/// Where a download lands, in the two halves the library needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Destination {
+    /// The `download_directory` passed to the library; peer names sanitized.
+    pub directory: String,
+    /// The file written there. Its folders are the sanitized ones above, its
+    /// filename the peer's raw one, which the library picks independently.
+    pub file: PathBuf,
+}
+
+/// Resolve both halves of a remote file's destination.
+#[must_use]
+pub fn destination_for(
+    download_dir: &str,
+    username: &str,
+    remote_path: &str,
+    per_user: bool,
+    preserve_remote_dirs: bool,
+) -> Destination {
+    let mut file = download_path_for(
+        download_dir,
+        username,
+        remote_path,
+        per_user,
+        preserve_remote_dirs,
+    );
+    let directory = file
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .display()
+        .to_string();
+    file.set_file_name(peer_filename(remote_path));
+    Destination { directory, file }
+}
+
 /// Windows device names (`CON`, `COM1`, …) that cannot be a folder name.
 fn is_reserved(name: &str) -> bool {
     let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
@@ -112,7 +184,10 @@ fn is_reserved(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{download_path_for, resolve_shared_directory};
+    use super::{
+        destination_for, download_dir_for, download_path_for,
+        resolve_shared_directory,
+    };
     use std::sync::atomic::{AtomicU32, Ordering};
 
     fn unique_temp_dir() -> std::path::PathBuf {
@@ -219,6 +294,63 @@ mod tests {
         assert_eq!(
             download_path_for("/dl", "com1", "track.mp3", true, false),
             std::path::PathBuf::from("/dl/_com1/track.mp3")
+        );
+    }
+
+    #[test]
+    fn the_directory_handed_to_the_library_is_the_sanitized_parent() {
+        assert_eq!(
+            download_dir_for(
+                "/dl",
+                "bob",
+                "@@share\\Album: One\\track.flac",
+                true,
+                true,
+            ),
+            "/dl/bob/@@share/Album_ One"
+        );
+        // Without the folders there is nothing to keep, and the download root
+        // is still what gets created and written into.
+        assert_eq!(
+            download_dir_for("/dl", "bob", "track.flac", false, false),
+            "/dl"
+        );
+    }
+
+    #[test]
+    fn the_written_file_keeps_the_peers_filename() {
+        // The library joins the directory with the basename itself, so the
+        // name it writes is the peer's raw one — sanitizing it here would
+        // report a file that never exists.
+        let destination = destination_for(
+            "/dl",
+            "bob",
+            "@@share\\Album: One\\greatest hits? vol:2.flac",
+            false,
+            true,
+        );
+        assert_eq!(destination.directory, "/dl/@@share/Album_ One");
+        assert_eq!(
+            destination.file,
+            std::path::PathBuf::from(
+                "/dl/@@share/Album_ One/greatest hits? vol:2.flac"
+            )
+        );
+    }
+
+    #[test]
+    fn a_filename_carrying_separators_is_still_only_one_component() {
+        let destination = destination_for(
+            "/dl",
+            "bob",
+            "../../outside\\evil.exe",
+            false,
+            true,
+        );
+        assert_eq!(destination.directory, "/dl/.._/.._/outside");
+        assert_eq!(
+            destination.file,
+            std::path::PathBuf::from("/dl/.._/.._/outside/evil.exe")
         );
     }
 }

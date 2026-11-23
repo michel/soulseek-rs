@@ -438,18 +438,13 @@ impl Daemon {
         // per download would scatter transfers in ways `daemon.status` cannot
         // report; changing the folder is a deliberate session-wide act,
         // `download.set_dir`.
-        let destination = crate::directories::download_path_for(
+        let directory = crate::directories::download_dir_for(
             &self.download_dir(),
             &params.username,
             &params.filename,
             self.use_username_dirs,
             self.preserve_remote_dirs,
         );
-        let directory = destination
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("."))
-            .display()
-            .to_string();
         let (download, updates) = self
             .session
             .download_with_metadata(

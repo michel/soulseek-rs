@@ -224,17 +224,13 @@ impl MainTui {
                     file.filename.clone(),
                     file.username.clone(),
                     file.size,
-                    crate::directories::download_path_for(
+                    crate::directories::download_dir_for(
                         &download_dir,
                         &file.username,
                         &file.filename,
                         use_username_dirs,
                         preserve_remote_dirs,
-                    )
-                    .parent()
-                    .unwrap_or_else(|| std::path::Path::new("."))
-                    .display()
-                    .to_string(),
+                    ),
                     metadata,
                 ) {
                     Ok((download, rx)) => {

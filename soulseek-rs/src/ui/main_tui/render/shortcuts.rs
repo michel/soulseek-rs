@@ -166,9 +166,8 @@ fn settings_shortcuts(
                 SettingsRow::ChangePassword => ("Enter", "change password"),
                 SettingsRow::Logout => ("Enter", "log out"),
                 SettingsRow::DownloadDir => ("Enter", "edit folder"),
-                SettingsRow::UseUsernameDirs | SettingsRow::UseRemoteDirs => {
-                    ("Enter", "toggle option")
-                }
+                SettingsRow::UseUsernameDirs
+                | SettingsRow::PreserveRemoteDirs => ("Enter", "toggle option"),
                 SettingsRow::Share(_) => ("d", "remove share"),
             },
             ("a", "add share"),

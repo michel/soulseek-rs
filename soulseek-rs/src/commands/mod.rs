@@ -19,6 +19,7 @@ use crate::api::SessionApi;
 use crate::cli::{
     AccountCommand, Commands, MessageCommand, RoomCommand, TransferCommand,
 };
+use crate::directories::Destination;
 use crate::output::{CliError, CliResult, Exit, Out, PortmapRecord};
 use crate::port_mapping::{self, PortMapper};
 use crate::remote::{Endpoint, RemoteSession};
@@ -50,10 +51,15 @@ pub struct Ctx {
 }
 
 impl Ctx {
-    /// Destination file path after applying the configured directory options.
+    /// Where a download of `remote_path` lands, once the configured directory
+    /// options are applied.
     #[must_use]
-    pub fn path_for(&self, username: &str, remote_path: &str) -> PathBuf {
-        crate::directories::download_path_for(
+    pub fn destination_for(
+        &self,
+        username: &str,
+        remote_path: &str,
+    ) -> Destination {
+        crate::directories::destination_for(
             &self.download_dir,
             username,
             remote_path,
