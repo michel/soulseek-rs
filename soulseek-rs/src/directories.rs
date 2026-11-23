@@ -107,8 +107,11 @@ pub fn download_path_for(
 /// The library appends the filename itself (its `resolve_download_path` joins
 /// the configured directory with this), so this is the name that actually
 /// lands on disk; sanitizing it here would report a file that never exists.
-/// Splitting on both separators keeps it a single component, which is why the
-/// raw name cannot widen the path the sanitized directory chose.
+/// Splitting on both separators keeps it a single component — no `/`, `\`
+/// or drive — so the name cannot address another directory, though it can
+/// still be a plain `..` (the final rename to such a path fails) or a
+/// Windows-unusable name. Sanitizing the basename inside the library is the
+/// durable fix; until then the reported path must match the raw one.
 fn peer_filename(remote_path: &str) -> &str {
     remote_path
         .split(['/', '\\'])
