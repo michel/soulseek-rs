@@ -431,15 +431,25 @@ fn publish_downloads(hub: &Hub, downloads: &Mutex<Vec<PendingDownload>>) {
     downloads.retain(|pending| {
         loop {
             match pending.updates.try_recv() {
-                Ok(status) => hub.publish(
-                    Event::DownloadStatus,
-                    serde_json::to_value(DownloadStatusEvent {
-                        username: pending.username.clone(),
-                        filename: pending.filename.clone(),
-                        status: (&status).into(),
-                    })
-                    .unwrap_or(serde_json::Value::Null),
-                ),
+                Ok(status) => {
+                    hub.publish(
+                        Event::DownloadStatus,
+                        serde_json::to_value(DownloadStatusEvent {
+                            username: pending.username.clone(),
+                            filename: pending.filename.clone(),
+                            status: (&status).into(),
+                        })
+                        .unwrap_or(serde_json::Value::Null),
+                    );
+                    // A finished transfer has nothing more to say, but its
+                    // channel stays open for as long as the session lists
+                    // it. Waiting for the disconnect meant polling every
+                    // download the daemon had ever finished, ten times a
+                    // second.
+                    if status.is_terminal() {
+                        return false;
+                    }
+                }
                 Err(std::sync::mpsc::TryRecvError::Empty) => return true,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     return false;
@@ -695,6 +705,39 @@ mod tests {
         publish_upload_sample(&hub, &mut state, &[], &[]);
         assert!(state.uploads.is_empty());
         let _ = drain(&receiver);
+    }
+
+    // Issue #119: the session keeps a finished download listed, and with it
+    // the sending half of this channel, so the disconnect never came.
+    #[test]
+    fn a_finished_download_stops_being_polled() {
+        let hub = Hub::new();
+        let (_, receiver) = hub.subscribe(|| {});
+        let (kept_by_the_session, updates) = std::sync::mpsc::channel();
+        let downloads = Mutex::new(vec![PendingDownload {
+            username: "amy".into(),
+            filename: "a.mp3".into(),
+            updates,
+        }]);
+
+        kept_by_the_session
+            .send(DownloadStatus::Queued)
+            .expect("the receiver is alive");
+        publish_downloads(&hub, &downloads);
+        assert_eq!(downloads.lock().expect("not poisoned").len(), 1);
+
+        kept_by_the_session
+            .send(DownloadStatus::Completed)
+            .expect("the receiver is alive");
+        publish_downloads(&hub, &downloads);
+        assert!(
+            downloads.lock().expect("not poisoned").is_empty(),
+            "nothing further can arrive for a finished download"
+        );
+        assert_eq!(
+            drain(&receiver),
+            ["event.download_status", "event.download_status"]
+        );
     }
 
     #[test]

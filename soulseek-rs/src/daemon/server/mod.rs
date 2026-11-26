@@ -521,7 +521,17 @@ impl Daemon {
     }
 
     fn record_search_start(&self, query: &str) {
+        // The session drops its oldest searches to make room for new ones.
+        // Forget their start times with them, or this map is the one thing
+        // that still grows with every query ever run.
+        let known: std::collections::HashSet<String> = self
+            .session
+            .all_searches()
+            .into_iter()
+            .map(|search| search.query)
+            .collect();
         if let Ok(mut searches) = self.searches.lock() {
+            searches.retain(|started, _| known.contains(started));
             searches.insert(query.to_string(), Instant::now());
         }
     }

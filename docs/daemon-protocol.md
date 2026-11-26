@@ -185,6 +185,13 @@ you care to wait. Decide the window yourself, then read `search.results`. This
 is deliberate: a client's search window must not be time the daemon spends not
 answering everybody else.
 
+**History is bounded.** A daemon is meant to stay up, so nothing it keeps
+grows without limit. The 100 most recent searches are kept, the oldest making
+room for a new one; `search.forget` still drops one early. `download.list`
+keeps every unfinished download and the 1,000 most recently finished. A browse
+listing, folder listing or user info is kept only if a client asked for it,
+and for ten minutes if nobody collects it.
+
 ## A session by hand
 
 ```console
