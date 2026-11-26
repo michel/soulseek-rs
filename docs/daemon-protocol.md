@@ -136,6 +136,23 @@ continuously; do not treat the socket as request/response only.
 A `download.start` you issued reports progress through `event.download_status`
 matched on `username` + `filename`.
 
+`event.upload` reports changes, not the queue. An upload is identified by
+`username` + `filename` and is announced at most once per 100 ms in its latest
+state, so intermediate states can be skipped. Changes that touch many uploads
+at once — every waiting peer moving up a place when one is served — are spread
+over the following ticks rather than sent in one burst, new uploads and
+changes of status first. Nothing is replayed when you connect: call
+`upload.list` for the current state and apply events on top of it. A queued
+upload whose peer disappears leaves the list without a final event, so refresh
+from `upload.list` if you display the queue.
+
+`upload.list` holds one row per peer and file: a peer asking again for a file
+it is already waiting for, has been offered or is receiving keeps its existing
+row and its place. Finished uploads stay listed as history, the newest 200.
+`upload.cancel` works at any stage — a queued or offered upload is removed and
+the peer told, one being sent stops — and answers `ok: false` only when
+nothing matched.
+
 ## Behaviour worth knowing
 
 **Files land on the daemon's filesystem.** The directory is the daemon's
