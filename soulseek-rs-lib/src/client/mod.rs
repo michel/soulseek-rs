@@ -110,8 +110,10 @@ struct UploadJob {
     real_path: std::path::PathBuf,
     virtual_path: String,
     size: u64,
-    /// When the offer went out; `None` once the peer has answered it.
-    offered: Option<Instant>,
+    /// When this job gives its slot back if it has not begun streaming.
+    deadline: Instant,
+    /// Whether the peer has accepted the offer.
+    answered: bool,
 }
 
 /// An upload waiting for its downloader to connect back to our listener while
@@ -818,25 +820,14 @@ impl Client {
         )
     }
 
-    /// Ask an in-progress upload to `username` of `filename` to stop.
-    /// Returns whether a matching in-progress upload was found.
+    /// Cancel the upload of `filename` to `username`, whatever stage it is
+    /// at: waiting in the queue, offered, or streaming. A waiting or offered
+    /// upload is withdrawn at once and the peer told it will not come; a
+    /// streaming one stops at its next chunk. Returns whether anything
+    /// matched.
     #[must_use = "returns whether a matching upload was found"]
     pub fn cancel_upload(&self, username: &str, filename: &str) -> bool {
-        self.context.read_safe().is_ok_and(|ctx| {
-            let mut found = false;
-            for upload in ctx.active_uploads.values() {
-                if upload.username == username
-                    && upload.filename == filename
-                    && upload.status == crate::types::UploadStatus::InProgress
-                {
-                    upload
-                        .cancel
-                        .store(true, std::sync::atomic::Ordering::Relaxed);
-                    found = true;
-                }
-            }
-            found
-        })
+        Self::cancel_upload_in(&self.context, username, filename)
     }
 
     /// Replace the shared directories at runtime: rescan into a fresh

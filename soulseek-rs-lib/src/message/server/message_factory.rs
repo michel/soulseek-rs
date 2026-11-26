@@ -293,6 +293,20 @@ impl MessageFactory {
             .clone()
     }
 
+    /// `UploadDenied` (peer code 50): we will not be sending `filename`, and
+    /// why.
+    #[must_use]
+    pub fn build_upload_denied_message(
+        filename: &str,
+        reason: &str,
+    ) -> Message {
+        Message::new()
+            .write_int32(50)
+            .write_string(filename)
+            .write_string(reason)
+            .clone()
+    }
+
     #[must_use]
     pub fn build_pierce_firewall_message(token: u32) -> Message {
         Message::new()

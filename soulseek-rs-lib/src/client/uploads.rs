@@ -77,6 +77,47 @@ impl Client {
         }
     }
 
+    /// Withdraw or stop the upload of `filename` to `username`; see
+    /// [`Client::cancel_upload`].
+    pub(crate) fn cancel_upload_in(
+        client_context: &Arc<RwLock<ClientContext>>,
+        username: &str,
+        filename: &str,
+    ) -> bool {
+        let (registry, withdrawn, found) = match client_context.write_safe() {
+            Ok(mut ctx) => {
+                let (withdrawn, found) = ctx.cancel_upload(username, filename);
+                (ctx.peer_registry.clone(), withdrawn, found)
+            }
+            Err(e) => {
+                error!("[client] cancel_upload write: {}", e);
+                return false;
+            }
+        };
+        if !withdrawn {
+            // Nothing matched, or only a transfer already streaming, which
+            // ends on its own thread and frees its own slot.
+            return found;
+        }
+        // Tell the peer, so its client stops waiting on a place in a queue
+        // it is no longer in. Best effort: a peer with no live connection
+        // finds out when it next asks.
+        if let Some(registry) = registry {
+            let _ = registry.send_to_peer(
+                username,
+                PeerMessage::SendMessage(
+                    MessageFactory::build_upload_denied_message(
+                        filename,
+                        "Cancelled",
+                    ),
+                ),
+            );
+        }
+        // Whatever was withdrawn may have held a slot.
+        Self::pump_upload_queue(client_context);
+        true
+    }
+
     /// Fill every free upload slot from the queue and send the offers.
     ///
     /// Called whenever the queue or the slot count could have changed: a new
@@ -124,7 +165,7 @@ impl Client {
         };
         let bytes_sent = Arc::new(AtomicU64::new(0));
         let cancel = Arc::new(AtomicBool::new(false));
-        ctx.active_uploads.insert(
+        ctx.track_active_upload(
             token,
             ActiveUpload {
                 username: job.downloader.clone(),
