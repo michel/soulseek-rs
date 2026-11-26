@@ -1999,7 +1999,7 @@
           "$ref": "#/components/schemas/Uploads"
         }
       },
-      "summary": "Uploads being served, active first."
+      "summary": "Uploads being served and recently finished, then those queued, one row per peer and file."
     },
     {
       "name": "upload.cancel",
@@ -2026,7 +2026,7 @@
           "$ref": "#/components/schemas/Ack"
         }
       },
-      "summary": "Stop serving an upload in progress."
+      "summary": "Cancel an upload: drop it from the queue, or stop it if it is being sent."
     },
     {
       "name": "upload.slots",

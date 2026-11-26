@@ -2,6 +2,7 @@
 //!
 //! This file is the harness the topic modules below share.
 
+mod long_running;
 mod peers;
 mod rooms;
 mod search;

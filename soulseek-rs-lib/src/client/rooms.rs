@@ -114,7 +114,7 @@ impl Client {
     /// Returns [`SoulseekRs::NotConnected`] if the client is not connected.
     pub fn request_user_info(&self, username: &str) -> Result<()> {
         use crate::message::server::MessageFactory;
-        self.context.write_safe()?.invalidate_user_info(username);
+        self.context.write_safe()?.expect_user_info(username);
         self.send_server_message(MessageFactory::build_get_user_status(
             username,
         ))?;

@@ -21,7 +21,7 @@ use crate::{
     utils::lock::RwLockExt,
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     net::TcpStream,
     sync::{
         Arc, RwLock,
@@ -63,6 +63,32 @@ const BROKER_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 const DEFAULT_MAX_PEERS: usize = 512;
 /// How long a message waits for a control connection to its peer.
 const PENDING_PEER_TTL: Duration = Duration::from_mins(1);
+
+/// How long an answer we asked a peer for stays welcome, and how long one
+/// that arrived waits to be collected before it is dropped.
+const PEER_REPLY_TTL: Duration = Duration::from_mins(10);
+
+/// How long a peer's listen address is believed before it is looked up
+/// again. Peers restart and change ports; an address from yesterday is a
+/// dial that times out.
+const PEER_ADDRESS_TTL: Duration = Duration::from_mins(10);
+
+/// How many searches are kept.
+///
+/// Each holds up to its full result set, and nothing but an explicit
+/// `forget_search` ever dropped one, so a client that searches all week held
+/// every result it had ever been sent.
+pub const MAX_SEARCHES: usize = 100;
+
+/// How many users outside the watch list we keep server info about.
+const MAX_USER_INFO_REQUESTS: usize = 256;
+
+/// How many peers' self-descriptions are kept.
+const MAX_PEER_INFOS: usize = 256;
+
+/// How many messages may wait for one peer's connection. Far more than any
+/// real exchange holds back; the newest are the ones worth keeping.
+const MAX_PENDING_PEER_MESSAGES: usize = 32;
 
 const BROWSE_PROTECT_WINDOW: Duration = Duration::from_mins(5);
 
@@ -110,8 +136,10 @@ struct UploadJob {
     real_path: std::path::PathBuf,
     virtual_path: String,
     size: u64,
-    /// When the offer went out; `None` once the peer has answered it.
-    offered: Option<Instant>,
+    /// When this job gives its slot back if it has not begun streaming.
+    deadline: Instant,
+    /// Whether the peer has accepted the offer.
+    answered: bool,
 }
 
 /// An upload waiting for its downloader to connect back to our listener while
@@ -500,6 +528,9 @@ pub struct ClientContext {
     parent_min_speed: u32,
     parent_speed_ratio: u32,
     searches: HashMap<String, Search>,
+    /// The registered searches, oldest first, so the oldest can make room
+    /// once there are [`MAX_SEARCHES`].
+    search_order: VecDeque<String>,
     private_messages: Vec<UserMessage>,
     /// Correlation tokens for server-brokered (firewalled) connections, mapping
     /// a token we sent in a ConnectToPeer to the peer we expect back.
@@ -511,12 +542,13 @@ pub struct ClientContext {
     /// The directories the current share index was built from.
     pub shared_directories: Vec<String>,
     /// Peer listen addresses learned from GetPeerAddress responses.
-    peer_addresses: HashMap<String, (String, u32)>,
-    /// Peer messages waiting for a control connection to that peer, and
-    /// when the last was queued: a peer that never answers must not keep
+    /// Each with when it was learned: an address is only good for a while.
+    peer_addresses: HashMap<String, (String, u32, Instant)>,
+    /// Peer messages waiting for a control connection to that peer, each
+    /// with when it was queued: a peer that never answers must not keep
     /// them forever.
     pending_peer_messages:
-        HashMap<String, (Instant, Vec<crate::message::Message>)>,
+        HashMap<String, VecDeque<(Instant, crate::message::Message)>>,
     /// Uploads we have offered, keyed by our transfer token.
     uploads: HashMap<u32, UploadJob>,
     active_uploads: HashMap<u32, ActiveUpload>,
@@ -527,11 +559,20 @@ pub struct ClientContext {
     /// `PierceFirewall` and we serve over that socket instead.
     brokered_uploads: HashMap<u32, BrokeredUpload>,
     /// Shared-file listings received from peers we browsed.
-    browse_results: HashMap<String, Vec<SharedDirectory>>,
-    /// One-folder listings received from peers, keyed by peer and folder.
-    folder_contents: HashMap<(String, String), Vec<SharedDirectory>>,
-    /// What peers said about themselves (peer code 16), keyed by peer.
-    peer_infos: HashMap<String, crate::message::peer::PeerInfo>,
+    /// Each with when it arrived, so one nobody collects can be dropped.
+    browse_results: HashMap<String, (Instant, Vec<SharedDirectory>)>,
+    /// One-folder listings received from peers, keyed by peer and folder,
+    /// each with when it arrived.
+    folder_contents: HashMap<(String, String), (Instant, Vec<SharedDirectory>)>,
+    /// Folders we have asked a peer for and until when the answer is
+    /// welcome. A listing nobody asked for is not stored.
+    pending_folders: HashMap<(String, String), Instant>,
+    /// What peers said about themselves (peer code 16), keyed by peer, each
+    /// with when it arrived.
+    peer_infos: HashMap<String, (Instant, crate::message::peer::PeerInfo)>,
+    /// Peers we have asked about themselves and until when the answer is
+    /// welcome.
+    pending_peer_infos: HashMap<String, Instant>,
     pending_browses: HashMap<String, Instant>,
     /// Latest snapshot of the public chat-room list (from `RoomList`, code 64).
     room_list: Vec<RoomInfo>,
@@ -571,6 +612,9 @@ pub struct ClientContext {
     /// What the server has told us about other users, merged across the
     /// separate status and statistics replies.
     user_info: HashMap<String, UserInfo>,
+    /// Users we asked the server about, oldest first. Together with the
+    /// watch list these are the only users whose pushes are kept.
+    user_info_requests: VecDeque<String>,
     /// Users we asked the server to watch (code 5), so it keeps pushing their
     /// status changes. Kept so a UI can render the watch list and so an
     /// unwatch can be rejected for someone we never watched.
@@ -818,25 +862,14 @@ impl Client {
         )
     }
 
-    /// Ask an in-progress upload to `username` of `filename` to stop.
-    /// Returns whether a matching in-progress upload was found.
+    /// Cancel the upload of `filename` to `username`, whatever stage it is
+    /// at: waiting in the queue, offered, or streaming. A waiting or offered
+    /// upload is withdrawn at once and the peer told it will not come; a
+    /// streaming one stops at its next chunk. Returns whether anything
+    /// matched.
     #[must_use = "returns whether a matching upload was found"]
     pub fn cancel_upload(&self, username: &str, filename: &str) -> bool {
-        self.context.read_safe().is_ok_and(|ctx| {
-            let mut found = false;
-            for upload in ctx.active_uploads.values() {
-                if upload.username == username
-                    && upload.filename == filename
-                    && upload.status == crate::types::UploadStatus::InProgress
-                {
-                    upload
-                        .cancel
-                        .store(true, std::sync::atomic::Ordering::Relaxed);
-                    found = true;
-                }
-            }
-            found
-        })
+        Self::cancel_upload_in(&self.context, username, filename)
     }
 
     /// Replace the shared directories at runtime: rescan into a fresh

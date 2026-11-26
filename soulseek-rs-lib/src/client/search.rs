@@ -111,13 +111,7 @@ impl Client {
             return Err(SoulseekRs::NotConnected);
         }
         let token = next_search_token();
-        self.context.write_safe()?.searches.insert(
-            query.to_string(),
-            Search {
-                token,
-                results: Vec::new(),
-            },
-        );
+        self.context.write_safe()?.register_search(query, token);
         Ok(token)
     }
 
@@ -196,7 +190,7 @@ impl Client {
     pub fn forget_search(&self, search_key: &str) -> bool {
         self.context
             .write_safe()
-            .is_ok_and(|mut ctx| ctx.searches.remove(search_key).is_some())
+            .is_ok_and(|mut ctx| ctx.forget_search(search_key))
     }
 
     #[must_use]

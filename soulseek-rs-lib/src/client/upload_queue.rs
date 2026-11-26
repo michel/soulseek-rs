@@ -10,8 +10,11 @@
 //! policy (per-user fairness, small-file-first) would be a different promise
 //! than the one the rules ask for.
 
-use super::{ClientContext, Duration, Instant, PeerRegistry, UploadJob};
+use super::{
+    ActiveUpload, ClientContext, Duration, Instant, PeerRegistry, UploadJob,
+};
 use crate::types::{UploadInfo, UploadStatus};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Cap on remembered queued-upload states, so a caller that never drains
@@ -22,6 +25,18 @@ const MAX_UPLOAD_EVENTS: usize = 256;
 /// never answers, having gone away or hung, would otherwise hold the slot for
 /// the life of the process; with two slots, two of them shut uploads down.
 const OFFER_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long an accepted offer may wait for the transfer to begin. Between the
+/// peer's TransferResponse and the first byte sits a `GetPeerAddress` round
+/// trip through the server, and an answer lost to a dropped session never
+/// comes: without a limit that upload holds its slot until the process exits.
+/// Generous next to a healthy lookup, which takes well under a second.
+const ACCEPTED_TIMEOUT: Duration = Duration::from_mins(2);
+
+/// How many finished uploads stay listed. The live ones are bounded by the
+/// slot count; the finished ones are history, and history kept for the life
+/// of a daemon grows by a row per file served, forever.
+pub const FINISHED_UPLOADS_KEPT: usize = 200;
 
 /// A queued upload that has just been given a slot, ready to be offered to the
 /// peer that asked for it.
@@ -45,6 +60,10 @@ pub struct QueuedUpload {
     pub privileged: bool,
     /// Arrival order, so the tie-break among equals is first-come.
     pub seq: u64,
+    /// Whether this wait has been recorded in the upload events yet. Each is
+    /// recorded once: re-recording the whole queue on every pump is what made
+    /// a long queue quadratic to maintain.
+    pub recorded: bool,
 }
 
 /// What decides the order: donors first, then whoever asked first.
@@ -96,16 +115,27 @@ pub fn place_in_queue(
 /// The queue as the client drives it: taking a request, filling slots, and
 /// answering where a peer sits.
 impl ClientContext {
-    /// Take `filename` from a peer's request and put them in the queue. The
-    /// caller pumps afterwards; queueing and serving are separate so a request
-    /// for a file we do not have never reaches the queue.
+    /// Take `filename` from a peer's request and put them in the queue,
+    /// returning whether that added anything. The caller pumps afterwards;
+    /// queueing and serving are separate so a request for a file we do not
+    /// have never reaches the queue.
+    ///
+    /// A request for a file the peer is already waiting for, has been offered
+    /// or is being sent changes nothing. Clients repeat `QueueUpload` as a
+    /// matter of course — on reconnect, on a timer, on every retry — and each
+    /// repeat used to become a row of its own: a daemon left running for a few
+    /// hours held several rows per file and offered the same transfer again
+    /// and again. The first request keeps its place in line.
     pub fn enqueue_upload(
         &mut self,
         downloader: &str,
         filename: &str,
         real_path: std::path::PathBuf,
         size: u64,
-    ) {
+    ) -> bool {
+        if self.is_upload_pending(downloader, filename) {
+            return false;
+        }
         self.upload_seq += 1;
         self.upload_queue.push(QueuedUpload {
             downloader: downloader.to_string(),
@@ -114,7 +144,24 @@ impl ClientContext {
             size,
             privileged: self.privileged_users.contains(downloader),
             seq: self.upload_seq,
+            recorded: false,
         });
+        true
+    }
+
+    /// Whether `downloader` already has `filename` waiting, offered or in
+    /// flight. A finished transfer does not count: asking again after one is
+    /// a new download.
+    fn is_upload_pending(&self, downloader: &str, filename: &str) -> bool {
+        self.upload_queue.iter().any(|job| {
+            job.downloader == downloader && job.virtual_path == filename
+        }) || self.uploads.values().any(|job| {
+            job.downloader == downloader && job.virtual_path == filename
+        }) || self.active_uploads.values().any(|upload| {
+            upload.username == downloader
+                && upload.filename == filename
+                && matches!(upload.status, UploadStatus::InProgress)
+        })
     }
 
     /// Move as many queued uploads into free slots as will fit, and return the
@@ -147,7 +194,8 @@ impl ClientContext {
                     real_path: job.real_path,
                     virtual_path: job.virtual_path,
                     size: job.size,
-                    offered: Some(Instant::now()),
+                    deadline: Instant::now() + OFFER_TIMEOUT,
+                    answered: false,
                 },
             );
         }
@@ -156,22 +204,30 @@ impl ClientContext {
         // polling `uploads()` on an interval cannot see a peer that queued and
         // was served between two polls — and with a small slot count that is
         // the common case, not the rare one.
-        for waiting in self.queued_uploads() {
-            let already = self.upload_events.iter().any(|seen| {
-                seen.username == waiting.username
-                    && seen.filename == waiting.filename
-            });
-            if !already {
-                self.upload_events.push(waiting);
+        if self.upload_queue.iter().any(|job| !job.recorded) {
+            for (place, index) in
+                serve_order(&self.upload_queue).into_iter().enumerate()
+            {
+                let job = &mut self.upload_queue[index];
+                if job.recorded {
+                    continue;
+                }
+                job.recorded = true;
+                let info = queued_info(job, place);
+                self.upload_events.push(info);
             }
         }
-        // A caller that never drains must not grow this without bound.
+        self.cap_upload_events();
+
+        (self.peer_registry.clone(), offers)
+    }
+
+    /// A caller that never drains must not grow the events without bound.
+    fn cap_upload_events(&mut self) {
         if self.upload_events.len() > MAX_UPLOAD_EVENTS {
             let excess = self.upload_events.len() - MAX_UPLOAD_EVENTS;
             self.upload_events.drain(..excess);
         }
-
-        (self.peer_registry.clone(), offers)
     }
 
     /// Take the queued-upload states recorded since the last call.
@@ -206,18 +262,101 @@ impl ClientContext {
         serve_order(&self.upload_queue)
             .into_iter()
             .enumerate()
-            .map(|(place, index)| {
-                let job = &self.upload_queue[index];
-                UploadInfo {
-                    username: job.downloader.clone(),
-                    filename: job.virtual_path.clone(),
-                    size: job.size,
-                    bytes_sent: 0,
-                    speed_bytes_per_sec: 0.0,
-                    status: UploadStatus::Queued(as_place(place)),
-                }
-            })
+            .map(|(place, index)| queued_info(&self.upload_queue[index], place))
             .collect()
+    }
+
+    /// Withdraw everything `downloader` is waiting for or has been offered
+    /// under `filename`, recording each as cancelled, and ask any transfer of
+    /// it already streaming to stop. Returns whether a waiting or offered
+    /// upload was withdrawn, which is the caller's cue to tell the peer, and
+    /// whether anything matched at all.
+    ///
+    /// The streaming transfer frees its own slot when its thread notices the
+    /// flag; the caller pumps for the rest.
+    pub fn cancel_upload(
+        &mut self,
+        downloader: &str,
+        filename: &str,
+    ) -> (bool, bool) {
+        let mut found = false;
+        for upload in self.active_uploads.values() {
+            if upload.username == downloader
+                && upload.filename == filename
+                && upload.status == UploadStatus::InProgress
+            {
+                upload
+                    .cancel
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                found = true;
+            }
+        }
+
+        let mut size = None;
+        self.upload_queue.retain(|job| {
+            let matches =
+                job.downloader == downloader && job.virtual_path == filename;
+            if matches {
+                size = Some(job.size);
+            }
+            !matches
+        });
+        let offered: Vec<u32> = self
+            .uploads
+            .iter()
+            .filter(|(_, job)| {
+                job.downloader == downloader && job.virtual_path == filename
+            })
+            .map(|(&token, _)| token)
+            .collect();
+        for token in &offered {
+            if let Some(job) = self.uploads.remove(token) {
+                size = Some(job.size);
+            }
+            self.forget_pending_serve(downloader, *token);
+        }
+
+        let withdrawn = size.is_some();
+        if let Some(size) = size {
+            found = true;
+            self.upload_events.push(UploadInfo {
+                username: downloader.to_string(),
+                filename: filename.to_string(),
+                size,
+                bytes_sent: 0,
+                speed_bytes_per_sec: 0.0,
+                status: UploadStatus::Cancelled,
+            });
+            self.cap_upload_events();
+        }
+        (withdrawn, found)
+    }
+
+    /// Stop waiting on `downloader`'s address on behalf of upload `token`.
+    fn forget_pending_serve(&mut self, downloader: &str, token: u32) {
+        if let Some(tokens) = self.pending_serves.get_mut(downloader) {
+            tokens.retain(|waiting| *waiting != token);
+            if tokens.is_empty() {
+                self.pending_serves.remove(downloader);
+            }
+        }
+    }
+
+    /// Start tracking a transfer that is about to stream, replacing whatever
+    /// finished row the same peer and file left behind and letting the oldest
+    /// finished rows fall off the end.
+    pub(super) fn track_active_upload(
+        &mut self,
+        token: u32,
+        upload: ActiveUpload,
+    ) {
+        self.active_uploads.retain(|_, other| {
+            matches!(other.status, UploadStatus::InProgress)
+                || other.username != upload.username
+                || other.filename != upload.filename
+        });
+        self.active_uploads.insert(token, upload);
+        prune_finished(&mut self.active_uploads, FINISHED_UPLOADS_KEPT);
     }
 
     /// Where `downloader`'s queued `filename` sits, counting from 1. `None`
@@ -245,23 +384,27 @@ impl ClientContext {
         self.privileged_users.contains(username)
     }
 
-    /// Drop offers older than [`OFFER_TIMEOUT`], recording each as a failed
-    /// upload so an operator sees why the peer never got its file. Returns
-    /// whether anything was dropped, which is the caller's cue to pump again.
+    /// Drop offers nobody answered within [`OFFER_TIMEOUT`], and accepted ones
+    /// that never got as far as streaming within [`ACCEPTED_TIMEOUT`],
+    /// recording each as a failed upload so an operator sees why the peer
+    /// never got its file. Returns whether anything was dropped, which is the
+    /// caller's cue to pump again.
     pub fn expire_stale_offers(&mut self, now: Instant) -> bool {
         let stale: Vec<u32> = self
             .uploads
             .iter()
-            .filter(|(_, job)| {
-                job.offered.is_some_and(|sent| {
-                    now.duration_since(sent) >= OFFER_TIMEOUT
-                })
-            })
+            .filter(|(_, job)| now >= job.deadline)
             .map(|(&token, _)| token)
             .collect();
         for token in &stale {
             let Some(job) = self.uploads.remove(token) else {
                 continue;
+            };
+            self.forget_pending_serve(&job.downloader, *token);
+            let reason = if job.answered {
+                "the transfer never started"
+            } else {
+                "no answer to the transfer offer"
             };
             self.upload_events.push(UploadInfo {
                 username: job.downloader,
@@ -269,19 +412,21 @@ impl ClientContext {
                 size: job.size,
                 bytes_sent: 0,
                 speed_bytes_per_sec: 0.0,
-                status: UploadStatus::Failed(
-                    "no answer to the transfer offer".to_string(),
-                ),
+                status: UploadStatus::Failed(reason.to_string()),
             });
         }
+        self.cap_upload_events();
         !stale.is_empty()
     }
 
-    /// The peer accepted the offer for `token`; it may still take a while to
-    /// resolve their address and connect, and that wait must not expire it.
+    /// The peer accepted the offer for `token`. Resolving their address and
+    /// connecting can outlast the offer window, so the clock restarts with the
+    /// longer allowance — restarts rather than stops, because an address
+    /// lookup lost to a dropped session would otherwise hold the slot forever.
     pub fn mark_offer_answered(&mut self, token: u32) {
         if let Some(job) = self.uploads.get_mut(&token) {
-            job.offered = None;
+            job.answered = true;
+            job.deadline = Instant::now() + ACCEPTED_TIMEOUT;
         }
     }
 
@@ -295,7 +440,40 @@ impl ClientContext {
         let before = self.upload_queue.len() + self.uploads.len();
         self.upload_queue.retain(|job| job.downloader != downloader);
         self.uploads.retain(|_, job| job.downloader != downloader);
+        self.pending_serves.remove(downloader);
         before != self.upload_queue.len() + self.uploads.len()
+    }
+}
+
+/// A waiting upload as it is reported, `place` counting from zero.
+fn queued_info(job: &QueuedUpload, place: usize) -> UploadInfo {
+    UploadInfo {
+        username: job.downloader.clone(),
+        filename: job.virtual_path.clone(),
+        size: job.size,
+        bytes_sent: 0,
+        speed_bytes_per_sec: 0.0,
+        status: UploadStatus::Queued(as_place(place)),
+    }
+}
+
+/// Forget the oldest finished uploads beyond `keep`. Tokens are handed out in
+/// order, so the lowest are the oldest; transfers still running are never
+/// touched.
+fn prune_finished(uploads: &mut HashMap<u32, ActiveUpload>, keep: usize) {
+    let mut finished: Vec<u32> = uploads
+        .iter()
+        .filter(|(_, upload)| {
+            !matches!(upload.status, UploadStatus::InProgress)
+        })
+        .map(|(&token, _)| token)
+        .collect();
+    if finished.len() <= keep {
+        return;
+    }
+    finished.sort_unstable();
+    for token in &finished[..finished.len() - keep] {
+        uploads.remove(token);
     }
 }
 
@@ -311,6 +489,7 @@ mod tests {
             size: 1,
             privileged,
             seq,
+            recorded: false,
         }
     }
 
@@ -393,8 +572,8 @@ mod tests {
 /// go untested.
 #[cfg(test)]
 mod context_tests {
-    use super::OFFER_TIMEOUT;
-    use crate::client::{ClientContext, DEFAULT_UPLOAD_SLOTS};
+    use super::{ACCEPTED_TIMEOUT, FINISHED_UPLOADS_KEPT, OFFER_TIMEOUT};
+    use crate::client::{ActiveUpload, ClientContext, DEFAULT_UPLOAD_SLOTS};
     use crate::types::UploadStatus;
     use std::path::PathBuf;
 
@@ -424,6 +603,258 @@ mod context_tests {
             .into_iter()
             .map(|offer| offer.requester_key)
             .collect()
+    }
+
+    fn active(user: &str, file: &str, status: UploadStatus) -> ActiveUpload {
+        ActiveUpload {
+            username: user.to_string(),
+            filename: file.to_string(),
+            size: 4096,
+            bytes_sent: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
+                0,
+            )),
+            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+                false,
+            )),
+            status,
+            started: std::time::Instant::now(),
+        }
+    }
+
+    /// Move the offer under `token` on to streaming, as `spawn_serve` does.
+    fn start_streaming(ctx: &mut ClientContext, token: u32) {
+        let job = ctx.uploads.remove(&token).expect("the offer exists");
+        ctx.track_active_upload(
+            token,
+            active(
+                &job.downloader,
+                &job.virtual_path,
+                UploadStatus::InProgress,
+            ),
+        );
+    }
+
+    // Issue #112: clients repeat QueueUpload routinely, and every repeat used
+    // to become a row — 8,013 rows for 2,131 distinct requests after ten
+    // hours, one of them listed 76 times.
+    #[test]
+    fn a_repeated_request_keeps_one_row_and_its_place() {
+        let (mut ctx, mut token) = context(1);
+        ask(&mut ctx, "blocker", "f.mp3");
+        offered(&mut ctx, &mut token);
+        ask(&mut ctx, "amy", "a.mp3");
+        ask(&mut ctx, "bob", "b.mp3");
+
+        for _ in 0..75 {
+            assert!(
+                !ctx.enqueue_upload(
+                    "amy",
+                    "a.mp3",
+                    PathBuf::from("/tmp/x"),
+                    4096
+                ),
+                "asking again must not add a row"
+            );
+        }
+
+        assert_eq!(ctx.queued_uploads().len(), 2);
+        assert_eq!(
+            ctx.place_in_queue("amy", "a.mp3"),
+            Some(1),
+            "asking again must not cost the peer its place either"
+        );
+        assert_eq!(ctx.place_in_queue("bob", "b.mp3"), Some(2));
+    }
+
+    #[test]
+    fn the_same_file_for_another_peer_or_another_file_still_queues() {
+        let (mut ctx, _) = context(1);
+        ask(&mut ctx, "amy", "a.mp3");
+        ask(&mut ctx, "bob", "a.mp3");
+        ask(&mut ctx, "amy", "b.mp3");
+        assert_eq!(ctx.upload_queue.len(), 3);
+    }
+
+    #[test]
+    fn a_request_for_a_transfer_already_under_way_is_not_queued_again() {
+        let (mut ctx, mut token) = context(1);
+        ask(&mut ctx, "amy", "a.mp3");
+        offered(&mut ctx, &mut token);
+
+        ask(&mut ctx, "amy", "a.mp3");
+        assert!(
+            ctx.upload_queue.is_empty(),
+            "an offer is out for it: a second row would send the file twice"
+        );
+
+        start_streaming(&mut ctx, 1);
+        ask(&mut ctx, "amy", "a.mp3");
+        assert!(ctx.upload_queue.is_empty(), "it is being sent right now");
+    }
+
+    #[test]
+    fn asking_again_after_the_transfer_finished_is_a_new_request() {
+        let (mut ctx, mut token) = context(1);
+        ask(&mut ctx, "amy", "a.mp3");
+        offered(&mut ctx, &mut token);
+        start_streaming(&mut ctx, 1);
+        ctx.active_uploads.get_mut(&1).expect("tracked").status =
+            UploadStatus::Completed;
+
+        ask(&mut ctx, "amy", "a.mp3");
+        assert_eq!(offered(&mut ctx, &mut token), ["amy"]);
+    }
+
+    #[test]
+    fn cancelling_removes_a_queued_row_and_says_so() {
+        let (mut ctx, mut token) = context(1);
+        ask(&mut ctx, "blocker", "f.mp3");
+        offered(&mut ctx, &mut token);
+        ask(&mut ctx, "amy", "a.mp3");
+        ask(&mut ctx, "bob", "b.mp3");
+        let _ = ctx.pump_uploads(&mut token);
+        let _ = ctx.take_upload_events();
+
+        let (withdrawn, found) = ctx.cancel_upload("amy", "a.mp3");
+
+        assert!(found, "a queued row is something to cancel");
+        assert!(withdrawn, "the peer is owed a word about it");
+        assert_eq!(ctx.place_in_queue("amy", "a.mp3"), None);
+        assert_eq!(
+            ctx.place_in_queue("bob", "b.mp3"),
+            Some(1),
+            "whoever was behind moves up"
+        );
+        assert!(ctx.take_upload_events().iter().any(|event| {
+            event.username == "amy"
+                && event.filename == "a.mp3"
+                && event.status == UploadStatus::Cancelled
+        }));
+    }
+
+    #[test]
+    fn cancelling_an_offer_frees_its_slot() {
+        let (mut ctx, mut token) = context(1);
+        ask(&mut ctx, "amy", "a.mp3");
+        ask(&mut ctx, "bob", "b.mp3");
+        offered(&mut ctx, &mut token);
+
+        let (withdrawn, found) = ctx.cancel_upload("amy", "a.mp3");
+
+        assert!(found);
+        assert!(withdrawn);
+        assert_eq!(offered(&mut ctx, &mut token), ["bob"]);
+    }
+
+    #[test]
+    fn cancelling_a_streaming_upload_raises_its_flag() {
+        let (mut ctx, mut token) = context(1);
+        ask(&mut ctx, "amy", "a.mp3");
+        offered(&mut ctx, &mut token);
+        start_streaming(&mut ctx, 1);
+
+        assert_eq!(
+            ctx.cancel_upload("amy", "a.mp3"),
+            (false, true),
+            "found, but nothing left the queue"
+        );
+        assert!(
+            ctx.active_uploads[&1]
+                .cancel
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
+    }
+
+    #[test]
+    fn cancelling_something_unknown_finds_nothing() {
+        let (mut ctx, _) = context(1);
+        ask(&mut ctx, "amy", "a.mp3");
+        assert!(!ctx.cancel_upload("amy", "other.mp3").1);
+        assert!(!ctx.cancel_upload("zoe", "a.mp3").1);
+        assert_eq!(ctx.upload_queue.len(), 1);
+    }
+
+    // The address lookup that follows an accepted offer goes through the
+    // server; one lost to a dropped session never answers, and that upload
+    // used to hold its slot for the life of the process.
+    #[test]
+    fn an_accepted_offer_that_never_starts_gives_its_slot_back() {
+        let (mut ctx, mut token) = context(1);
+        ask(&mut ctx, "stuck", "f.mp3");
+        ask(&mut ctx, "next", "f.mp3");
+        offered(&mut ctx, &mut token);
+        ctx.mark_offer_answered(1);
+        ctx.pending_serves.insert("stuck".to_string(), vec![1]);
+
+        let later = std::time::Instant::now() + ACCEPTED_TIMEOUT;
+        assert!(ctx.expire_stale_offers(later));
+        assert!(
+            ctx.pending_serves.is_empty(),
+            "nothing is left waiting on that peer's address"
+        );
+        assert_eq!(offered(&mut ctx, &mut token), ["next"]);
+    }
+
+    #[test]
+    fn finished_uploads_are_kept_only_up_to_a_limit() {
+        let (mut ctx, _) = context(2);
+        let served = FINISHED_UPLOADS_KEPT as u32 + 50;
+        for token in 0..served {
+            ctx.track_active_upload(
+                token,
+                active("amy", &format!("{token}.mp3"), UploadStatus::Completed),
+            );
+        }
+        ctx.track_active_upload(
+            served,
+            active("amy", "live.mp3", UploadStatus::InProgress),
+        );
+
+        assert_eq!(ctx.active_uploads.len(), FINISHED_UPLOADS_KEPT + 1);
+        assert!(
+            !ctx.active_uploads.contains_key(&0),
+            "the oldest history goes first"
+        );
+        assert!(ctx.active_uploads.contains_key(&(served - 1)));
+        assert!(
+            ctx.active_uploads.contains_key(&served),
+            "a running transfer is never pruned"
+        );
+    }
+
+    #[test]
+    fn serving_a_file_again_replaces_its_finished_row() {
+        let (mut ctx, _) = context(2);
+        ctx.track_active_upload(
+            1,
+            active("amy", "a.mp3", UploadStatus::Completed),
+        );
+        ctx.track_active_upload(
+            2,
+            active("amy", "a.mp3", UploadStatus::InProgress),
+        );
+        assert_eq!(
+            ctx.active_uploads.keys().copied().collect::<Vec<_>>(),
+            [2],
+            "one row per peer and file, the current one"
+        );
+    }
+
+    #[test]
+    fn a_wait_is_recorded_once_however_often_the_queue_is_pumped() {
+        let (mut ctx, mut token) = context(1);
+        ask(&mut ctx, "blocker", "f.mp3");
+        ask(&mut ctx, "amy", "a.mp3");
+        let _ = ctx.pump_uploads(&mut token);
+        assert_eq!(ctx.take_upload_events().len(), 1);
+
+        for _ in 0..5 {
+            let _ = ctx.pump_uploads(&mut token);
+        }
+        assert!(
+            ctx.take_upload_events().is_empty(),
+            "an unchanged queue has nothing new to say"
+        );
     }
 
     #[test]
@@ -554,19 +985,7 @@ mod context_tests {
         let job = ctx.uploads.remove(&1).expect("the offer was recorded");
         ctx.active_uploads.insert(
             1,
-            crate::client::ActiveUpload {
-                username: job.downloader,
-                filename: job.virtual_path,
-                size: job.size,
-                bytes_sent: std::sync::Arc::new(
-                    std::sync::atomic::AtomicU64::new(job.size),
-                ),
-                cancel: std::sync::Arc::new(
-                    std::sync::atomic::AtomicBool::new(false),
-                ),
-                status: UploadStatus::Completed,
-                started: std::time::Instant::now(),
-            },
+            active(&job.downloader, &job.virtual_path, UploadStatus::Completed),
         );
 
         ask(&mut ctx, "second", "f.mp3");

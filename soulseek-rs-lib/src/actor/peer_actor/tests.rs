@@ -233,3 +233,33 @@ fn retiring_a_connecting_actor_closes_it_at_once() {
         Ok(crate::actor::ActorMessage::Stop)
     ));
 }
+
+// Issue #115: the declared length was trusted, so a peer announcing a huge
+// message had everything it then sent buffered for as long as it kept
+// sending.
+#[test]
+fn a_peer_declaring_an_enormous_message_is_disconnected() {
+    use std::io::Write;
+
+    let (mut actor, rx, mut far_end) = connected_actor();
+    far_end.write_all(&u32::MAX.to_le_bytes()).unwrap();
+    far_end.write_all(&[0u8; 4096]).unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        actor.tick();
+        if let Ok(ClientOperation::PeerDisconnected(_, username, error)) =
+            rx.try_recv()
+        {
+            assert_eq!(username, "bob");
+            assert!(error.is_some(), "this is not a clean close");
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the actor kept waiting for four gigabytes"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(actor.reader.buffer_len(), 0, "and holds none of it");
+}

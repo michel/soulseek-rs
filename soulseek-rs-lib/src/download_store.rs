@@ -1,5 +1,10 @@
 use crate::types::{Download, DownloadStatus};
 
+/// How many finished downloads stay listed. Finished entries are history;
+/// kept without limit they are also work, since everything that walks the
+/// list — a status poll, the daemon's periodic save — walks all of it.
+pub const MAX_FINISHED_DOWNLOADS: usize = 1000;
+
 #[derive(Default)]
 pub struct DownloadStore {
     downloads: Vec<Download>,
@@ -18,6 +23,26 @@ impl DownloadStore {
                 && d.filename == download.filename)
         });
         self.downloads.push(download);
+        self.prune_finished(MAX_FINISHED_DOWNLOADS);
+    }
+
+    /// Forget the oldest finished downloads beyond `keep`. The list is in
+    /// the order downloads were added, so the first are the oldest; anything
+    /// still queued, running or paused is never touched.
+    fn prune_finished(&mut self, keep: usize) {
+        let finished =
+            self.downloads.iter().filter(|d| d.is_finished()).count();
+        let mut excess = finished.saturating_sub(keep);
+        if excess == 0 {
+            return;
+        }
+        self.downloads.retain(|d| {
+            if excess > 0 && d.is_finished() {
+                excess -= 1;
+                return false;
+            }
+            true
+        });
     }
 
     pub fn remove(&mut self, token: u32) {
@@ -262,6 +287,29 @@ mod tests {
             queue_position: None,
             metadata: DownloadMetadata::default(),
         }
+    }
+
+    // Issue #119: finished downloads were kept until a client removed them.
+    #[test]
+    fn finished_downloads_are_kept_only_up_to_a_limit() {
+        let mut store = DownloadStore::new();
+        store.add(make_download(1, DownloadStatus::Queued));
+        let extra = 25;
+        for token in 0..(MAX_FINISHED_DOWNLOADS as u32 + extra) {
+            store.add(make_download(1000 + token, DownloadStatus::Completed));
+        }
+
+        assert_eq!(store.list().len(), MAX_FINISHED_DOWNLOADS + 1);
+        assert!(
+            store.get_by_token(1).is_some(),
+            "a download still waiting is never pruned"
+        );
+        assert!(store.get_by_token(1000).is_none(), "the oldest go first");
+        assert!(
+            store
+                .get_by_token(1000 + MAX_FINISHED_DOWNLOADS as u32 + extra - 1)
+                .is_some()
+        );
     }
 
     #[test]

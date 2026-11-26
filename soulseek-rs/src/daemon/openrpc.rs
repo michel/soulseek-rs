@@ -178,8 +178,14 @@ fn summary(method: Method) -> &'static str {
             "Change the password of the account the daemon is logged in as, \
              and store it on the daemon's host so a restart still logs in."
         }
-        Method::UploadList => "Uploads being served, active first.",
-        Method::UploadCancel => "Stop serving an upload in progress.",
+        Method::UploadList => {
+            "Uploads being served and recently finished, then those queued, \
+             one row per peer and file."
+        }
+        Method::UploadCancel => {
+            "Cancel an upload: drop it from the queue, or stop it if it is \
+             being sent."
+        }
         Method::UploadSlots => "How many uploads may run at once.",
         Method::PrivilegesCheck => {
             "Ask the server for this account's privilege time."

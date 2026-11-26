@@ -133,6 +133,12 @@ const RETIRE_GRACE: Duration = Duration::from_secs(30);
 /// Socket buffers read per tick: 64 KiB, against a 100 ms tick.
 const READS_PER_TICK: usize = 64;
 
+/// The largest message a peer may send. The biggest legitimate one is the
+/// compressed share listing of a very large library, which runs to tens of
+/// megabytes; anything declaring more than this is not a listing, and waiting
+/// for it means buffering whatever the peer sends for as long as it sends.
+const MAX_PEER_MESSAGE: usize = 128 * 1024 * 1024;
+
 impl PeerActor {
     #[must_use]
     pub fn new(
@@ -154,7 +160,11 @@ impl PeerActor {
             peer: Arc::new(RwLock::new(peer)),
             stream,
             connection_state,
-            reader: reader.unwrap_or_default(),
+            reader: {
+                let mut reader = reader.unwrap_or_default();
+                reader.limit_frames(MAX_PEER_MESSAGE);
+                reader
+            },
             client_channel,
             self_handle: None,
             dispatcher: None,

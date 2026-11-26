@@ -29,6 +29,8 @@ struct Daemon {
     child: Child,
     state: TempDir,
     port: u16,
+    /// Where peers reach the daemon, as opposed to control clients.
+    listener_port: u16,
     server: Soulfind,
 }
 
@@ -52,9 +54,15 @@ impl Daemon {
     /// Start against `config` in place of `--no-config`, for settings that
     /// only a config file carries.
     fn start_with_config(config: Option<&Path>) -> Option<Self> {
+        Self::start_with(config, &[])
+    }
+
+    /// Start with `extra` global options ahead of the `daemon` subcommand.
+    fn start_with(config: Option<&Path>, extra: &[&str]) -> Option<Self> {
         let server = Soulfind::start()?;
         let state = tempfile::tempdir().ok()?;
         let port = free_port()?;
+        let listener_port = free_port()?;
 
         let mut command = cli_command(state.path());
         match config {
@@ -69,9 +77,12 @@ impl Daemon {
             "--password",
             "pw",
             "--listener-port",
-            &free_port()?.to_string(),
+            &listener_port.to_string(),
             "--download-dir",
             state.path().join("downloads").to_str()?,
+        ]);
+        command.args(extra);
+        command.args([
             "daemon",
             "--bind",
             &format!("127.0.0.1:{port}"),
@@ -87,6 +98,7 @@ impl Daemon {
             child,
             state,
             port,
+            listener_port,
             server,
         };
         daemon.wait_until_ready()?;
@@ -963,6 +975,124 @@ fn the_upload_slot_limit_can_be_retuned_live() {
         )
         .expect("an answer");
     assert!(reply.contains(r#""ok":true"#), "got {reply}");
+}
+
+/// The uploads the daemon lists, as `(username, filename, state)`.
+fn listed_uploads(
+    connection: &mut Connection,
+) -> Vec<(String, String, String)> {
+    let reply = connection
+        .call(r#"{"jsonrpc":"2.0","id":7,"method":"upload.list"}"#)
+        .expect("an answer");
+    let parsed: serde_json::Value = serde_json::from_str(&reply).expect("json");
+    parsed["result"]["uploads"]
+        .as_array()
+        .expect("an uploads array")
+        .iter()
+        .map(|upload| {
+            let field = |value: &serde_json::Value| {
+                value.as_str().unwrap_or_default().to_string()
+            };
+            (
+                field(&upload["username"]),
+                field(&upload["filename"]),
+                field(&upload["status"]["state"]),
+            )
+        })
+        .collect()
+}
+
+/// A peer that asks for the same files over and over must end up with one
+/// queue row per file, and a queued row must be cancellable.
+///
+/// Clients repeat `QueueUpload` routinely. Each repeat used to add a row:
+/// after ten hours a daemon listed 8,013 of them for 2,131 distinct requests,
+/// `upload.cancel` answered `ok: false` for every one, and the events they
+/// generated disconnected any client that attached.
+#[test]
+fn a_repeated_upload_request_keeps_one_row_and_can_be_cancelled() {
+    const SLOTS: usize = 8; // what `Daemon::start_with` asks for
+    const FILES: usize = SLOTS + 4;
+    const REPEATS: usize = 5;
+
+    let shared = tempfile::tempdir().expect("a share root");
+    let music = shared.path().join("music");
+    std::fs::create_dir(&music).expect("a shared folder");
+    for index in 0..FILES {
+        std::fs::write(music.join(format!("{index:02}.mp3")), [0u8; 512])
+            .expect("a shared file");
+    }
+    let Some(daemon) = Daemon::start_with(
+        None,
+        &["--shared-dir", music.to_str().expect("utf-8 path")],
+    ) else {
+        common::no_server("daemon protocol e2e");
+        return;
+    };
+
+    // Online so the daemon can look the peer up, and deaf to every offer so
+    // the queue stays exactly as the requests left it.
+    let host = "127.0.0.1";
+    let _online = silent_peer(host, daemon.server.port(), "repeater");
+    let mut peer = TcpStream::connect((host, daemon.listener_port))
+        .expect("the daemon's peer listener");
+    let init =
+        soulseek_rs::message::server::MessageFactory::build_peer_init_message(
+            "repeater",
+            soulseek_rs::ConnectionType::P,
+            0,
+        );
+    peer.write_all(&init.get_buffer()).expect("peer init");
+    for _ in 0..REPEATS {
+        for index in 0..FILES {
+            let request = soulseek_rs::message::server::MessageFactory::build_queue_upload_message(
+                &format!("music\\{index:02}.mp3"),
+            );
+            peer.write_all(&request.get_buffer()).expect("queue upload");
+        }
+    }
+
+    let mut connection = daemon.connect_tcp().expect("tcp");
+    connection
+        .authenticate(Some(&daemon.token()))
+        .expect("an answer");
+
+    // The first SLOTS requests are out on offer; the rest wait.
+    let waiting = FILES - SLOTS;
+    let mut uploads = Vec::new();
+    assert!(
+        wait_until(Duration::from_secs(20), || {
+            uploads = listed_uploads(&mut connection);
+            uploads.len() >= waiting
+        }),
+        "the requests never reached the queue"
+    );
+    // Let any stragglers land before counting: the bug is rows appearing.
+    std::thread::sleep(Duration::from_secs(1));
+    uploads = listed_uploads(&mut connection);
+    assert_eq!(
+        uploads.len(),
+        waiting,
+        "{REPEATS} requests per file must leave one row per file: {uploads:?}"
+    );
+    assert!(uploads.iter().all(|(_, _, state)| state == "queued"));
+
+    let (username, filename, _) = uploads.last().expect("a queued row").clone();
+    let cancel = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 8,
+        "method": "upload.cancel",
+        "params": { "username": username, "filename": filename },
+    });
+    let reply = connection.call(&cancel.to_string()).expect("an answer");
+    assert!(reply.contains(r#""ok":true"#), "got {reply}");
+
+    let after = listed_uploads(&mut connection);
+    assert_eq!(after.len(), waiting - 1, "the row must be gone: {after:?}");
+    assert!(
+        !after.iter().any(|(_, listed, _)| *listed == filename),
+        "the cancelled file is still listed: {after:?}"
+    );
 }
 
 /// A wrong or missing token is the CLI's problem to explain, not just the

@@ -8,11 +8,12 @@ fn a_fresh_request_discards_the_previous_answer() {
     // Without this, a poll after a second request returns the old
     // snapshot immediately and the caller cannot tell stale from fresh.
     let mut context = ClientContext::new();
+    context.expect_user_info("alice");
     context.apply_user_status("alice".to_string(), 2, false);
     context.apply_user_stats("alice".to_string(), 10, 20, 30);
     assert!(context.user_info("alice").is_some_and(|i| i.is_complete()));
 
-    context.invalidate_user_info("alice");
+    context.expect_user_info("alice");
     assert!(
         context.user_info("alice").is_none(),
         "a new request must not be answerable from the old reply"
@@ -22,6 +23,7 @@ fn a_fresh_request_discards_the_previous_answer() {
 #[test]
 fn each_reply_fills_only_its_own_half() {
     let mut context = ClientContext::new();
+    context.expect_user_info("bob");
     context.apply_user_status("bob".to_string(), 1, true);
 
     let info = context.user_info("bob").expect("a snapshot");
@@ -67,6 +69,7 @@ fn a_watch_reply_keeps_a_privileged_flag_it_cannot_carry() {
     // WatchUser has no privileged field, so it must not overwrite what
     // GetUserStatus already told us with a fabricated `false`.
     let mut context = ClientContext::new();
+    context.add_watched_user("bob");
     context.apply_user_status("bob".to_string(), 1, true);
     context.apply_watched_user(
         "bob".to_string(),

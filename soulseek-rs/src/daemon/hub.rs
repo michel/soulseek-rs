@@ -15,7 +15,7 @@ use super::proto::{
     SessionLossEvent, UploadInfoDto, UploadStatusDto, UserMessageDto,
 };
 use crate::api::SessionApi;
-use soulseek_rs::{DownloadStatus, SessionLoss};
+use soulseek_rs::{DownloadStatus, SessionLoss, UploadInfo};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
@@ -172,8 +172,9 @@ pub struct PendingDownload {
 /// the drainer touches it, so none of it needs a lock.
 #[derive(Default)]
 struct DrainState {
-    /// Last upload state reported per (user, file), so an upload that has not
-    /// moved is not re-announced every tick.
+    /// Last upload state announced per (user, file), for every upload still in
+    /// the session's table, so one that has not moved is not re-announced
+    /// every tick.
     uploads: HashMap<(String, String), UploadInfoDto>,
     last_loss: Option<SessionLoss>,
 }
@@ -285,47 +286,120 @@ fn tick(
     }
 }
 
+/// How many upload events one tick may send about uploads that will still be
+/// there next tick.
+///
+/// A change to one upload can be news about all of them: serving the head of
+/// the queue moves every waiting peer up a place, and a peer queueing an album
+/// folder adds a row per file in one burst. Announced all at once, either
+/// overruns a client's event queue inside a single tick and costs it its
+/// connection, however fast it reads — which is what a long queue did to
+/// every client that attached. Whatever does not fit is not lost: the next
+/// tick compares against what was announced, not against what changed, so it
+/// goes out then, and a row that moved twice in the meantime is announced
+/// once. Comfortably under [`QUEUE_DEPTH`], and still over a thousand a
+/// second.
+const UPLOAD_EVENTS_PER_TICK: usize = 128;
+
 /// Report an upload whenever it differs from what was last announced.
 ///
 /// Both sources matter: the drained events carry states that came and went
 /// between two ticks (a small file served straight out of the queue), and the
-/// live table carries progress.
+/// live table carries progress. Each upload is announced at most once a tick,
+/// in its latest state.
 fn publish_uploads(
     session: &dyn SessionApi,
     hub: &Hub,
     state: &mut DrainState,
 ) {
-    let sampled = session
-        .take_upload_events()
-        .iter()
-        .chain(session.uploads().iter())
-        .map(UploadInfoDto::from)
-        .collect::<Vec<_>>();
+    let drained = session.take_upload_events();
+    let live = session.uploads();
+    publish_upload_sample(hub, state, &drained, &live);
+}
 
-    for upload in sampled {
-        let key = (upload.username.clone(), upload.filename.clone());
-        if state.uploads.get(&key) == Some(&upload) {
-            continue;
-        }
-        let settled = matches!(
-            upload.status,
-            UploadStatusDto::Completed
-                | UploadStatusDto::Cancelled
-                | UploadStatusDto::Failed { .. }
-        );
-        hub.publish(
-            Event::Upload,
-            serde_json::to_value(&upload).unwrap_or(serde_json::Value::Null),
-        );
-        // An upload that has finished cannot change again, so remembering it
-        // would grow this table by one entry per file for the life of the
-        // daemon.
-        if settled {
-            state.uploads.remove(&key);
+/// One tick's worth of upload news: `drained` is what came and went since the
+/// last tick, `live` the session's table as it stands.
+fn publish_upload_sample(
+    hub: &Hub,
+    state: &mut DrainState,
+    drained: &[UploadInfo],
+    live: &[UploadInfo],
+) {
+    // One entry per upload, the latest state winning: the drained events are
+    // older than the table, and within the table a finished transfer sorts
+    // ahead of the same file queued or streaming again.
+    let mut sampled: Vec<(UploadInfoDto, bool)> = Vec::new();
+    let mut index: HashMap<(String, String), usize> = HashMap::new();
+    let entries = drained
+        .iter()
+        .map(|upload| (upload, false))
+        .chain(live.iter().map(|upload| (upload, true)));
+    for (upload, is_live) in entries {
+        let dto = UploadInfoDto::from(upload);
+        let key = (dto.username.clone(), dto.filename.clone());
+        if let Some(&at) = index.get(&key) {
+            sampled[at] = (dto, is_live);
         } else {
-            state.uploads.insert(key, upload);
+            index.insert(key, sampled.len());
+            sampled.push((dto, is_live));
         }
     }
+
+    // An upload that is gone from the table cannot change again. Forgetting
+    // it here is what keeps this map the size of the table rather than the
+    // size of everything the daemon has ever served.
+    state
+        .uploads
+        .retain(|key, _| index.get(key).is_some_and(|&at| sampled[at].1));
+
+    let mut passing = Vec::new();
+    let mut lasting = Vec::new();
+    let mut shuffled = Vec::new();
+    for (upload, is_live) in sampled {
+        let key = (upload.username.clone(), upload.filename.clone());
+        let announced = state.uploads.get(&key);
+        if announced == Some(&upload) {
+            continue;
+        }
+        if !is_live {
+            passing.push(upload);
+        } else if announced.is_some_and(|before| only_moved(before, &upload)) {
+            shuffled.push(upload);
+        } else {
+            lasting.push(upload);
+        }
+    }
+
+    // A state that only ever existed between two ticks is announced now or
+    // never; the library caps how many of those it holds.
+    for upload in &passing {
+        announce(hub, upload);
+    }
+    // Everything else waits its turn, a new row or a change of status ahead
+    // of a row that merely moved up the queue.
+    for upload in lasting
+        .into_iter()
+        .chain(shuffled)
+        .take(UPLOAD_EVENTS_PER_TICK)
+    {
+        announce(hub, &upload);
+        state
+            .uploads
+            .insert((upload.username.clone(), upload.filename.clone()), upload);
+    }
+}
+
+fn announce(hub: &Hub, upload: &UploadInfoDto) {
+    hub.publish(
+        Event::Upload,
+        serde_json::to_value(upload).unwrap_or(serde_json::Value::Null),
+    );
+}
+
+/// Whether the only news is a new place in the queue.
+const fn only_moved(before: &UploadInfoDto, now: &UploadInfoDto) -> bool {
+    matches!(before.status, UploadStatusDto::Queued { .. })
+        && matches!(now.status, UploadStatusDto::Queued { .. })
 }
 
 fn publish_browses(
@@ -357,15 +431,25 @@ fn publish_downloads(hub: &Hub, downloads: &Mutex<Vec<PendingDownload>>) {
     downloads.retain(|pending| {
         loop {
             match pending.updates.try_recv() {
-                Ok(status) => hub.publish(
-                    Event::DownloadStatus,
-                    serde_json::to_value(DownloadStatusEvent {
-                        username: pending.username.clone(),
-                        filename: pending.filename.clone(),
-                        status: (&status).into(),
-                    })
-                    .unwrap_or(serde_json::Value::Null),
-                ),
+                Ok(status) => {
+                    hub.publish(
+                        Event::DownloadStatus,
+                        serde_json::to_value(DownloadStatusEvent {
+                            username: pending.username.clone(),
+                            filename: pending.filename.clone(),
+                            status: (&status).into(),
+                        })
+                        .unwrap_or(serde_json::Value::Null),
+                    );
+                    // A finished transfer has nothing more to say, but its
+                    // channel stays open for as long as the session lists
+                    // it. Waiting for the disconnect meant polling every
+                    // download the daemon had ever finished, ten times a
+                    // second.
+                    if status.is_terminal() {
+                        return false;
+                    }
+                }
                 Err(std::sync::mpsc::TryRecvError::Empty) => return true,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     return false;
@@ -379,6 +463,7 @@ fn publish_downloads(hub: &Hub, downloads: &Mutex<Vec<PendingDownload>>) {
 mod tests {
     use super::*;
     use serde_json::json;
+    use soulseek_rs::UploadStatus;
 
     fn drain(receiver: &Receiver<Response>) -> Vec<String> {
         let mut seen = Vec::new();
@@ -438,6 +523,221 @@ mod tests {
             "the healthy client must not lose events to the slow one"
         );
         drop(slow);
+    }
+
+    fn upload(user: &str, file: &str, status: UploadStatus) -> UploadInfo {
+        UploadInfo {
+            username: user.to_string(),
+            filename: file.to_string(),
+            size: 4096,
+            bytes_sent: 0,
+            speed_bytes_per_sec: 0.0,
+            status,
+        }
+    }
+
+    /// A queue of `rows` waiting uploads, places counted from `first_place`.
+    fn queue(rows: usize, first_place: u32) -> Vec<UploadInfo> {
+        (0..rows)
+            .map(|row| {
+                upload(
+                    "amy",
+                    &format!("{row}.mp3"),
+                    UploadStatus::Queued(first_place + row as u32),
+                )
+            })
+            .collect()
+    }
+
+    /// Run one tick and return how many events it sent.
+    fn tick_uploads(
+        hub: &Hub,
+        state: &mut DrainState,
+        receiver: &Receiver<Response>,
+        drained: &[UploadInfo],
+        live: &[UploadInfo],
+    ) -> usize {
+        publish_upload_sample(hub, state, drained, live);
+        drain(receiver).len()
+    }
+
+    // Issue #112: with several thousand rows queued, a client that only
+    // authenticated and read was sent an event per row and disconnected
+    // within seconds, however fast it read.
+    #[test]
+    fn a_long_queue_cannot_overrun_a_client_that_is_reading() {
+        let hub = Hub::new();
+        let (_, receiver) = hub.subscribe(|| {});
+        let mut state = DrainState::default();
+        let rows = QUEUE_DEPTH * 8;
+
+        // The queue appears, then its head is served and every row moves up.
+        let mut sent = 0;
+        for first_place in [1, 1, 1, 0, 0, 0] {
+            let live = queue(rows, first_place + 1);
+            let now = tick_uploads(&hub, &mut state, &receiver, &[], &live);
+            assert!(
+                now <= UPLOAD_EVENTS_PER_TICK,
+                "one tick sent {now} events"
+            );
+            sent += now;
+        }
+
+        assert!(sent > 0, "the queue is still announced, a slice at a time");
+        assert_eq!(
+            hub.subscribers(),
+            1,
+            "a client that reads between ticks keeps its connection"
+        );
+    }
+
+    #[test]
+    fn rows_held_back_by_the_budget_are_announced_on_later_ticks() {
+        let hub = Hub::new();
+        let (_, receiver) = hub.subscribe(|| {});
+        let mut state = DrainState::default();
+        let rows = UPLOAD_EVENTS_PER_TICK * 3 + 7;
+        let live = queue(rows, 1);
+
+        let mut sent = 0;
+        for _ in 0..4 {
+            sent += tick_uploads(&hub, &mut state, &receiver, &[], &live);
+        }
+        assert_eq!(sent, rows, "every row is announced exactly once");
+        assert_eq!(
+            tick_uploads(&hub, &mut state, &receiver, &[], &live),
+            0,
+            "and an unchanged queue is then silent"
+        );
+    }
+
+    #[test]
+    fn a_new_upload_is_announced_ahead_of_rows_that_only_moved() {
+        let hub = Hub::new();
+        let (_, receiver) = hub.subscribe(|| {});
+        let mut state = DrainState::default();
+        let rows = UPLOAD_EVENTS_PER_TICK * 2;
+        let mut live = queue(rows, 2);
+        for _ in 0..2 {
+            publish_upload_sample(&hub, &mut state, &[], &live);
+        }
+        let _ = drain(&receiver);
+
+        // Everything moves up, and a transfer starts at the back of the table.
+        live = queue(rows, 1);
+        live.push(upload("bob", "new.mp3", UploadStatus::InProgress));
+        publish_upload_sample(&hub, &mut state, &[], &live);
+
+        let first = receiver.try_recv().expect("an event");
+        assert_eq!(
+            first.params.as_ref().and_then(|p| p["username"].as_str()),
+            Some("bob"),
+            "a change of status must not wait behind a queue shuffle"
+        );
+    }
+
+    // A finished upload stays in the session's table as history. It used to
+    // be announced again on every tick for as long as it was listed.
+    #[test]
+    fn a_finished_upload_is_announced_once() {
+        let hub = Hub::new();
+        let (_, receiver) = hub.subscribe(|| {});
+        let mut state = DrainState::default();
+        let live = [upload("amy", "a.mp3", UploadStatus::Completed)];
+
+        assert_eq!(tick_uploads(&hub, &mut state, &receiver, &[], &live), 1);
+        for _ in 0..5 {
+            assert_eq!(
+                tick_uploads(&hub, &mut state, &receiver, &[], &live),
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn an_upload_listed_twice_is_announced_once_in_its_latest_state() {
+        let hub = Hub::new();
+        let (_, receiver) = hub.subscribe(|| {});
+        let mut state = DrainState::default();
+        // Served yesterday, being served again now.
+        let live = [
+            upload("amy", "a.mp3", UploadStatus::Completed),
+            upload("amy", "a.mp3", UploadStatus::InProgress),
+        ];
+
+        publish_upload_sample(&hub, &mut state, &[], &live);
+        let event = receiver.try_recv().expect("an event");
+        assert_eq!(
+            event
+                .params
+                .as_ref()
+                .and_then(|p| p["status"]["state"].as_str()),
+            Some("in_progress")
+        );
+        assert!(receiver.try_recv().is_err(), "one event, not two");
+        assert_eq!(tick_uploads(&hub, &mut state, &receiver, &[], &live), 0);
+    }
+
+    #[test]
+    fn a_state_that_came_and_went_between_ticks_is_still_announced() {
+        let hub = Hub::new();
+        let (_, receiver) = hub.subscribe(|| {});
+        let mut state = DrainState::default();
+        let drained = [upload("amy", "a.mp3", UploadStatus::Cancelled)];
+
+        assert_eq!(tick_uploads(&hub, &mut state, &receiver, &drained, &[]), 1);
+        assert!(
+            state.uploads.is_empty(),
+            "nothing is remembered about an upload that is gone"
+        );
+    }
+
+    #[test]
+    fn uploads_that_leave_the_table_are_forgotten() {
+        let hub = Hub::new();
+        let (_, receiver) = hub.subscribe(|| {});
+        let mut state = DrainState::default();
+        let live = queue(10, 1);
+        publish_upload_sample(&hub, &mut state, &[], &live);
+        assert_eq!(state.uploads.len(), 10);
+
+        // The peer vanished and took its queue with it.
+        publish_upload_sample(&hub, &mut state, &[], &[]);
+        assert!(state.uploads.is_empty());
+        let _ = drain(&receiver);
+    }
+
+    // Issue #119: the session keeps a finished download listed, and with it
+    // the sending half of this channel, so the disconnect never came.
+    #[test]
+    fn a_finished_download_stops_being_polled() {
+        let hub = Hub::new();
+        let (_, receiver) = hub.subscribe(|| {});
+        let (kept_by_the_session, updates) = std::sync::mpsc::channel();
+        let downloads = Mutex::new(vec![PendingDownload {
+            username: "amy".into(),
+            filename: "a.mp3".into(),
+            updates,
+        }]);
+
+        kept_by_the_session
+            .send(DownloadStatus::Queued)
+            .expect("the receiver is alive");
+        publish_downloads(&hub, &downloads);
+        assert_eq!(downloads.lock().expect("not poisoned").len(), 1);
+
+        kept_by_the_session
+            .send(DownloadStatus::Completed)
+            .expect("the receiver is alive");
+        publish_downloads(&hub, &downloads);
+        assert!(
+            downloads.lock().expect("not poisoned").is_empty(),
+            "nothing further can arrive for a finished download"
+        );
+        assert_eq!(
+            drain(&receiver),
+            ["event.download_status", "event.download_status"]
+        );
     }
 
     #[test]
