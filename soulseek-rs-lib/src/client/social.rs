@@ -177,7 +177,7 @@ impl Client {
     /// [`crate::SoulseekRs::NotConnected`] when there is no server connection,
     /// or [`crate::SoulseekRs::LockPoisoned`] if the client state is poisoned.
     pub fn request_peer_info(&self, username: &str) -> Result<()> {
-        self.context.write_safe()?.invalidate_peer_info(username);
+        self.context.write_safe()?.expect_peer_info(username);
         let request = crate::message::peer::build_user_info_request();
         self.send_to_peer_or_queue(username, request)
     }
@@ -209,6 +209,9 @@ impl Client {
         username: &str,
         folder: &str,
     ) -> Result<()> {
+        self.context
+            .write_safe()?
+            .expect_folder_contents(username, folder);
         let request = crate::message::peer::build_folder_contents_request(
             crate::client::next_search_token(),
             folder,

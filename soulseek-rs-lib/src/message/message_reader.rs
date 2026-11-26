@@ -9,6 +9,9 @@ use crate::message::Message;
 
 pub struct MessageReader {
     buffer: VecDeque<u8>,
+    /// The largest payload a frame may declare, when the other end is not
+    /// trusted to declare a sane one.
+    max_frame: Option<usize>,
 }
 
 impl Default for MessageReader {
@@ -22,7 +25,18 @@ impl MessageReader {
     pub const fn new() -> Self {
         Self {
             buffer: VecDeque::new(),
+            max_frame: None,
         }
+    }
+
+    /// Refuse any frame declaring more than `max` bytes of payload.
+    ///
+    /// The length prefix is whatever the other end wrote. Without a limit a
+    /// frame declaring four gigabytes is simply waited for, and everything
+    /// sent towards it is buffered: one connection can hold as much memory
+    /// as its peer cares to send, for as long as it keeps sending.
+    pub const fn limit_frames(&mut self, max: usize) {
+        self.max_frame = Some(max);
     }
 
     #[cfg(test)]
@@ -30,6 +44,7 @@ impl MessageReader {
     pub fn new_with_buffer(buffer: Vec<u8>) -> Self {
         Self {
             buffer: buffer.into(),
+            max_frame: None,
         }
     }
 
@@ -76,6 +91,20 @@ impl MessageReader {
             self.buffer[2],
             self.buffer[3],
         ]) as usize;
+
+        if let Some(max) = self.max_frame
+            && message_size > max
+        {
+            // Nothing in the buffer can be framed any more; let it go.
+            self.buffer = VecDeque::new();
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "frame declares {message_size} bytes, over the \
+                     {max}-byte limit"
+                ),
+            ));
+        }
 
         let total_size = message_size + 4;
 
@@ -126,6 +155,37 @@ mod tests {
 
         assert!(buffered_reader.buffer.is_empty());
         assert_eq!(vec![1, 2, 3], rest);
+    }
+
+    // Issue #115: the declared length was trusted, so a peer announcing a
+    // huge frame had everything it then sent buffered while the reader
+    // waited for the rest.
+    #[test]
+    fn a_frame_over_the_limit_is_refused_instead_of_waited_for() {
+        let mut declared_4gib = u32::MAX.to_le_bytes().to_vec();
+        declared_4gib.extend([0u8; 64]);
+
+        let mut trusting =
+            MessageReader::new_with_buffer(declared_4gib.clone());
+        assert_eq!(
+            trusting.extract_message().unwrap(),
+            None,
+            "without a limit the reader waits for four gigabytes"
+        );
+
+        let mut limited = MessageReader::new_with_buffer(declared_4gib);
+        limited.limit_frames(1024);
+        let refused = limited.extract_message().unwrap_err();
+        assert_eq!(refused.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn a_frame_at_the_limit_still_arrives() {
+        let mut frame = 8u32.to_le_bytes().to_vec();
+        frame.extend([7u8; 8]);
+        let mut reader = MessageReader::new_with_buffer(frame);
+        reader.limit_frames(8);
+        assert!(reader.extract_message().unwrap().is_some());
     }
 
     /// A hangup has to reach the caller as an error. Reported as success it

@@ -8,10 +8,12 @@ use super::{
     ActorSystem, Arc, AtomicBool, AtomicUsize, BROKER_CONNECT_TIMEOUT,
     BROWSE_PROTECT_WINDOW, ClientContext, DEFAULT_MAX_PEERS,
     DEFAULT_UPLOAD_SLOTS, DownloadStatus, DownloadStore, HashMap, HashSet,
-    Instant, PENDING_PEER_TTL, Recommendation, RoomEvent, RoomInfo, RoomTicker,
-    RoomUserStats, SharedDirectory, Shares, SimilarUser, UserInfo,
-    UserInterests, UserMessage, UserPresence, UserStats, UserStatus, children,
-    distributed, sorted_unique,
+    Instant, MAX_PEER_INFOS, MAX_PENDING_PEER_MESSAGES, MAX_SEARCHES,
+    MAX_USER_INFO_REQUESTS, PEER_ADDRESS_TTL, PEER_REPLY_TTL, PENDING_PEER_TTL,
+    Recommendation, RoomEvent, RoomInfo, RoomTicker, RoomUserStats, Search,
+    SharedDirectory, Shares, SimilarUser, UserInfo, UserInterests, UserMessage,
+    UserPresence, UserStats, UserStatus, VecDeque, children, distributed,
+    sorted_unique,
 };
 
 impl ClientContext {
@@ -39,6 +41,7 @@ impl ClientContext {
             parent_min_speed: 0,
             parent_speed_ratio: 0,
             searches: HashMap::new(),
+            search_order: VecDeque::new(),
             private_messages: Vec::new(),
             pending_connect_tokens: HashMap::new(),
             max_peers: Arc::new(AtomicUsize::new(DEFAULT_MAX_PEERS)),
@@ -53,7 +56,10 @@ impl ClientContext {
             brokered_uploads: HashMap::new(),
             browse_results: HashMap::new(),
             folder_contents: HashMap::new(),
+            pending_folders: HashMap::new(),
             peer_infos: HashMap::new(),
+            pending_peer_infos: HashMap::new(),
+            user_info_requests: VecDeque::new(),
             pending_browses: HashMap::new(),
             room_list: Vec::new(),
             room_events: Vec::new(),
@@ -291,13 +297,39 @@ impl ClientContext {
         }
     }
 
-    /// Record what `username` says about itself.
+    /// Record what `username` says about itself, if we asked.
+    ///
+    /// A peer can send this unprompted, under any name it likes, so an
+    /// answer nobody is waiting for is dropped rather than kept.
     pub fn store_peer_info(
         &mut self,
         username: String,
         info: crate::message::peer::PeerInfo,
     ) {
-        self.peer_infos.insert(username, info);
+        let now = Instant::now();
+        if !take_pending(&mut self.pending_peer_infos, &username, now) {
+            return;
+        }
+        self.peer_infos.insert(username, (now, info));
+        while self.peer_infos.len() > MAX_PEER_INFOS {
+            let Some(oldest) = self
+                .peer_infos
+                .iter()
+                .min_by_key(|(_, (arrived, _))| *arrived)
+                .map(|(name, _)| name.clone())
+            else {
+                break;
+            };
+            self.peer_infos.remove(&oldest);
+        }
+    }
+
+    /// Expect `username` to describe itself, dropping what it said before so
+    /// a poll after a fresh request cannot report the previous answer.
+    pub fn expect_peer_info(&mut self, username: &str) {
+        self.peer_infos.remove(username);
+        self.pending_peer_infos
+            .insert(username.to_string(), Instant::now() + PEER_REPLY_TTL);
     }
 
     /// What `username` last said about itself, if anything.
@@ -306,7 +338,7 @@ impl ClientContext {
         &self,
         username: &str,
     ) -> Option<crate::message::peer::PeerInfo> {
-        self.peer_infos.get(username).cloned()
+        self.peer_infos.get(username).map(|(_, info)| info.clone())
     }
 
     /// Drop what we hold about `username`, so a poll after a fresh request
@@ -315,14 +347,31 @@ impl ClientContext {
         self.peer_infos.remove(username);
     }
 
-    /// Record one folder's listing from `username`.
+    /// Record one folder's listing from `username`, if we asked for it.
+    ///
+    /// The folder name in the reply is the peer's to choose, so storing
+    /// whatever arrives would let one peer fill this map with keys nobody
+    /// will ever collect.
     pub fn store_folder_contents(
         &mut self,
         username: String,
         folder: String,
         directories: Vec<SharedDirectory>,
     ) {
-        self.folder_contents.insert((username, folder), directories);
+        let now = Instant::now();
+        let key = (username, folder);
+        if !take_pending(&mut self.pending_folders, &key, now) {
+            return;
+        }
+        self.folder_contents.insert(key, (now, directories));
+    }
+
+    /// Expect `username` to send the listing of `folder`.
+    pub fn expect_folder_contents(&mut self, username: &str, folder: &str) {
+        self.pending_folders.insert(
+            (username.to_string(), folder.to_string()),
+            Instant::now() + PEER_REPLY_TTL,
+        );
     }
 
     /// Remove and return the listing of `folder` from `username`, if it has
@@ -334,6 +383,53 @@ impl ClientContext {
     ) -> Option<Vec<SharedDirectory>> {
         self.folder_contents
             .remove(&(username.to_string(), folder.to_string()))
+            .map(|(_, directories)| directories)
+    }
+
+    /// Drop what has outlived its use: answers from peers that nobody
+    /// collected, requests no answer came to, and addresses too old to
+    /// trust. Run on the client's sweep, so none of it depends on a caller
+    /// coming back for what it asked for.
+    pub(crate) fn expire_peer_caches(&mut self, now: Instant) {
+        let fresh = |arrived: &Instant| {
+            now.saturating_duration_since(*arrived) < PEER_REPLY_TTL
+        };
+        self.browse_results.retain(|_, (arrived, _)| fresh(arrived));
+        self.folder_contents
+            .retain(|_, (arrived, _)| fresh(arrived));
+        self.pending_folders.retain(|_, deadline| *deadline > now);
+        self.pending_peer_infos
+            .retain(|_, deadline| *deadline > now);
+        self.pending_browses.retain(|_, deadline| *deadline > now);
+        self.peer_addresses.retain(|_, (_, _, learned)| {
+            now.saturating_duration_since(*learned) < PEER_ADDRESS_TTL
+        });
+    }
+
+    /// File `query` under `token`, the oldest search making room once there
+    /// are [`MAX_SEARCHES`]. Searching for the same thing again replaces the
+    /// earlier search and counts as new.
+    pub fn register_search(&mut self, query: &str, token: u32) {
+        self.search_order.retain(|known| known != query);
+        self.search_order.push_back(query.to_string());
+        self.searches.insert(
+            query.to_string(),
+            Search {
+                token,
+                results: Vec::new(),
+            },
+        );
+        while self.search_order.len() > MAX_SEARCHES {
+            if let Some(oldest) = self.search_order.pop_front() {
+                self.searches.remove(&oldest);
+            }
+        }
+    }
+
+    /// Drop a search and what it collected; whether there was one.
+    pub fn forget_search(&mut self, query: &str) -> bool {
+        self.search_order.retain(|known| known != query);
+        self.searches.remove(query).is_some()
     }
 
     /// Who may enter the private room `room`, as last reported.
@@ -467,6 +563,33 @@ impl ClientContext {
         self.user_interests.remove(username);
     }
 
+    /// Whether what the server says about `username` is worth keeping: only
+    /// for someone we watch or asked about. The server also pushes status
+    /// and statistics for users we merely crossed paths with, and keeping
+    /// all of those is a map that grows for as long as the session lasts.
+    fn wants_user_info(&self, username: &str) -> bool {
+        self.watched_users.contains(username)
+            || self
+                .user_info_requests
+                .iter()
+                .any(|asked| asked == username)
+    }
+
+    /// Expect the server to describe `username`, forgetting what it said
+    /// before so the next poll reports the answer to this request.
+    pub fn expect_user_info(&mut self, username: &str) {
+        self.user_info.remove(username);
+        self.user_info_requests.retain(|asked| asked != username);
+        self.user_info_requests.push_back(username.to_string());
+        while self.user_info_requests.len() > MAX_USER_INFO_REQUESTS {
+            if let Some(oldest) = self.user_info_requests.pop_front()
+                && !self.watched_users.contains(&oldest)
+            {
+                self.user_info.remove(&oldest);
+            }
+        }
+    }
+
     /// Record a `GetUserStatus` reply, merging it with any statistics already
     /// received for that user.
     pub fn apply_user_status(
@@ -475,6 +598,9 @@ impl ClientContext {
         status: u32,
         privileged: bool,
     ) {
+        if !self.wants_user_info(&username) {
+            return;
+        }
         self.user_info
             .entry(username.clone())
             .or_insert_with(|| UserInfo::pending(username))
@@ -499,6 +625,9 @@ impl ClientContext {
         shared_files: u32,
         shared_folders: u32,
     ) {
+        if !self.wants_user_info(&username) {
+            return;
+        }
         self.user_info
             .entry(username.clone())
             .or_insert_with(|| UserInfo::pending(username))
@@ -518,6 +647,7 @@ impl ClientContext {
     /// re-watch reports a fresh answer rather than a stale one.
     pub fn remove_watched_user(&mut self, username: &str) {
         self.watched_users.remove(username);
+        self.user_info_requests.retain(|asked| asked != username);
         self.user_info.remove(username);
     }
 
@@ -627,13 +757,16 @@ impl ClientContext {
         port: u32,
     ) {
         self.peer_addresses
-            .insert(username.to_string(), (host, port));
+            .insert(username.to_string(), (host, port, Instant::now()));
     }
 
     /// The cached listen address for `username`, if known.
     #[must_use]
     pub fn peer_address(&self, username: &str) -> Option<(String, u32)> {
-        self.peer_addresses.get(username).cloned()
+        self.peer_addresses
+            .get(username)
+            .filter(|(_, _, learned)| learned.elapsed() < PEER_ADDRESS_TTL)
+            .map(|(host, port, _)| (host.clone(), *port))
     }
 
     /// Queue a peer message to send once a control connection to `username` is up.
@@ -642,12 +775,18 @@ impl ClientContext {
         username: &str,
         message: crate::message::Message,
     ) {
-        let entry = self
+        // Each message carries its own clock. One clock per peer, restarted
+        // by every message, never ran out for a peer that kept being sent
+        // things — a searcher we could not reach whose queries kept matching
+        // our shares collected replies for as long as it kept asking.
+        let waiting = self
             .pending_peer_messages
             .entry(username.to_string())
-            .or_insert_with(|| (Instant::now(), Vec::new()));
-        entry.0 = Instant::now();
-        entry.1.push(message);
+            .or_default();
+        waiting.push_back((Instant::now(), message));
+        while waiting.len() > MAX_PENDING_PEER_MESSAGES {
+            waiting.pop_front();
+        }
     }
 
     /// Remove and return the messages queued for `username`.
@@ -657,15 +796,20 @@ impl ClientContext {
     ) -> Vec<crate::message::Message> {
         self.pending_peer_messages
             .remove(username)
-            .map(|(_, messages)| messages)
+            .map(|waiting| {
+                waiting.into_iter().map(|(_, message)| message).collect()
+            })
             .unwrap_or_default()
     }
 
     /// Drop peer messages nobody could deliver within
     /// [`PENDING_PEER_TTL`]: the searcher went offline, or never existed.
     pub(crate) fn expire_pending_peer_messages(&mut self, now: Instant) {
-        self.pending_peer_messages.retain(|_, (since, _)| {
-            now.duration_since(*since) < PENDING_PEER_TTL
+        self.pending_peer_messages.retain(|_, waiting| {
+            waiting.retain(|(since, _)| {
+                now.saturating_duration_since(*since) < PENDING_PEER_TTL
+            });
+            !waiting.is_empty()
         });
     }
 
@@ -675,8 +819,14 @@ impl ClientContext {
         username: String,
         directories: Vec<SharedDirectory>,
     ) {
-        self.pending_browses.remove(&username);
-        self.browse_results.insert(username, directories);
+        // Only a listing we asked for. A whole share listing runs to
+        // megabytes, a peer can send one unprompted, and one nobody is
+        // waiting for would be kept until the process exits.
+        let now = Instant::now();
+        if !take_pending(&mut self.pending_browses, &username, now) {
+            return;
+        }
+        self.browse_results.insert(username, (now, directories));
     }
 
     pub(crate) fn mark_browse_pending(&mut self, username: &str) {
@@ -691,7 +841,9 @@ impl ClientContext {
         &mut self,
         username: &str,
     ) -> Option<Vec<SharedDirectory>> {
-        self.browse_results.remove(username)
+        self.browse_results
+            .remove(username)
+            .map(|(_, directories)| directories)
     }
 
     /// Remember that a server-brokered connection to `username` is pending under
@@ -801,4 +953,14 @@ impl ClientContext {
     pub fn take_private_messages(&mut self) -> Vec<UserMessage> {
         std::mem::take(&mut self.private_messages)
     }
+}
+
+/// Whether `key` was being waited for and is still in time, consuming the
+/// wait either way.
+fn take_pending<K: std::hash::Hash + Eq>(
+    pending: &mut HashMap<K, Instant>,
+    key: &K,
+    now: Instant,
+) -> bool {
+    pending.remove(key).is_some_and(|deadline| deadline > now)
 }
