@@ -270,6 +270,23 @@ impl MainTui {
         self.sync_browse_selection();
     }
 
+    /// Browse `username` and land on the folder holding `file_path`
+    pub(super) fn start_browse_at(
+        &mut self,
+        username: String,
+        file_path: String,
+    ) {
+        self.start_browse(username);
+        if let Some(tab) = self.state.browse.active_tab_mut() {
+            if tab.status == BrowseStatus::Loaded {
+                tab.reveal(&file_path);
+            } else {
+                tab.reveal = Some(file_path);
+            }
+        }
+        self.sync_browse_selection();
+    }
+
     /// Open (or focus) the view of what this session shares, filled from the
     /// index the network is served from.
     pub(super) fn show_own_shares(&mut self) {

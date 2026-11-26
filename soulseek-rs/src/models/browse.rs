@@ -352,6 +352,8 @@ pub struct BrowseState {
     pub file_count: usize,
     pub folder_count: usize,
     pub requested_at: Instant,
+    /// File to put the cursor on once the listing arrives.
+    pub reveal: Option<String>,
 }
 
 impl BrowseState {
@@ -371,6 +373,7 @@ impl BrowseState {
             file_count: 0,
             folder_count: 0,
             requested_at: Instant::now(),
+            reveal: None,
         }
     }
 
@@ -380,6 +383,25 @@ impl BrowseState {
         Self {
             own: true,
             ..Self::loading(username)
+        }
+    }
+
+    /// Open every folder above `file_path` and put the cursor on it.
+    pub fn reveal(&mut self, file_path: &str) {
+        self.set_filter(String::new());
+        let segments: Vec<&str> =
+            file_path.split('\\').filter(|s| !s.is_empty()).collect();
+        let mut prefix = String::new();
+        for segment in &segments[..segments.len().saturating_sub(1)] {
+            if !prefix.is_empty() {
+                prefix.push('\\');
+            }
+            prefix.push_str(segment);
+            self.expanded.insert(prefix.clone());
+        }
+        self.refresh();
+        if let Some(row) = self.rows.iter().position(|r| r.path == file_path) {
+            self.selected_row = row;
         }
     }
 
@@ -405,6 +427,9 @@ impl BrowseState {
         self.folder_count = built.folder_count;
         self.selected_row = 0;
         self.refresh();
+        if let Some(target) = self.reveal.take() {
+            self.reveal(&target);
+        }
     }
 
     /// The flattened visible rows for the current expansion state.

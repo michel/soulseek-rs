@@ -150,6 +150,13 @@ impl MainTui {
                 self.show_own_shares();
                 return;
             }
+            KeyCode::Char('f') => {
+                if let Some(result) = self.highlighted_result() {
+                    let (user, path) =
+                        (result.username.clone(), result.filename.clone());
+                    self.start_browse_at(user, path);
+                }
+            }
             KeyCode::Char('b') => {
                 // From a highlighted search result, browse its owner directly;
                 // otherwise prompt for a username.
