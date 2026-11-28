@@ -5,8 +5,8 @@
 //! our password (142).
 
 use super::{
-    Client, Recommendation, Result, RoomTicker, RwLockExt, SimilarUser,
-    UserInterests, error,
+    Client, MutexExt, Recommendation, Result, RoomTicker, RwLockExt,
+    SimilarUser, SoulseekRs, UserInterests, error,
 };
 use crate::message::server::MessageFactory;
 
@@ -523,9 +523,17 @@ impl Client {
     /// # Errors
     /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
     pub fn change_password(&self, password: &str) -> Result<()> {
+        // A change the server never hears would leave us logging in with a
+        // password it does not have.
+        if self.session.loss().is_some() {
+            return Err(SoulseekRs::NotConnected);
+        }
+        let mut current_password = self.password.lock_safe()?;
         self.send_server_message(MessageFactory::build_change_password(
             password,
-        ))
+        ))?;
+        password.clone_into(&mut current_password);
+        Ok(())
     }
 
     /// Send one private message to several users at once (code 149). Each

@@ -18,13 +18,13 @@ use crate::{
     peer::{ConnectionType, DownloadPeer, Peer, PeerMessage, listen::Listen},
     shares::Shares,
     types::{Download, Search, SearchResult},
-    utils::lock::RwLockExt,
+    utils::lock::{MutexExt, RwLockExt},
 };
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     net::TcpStream,
     sync::{
-        Arc, RwLock,
+        Arc, Mutex, RwLock,
         atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
         mpsc::{self, Receiver, Sender},
     },
@@ -705,7 +705,7 @@ pub struct Client {
     bound_port: Option<u16>,
     address: PeerAddress,
     username: String,
-    password: String,
+    password: Mutex<String>,
     version: ClientVersion,
     shared_directories: Vec<String>,
     server_handle: Option<ActorHandle<ServerMessage>>,
@@ -744,7 +744,7 @@ impl Client {
             address: settings.server_address,
             context: Arc::new(RwLock::new(context)),
             username: settings.username,
-            password: settings.password,
+            password: Mutex::new(settings.password),
             version: settings.version,
             shared_directories: settings.shared_directories,
             server_handle: None,
