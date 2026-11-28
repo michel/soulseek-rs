@@ -40,10 +40,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1"
 directories = "6"
-# Linux uses the pure-Rust zbus Secret Service backend (async-secret-service
-# + async-io + crypto-rust) instead of sync-secret-service, which links the
-# system libdbus and breaks builds without libdbus-1-dev.
-keyring = { version = "3", features = ["apple-native", "windows-native", "async-secret-service", "async-io", "crypto-rust"] }
+# The default `v1` feature is the keychain on macOS, the Credential Manager on
+# Windows and, on Linux, the pure-Rust zbus Secret Service store with Rust
+# crypto: nothing here links the system libdbus or OpenSSL.
+keyring = "4"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde"] }
 getrandom = "0.4.3"
 
