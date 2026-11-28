@@ -171,3 +171,85 @@ fn the_server_is_told_our_child_capacity_only_when_it_changes() {
     );
     assert_eq!(ctx.accept_children_change(), None, "unchanged, so silent");
 }
+
+/// A client under the parent "dad" whose child slots are all taken, that
+/// has told the server so, and one of whose children is gone. Feeding
+/// `relay` to its operations loop makes it write to every child.
+///
+/// The gone child's link is shut down at our end rather than dropped at
+/// theirs, so the write to it fails at once instead of after the RST has
+/// crossed the loopback.
+fn the_server_hears_of_room_after(relay: impl FnOnce(u64) -> ClientOperation) {
+    const ACCEPT_CHILDREN: u32 = 100;
+
+    let (server, server_rx) = mpsc::channel();
+    let (ops, ops_rx) = mpsc::channel();
+    let context = Arc::new(RwLock::new(ClientContext::for_user("me")));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let mut child_ends = Vec::new();
+    let mut gone = None;
+    let link = {
+        let mut ctx = context.write().unwrap();
+        ctx.server_sender = Some(server);
+        ctx.operations = Some(ops.clone());
+        ctx.children = children::Children::new(true);
+        ctx.set_fed_by(true);
+        let dial = ctx
+            .leaf
+            .consider(vec![("dad".into(), "127.0.0.1".into(), 2234)])
+            .remove(0);
+        ctx.leaf.branch_level("dad", dial.link, 0);
+        assert!(ctx.leaf.search_from("dad", dial.link).is_some());
+        for i in 0..children::MAX_CHILDREN {
+            let ours = TcpStream::connect(listener.local_addr().unwrap())
+                .expect("connect");
+            child_ends.push(listener.accept().expect("accept").0);
+            gone.get_or_insert_with(|| ours.try_clone().expect("clone"));
+            assert!(ctx.children.accept(&format!("kid{i}"), ours));
+        }
+        assert_eq!(child_ends.len(), children::MAX_CHILDREN, "links held");
+        assert_eq!(ctx.accept_children_change(), Some(false), "told: full");
+        dial.link
+    };
+    gone.expect("a child")
+        .shutdown(std::net::Shutdown::Both)
+        .expect("shutdown");
+
+    Client::listen_to_client_operations(ops_rx, context, "me".to_string());
+    ops.send(relay(link)).unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let wait = deadline.saturating_duration_since(Instant::now());
+        let Ok(message) = server_rx.recv_timeout(wait) else {
+            panic!("the server never heard that a slot opened");
+        };
+        let ServerMessage::SendMessage(message) = message else {
+            continue;
+        };
+        let data = message.get_data();
+        if data[..4] == ACCEPT_CHILDREN.to_le_bytes() && data[4] == 1 {
+            break;
+        }
+    }
+}
+
+#[test]
+fn a_child_lost_relaying_our_parents_search_tells_the_server_we_have_room() {
+    the_server_hears_of_room_after(|link| ClientOperation::ParentSearch {
+        parent: "dad".to_string(),
+        link,
+        username: "seeker".to_string(),
+        token: 1,
+        query: "jazz".to_string(),
+    });
+}
+
+#[test]
+fn a_child_lost_hearing_our_new_place_tells_the_server_we_have_room() {
+    the_server_hears_of_room_after(|link| ClientOperation::ParentBranchLevel {
+        parent: "dad".to_string(),
+        link,
+        level: 3,
+    });
+}

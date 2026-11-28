@@ -324,10 +324,13 @@ pub fn announce_move(
     // peer right now, not whether we serve children in principle. The stance
     // carries it, so record it as told: a separate AcceptChildren right
     // behind this one would say nothing new.
+    //
+    // The children hear it first: telling them drops the ones whose link is
+    // gone, and that is room the answer has to count.
+    ctx.children.broadcast_stance(&branch.root, branch.level);
     let has_room = ctx.children.has_room();
     let _ = ctx.accept_children_change();
     announce(server.as_ref(), branch, has_parent, has_room);
-    ctx.children.broadcast_stance(&branch.root, branch.level);
 }
 
 /// Dial a parent candidate on its own thread: a `D` PeerInit, then whatever it
