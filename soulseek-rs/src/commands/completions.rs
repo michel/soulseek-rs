@@ -315,7 +315,11 @@ mod tests {
         let zsh = String::from_utf8(script(Shell::Zsh)).expect("utf-8");
         assert!(zsh.contains("compdef _soulseek-rs soulseek-rs"));
         let bash = String::from_utf8(script(Shell::Bash)).expect("utf-8");
-        assert!(bash.contains("complete -F _soulseek-rs"));
+        // clap names the function; what matters is that it is registered
+        // for the command.
+        assert!(bash.lines().map(str::trim).any(|line| {
+            line.starts_with("complete -F ") && line.ends_with(" soulseek-rs")
+        }));
     }
 
     #[test]
