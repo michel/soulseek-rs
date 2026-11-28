@@ -134,6 +134,10 @@ impl Client {
                             obfuscated_port
                         );
 
+                        let polled =
+                            client_context.read_safe().is_ok_and(|ctx| {
+                                ctx.poll_lookups.contains(&username)
+                            });
                         // Port 0 is the server saying it does not know
                         // where this user listens (no SetWaitPort yet,
                         // or firewalled). It is not an address: caching
@@ -143,11 +147,16 @@ impl Client {
                         // floor. Leave those uploads queued for a later
                         // resolution instead.
                         //
-                        // The connect attempt further down still runs:
-                        // its failure is exactly what makes an
-                        // unreachable peer fall back to the
-                        // server-brokered path.
-                        if port == 0 {
+                        // The connect attempt further down still runs,
+                        // except for a user the queue poll asked about
+                        // and the server reports offline: its failure is
+                        // exactly what makes an unreachable peer fall
+                        // back to the server-brokered path.
+                        //
+                        // The queue poll asks about every uploader it has
+                        // lost, every few minutes: one of them being offline
+                        // is not news.
+                        if port == 0 && !polled {
                             warn!(
                                 "[client] server reports no listening port for {}",
                                 username
@@ -176,6 +185,13 @@ impl Client {
                                 host.clone(),
                                 port,
                             );
+                        }
+
+                        // 0.0.0.0 port 0 is a user who is not logged in.
+                        // Nothing answers a dial, so the queue poll's lookup
+                        // ends here and the next poll asks again.
+                        if polled && host == "0.0.0.0" && port == 0 {
+                            continue;
                         }
 
                         let peer_exists = match client_context.read_safe() {
@@ -371,6 +387,11 @@ impl Client {
                         }
                     }
                     ClientOperation::PeerConnected(username) => {
+                        // Reached, so the poll's lookup is over: from here
+                        // on a failure means what it always did.
+                        if let Ok(mut ctx) = client_context.write_safe() {
+                            ctx.poll_lookups.remove(&username);
+                        }
                         // A control connection just came up — one we dialled,
                         // or an inbound one the listener registered. Flush any
                         // downloads that were queued for this peer while it
@@ -714,7 +735,14 @@ impl Client {
 
     /// Ask every peer holding a queued download of ours where it sits. The
     /// answers arrive as `PlaceInQueueResponse` and land on the downloads.
-    fn poll_queue_positions(client_context: &Arc<RwLock<ClientContext>>) {
+    ///
+    /// A peer we hold no connection to is looked up on the server instead.
+    /// An uploader that restarted, or closed the connection along with its
+    /// queue, no longer knows our request, and the connection that comes
+    /// back sends it again.
+    pub(super) fn poll_queue_positions(
+        client_context: &Arc<RwLock<ClientContext>>,
+    ) {
         let (registry, queued) = match client_context.read_safe() {
             Ok(ctx) => (
                 ctx.peer_registry.clone(),
@@ -727,10 +755,10 @@ impl Client {
             Err(_) => return,
         };
         let Some(registry) = registry else { return };
+        let mut lookups = std::collections::HashSet::new();
         for (username, filename) in queued {
-            // Only over a connection we already hold: a peer we cannot reach
-            // is a connection problem, not a queue question.
             if !registry.contains(&username) {
+                lookups.insert(username);
                 continue;
             }
             let request =
@@ -738,6 +766,16 @@ impl Client {
             let _ = registry
                 .send_to_peer(&username, PeerMessage::SendMessage(request));
         }
+        let Ok(mut ctx) = client_context.write_safe() else {
+            return;
+        };
+        if let Some(sender) = &ctx.server_sender {
+            for username in &lookups {
+                let _ = sender
+                    .send(ServerMessage::GetPeerAddress(username.clone()));
+            }
+        }
+        ctx.poll_lookups = lookups;
     }
 
     /// Tell the server whether we would take another child right now

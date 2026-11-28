@@ -44,6 +44,7 @@ impl ClientContext {
             search_order: VecDeque::new(),
             private_messages: Vec::new(),
             pending_connect_tokens: HashMap::new(),
+            poll_lookups: HashSet::new(),
             max_peers: Arc::new(AtomicUsize::new(DEFAULT_MAX_PEERS)),
             download_speed_limit: Arc::default(),
             shares: Arc::new(Shares::empty()),
