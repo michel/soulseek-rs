@@ -550,6 +550,10 @@ pub struct ClientContext {
         HashMap<String, VecDeque<(Instant, crate::message::Message)>>,
     /// Uploads we have offered, keyed by our transfer token.
     uploads: HashMap<u32, UploadJob>,
+    /// Offers withdrawn or expired out of `uploads`, by downloader and token,
+    /// for the next pump to tell that peer's actor: it keeps its own set of
+    /// the tokens it may still be answered on.
+    retired_offers: Vec<(String, u32)>,
     active_uploads: HashMap<u32, ActiveUpload>,
     /// Upload tokens waiting for the downloader's address to be resolved.
     pending_serves: HashMap<String, Vec<u32>>,

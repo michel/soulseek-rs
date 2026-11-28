@@ -51,6 +51,7 @@ impl ClientContext {
             peer_addresses: HashMap::new(),
             pending_peer_messages: HashMap::new(),
             uploads: HashMap::new(),
+            retired_offers: Vec::new(),
             active_uploads: HashMap::new(),
             pending_serves: HashMap::new(),
             brokered_uploads: HashMap::new(),
