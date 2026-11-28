@@ -90,7 +90,7 @@ pub fn probe(port: u16) -> Probe {
         };
     };
 
-    match map_once(local_ip, port) {
+    match map_once(local_ip, port, false) {
         Some((backend, _lease)) => {
             let (name, external) = match &backend {
                 Backend::Upnp { gateway, .. } => (
@@ -143,54 +143,91 @@ enum Backend {
     },
 }
 
+/// How long to leave a router alone after it failed to map or renew.
+const RETRY_AFTER: Duration = Duration::from_mins(5);
+
 fn run(port: u16, stop: &AtomicBool) {
-    let Some(local_ip) = local_lan_ip() else {
-        warn(
-            "could not determine this machine's LAN IP; skipping automatic \
-              port mapping (you may need to forward the port manually)",
-        );
-        return;
-    };
+    keep_mapped(
+        port,
+        stop,
+        |quiet| map_once(local_lan_ip()?, port, quiet),
+        &mut sleep_until,
+    );
+}
 
-    let Some((backend, lease)) = map_once(local_ip, port) else {
-        warn(&format!(
-            "automatic port mapping unavailable (no UPnP/NAT-PMP router \
-             found for port {port}); browsing/downloading firewalled peers \
-             may fail unless you forward TCP {port} on your router"
-        ));
-        return;
-    };
-
-    manage(&backend, lease, port, stop);
+/// Hold a mapping until `stop`, starting over from discovery whenever the
+/// router stops answering: a daemon outlives router reboots and network
+/// changes. `map` is told to keep quiet once a failure has been reported, so
+/// a router that keeps refusing is logged once, not every retry.
+fn keep_mapped(
+    port: u16,
+    stop: &AtomicBool,
+    mut map: impl FnMut(bool) -> Option<(Backend, u32)>,
+    wait: &mut impl FnMut(Duration, &AtomicBool) -> bool,
+) {
+    let mut warned = false;
+    loop {
+        if let Some((backend, lease)) = map(warned) {
+            warned = false;
+            if manage(&backend, lease, port, stop, wait) {
+                return;
+            }
+        } else if !warned {
+            warned = true;
+            warn(&format!(
+                "automatic port mapping unavailable (no UPnP/NAT-PMP router \
+                 found for port {port}); browsing/downloading firewalled \
+                 peers may fail unless you forward TCP {port} on your router"
+            ));
+        }
+        if wait(RETRY_AFTER, stop) {
+            return;
+        }
+    }
 }
 
 /// Renew `backend`'s mapping until `stop`, then remove it. Renews at half the
 /// granted lease, floored at 30s so a pathologically short lease can't spin us
-/// into a hot re-map loop.
-fn manage(backend: &Backend, lease: u32, port: u16, stop: &AtomicBool) {
+/// into a hot re-map loop. Returns whether it was asked to stop; `false` means
+/// a renewal failed.
+fn manage(
+    backend: &Backend,
+    lease: u32,
+    port: u16,
+    stop: &AtomicBool,
+    wait: &mut impl FnMut(Duration, &AtomicBool) -> bool,
+) -> bool {
     let renew_after = Duration::from_secs(u64::from((lease / 2).max(30)));
     loop {
-        if sleep_until(renew_after, stop) {
+        if wait(renew_after, stop) {
             break; // asked to stop
         }
         if !renew(backend, port) {
-            // Renewal failed; the lease will expire on its own. Stop trying.
-            warn("failed to renew the port mapping; it may expire");
-            return;
+            warn("failed to renew the port mapping; starting over");
+            return false;
         }
     }
     remove(backend);
+    true
 }
 
 /// Attempt UPnP then NAT-PMP once. Returns the backend and granted lease seconds.
-fn map_once(local_ip: IpAddr, port: u16) -> Option<(Backend, u32)> {
-    if let Some(result) = map_upnp(local_ip, port) {
+fn map_once(
+    local_ip: IpAddr,
+    port: u16,
+    quiet: bool,
+) -> Option<(Backend, u32)> {
+    if let Some(result) = map_upnp(local_ip, port, quiet) {
         return Some(result);
     }
     map_natpmp(port)
 }
 
-fn map_upnp(local_ip: IpAddr, port: u16) -> Option<(Backend, u32)> {
+fn map_upnp(
+    local_ip: IpAddr,
+    port: u16,
+    quiet: bool,
+) -> Option<(Backend, u32)> {
     let options = SearchOptions {
         bind_addr: SocketAddr::new(local_ip, 0),
         timeout: Some(Duration::from_secs(5)),
@@ -198,7 +235,7 @@ fn map_upnp(local_ip: IpAddr, port: u16) -> Option<(Backend, u32)> {
     };
     let gateway = search_gateway(options).ok()?;
     let local_addr = SocketAddr::new(local_ip, port);
-    map_via_gateway(gateway, local_addr, port)
+    map_via_gateway(gateway, local_addr, port, quiet)
 }
 
 /// Map `port` on an already-discovered IGD `gateway`. Split out from discovery
@@ -207,6 +244,7 @@ fn map_via_gateway(
     gateway: igd_next::Gateway,
     local_addr: SocketAddr,
     port: u16,
+    quiet: bool,
 ) -> Option<(Backend, u32)> {
     // We advertise our listen port verbatim to the Soulseek server, so the
     // EXTERNAL port must equal it. If the exact port can't be mapped (e.g.
@@ -231,10 +269,13 @@ fn map_via_gateway(
         ) {
             Ok(()) => 0,
             Err(e) => {
-                warn(&format!(
-                    "UPnP found a router but couldn't map port {port} ({e}); \
-                     try a different --listener-port or forward it manually"
-                ));
+                if !quiet {
+                    warn(&format!(
+                        "UPnP found a router but couldn't map port {port} \
+                         ({e}); try a different --listener-port or forward \
+                         it manually"
+                    ));
+                }
                 return None;
             }
         },
@@ -377,26 +418,33 @@ impl PortMapper {
     /// Spawn a mapper that uses ONLY the NAT-PMP backend against an injected
     /// gateway (no UPnP, no routing-table discovery), so the full spawn → map →
     /// renew → cleanup-on-drop lifecycle can be driven against a mock gateway.
-    fn spawn_natpmp_test(port: u16, gateway: SocketAddr) -> Self {
+    fn spawn_natpmp_test(
+        port: u16,
+        gateway: SocketAddr,
+        mut wait: impl FnMut(Duration, &AtomicBool) -> bool + Send + 'static,
+    ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = stop.clone();
         let (done_tx, done) = mpsc::channel();
         let _ = thread::Builder::new()
             .name("port-mapper-test".into())
             .spawn(move || {
-                if let Ok(response) = nat_pmp::map_tcp(
-                    gateway,
-                    port,
-                    port,
-                    LEASE_SECS,
-                    NATPMP_ATTEMPTS,
-                ) {
+                let map = |_quiet| {
+                    let response = nat_pmp::map_tcp(
+                        gateway,
+                        port,
+                        port,
+                        LEASE_SECS,
+                        NATPMP_ATTEMPTS,
+                    )
+                    .ok()?;
                     let backend = Backend::NatPmp {
                         gateway,
                         internal_port: port,
                     };
-                    manage(&backend, response.lifetime, port, &thread_stop);
-                }
+                    Some((backend, response.lifetime))
+                };
+                keep_mapped(port, &thread_stop, map, &mut wait);
                 let _ = done_tx.send(());
             });
         Self { stop, done }
@@ -409,9 +457,12 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration as StdDuration;
 
-    /// A mock NAT-PMP gateway that answers every map-TCP request with the same
-    /// granted values and forwards each raw request to the test.
-    fn mock_gateway() -> (SocketAddr, mpsc::Receiver<Vec<u8>>) {
+    /// A mock NAT-PMP gateway that answers each map-TCP request with the next
+    /// of `results` (success once they run out), granting what was asked
+    /// for, and forwards each raw request to the test.
+    fn mock_gateway(
+        mut results: impl Iterator<Item = u16> + Send + 'static,
+    ) -> (SocketAddr, mpsc::Receiver<Vec<u8>>) {
         let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let addr = socket.local_addr().unwrap();
         let (tx, rx) = mpsc::channel();
@@ -438,9 +489,12 @@ mod tests {
                     request[10],
                     request[11],
                 ]);
-                // Response: version 0, opcode 130, result 0, echo internal port
-                // and grant the SAME external port + requested lifetime.
-                let mut reply = vec![0u8, 130, 0, 0];
+                // Response: version 0, opcode 130, the scripted result, echo
+                // internal port and grant the SAME external port + lifetime.
+                let mut reply = vec![0u8, 130];
+                reply.extend_from_slice(
+                    &results.next().unwrap_or(0).to_be_bytes(),
+                );
                 reply.extend_from_slice(&7u32.to_be_bytes()); // epoch
                 reply.extend_from_slice(&internal.to_be_bytes());
                 reply.extend_from_slice(&internal.to_be_bytes());
@@ -456,8 +510,8 @@ mod tests {
 
     #[test]
     fn service_maps_on_start_and_unmaps_on_drop() {
-        let (gateway, requests) = mock_gateway();
-        let mapper = PortMapper::spawn_natpmp_test(2234, gateway);
+        let (gateway, requests) = mock_gateway(std::iter::empty());
+        let mapper = PortMapper::spawn_natpmp_test(2234, gateway, sleep_until);
 
         // The first request must be a map with our full requested lifetime.
         let map_req = requests
@@ -491,6 +545,35 @@ mod tests {
             ]) == 0
         });
         assert!(unmapped, "cleanup should request lifetime 0");
+    }
+
+    #[test]
+    fn a_failed_renewal_does_not_stop_port_mapping() {
+        // Granted once, refused from then on: a resent request cannot use up
+        // the refusal the renewal is meant to get.
+        let (gateway, requests) =
+            mock_gateway(std::iter::once(0).chain(std::iter::repeat(3)));
+        let (advance, waits) = mpsc::channel::<()>();
+        let mapper =
+            PortMapper::spawn_natpmp_test(2234, gateway, move |_, _| {
+                waits.recv().is_err()
+            });
+
+        for phase in
+            ["initial lease", "renewal", "mapping after failed renewal"]
+        {
+            let request = requests
+                .recv_timeout(StdDuration::from_secs(3))
+                .unwrap_or_else(|error| panic!("missing {phase}: {error}"));
+            assert_eq!(
+                request,
+                [0, 2, 0, 0, 8, 186, 8, 186, 0, 0, 28, 32],
+                "{phase} should map TCP 2234 for 7200 seconds"
+            );
+            let _ = advance.send(());
+        }
+        drop(advance);
+        drop(mapper);
     }
 
     /// A minimal in-process UPnP IGD: an HTTP server that answers every SOAP
@@ -593,7 +676,7 @@ mod tests {
 
         let local_addr =
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)), 2234);
-        let result = map_via_gateway(gateway, local_addr, 2234);
+        let result = map_via_gateway(gateway, local_addr, 2234, false);
 
         let (backend, _lease) =
             result.expect("mapping against a healthy IGD should succeed");
@@ -633,7 +716,7 @@ mod tests {
         // long — it detaches after a bounded grace period.
         let silent = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let addr = silent.local_addr().unwrap();
-        let mapper = PortMapper::spawn_natpmp_test(2234, addr);
+        let mapper = PortMapper::spawn_natpmp_test(2234, addr, sleep_until);
         // Ensure the thread is mid-transaction before we drop.
         thread::sleep(StdDuration::from_millis(100));
 
