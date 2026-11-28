@@ -14,10 +14,14 @@ impl MessageHandler<PeerMessage> for UploadDeniedHandler {
         let filename = message.read_string();
         let reason = message.read_string();
         info!("Upload denied for {}: {}", filename, reason);
+        let reason = reason.trim();
         if reason == "Queued" {
             return;
         }
-        let _ = sender.send(PeerMessage::UploadFailed(String::new(), filename));
+        let _ = sender.send(PeerMessage::UploadFailed {
+            filename,
+            reason: (!reason.is_empty()).then(|| reason.to_string()),
+        });
     }
 }
 
@@ -38,7 +42,7 @@ mod tests {
     }
 
     #[test]
-    fn the_denied_filename_is_forwarded() {
+    fn the_denied_filename_and_reason_are_forwarded() {
         let (tx, rx) = std::sync::mpsc::channel();
         let mut message = framed(|m| {
             m.write_string("@@share\\gone.mp3")
@@ -47,8 +51,9 @@ mod tests {
 
         UploadDeniedHandler.handle(&mut message, tx);
         match rx.try_recv() {
-            Ok(PeerMessage::UploadFailed(_, filename)) => {
+            Ok(PeerMessage::UploadFailed { filename, reason }) => {
                 assert_eq!(filename, "@@share\\gone.mp3");
+                assert_eq!(reason.as_deref(), Some("File not shared."));
             }
             other => panic!("unexpected: {other:?}"),
         }

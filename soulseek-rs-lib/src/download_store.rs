@@ -208,13 +208,14 @@ impl DownloadStore {
     }
 
     /// Tell the waiters of `username`'s queued downloads (all of them, or
-    /// the one for `filename`) that the upload failed, and forget those
-    /// downloads. One pass under one lock: nothing can claim a download
-    /// between its being told and its being gone.
+    /// the one for `filename`) that the upload failed for `reason`, and
+    /// forget those downloads. One pass under one lock: nothing can claim a
+    /// download between its being told and its being gone.
     pub fn fail_and_forget_queued(
         &mut self,
         username: &str,
         filename: Option<&str>,
+        reason: &str,
     ) {
         self.downloads.retain(|download| {
             if download.username != username
@@ -223,9 +224,9 @@ impl DownloadStore {
             {
                 return true;
             }
-            let _ = download.sender.send(DownloadStatus::Failed(Some(
-                "The upload failed on the other side".to_string(),
-            )));
+            let _ = download
+                .sender
+                .send(DownloadStatus::Failed(Some(reason.to_string())));
             false
         });
     }
@@ -762,7 +763,7 @@ mod tests {
         store.add(completed);
         store.add(queued);
 
-        store.fail_and_forget_queued("peer", None);
+        store.fail_and_forget_queued("peer", None, "gone");
 
         assert_eq!(
             store.tokens(),
@@ -809,12 +810,12 @@ mod tests {
         store.add(b);
         store.add(c);
 
-        store.fail_and_forget_queued("peer", Some("song.mp3"));
+        store.fail_and_forget_queued("peer", Some("song.mp3"), "gone");
 
         assert_eq!(store.tokens(), vec![2, 3]);
         assert!(matches!(
             rx_match.try_recv().unwrap(),
-            DownloadStatus::Failed(_)
+            DownloadStatus::Failed(Some(reason)) if reason == "gone"
         ));
     }
 

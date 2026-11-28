@@ -1281,6 +1281,7 @@ fn an_upload_offer_for_a_file_we_never_asked_for_is_refused() {
 fn refusal_fails_the_download_quickly(
     peer_username: &str,
     build_refusal: impl FnOnce(&str) -> Message,
+    reason: &str,
 ) {
     let server = server_or_skip!();
 
@@ -1326,11 +1327,11 @@ fn refusal_fails_the_download_quickly(
         .expect("start download");
 
     let deadline = Instant::now() + Duration::from_secs(10);
-    let mut failed = false;
+    let mut failure = None;
     while Instant::now() < deadline {
         match status_rx.recv_timeout(Duration::from_millis(500)) {
-            Ok(DownloadStatus::Failed(_)) => {
-                failed = true;
+            Ok(DownloadStatus::Failed(reason)) => {
+                failure = Some(reason);
                 break;
             }
             Ok(DownloadStatus::Completed) => {
@@ -1342,28 +1343,39 @@ fn refusal_fails_the_download_quickly(
     let _ = uploader.join();
     let _ = std::fs::remove_dir_all(&download_dir);
 
-    assert!(failed, "the peer's refusal should fail the download fast");
+    assert_eq!(
+        failure.expect("the peer's refusal should fail the download fast"),
+        Some(reason.to_string())
+    );
 }
 
 #[test]
 fn an_upload_failed_reply_fails_the_download_quickly() {
-    refusal_fails_the_download_quickly("e2e_failing_peer", |filename| {
-        let mut refusal = Message::new();
-        refusal.write_int32(46).write_string(filename);
-        refusal
-    });
+    refusal_fails_the_download_quickly(
+        "e2e_failing_peer",
+        |filename| {
+            let mut refusal = Message::new();
+            refusal.write_int32(46).write_string(filename);
+            refusal
+        },
+        "The upload failed on the other side",
+    );
 }
 
 #[test]
-fn an_upload_denied_reply_fails_the_download_quickly() {
-    refusal_fails_the_download_quickly("e2e_denying_peer", |filename| {
-        let mut refusal = Message::new();
-        refusal
-            .write_int32(50)
-            .write_string(filename)
-            .write_string("File not shared.");
-        refusal
-    });
+fn an_upload_denied_reply_fails_the_download_with_the_peers_reason() {
+    refusal_fails_the_download_quickly(
+        "e2e_denying_peer",
+        |filename| {
+            let mut refusal = Message::new();
+            refusal
+                .write_int32(50)
+                .write_string(filename)
+                .write_string("Too many files");
+            refusal
+        },
+        "Too many files",
+    );
 }
 
 #[test]

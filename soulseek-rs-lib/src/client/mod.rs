@@ -325,7 +325,11 @@ pub enum ClientOperation {
         obfuscation_type: u32,
         obfuscated_port: u16,
     },
-    UploadFailed(String, String),
+    UploadFailed {
+        username: String,
+        filename: String,
+        reason: Option<String>,
+    },
     PlaceInQueueUpdate {
         username: String,
         filename: String,

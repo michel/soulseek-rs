@@ -233,11 +233,16 @@ impl Client {
                             );
                         }
                     }
-                    ClientOperation::UploadFailed(username, filename) => {
+                    ClientOperation::UploadFailed {
+                        username,
+                        filename,
+                        reason,
+                    } => {
                         Self::process_failed_uploads(
                             client_context.clone(),
                             &username,
                             Some(&filename),
+                            reason.as_deref(),
                         );
                     }
                     ClientOperation::PlaceInQueueUpdate {

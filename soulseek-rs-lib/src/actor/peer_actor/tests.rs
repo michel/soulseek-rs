@@ -61,15 +61,20 @@ fn a_timed_out_connect_parks_the_actor_in_disconnected() {
 fn an_upload_failed_message_reaches_the_client_as_this_peer() {
     let (mut actor, rx, _far_end) = connected_actor();
 
-    actor.handle_message(PeerMessage::UploadFailed(
-        String::new(),
-        "song.mp3".to_string(),
-    ));
+    actor.handle_message(PeerMessage::UploadFailed {
+        filename: "song.mp3".to_string(),
+        reason: Some("Too many files".to_string()),
+    });
 
     match rx.try_recv() {
-        Ok(ClientOperation::UploadFailed(username, filename)) => {
+        Ok(ClientOperation::UploadFailed {
+            username,
+            filename,
+            reason,
+        }) => {
             assert_eq!(username, "bob");
             assert_eq!(filename, "song.mp3");
+            assert_eq!(reason.as_deref(), Some("Too many files"));
         }
         other => panic!("expected UploadFailed, got {other:?}"),
     }

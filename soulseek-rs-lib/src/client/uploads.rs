@@ -377,10 +377,15 @@ impl Client {
         client_context: Arc<RwLock<ClientContext>>,
         username: &str,
         filename: Option<&str>,
+        reason: Option<&str>,
     ) {
         match client_context.write_safe() {
             Ok(mut context) => {
-                context.downloads.fail_and_forget_queued(username, filename);
+                context.downloads.fail_and_forget_queued(
+                    username,
+                    filename,
+                    reason.unwrap_or("The upload failed on the other side"),
+                );
             }
             Err(e) => {
                 error!("[client] process_failed_uploads write: {}", e);

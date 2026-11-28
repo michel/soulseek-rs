@@ -27,7 +27,11 @@ pub enum PeerMessage {
     SendMessage(Message),
     FileSearchResult(SearchResult),
     TransferRequest(Transfer),
-    UploadFailed(String, String),
+    /// A peer will not send `filename`, for the `reason` it gave if any.
+    UploadFailed {
+        filename: String,
+        reason: Option<String>,
+    },
     TransferResponse {
         token: u32,
         allowed: bool,
@@ -377,8 +381,12 @@ impl PeerActor {
             PeerMessage::ProcessRead => {
                 self.process_read();
             }
-            PeerMessage::UploadFailed(_, filename) => {
-                self.handle_upload_failed(filename);
+            PeerMessage::UploadFailed { filename, reason } => {
+                self.forward(ClientOperation::UploadFailed {
+                    username: self.peer_username(),
+                    filename,
+                    reason,
+                });
             }
         }
     }
@@ -536,16 +544,6 @@ impl PeerActor {
     fn forward(&self, operation: ClientOperation) {
         if let Err(e) = self.client_channel.send(operation) {
             error!("[peer_actor] forward to client: {}", e);
-        }
-    }
-
-    fn handle_upload_failed(&self, filename: String) {
-        let username = self.peer_username();
-        if let Err(e) = self
-            .client_channel
-            .send(ClientOperation::UploadFailed(username, filename))
-        {
-            error!("[peer_actor] failed to forward UploadFailed: {}", e);
         }
     }
 

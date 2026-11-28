@@ -13,7 +13,10 @@ impl MessageHandler<PeerMessage> for UploadFailedHandler {
     fn handle(&self, message: &mut Message, sender: Sender<PeerMessage>) {
         let filename = message.read_string();
         info!("Upload failed for {}", filename);
-        let _ = sender.send(PeerMessage::UploadFailed(String::new(), filename));
+        let _ = sender.send(PeerMessage::UploadFailed {
+            filename,
+            reason: None,
+        });
     }
 }
 
@@ -31,7 +34,7 @@ mod tests {
 
         UploadFailedHandler.handle(&mut message, tx);
         match rx.try_recv() {
-            Ok(PeerMessage::UploadFailed(_, filename)) => {
+            Ok(PeerMessage::UploadFailed { filename, .. }) => {
                 assert_eq!(filename, "@@share\\gone.mp3");
             }
             other => panic!("unexpected: {other:?}"),
