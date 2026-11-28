@@ -1,7 +1,7 @@
 use super::{
-    ActiveUpload, Arc, BrokeredUpload, Client, ClientContext, DownloadStatus,
-    PeerMessage, RwLock, RwLockExt, ServerMessage, collect_failed_tokens,
-    debug, error, next_connect_token, next_upload_token, thread,
+    ActiveUpload, Arc, BrokeredUpload, Client, ClientContext, PeerMessage,
+    RwLock, RwLockExt, ServerMessage, debug, error, next_connect_token,
+    next_upload_token, thread,
 };
 use crate::message::server::MessageFactory;
 use crate::peer::{ConnectionType, upload_peer};
@@ -369,32 +369,9 @@ impl Client {
         username: &str,
         filename: Option<&str>,
     ) {
-        let failed_tokens = match client_context.read_safe() {
-            Ok(context) => {
-                collect_failed_tokens(&context.downloads, username, filename)
-            }
-            Err(e) => {
-                error!("[client] process_failed_uploads read: {}", e);
-                return;
-            }
-        };
-
-        if failed_tokens.is_empty() {
-            return;
-        }
-
         match client_context.write_safe() {
             Ok(mut context) => {
-                for token in failed_tokens {
-                    context.downloads.update_status(
-                        username,
-                        token,
-                        DownloadStatus::Failed(Some(
-                            "The upload failed on the other side".to_string(),
-                        )),
-                    );
-                    context.downloads.remove_for_peer(username, token);
-                }
+                context.downloads.fail_and_forget_queued(username, filename);
             }
             Err(e) => {
                 error!("[client] process_failed_uploads write: {}", e);
