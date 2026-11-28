@@ -384,6 +384,11 @@ pub enum ClientOperation {
     StartUpload {
         token: u32,
     },
+    /// The peer turned down our upload offer for `token`.
+    UploadRefused {
+        token: u32,
+        reason: Option<String>,
+    },
     /// A peer asked to browse our shared files; send our SharedFileListResponse.
     ShareListRequested {
         requester_key: String,

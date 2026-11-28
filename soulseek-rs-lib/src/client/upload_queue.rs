@@ -458,6 +458,29 @@ impl ClientContext {
         !stale.is_empty()
     }
 
+    /// The peer turned down the offer for `token`, which frees its slot.
+    /// Returns whether the offer was still open.
+    pub fn refuse_offer(&mut self, token: u32, reason: Option<&str>) -> bool {
+        let Some(job) = self.uploads.remove(&token) else {
+            return false;
+        };
+        self.forget_pending_serve(&job.downloader, token);
+        let status = match reason {
+            None | Some("Cancelled") => UploadStatus::Cancelled,
+            Some(reason) => UploadStatus::Failed(reason.to_string()),
+        };
+        self.upload_events.push(UploadInfo {
+            username: job.downloader,
+            filename: job.virtual_path,
+            size: job.size,
+            bytes_sent: 0,
+            speed_bytes_per_sec: 0.0,
+            status,
+        });
+        self.cap_upload_events();
+        true
+    }
+
     /// The peer accepted the offer for `token`. Resolving their address and
     /// connecting can outlast the offer window, so the clock restarts with the
     /// longer allowance — restarts rather than stops, because an address

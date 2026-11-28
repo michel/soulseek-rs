@@ -167,6 +167,14 @@ impl Client {
                     }
                 }
             }
+            ClientOperation::UploadRefused { token, reason } => {
+                let freed = client_context.write_safe().is_ok_and(|mut ctx| {
+                    ctx.refuse_offer(token, reason.as_deref())
+                });
+                if freed {
+                    Self::pump_upload_queue(client_context);
+                }
+            }
             ClientOperation::QueueUpload {
                 requester_key,
                 filename,

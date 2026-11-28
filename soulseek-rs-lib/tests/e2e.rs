@@ -3934,6 +3934,70 @@ fn an_unanswered_upload_offer_frees_its_slot() {
     let _ = std::fs::remove_dir_all(share);
 }
 
+#[test]
+fn a_refused_upload_offer_frees_its_slot_at_once() {
+    let server = server_or_skip!();
+    let (share, folder) = queue_share("refused", &["unwanted.mp3", "next.mp3"]);
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let (sharer, listen_addr) = sharing(&server, "e2e_refused_sharer", &share);
+    sharer.set_upload_slots(1);
+
+    let mut refuser = queue_as(
+        &server_addr,
+        &listen_addr,
+        "e2e_refused_refuser",
+        &format!("{folder}\\unwanted.mp3"),
+    )
+    .expect("refuser queues");
+    let mut offer = expect_code(&mut refuser.peer, 40, Duration::from_secs(10))
+        .expect("the refuser is offered the slot");
+    offer.set_pointer(8);
+    let _direction = offer.read_int32();
+    let token = offer.read_int32();
+
+    let mut next = queue_as(
+        &server_addr,
+        &listen_addr,
+        "e2e_refused_next",
+        &format!("{folder}\\next.mp3"),
+    )
+    .expect("next peer queues");
+    assert!(
+        wait_for(|| place_of(
+            &sharer,
+            "e2e_refused_next",
+            &format!("{folder}\\next.mp3")
+        ) == Some(1)),
+        "the next peer waits while the offer is out"
+    );
+
+    let mut refusal = Message::new();
+    refusal
+        .write_int32(41)
+        .write_int32(token)
+        .write_bool(false)
+        .write_string("Cancelled");
+    refuser
+        .peer
+        .write_all(&refusal.get_buffer())
+        .expect("refuse");
+    refuser.peer.flush().expect("flush");
+
+    assert!(
+        next.takes_a_slot_within(Duration::from_secs(5)),
+        "the slot must not wait out the offer timeout"
+    );
+    assert!(
+        sharer.take_upload_events().iter().any(|event| {
+            event.username == "e2e_refused_refuser"
+                && event.status == UploadStatus::Cancelled
+        }),
+        "the operator sees the refused offer as cancelled"
+    );
+
+    let _ = std::fs::remove_dir_all(share);
+}
+
 /// A constant-bitrate MP3: `frames` MPEG-1 Layer III frames at 128 kbps,
 /// 44.1 kHz, so every searcher sees a bitrate to filter and sort on.
 fn cbr_mp3(frames: usize) -> Vec<u8> {

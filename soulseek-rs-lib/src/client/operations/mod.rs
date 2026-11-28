@@ -111,6 +111,7 @@ impl Client {
                     operation @ (ClientOperation::DownloadFromPeer(..)
                     | ClientOperation::UpdateDownloadTokens(..)
                     | ClientOperation::StartUpload { .. }
+                    | ClientOperation::UploadRefused { .. }
                     | ClientOperation::QueueUpload { .. }) => {
                         Self::on_transfers(
                             operation,

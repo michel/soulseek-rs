@@ -453,11 +453,11 @@ impl PeerActor {
         // our offer — start streaming. This leaves the download path
         // (every other token) byte-for-byte unchanged.
         if self.serving_tokens.remove(&token) {
-            if allowed {
-                let _ = self
-                    .client_channel
-                    .send(ClientOperation::StartUpload { token });
-            }
+            self.forward(if allowed {
+                ClientOperation::StartUpload { token }
+            } else {
+                ClientOperation::UploadRefused { token, reason }
+            });
             return;
         }
 
