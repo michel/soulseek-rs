@@ -909,12 +909,14 @@ impl Client {
             ctx.shares = Arc::new(shares);
             ctx.shared_directories = dirs;
         }
-        self.send_server_message(
-            crate::message::server::MessageFactory::build_shared_folders_message(
-                folder_count,
-                file_count,
-            ),
-        )
+        self.server_handle
+            .as_ref()
+            .ok_or(SoulseekRs::NotConnected)?
+            .send(ServerMessage::SharedCounts {
+                folders: folder_count,
+                files: file_count,
+            })
+            .map_err(|_| SoulseekRs::NotConnected)
     }
 }
 

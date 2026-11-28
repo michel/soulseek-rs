@@ -1942,6 +1942,64 @@ fn a_runtime_share_update_is_visible_to_browsers() {
 }
 
 #[test]
+fn share_counts_changed_at_runtime_survive_a_relogin() {
+    fn assert_counts(observer: &Client, username: &str, expected: (u32, u32)) {
+        observer.request_user_info(username).unwrap();
+        assert!(
+            wait_for(|| {
+                let counts = observer
+                    .user_info(username)
+                    .and_then(|info| info.stats)
+                    .map(|stats| (stats.shared_folders, stats.shared_files));
+                if counts == Some(expected) {
+                    return true;
+                }
+                if counts.is_some() {
+                    observer.request_user_info(username).unwrap();
+                }
+                false
+            }),
+            "the server should report {expected:?} for {username}"
+        );
+    }
+
+    let server = server_or_skip!();
+    let username = "e2e_share_counts_relogin";
+    let mut sharer = Client::with_settings(server.settings(username, "pw"));
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+
+    let mut observer = Client::with_settings(
+        server.settings("e2e_share_counts_observer", "pw"),
+    );
+    observer.connect().expect("observer connect");
+    assert!(observer.login().expect("observer login"));
+    assert_counts(&observer, username, (0, 0));
+
+    let share_dir = unique_download_dir();
+    for name in ["one.mp3", "two.mp3"] {
+        std::fs::write(share_dir.join(name), b"music").unwrap();
+    }
+    sharer
+        .set_shared_directories(vec![share_dir.display().to_string()])
+        .expect("runtime share update");
+    assert_counts(&observer, username, (1, 2));
+
+    let mut replacement =
+        Client::with_settings(server.settings(username, "pw"));
+    replacement.connect().expect("replacement connect");
+    assert!(replacement.login().expect("replacement login"));
+    assert!(wait_for(
+        || sharer.session_loss() == Some(SessionLoss::Displaced)
+    ));
+
+    assert!(sharer.login().expect("relogin the same sharer"));
+    assert_counts(&observer, username, (1, 2));
+
+    let _ = std::fs::remove_dir_all(share_dir);
+}
+
+#[test]
 fn browse_a_peers_shared_files() {
     let server = server_or_skip!();
 

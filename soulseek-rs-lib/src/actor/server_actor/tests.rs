@@ -338,6 +338,37 @@ fn a_successful_login_resets_the_distributed_leaf() {
 }
 
 #[test]
+fn share_counts_changed_while_offline_are_what_the_next_login_announces() {
+    use std::io::Read;
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mut actor = parked_actor(addr.port());
+    actor.handle_message(ServerMessage::SharedCounts {
+        folders: 2,
+        files: 5,
+    });
+
+    actor.stream = Some(TcpStream::connect(addr).unwrap());
+    let (mut server_side, _) = listener.accept().unwrap();
+    actor.connection_state = ConnectionState::Connected;
+    actor.handle_login_status(true);
+
+    server_side
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut frame = [0u8; 16];
+    server_side.read_exact(&mut frame).unwrap();
+    let field =
+        |at: usize| u32::from_le_bytes(frame[at..at + 4].try_into().unwrap());
+    assert_eq!(
+        (field(4), field(8), field(12)),
+        (35, 2, 5),
+        "the first announcement is SharedFoldersFiles with the new counts"
+    );
+}
+
+#[test]
 fn post_login_messages_carry_counts_and_conditional_wait_port() {
     let messages = post_login_messages(true, 4321, 3, 7);
     let codes: Vec<u32> = messages.iter().map(code_of).collect();
