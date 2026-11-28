@@ -46,7 +46,8 @@ enthusiasts to share niche music. This repository is that client plus
 - **Resumable downloads**: a dead transfer leaves a `.part`, and re-running it
   asks the peer for only what is missing
 - **Cancel a transfer**: `x` in the TUI or `transfer cancel` from a script stops
-  a download, queued or in progress, and deletes its `.part`; uploads too
+  a download, queued or in progress, and deletes its `.part`; uploads too.
+  `c` or `transfer clear` forgets every finished download and upload
 - **Chat rooms**: list, join, and talk in public rooms, several open at once
 - **Private messages**: send and receive, with an inbox in the TUI
 - **Firewalled peers**: browsing and downloads fall back to server-brokered
@@ -360,6 +361,7 @@ soulseek-rs download <USER> <PATH>        # fetch one known file
 soulseek-rs download --stdin              # fetch files listed on stdin
 soulseek-rs get <QUERY>                   # search, pick, and download
 soulseek-rs transfer cancel <USER> <PATH> # stop a download or upload
+soulseek-rs transfer clear                # forget finished transfers
 soulseek-rs wish add|remove|list <QUERY>  # keep looking for something
 soulseek-rs wish run                      # search every stored wish once
 soulseek-rs browse <USER>                 # list a user's shared files
@@ -403,11 +405,12 @@ account of its own can still ask whether one is running. `shares status` and
 `shares reindex` are not among them, because reporting what the network sees
 means logging in and scanning the folders.
 
-Seven commands perform an action and print nothing, answering with their exit
+Eight commands perform an action and print nothing, answering with their exit
 code alone: `room say`, `message send`, `shares add`, `shares remove`,
-`wish remove`, `transfer cancel` and `daemon stop`. `room listen`, `message read` and `serve`
-stream records until `--duration` seconds pass or, with `--follow`, until
-interrupted. The rest print records and exit.
+`wish remove`, `transfer cancel`, `transfer clear` and `daemon stop`.
+`room listen`, `message read` and `serve` stream records until `--duration`
+seconds pass or, with `--follow`, until interrupted. The rest print records and
+exit.
 
 #### Record shapes
 

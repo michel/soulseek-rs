@@ -1169,6 +1169,37 @@ fn a_finished_upload_is_removed_once_and_stays_gone() {
     );
 }
 
+/// `transfer clear` is the scripted twin of the TUI's `c`, and running it
+/// again with nothing left to clear is still a success.
+#[test]
+fn transfer_clear_forgets_a_finished_upload_on_the_daemon() {
+    let Some((daemon, mut connection, _share)) = serve_one_upload() else {
+        common::no_server("daemon protocol e2e");
+        return;
+    };
+    let state = tempfile::tempdir().expect("state directory");
+
+    for expected in [
+        "finished transfers cleared: 1",
+        "finished transfers cleared: 0",
+    ] {
+        let run = cli_command(state.path())
+            .args(["--no-config", "--daemon"])
+            .arg(format!("127.0.0.1:{}", daemon.port))
+            .args(["--daemon-token", &daemon.token(), "transfer", "clear"])
+            .output()
+            .expect("the binary should run");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert_eq!(run.status.code(), Some(0), "{stderr}");
+        assert!(stderr.contains(expected), "{stderr}");
+        assert!(run.stdout.is_empty(), "a bulk action prints no records");
+    }
+    assert!(
+        served_states(&mut connection).is_empty(),
+        "the row must be gone"
+    );
+}
+
 /// A wrong or missing token is the CLI's problem to explain, not just the
 /// wire's: the user typed `--daemon-token`, so the failure has to come back
 /// as a connection error rather than a hang or a fallback to local defaults.
