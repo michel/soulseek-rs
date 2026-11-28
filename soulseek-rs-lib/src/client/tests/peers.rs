@@ -172,8 +172,16 @@ fn the_server_is_told_our_child_capacity_only_when_it_changes() {
     assert_eq!(ctx.accept_children_change(), None, "unchanged, so silent");
 }
 
-#[test]
-fn a_child_lost_relaying_our_parents_search_tells_the_server_we_have_room() {
+/// A client under the parent "dad" whose child slots are all taken, that
+/// has told the server so, and one of whose children is gone. Feeding
+/// `relay` to its operations loop makes it write to every child.
+///
+/// The gone child's link is shut down at our end rather than dropped at
+/// theirs, so the write to it fails at once instead of after the RST has
+/// crossed the loopback.
+fn the_server_hears_of_room_after(relay: impl FnOnce(u64) -> ClientOperation) {
+    const ACCEPT_CHILDREN: u32 = 100;
+
     let (server, server_rx) = mpsc::channel();
     let (ops, ops_rx) = mpsc::channel();
     let context = Arc::new(RwLock::new(ClientContext::for_user("me")));
@@ -203,21 +211,12 @@ fn a_child_lost_relaying_our_parents_search_tells_the_server_we_have_room() {
         assert_eq!(ctx.accept_children_change(), Some(false), "told: full");
         dial.link
     };
-    // Our end is shut down rather than the child's dropped, so the relay's
-    // write fails at once instead of after the RST crosses the loopback.
     gone.expect("a child")
         .shutdown(std::net::Shutdown::Both)
         .expect("shutdown");
 
     Client::listen_to_client_operations(ops_rx, context, "me".to_string());
-    ops.send(ClientOperation::ParentSearch {
-        parent: "dad".to_string(),
-        link,
-        username: "seeker".to_string(),
-        token: 1,
-        query: "jazz".to_string(),
-    })
-    .unwrap();
+    ops.send(relay(link)).unwrap();
 
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -229,9 +228,28 @@ fn a_child_lost_relaying_our_parents_search_tells_the_server_we_have_room() {
             continue;
         };
         let data = message.get_data();
-        if data[..4] == 100u32.to_le_bytes() {
-            assert_eq!(data[4], 1, "AcceptChildren is true");
+        if data[..4] == ACCEPT_CHILDREN.to_le_bytes() && data[4] == 1 {
             break;
         }
     }
+}
+
+#[test]
+fn a_child_lost_relaying_our_parents_search_tells_the_server_we_have_room() {
+    the_server_hears_of_room_after(|link| ClientOperation::ParentSearch {
+        parent: "dad".to_string(),
+        link,
+        username: "seeker".to_string(),
+        token: 1,
+        query: "jazz".to_string(),
+    });
+}
+
+#[test]
+fn a_child_lost_hearing_our_new_place_tells_the_server_we_have_room() {
+    the_server_hears_of_room_after(|link| ClientOperation::ParentBranchLevel {
+        parent: "dad".to_string(),
+        link,
+        level: 3,
+    });
 }
