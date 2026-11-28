@@ -172,7 +172,8 @@ pub struct Cli {
     #[arg(short, long, global = true, action = ArgAction::Count)]
     pub verbose: u8,
 
-    /// Write logs to a file instead of stderr
+    /// Write logs to a file instead of stderr; past 16 MiB it is moved to
+    /// FILE.1 and started again
     #[arg(long, global = true, env = "SOULSEEK_LOG_FILE")]
     pub log_file: Option<PathBuf>,
 }
