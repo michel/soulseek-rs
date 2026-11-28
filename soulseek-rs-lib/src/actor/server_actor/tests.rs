@@ -226,6 +226,38 @@ fn a_cancelled_actor_never_writes_the_login_it_queued() {
     assert_eq!(server_side.read_to_end(&mut written).unwrap(), 0);
 }
 
+// The server accepts the login and the connection dies under the
+// announcements that follow. Reporting that as a live session cleared the
+// loss the daemon reconnects on, so it stayed offline until restarted.
+#[test]
+fn a_failed_post_login_write_keeps_the_session_lost_and_never_reports_success()
+{
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stream = TcpStream::connect(addr).unwrap();
+    let (_server_side, _) = listener.accept().unwrap();
+    stream.shutdown(std::net::Shutdown::Write).unwrap();
+
+    let (mut actor, client) = parked_actor_with_client(addr.port());
+    actor.stream = Some(stream);
+    actor.connection_state = ConnectionState::Connected;
+
+    actor.handle_message(ServerMessage::LoginStatus(true));
+
+    assert_eq!(
+        (
+            actor.session.loss(),
+            actor.context.read().unwrap().logged_in
+        ),
+        (Some(SessionLoss::Disconnected), None),
+        "a failed announcement must preserve the loss and leave login unfinished"
+    );
+    assert!(
+        client.try_recv().is_err(),
+        "a failed login must not announce an established session"
+    );
+}
+
 #[test]
 fn a_successful_login_marks_the_session_live_again() {
     let mut actor = parked_actor(1);
