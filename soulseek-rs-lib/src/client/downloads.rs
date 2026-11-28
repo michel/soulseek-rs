@@ -221,10 +221,6 @@ mod tests {
     use super::next_download_token;
     use std::collections::HashSet;
 
-    // The download store is keyed by token and removes *every* entry matching
-    // one, so two downloads sharing a token means queueing one silently evicts
-    // the other — which is what fetching the same filename from two peers does
-    // if the token depends on the filename.
     #[test]
     fn download_tokens_are_unique_and_below_the_upload_range() {
         let tokens: Vec<u32> =

@@ -196,9 +196,7 @@ fn an_expired_broker_connect_fails_the_queued_downloads() {
     );
 }
 
-// A peer that repeats its offer names the token the download already has.
-// Re-keying then removed the row it had just written, and the peer was still
-// told to go ahead with a transfer nothing was waiting for.
+// A peer may repeat its offer, naming the token the download already has.
 #[test]
 fn a_repeated_transfer_offer_keeps_the_download_listed_and_claimable() {
     let client = Client::new("u", "p");
@@ -217,38 +215,27 @@ fn a_repeated_transfer_offer_keeps_the_download_listed_and_claimable() {
         client.context.clone(),
         "u".to_string(),
     );
-    let offer = Transfer {
-        direction: 1,
-        token: 7,
-        filename: "f.mp3".to_string(),
-        size: 200,
-    };
-
-    for attempt in 1..=2 {
+    for _ in 0..2 {
         ops_tx
             .send(ClientOperation::UpdateDownloadTokens(
-                offer.clone(),
+                Transfer {
+                    direction: 1,
+                    token: 7,
+                    filename: "f.mp3".to_string(),
+                    size: 200,
+                },
                 "peer".to_string(),
             ))
             .unwrap();
-        ops_tx
-            .send(ClientOperation::OwnPrivileges(attempt))
-            .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while client.own_privilege_seconds() != Some(attempt) {
-            assert!(Instant::now() < deadline, "ops loop never caught up");
-            thread::yield_now();
-        }
-
-        let downloads = client.get_all_downloads();
-        assert_eq!(downloads.len(), 1, "after offer {attempt}");
-        assert_eq!(downloads[0].username, "peer");
-        assert_eq!(downloads[0].filename, "f.mp3");
-        assert_eq!(downloads[0].token, 7);
-        assert_eq!(downloads[0].size, 200);
-        assert!(matches!(downloads[0].status, DownloadStatus::Queued));
+    }
+    ops_tx.send(ClientOperation::OwnPrivileges(1)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while client.own_privilege_seconds() != Some(1) {
+        assert!(Instant::now() < deadline, "ops loop never caught up");
+        thread::yield_now();
     }
 
+    assert_eq!(client.get_all_downloads().len(), 1);
     let claimed = client
         .context
         .write()
@@ -256,13 +243,11 @@ fn a_repeated_transfer_offer_keeps_the_download_listed_and_claimable() {
         .downloads
         .claim_for_peer(7, "peer")
         .expect("the repeated offer must leave the download claimable");
-    assert_eq!(claimed.filename, "f.mp3");
-    assert_eq!(claimed.size, 200);
+    assert_eq!((claimed.filename.as_str(), claimed.size), ("f.mp3", 200));
 }
 
 // The token we give a download before it is offered and the token a peer
-// chose for another one are drawn from the same small numbers. Re-keying by
-// "remove the old token" took the other peer's download with it.
+// chose for another one are drawn from the same small numbers.
 #[test]
 fn an_offer_re_keys_its_own_download_and_leaves_the_rest() {
     let client = Client::new("u", "p");

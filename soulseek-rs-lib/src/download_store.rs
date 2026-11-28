@@ -710,9 +710,7 @@ mod tests {
     }
 
     // Peers pick their own transfer tokens and count from the same small
-    // numbers. Looked up by token alone, the first row with that number
-    // answered for everyone: a second peer's file connection was refused,
-    // and failing one peer's download removed the other's.
+    // numbers.
     #[test]
     fn two_peers_using_the_same_token_keep_their_own_downloads() {
         let mut store = DownloadStore::new();

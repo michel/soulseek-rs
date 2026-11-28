@@ -145,9 +145,9 @@ impl ActorSystem {
         let mut tick_count = 0;
 
         loop {
-            // Wait only until the next tick is due: a mailbox that never goes
-            // quiet for a whole interval would otherwise never tick at all,
-            // and ticking is where an actor reads its socket.
+            // Waiting a whole interval would let a mailbox that never goes
+            // quiet put the tick off for good, and the tick is where an
+            // actor reads its socket.
             let until_tick = tick_interval.saturating_sub(last_tick.elapsed());
             match receiver.recv_timeout(until_tick) {
                 Ok(ActorMessage::UserMessage(msg)) => {
@@ -248,9 +248,7 @@ mod tests {
         }
     }
 
-    // An actor reads its socket on the tick. A mailbox that never went quiet
-    // for a whole interval used to put the tick off for good: a busy session
-    // stopped hearing the server, and its downloads sat queued.
+    // An actor reads its socket on the tick.
     #[test]
     fn a_busy_mailbox_does_not_starve_the_tick() {
         let ticks = Arc::new(AtomicUsize::new(0));
