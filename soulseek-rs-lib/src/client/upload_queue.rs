@@ -266,6 +266,18 @@ impl ClientContext {
             .collect()
     }
 
+    /// Forget the finished uploads of `filename` to `downloader`. One still
+    /// streaming stays, because it holds a slot until its thread ends.
+    pub fn remove_upload(&mut self, downloader: &str, filename: &str) -> bool {
+        let before = self.active_uploads.len();
+        self.active_uploads.retain(|_, upload| {
+            upload.username != downloader
+                || upload.filename != filename
+                || !upload.status.is_terminal()
+        });
+        self.active_uploads.len() != before
+    }
+
     /// Withdraw everything `downloader` is waiting for or has been offered
     /// under `filename`, recording each as cancelled, and ask any transfer of
     /// it already streaming to stop. Returns whether a waiting or offered
@@ -793,6 +805,22 @@ mod context_tests {
             "nothing is left waiting on that peer's address"
         );
         assert_eq!(offered(&mut ctx, &mut token), ["next"]);
+    }
+
+    #[test]
+    fn removing_a_finished_upload_preserves_a_matching_stream() {
+        let (mut ctx, _) = context(2);
+        ctx.active_uploads
+            .insert(1, active("amy", "a.mp3", UploadStatus::Completed));
+        ctx.active_uploads
+            .insert(2, active("amy", "a.mp3", UploadStatus::InProgress));
+
+        assert!(!ctx.remove_upload("bob", "a.mp3"));
+        assert!(!ctx.remove_upload("amy", "b.mp3"));
+        assert!(ctx.remove_upload("amy", "a.mp3"));
+        assert!(!ctx.active_uploads.contains_key(&1));
+        assert_eq!(ctx.active_uploads[&2].status, UploadStatus::InProgress);
+        assert!(!ctx.remove_upload("amy", "a.mp3"));
     }
 
     #[test]

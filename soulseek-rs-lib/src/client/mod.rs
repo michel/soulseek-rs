@@ -879,6 +879,19 @@ impl Client {
         Self::cancel_upload_in(&self.context, username, filename)
     }
 
+    /// Forget finished uploads for `username`/`filename`, returning whether
+    /// any were removed.
+    #[must_use]
+    pub fn remove_upload(&self, username: &str, filename: &str) -> bool {
+        match self.context.write_safe() {
+            Ok(mut ctx) => ctx.remove_upload(username, filename),
+            Err(e) => {
+                error!("[client] remove_upload: {}", e);
+                false
+            }
+        }
+    }
+
     /// Replace the shared directories at runtime: rescan into a fresh
     /// index (served to peers from then on) and re-announce the new
     /// folder/file counts to the server.
