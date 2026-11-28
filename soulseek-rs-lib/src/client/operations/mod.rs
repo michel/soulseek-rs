@@ -2,7 +2,8 @@ use super::{
     Arc, Client, ClientContext, ClientOperation, ConnectionType, DownloadPeer,
     DownloadStatus, Duration, Instant, Peer, PeerMessage, PeerRegistry,
     Receiver, RwLock, RwLockExt, ServerMessage, build_search_response, debug,
-    error, info, mpsc, next_connect_token, thread, trace, warn,
+    error, info, mpsc, next_connect_token, next_download_token, thread, trace,
+    warn,
 };
 use crate::message::server::MessageFactory;
 use crate::peer::DownloadError;
