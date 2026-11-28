@@ -31,7 +31,9 @@ impl Client {
                     // search goes down to our children. The budget
                     // below bounds only the share scan we do for our
                     // own reply.
+                    let before = ctx.children.len();
                     ctx.children.broadcast_search(&username, token, &query);
+                    let dropped = ctx.children.len() != before;
                     if let Some(ops) = &ctx.operations {
                         let _ = ops.send(ClientOperation::IncomingSearch {
                             username,
@@ -39,6 +41,12 @@ impl Client {
                             query,
                             from_parent: true,
                         });
+                    }
+                    drop(ctx);
+                    // A child the relay dropped frees a slot the server
+                    // should hear about.
+                    if dropped {
+                        Self::announce_child_capacity(client_context);
                     }
                 }
             }
