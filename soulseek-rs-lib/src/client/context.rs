@@ -676,6 +676,9 @@ impl ClientContext {
             self.watched_users.remove(&username);
             return;
         }
+        if !self.wants_user_info(&username) {
+            return;
+        }
         if let Some(status) = status {
             let entry = self
                 .user_info

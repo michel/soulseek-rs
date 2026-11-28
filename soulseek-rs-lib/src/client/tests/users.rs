@@ -118,6 +118,25 @@ fn unwatching_forgets_the_users_snapshot() {
 }
 
 #[test]
+fn a_late_watch_reply_does_not_restore_an_unwatched_users_snapshot() {
+    let mut context = ClientContext::new();
+    context.expect_user_info("alice");
+    context.add_watched_user("alice");
+    context.remove_watched_user("alice");
+
+    context.apply_watched_user(
+        "alice".to_string(),
+        true,
+        Some(2),
+        Some(1024),
+        Some(20),
+        Some(3),
+    );
+
+    assert!(context.user_info("alice").is_none());
+}
+
+#[test]
 fn watched_users_are_listed_in_a_stable_order() {
     let mut context = ClientContext::new();
     context.add_watched_user("carol");
