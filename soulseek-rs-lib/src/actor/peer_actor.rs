@@ -69,6 +69,9 @@ pub enum PeerMessage {
         filename: String,
         size: u64,
     },
+    /// The client withdrew the offer under this token, or gave up waiting for
+    /// an answer to it.
+    WithdrawOffer(u32),
     ProcessRead,
     /// A newer connection to this peer took over. Deliver what is already
     /// on the wire, then close.
@@ -319,6 +322,9 @@ impl PeerActor {
                 size,
             } => {
                 self.handle_serve_upload(token, filename, size);
+            }
+            PeerMessage::WithdrawOffer(token) => {
+                self.serving_tokens.remove(&token);
             }
             PeerMessage::ShareListRequested => {
                 self.forward(ClientOperation::ShareListRequested {

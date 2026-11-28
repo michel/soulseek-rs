@@ -263,3 +263,107 @@ fn a_peer_declaring_an_enormous_message_is_disconnected() {
     }
     assert_eq!(actor.reader.buffer_len(), 0, "and holds none of it");
 }
+
+/// The token of the next upload offer (`TransferRequest`, code 40) the far
+/// end receives, skipping whatever else arrives first.
+fn next_offer_token(far_end: &mut TcpStream) -> u32 {
+    use std::io::Read;
+    far_end
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    loop {
+        let mut length = [0u8; 4];
+        far_end.read_exact(&mut length).expect("an offer arrives");
+        let mut body = vec![0u8; u32::from_le_bytes(length) as usize];
+        far_end.read_exact(&mut body).unwrap();
+        let word = |at: usize| {
+            u32::from_le_bytes(body[at..at + 4].try_into().unwrap())
+        };
+        if word(0) == 40 {
+            return word(8);
+        }
+    }
+}
+
+// A peer that keeps its control connection open and never answers an offer
+// must not leave the actor listening for that answer, or a token per offer
+// piles up for as long as the connection lasts.
+#[test]
+fn an_offer_the_client_gave_up_on_cannot_be_accepted_but_a_live_one_can() {
+    use crate::actor::ActorSystem;
+    use crate::actor::peer_registry::PeerRegistry;
+    use crate::client::{Client, ClientContext};
+    use std::io::Write;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let registry =
+        PeerRegistry::new(Arc::new(ActorSystem::new()), tx, "me".to_string());
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    stream.set_nonblocking(true).unwrap();
+    let mut far_end = listener.accept().unwrap().0;
+    let bob = Peer::new(
+        "bob".to_string(),
+        ConnectionType::P,
+        "127.0.0.1".to_string(),
+        0,
+        None,
+        0,
+        0,
+        0,
+    );
+    registry.register_peer(bob, Some(stream), None).unwrap();
+
+    let mut ctx = ClientContext::new();
+    ctx.peer_registry = Some(registry);
+    let ctx = Arc::new(RwLock::new(ctx));
+    let offer = |file: &str| {
+        ctx.write().unwrap().enqueue_upload(
+            "bob",
+            file,
+            std::path::PathBuf::from("/tmp/x.mp3"),
+            1,
+        );
+        Client::pump_upload_queue(&ctx);
+    };
+
+    offer("expired.mp3");
+    let expired = next_offer_token(&mut far_end);
+    let long_after = Instant::now() + Duration::from_hours(1);
+    assert!(ctx.write().unwrap().expire_stale_offers(long_after));
+    Client::pump_upload_queue(&ctx);
+
+    offer("cancelled.mp3");
+    let cancelled = next_offer_token(&mut far_end);
+    assert!(Client::cancel_upload_in(&ctx, "bob", "cancelled.mp3"));
+
+    // The actor reads its mailbox in order, so this offer reaching the wire
+    // means it has heard about the two before it.
+    offer("live.mp3");
+    let live = next_offer_token(&mut far_end);
+
+    for token in [expired, cancelled, live] {
+        let accept = Message::new()
+            .write_int32(41)
+            .write_int32(token)
+            .write_bool(true)
+            .clone();
+        far_end.write_all(&accept.get_buffer()).unwrap();
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut started = Vec::new();
+    while !started.contains(&live) {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match rx.recv_timeout(left) {
+            Ok(ClientOperation::StartUpload { token }) => started.push(token),
+            Ok(_) => {}
+            Err(e) => panic!("the live offer never started: {e}"),
+        }
+    }
+    assert_eq!(
+        started,
+        [live],
+        "an acceptance of an offer the client gave up on starts nothing"
+    );
+}

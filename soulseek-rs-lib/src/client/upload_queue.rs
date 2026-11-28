@@ -341,11 +341,10 @@ impl ClientContext {
             })
             .map(|(&token, _)| token)
             .collect();
-        for token in &offered {
-            if let Some(job) = self.uploads.remove(token) {
+        for token in offered {
+            if let Some(job) = self.retire_offer(token) {
                 size = Some(job.size);
             }
-            self.forget_pending_serve(downloader, *token);
         }
 
         let withdrawn = size.is_some();
@@ -416,6 +415,15 @@ impl ClientContext {
         self.privileged_users.contains(username)
     }
 
+    /// Give up on an offer: forget it here and note it for the peer's actor,
+    /// which keeps its own record of the tokens it may be answered on.
+    fn retire_offer(&mut self, token: u32) -> Option<UploadJob> {
+        let job = self.uploads.remove(&token)?;
+        self.forget_pending_serve(&job.downloader, token);
+        self.retired_offers.push((job.downloader.clone(), token));
+        Some(job)
+    }
+
     /// Drop offers nobody answered within [`OFFER_TIMEOUT`], and accepted ones
     /// that never got as far as streaming within [`ACCEPTED_TIMEOUT`],
     /// recording each as a failed upload so an operator sees why the peer
@@ -429,10 +437,9 @@ impl ClientContext {
             .map(|(&token, _)| token)
             .collect();
         for token in &stale {
-            let Some(job) = self.uploads.remove(token) else {
+            let Some(job) = self.retire_offer(*token) else {
                 continue;
             };
-            self.forget_pending_serve(&job.downloader, *token);
             let reason = if job.answered {
                 "the transfer never started"
             } else {

@@ -118,16 +118,21 @@ impl Client {
         true
     }
 
-    /// Fill every free upload slot from the queue and send the offers.
+    /// Fill every free upload slot from the queue and send the offers, after
+    /// telling each peer's actor which of its offers were withdrawn or expired.
     ///
     /// Called whenever the queue or the slot count could have changed: a new
-    /// request, a finished transfer, or a privileged list that re-ranked who is
-    /// waiting.
+    /// request, a finished transfer, a withdrawn or expired offer, or a
+    /// privileged list that re-ranked who is waiting.
     pub(crate) fn pump_upload_queue(
         client_context: &Arc<RwLock<ClientContext>>,
     ) {
-        let (registry, offers) = match client_context.write_safe() {
-            Ok(mut ctx) => ctx.pump_uploads(next_upload_token),
+        let (registry, offers, retired) = match client_context.write_safe() {
+            Ok(mut ctx) => {
+                let retired = std::mem::take(&mut ctx.retired_offers);
+                let (registry, offers) = ctx.pump_uploads(next_upload_token);
+                (registry, offers, retired)
+            }
             Err(e) => {
                 error!("[client] pump_upload_queue write: {}", e);
                 return;
@@ -136,6 +141,10 @@ impl Client {
         let Some(registry) = registry else {
             return;
         };
+        for (downloader, token) in retired {
+            let _ = registry
+                .send_to_peer(&downloader, PeerMessage::WithdrawOffer(token));
+        }
         for offer in offers {
             let _ = registry.send_to_peer(
                 &offer.requester_key,
