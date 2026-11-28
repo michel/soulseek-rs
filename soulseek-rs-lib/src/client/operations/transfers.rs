@@ -98,6 +98,7 @@ impl Client {
                     });
                 if !cancelled
                     && let Some((old_token, download)) = download_to_update
+                    && old_token != transfer.token
                 {
                     trace!(
                         "[client] UpdateDownloadTokens found {old_token}, transfer: {:?}",
