@@ -33,6 +33,9 @@ impl std::fmt::Display for PeerAddress {
 #[derive(Debug, Default)]
 pub struct Context {
     pub logged_in: Option<bool>,
+    /// The connection dropped. A login waiting on it is never sent again, so
+    /// its waiter answers now rather than at the verdict timeout.
+    pub connection_lost: bool,
 }
 
 impl Context {
