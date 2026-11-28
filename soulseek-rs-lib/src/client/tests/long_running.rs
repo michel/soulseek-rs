@@ -7,6 +7,63 @@ use super::*;
 use crate::message::Message;
 use crate::message::peer::PeerInfo;
 
+// The daemon logs back in by itself. It did so with the password it was
+// started with, so one `account.password` meant every reconnect after it was
+// refused until the daemon was restarted.
+#[test]
+fn a_changed_password_is_sent_with_the_next_login() {
+    use crate::actor::ActorMessage;
+
+    fn assert_traits<
+        T: Send + Sync + std::panic::UnwindSafe + std::panic::RefUnwindSafe,
+    >() {
+    }
+    assert_traits::<Client>();
+
+    let mut client = Client::new("me", "first-pw");
+    let (sender, receiver) = mpsc::channel();
+    client.server_handle = Some(ActorHandle { sender });
+
+    client
+        .change_password("second-pw")
+        .expect("change password");
+    let ActorMessage::UserMessage(ServerMessage::SendMessage(mut change)) =
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("password change")
+    else {
+        panic!("expected a password change");
+    };
+    assert_eq!(change.read_int32(), 142);
+    assert_eq!(change.read_string(), "second-pw");
+
+    thread::scope(|scope| {
+        let login = scope.spawn(|| client.login());
+        let ActorMessage::UserMessage(ServerMessage::Login {
+            password,
+            response,
+            ..
+        }) = receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("login request")
+        else {
+            panic!("expected a login request");
+        };
+        response.send(Ok(true)).expect("login verdict");
+        assert!(login.join().expect("login thread").expect("login"));
+        assert_eq!(
+            password, "second-pw",
+            "the next login uses the changed password"
+        );
+    });
+
+    client.session.record(SessionLoss::Disconnected);
+    assert!(
+        client.change_password("third-pw").is_err(),
+        "a change the server cannot hear must not become our password"
+    );
+}
+
 // Issue #116: one expiry clock per peer, restarted by every message, never
 // ran out for a peer that kept being sent things.
 #[test]

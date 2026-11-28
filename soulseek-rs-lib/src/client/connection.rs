@@ -1,7 +1,7 @@
 use super::{
     Arc, AtomicBool, Client, ClientContext, ClientOperation, ConnectionType,
-    DownloadPeer, Listen, Peer, PeerRegistry, Receiver, Result, RwLock,
-    RwLockExt, Sender, ServerActor, ServerMessage, Shares, SoulseekRs,
+    DownloadPeer, Listen, MutexExt, Peer, PeerRegistry, Receiver, Result,
+    RwLock, RwLockExt, Sender, ServerActor, ServerMessage, Shares, SoulseekRs,
     TcpStream, error, info, mpsc, thread, trace, warn,
 };
 use std::sync::atomic::Ordering;
@@ -218,7 +218,7 @@ impl Client {
         let (tx, rx) = std::sync::mpsc::channel();
         let _ = handle.send(ServerMessage::Login {
             username: self.username.clone(),
-            password: self.password.clone(),
+            password: self.password.lock_safe()?.clone(),
             version: self.version,
             response: tx,
         });

@@ -4397,7 +4397,12 @@ fn a_changed_password_is_what_the_next_login_needs() {
         );
         std::thread::sleep(Duration::from_millis(100));
     }
-    drop(client);
+    client.disconnect();
+    client.connect().expect("reconnect the original client");
+    assert!(
+        client.login().expect("login after changing the password"),
+        "the original client must use the changed password"
+    );
 
     let mut stale = Client::with_settings(server.settings(user, "first-pw"));
     stale.connect().expect("connect with the old password");
