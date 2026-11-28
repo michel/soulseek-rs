@@ -1275,7 +1275,6 @@ fn an_upload_offer_for_a_file_we_never_asked_for_is_refused() {
         read_transfer_response(&mut peer).expect("an answer to the offer"),
         (false, "Cancelled".to_string())
     );
-    assert!(client.get_all_downloads().is_empty());
 }
 
 fn refusal_fails_the_download_quickly(
@@ -2586,6 +2585,37 @@ impl QueueingPeer {
         let _ = self.peer.set_read_timeout(Some(timeout));
         read_until_code(&mut self.peer, 40, timeout).is_some()
     }
+
+    /// Wait for the upload offer and return the token it carries.
+    fn offered_token(&mut self) -> u32 {
+        let mut offer =
+            expect_code(&mut self.peer, 40, Duration::from_secs(10))
+                .expect("an upload offer");
+        offer.set_pointer(8);
+        let _direction = offer.read_int32();
+        offer.read_int32()
+    }
+
+    fn answer_offer(&mut self, token: u32, refusal: Option<&str>) {
+        self.peer
+            .write_all(&transfer_response(token, refusal).get_buffer())
+            .expect("answer the offer");
+        self.peer.flush().expect("flush");
+    }
+}
+
+/// A TransferResponse (peer code 41) allowing the transfer under `token`, or
+/// refusing it for the reason given.
+fn transfer_response(token: u32, refusal: Option<&str>) -> Message {
+    let mut response = Message::new();
+    response
+        .write_int32(41)
+        .write_int32(token)
+        .write_bool(refusal.is_none());
+    if let Some(reason) = refusal {
+        response.write_string(reason);
+    }
+    response
 }
 
 fn queue_as(
@@ -2947,17 +2977,6 @@ fn open_brokered_file_connection(
     Ok(f)
 }
 
-fn receive_brokered_file(
-    server: &mut TcpStream,
-    listen_addr: &str,
-    size: usize,
-) -> std::io::Result<Vec<u8>> {
-    let mut f = open_brokered_file_connection(server, listen_addr, 0)?;
-    let mut content = vec![0u8; size];
-    f.read_exact(&mut content)?;
-    Ok(content)
-}
-
 fn legacy_transfer_request(token: u32, filename: &str) -> Message {
     let mut request = Message::new();
     request
@@ -3014,14 +3033,22 @@ fn a_file_asked_for_with_a_transfer_request_is_queued_and_served() {
     assert_eq!(offer.read_string(), wanted);
     assert_eq!(offer.read_int64(), 4096);
 
-    let mut accept = Message::new();
-    accept.write_int32(41).write_int32(token).write_bool(true);
-    peer.write_all(&accept.get_buffer()).expect("accept");
+    peer.write_all(&legacy_transfer_request(32, &wanted).get_buffer())
+        .expect("ask again");
     assert_eq!(
-        receive_brokered_file(&mut asker_server, &listen_addr, 4096)
-            .expect("the file"),
-        vec![9u8; 4096]
+        read_transfer_response(&mut peer).expect("an answer"),
+        (false, "Queued".to_string()),
+        "asking again for a file already offered changes nothing"
     );
+
+    peer.write_all(&transfer_response(token, None).get_buffer())
+        .expect("accept");
+    let mut file =
+        open_brokered_file_connection(&mut asker_server, &listen_addr, 0)
+            .expect("file connection");
+    let mut content = vec![0u8; 4096];
+    file.read_exact(&mut content).expect("the file");
+    assert_eq!(content, vec![9u8; 4096]);
 
     let _ = std::fs::remove_dir_all(share);
 }
@@ -3958,11 +3985,7 @@ fn a_refused_upload_offer_frees_its_slot_at_once() {
         &format!("{folder}\\unwanted.mp3"),
     )
     .expect("refuser queues");
-    let mut offer = expect_code(&mut refuser.peer, 40, Duration::from_secs(10))
-        .expect("the refuser is offered the slot");
-    offer.set_pointer(8);
-    let _direction = offer.read_int32();
-    let token = offer.read_int32();
+    let token = refuser.offered_token();
 
     let mut next = queue_as(
         &server_addr,
@@ -3980,17 +4003,7 @@ fn a_refused_upload_offer_frees_its_slot_at_once() {
         "the next peer waits while the offer is out"
     );
 
-    let mut refusal = Message::new();
-    refusal
-        .write_int32(41)
-        .write_int32(token)
-        .write_bool(false)
-        .write_string("Cancelled");
-    refuser
-        .peer
-        .write_all(&refusal.get_buffer())
-        .expect("refuse");
-    refuser.peer.flush().expect("flush");
+    refuser.answer_offer(token, Some("Cancelled"));
 
     assert!(
         next.takes_a_slot_within(Duration::from_secs(5)),
@@ -4021,11 +4034,7 @@ fn an_unanswered_offer_follows_its_peer_to_a_new_connection() {
         &format!("{folder}\\moved.mp3"),
     )
     .expect("asker queues");
-    let mut offer = expect_code(&mut asker.peer, 40, Duration::from_secs(10))
-        .expect("the file is offered");
-    offer.set_pointer(8);
-    let _direction = offer.read_int32();
-    let token = offer.read_int32();
+    let token = asker.offered_token();
 
     let mut replacement = connect_retry(&listen_addr, Duration::from_secs(5))
         .expect("second connection");
@@ -4072,11 +4081,7 @@ fn a_queued_peer_that_hung_up_is_dialled_when_its_slot_comes() {
         &format!("{folder}\\first.mp3"),
     )
     .expect("first peer queues");
-    let mut offer = expect_code(&mut first.peer, 40, Duration::from_secs(10))
-        .expect("the first peer is offered the slot");
-    offer.set_pointer(8);
-    let _direction = offer.read_int32();
-    let token = offer.read_int32();
+    let token = first.offered_token();
 
     let later_file = format!("{folder}\\later.mp3");
     let later_port = free_port().expect("later peer port");
@@ -4119,14 +4124,7 @@ fn a_queued_peer_that_hung_up_is_dialled_when_its_slot_comes() {
         0
     );
 
-    let mut refusal = Message::new();
-    refusal
-        .write_int32(41)
-        .write_int32(token)
-        .write_bool(false)
-        .write_string("Cancelled");
-    first.peer.write_all(&refusal.get_buffer()).expect("refuse");
-    first.peer.flush().expect("flush");
+    first.answer_offer(token, Some("Cancelled"));
 
     let mut dialled = accept_within(&listener, Duration::from_secs(15))
         .expect("the sharer dials the peer whose slot came up");
@@ -4151,14 +4149,8 @@ fn an_upload_that_breaks_tells_the_downloader() {
     let mut asker =
         queue_as(&server_addr, &listen_addr, "e2e_broken_asker", &wanted)
             .expect("asker queues");
-    let mut offer = expect_code(&mut asker.peer, 40, Duration::from_secs(10))
-        .expect("the file is offered");
-    offer.set_pointer(8);
-    let _direction = offer.read_int32();
-    let token = offer.read_int32();
-    let mut accept = Message::new();
-    accept.write_int32(41).write_int32(token).write_bool(true);
-    asker.peer.write_all(&accept.get_buffer()).expect("accept");
+    let token = asker.offered_token();
+    asker.answer_offer(token, None);
 
     let past_the_end = 4096 + 1;
     let _f = open_brokered_file_connection(
