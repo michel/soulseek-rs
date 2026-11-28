@@ -2825,6 +2825,43 @@ fn a_peer_asking_where_it_sits_is_answered_with_its_place() {
     let _ = std::fs::remove_dir_all(share);
 }
 
+/// A logged-in client sharing `share`, and the address its listener is on.
+fn sharing(
+    server: &TestServer,
+    username: &str,
+    share: &std::path::Path,
+) -> (Client, String) {
+    let port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share.display().to_string()],
+        ..server.listening_settings(username, "pw", port)
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+    (sharer, format!("127.0.0.1:{port}"))
+}
+
+#[test]
+fn a_request_for_a_file_we_do_not_share_is_refused() {
+    let server = server_or_skip!();
+    let (share, folder) = queue_share("unshared", &["here.mp3"]);
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let (_sharer, listen_addr) = sharing(&server, "e2e_q_nsharer", &share);
+
+    let missing = format!("{folder}\\gone.mp3");
+    let mut asker =
+        queue_as(&server_addr, &listen_addr, "e2e_q_nasker", &missing)
+            .expect("asker queues");
+
+    let mut refusal = expect_code(&mut asker.peer, 50, Duration::from_secs(10))
+        .expect("an UploadDenied should come back");
+    refusal.set_pointer(8);
+    assert_eq!(refusal.read_string(), missing);
+    assert_eq!(refusal.read_string(), "File not shared.");
+
+    let _ = std::fs::remove_dir_all(share);
+}
+
 #[test]
 fn the_server_answers_how_much_privilege_time_we_have() {
     let server = server_or_skip!();

@@ -171,30 +171,42 @@ impl Client {
                 requester_key,
                 filename,
             } => {
-                // The peer served next may not be this one.
-                match client_context.write_safe() {
+                let shared = match client_context.write_safe() {
                     Ok(mut ctx) => {
-                        let Some(file) = ctx.shares.get(&filename) else {
-                            debug!(
-                                "[client] QueueUpload for unknown file {}",
-                                filename
+                        let file = ctx
+                            .shares
+                            .get(&filename)
+                            .map(|file| (file.real_path.clone(), file.size));
+                        let shared = file.is_some();
+                        if let Some((real_path, size)) = file {
+                            ctx.enqueue_upload(
+                                &requester_key,
+                                &filename,
+                                real_path,
+                                size,
                             );
-                            return;
-                        };
-                        let size = file.size;
-                        let real_path = file.real_path.clone();
-                        ctx.enqueue_upload(
-                            &requester_key,
-                            &filename,
-                            real_path,
-                            size,
-                        );
+                        }
+                        shared
                     }
                     Err(e) => {
                         error!("[client] QueueUpload write: {}", e);
                         return;
                     }
+                };
+                if !shared {
+                    debug!(
+                        "[client] QueueUpload for unknown file {}",
+                        filename
+                    );
+                    Self::reply_to_peer(client_context, &requester_key, |_| {
+                        MessageFactory::build_upload_denied_message(
+                            &filename,
+                            "File not shared.",
+                        )
+                    });
+                    return;
                 }
+                // The peer served next may not be this one.
                 Self::pump_upload_queue(client_context);
             }
             // The dispatch loop routes only the variants above to here.
