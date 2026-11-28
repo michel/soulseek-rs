@@ -57,11 +57,13 @@ fn shift_b_shows_what_this_session_shares_and_r_re_indexes_it() {
 
 #[test]
 fn browse_downloads_use_the_username_and_remote_folder_options() {
-    for (use_username_dirs, preserve_remote_dirs, expected) in [
-        (false, false, &[][..]),
-        (true, false, &["bob"][..]),
-        (false, true, &["Music"][..]),
-        (true, true, &["bob", "Music"][..]),
+    for (use_username_dirs, preserve_remote_dirs, preserve_remote_folder, expected) in [
+        (false, false, false, &[][..]),
+        (true, false, false, &["bob"][..]),
+        (false, true, false, &["Music"][..]),
+        (true, true, false, &["bob", "Music"][..]),
+        (false, false, true, &["Music"][..]),
+        (true, false, true, &["bob", "Music"][..]),
     ] {
         let expected = expected
             .iter()
@@ -76,6 +78,7 @@ fn browse_downloads_use_the_username_and_remote_folder_options() {
             "/tmp".to_string(),
             use_username_dirs,
             preserve_remote_dirs,
+            preserve_remote_folder,
             Duration::from_secs(1),
             None,
             None,
@@ -99,7 +102,7 @@ fn browse_downloads_use_the_username_and_remote_folder_options() {
         assert_eq!(
             *session.download_dirs.lock().expect("not poisoned"),
             vec![expected],
-            "browse download with username={use_username_dirs}, remote={preserve_remote_dirs}"
+            "browse download with username={use_username_dirs}, remote={preserve_remote_dirs}, folder={preserve_remote_folder}"
         );
     }
 }

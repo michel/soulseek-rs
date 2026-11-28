@@ -80,6 +80,7 @@ pub fn download_path_for(
     remote_path: &str,
     per_user: bool,
     preserve_remote_dirs: bool,
+    preserve_remote_folder: bool,
 ) -> PathBuf {
     let mut path = expand_tilde(download_dir);
     if per_user {
@@ -94,6 +95,11 @@ pub fn download_path_for(
         path.extend(
             components.iter().map(|part| sanitize_path_component(part)),
         );
+    } else if preserve_remote_folder && components.len() > 1 {
+        let folder = components[components.len() - 2];
+        let file = components.last().unwrap();
+        path.push(sanitize_path_component(folder));
+        path.push(sanitize_path_component(file));
     } else if let Some(name) = components.last() {
         path.push(sanitize_path_component(name));
     } else {
@@ -162,24 +168,68 @@ mod tests {
     fn download_path_flags_compose_independently() {
         let remote = "@@share\\Music\\Artist\\Album\\track.flac";
         assert_eq!(
-            download_path_for("/dl", "bob", remote, false, false),
+            download_path_for("/dl", "bob", remote, false, false, false),
             std::path::PathBuf::from("/dl/track.flac")
         );
         assert_eq!(
-            download_path_for("/dl", "bob", remote, true, false),
+            download_path_for("/dl", "bob", remote, true, false, false),
             std::path::PathBuf::from("/dl/bob/track.flac")
         );
         assert_eq!(
-            download_path_for("/dl", "bob", remote, false, true),
+            download_path_for("/dl", "bob", remote, false, true, false),
             std::path::PathBuf::from(
                 "/dl/@@share/Music/Artist/Album/track.flac"
             )
         );
         assert_eq!(
-            download_path_for("/dl", "bob", remote, true, true),
+            download_path_for("/dl", "bob", remote, true, true, false),
             std::path::PathBuf::from(
                 "/dl/bob/@@share/Music/Artist/Album/track.flac"
             )
+        );
+        assert_eq!(
+            download_path_for("/dl", "bob", remote, false, false, true),
+            std::path::PathBuf::from("/dl/Album/track.flac")
+        );
+        assert_eq!(
+            download_path_for("/dl", "bob", remote, true, false, true),
+            std::path::PathBuf::from("/dl/bob/Album/track.flac")
+        );
+        assert_eq!(
+            download_path_for("/dl", "bob", remote, false, true, true),
+            std::path::PathBuf::from(
+                "/dl/@@share/Music/Artist/Album/track.flac"
+            )
+        );
+    }
+
+    #[test]
+    fn preserve_remote_folder_uses_immediate_parent_dir() {
+        assert_eq!(
+            download_path_for(
+                "/dl",
+                "bob",
+                "user/smthing/culprate/files",
+                false,
+                false,
+                true,
+            ),
+            std::path::PathBuf::from("/dl/culprate/files")
+        );
+        assert_eq!(
+            download_path_for(
+                "/dl",
+                "bob",
+                "user/smthing/culprate/files",
+                true,
+                false,
+                true,
+            ),
+            std::path::PathBuf::from("/dl/bob/culprate/files")
+        );
+        assert_eq!(
+            download_path_for("/dl", "bob", "files", false, false, true),
+            std::path::PathBuf::from("/dl/files")
         );
     }
 
@@ -191,33 +241,46 @@ mod tests {
             "../../outside\\\\CON\\\\track.mp3",
             false,
             true,
+            false,
         );
         assert_eq!(
             path,
             std::path::PathBuf::from("/dl/.._/.._/outside/_CON/track.mp3")
+        );
+        let folder_path = download_path_for(
+            "/dl",
+            "bob",
+            "../../CON/track.mp3",
+            false,
+            false,
+            true,
+        );
+        assert_eq!(
+            folder_path,
+            std::path::PathBuf::from("/dl/_CON/track.mp3")
         );
     }
 
     #[test]
     fn a_hostile_username_cannot_leave_the_download_dir() {
         assert_eq!(
-            download_path_for("/dl", "../..", "track.mp3", true, false),
+            download_path_for("/dl", "../..", "track.mp3", true, false, false),
             std::path::PathBuf::from("/dl/.._.._/track.mp3")
         );
         assert_eq!(
-            download_path_for("/dl", "/tmp/x", "track.mp3", true, false),
+            download_path_for("/dl", "/tmp/x", "track.mp3", true, false, false),
             std::path::PathBuf::from("/dl/_tmp_x/track.mp3")
         );
         assert_eq!(
-            download_path_for("/dl", "..", "track.mp3", true, false),
+            download_path_for("/dl", "..", "track.mp3", true, false, false),
             std::path::PathBuf::from("/dl/.._/track.mp3")
         );
         assert_eq!(
-            download_path_for("/dl", "", "track.mp3", true, false),
+            download_path_for("/dl", "", "track.mp3", true, false, false),
             std::path::PathBuf::from("/dl/_/track.mp3")
         );
         assert_eq!(
-            download_path_for("/dl", "com1", "track.mp3", true, false),
+            download_path_for("/dl", "com1", "track.mp3", true, false, false),
             std::path::PathBuf::from("/dl/_com1/track.mp3")
         );
     }
