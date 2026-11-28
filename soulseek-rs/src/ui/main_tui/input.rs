@@ -567,13 +567,13 @@ impl MainTui {
                 self.toggle_selected_download_pause();
             }
             KeyCode::Char('d') => {
-                self.remove_selected_download();
+                self.remove_selected_transfer();
             }
             KeyCode::Char('r') => {
                 self.retry_selected_download();
             }
             KeyCode::Char('c') => {
-                self.clear_finished_downloads();
+                self.clear_finished_transfers();
             }
             KeyCode::Char('C') => {
                 self.clear_all_transfers();
