@@ -136,6 +136,26 @@ impl ClientContext {
         if self.is_upload_pending(downloader, filename) {
             return false;
         }
+        // The new request is this peer's row for the file from here on; a
+        // finished one left beside it would list the same upload twice. How
+        // that one ended goes to the events, for a caller that samples the
+        // list and has not seen it yet.
+        let finished = self.active_uploads.values().filter(|upload| {
+            upload.username == downloader
+                && upload.filename == filename
+                && upload.status.is_terminal()
+        });
+        self.upload_events.extend(finished.map(|upload| UploadInfo {
+            username: upload.username.clone(),
+            filename: upload.filename.clone(),
+            size: upload.size,
+            bytes_sent:
+                upload.bytes_sent.load(std::sync::atomic::Ordering::Relaxed),
+            speed_bytes_per_sec: 0.0,
+            status: upload.status.clone(),
+        }));
+        self.cap_upload_events();
+        self.remove_upload(downloader, filename);
         self.upload_seq += 1;
         self.upload_queue.push(QueuedUpload {
             downloader: downloader.to_string(),
@@ -865,6 +885,33 @@ mod context_tests {
             ctx.active_uploads.keys().copied().collect::<Vec<_>>(),
             [2],
             "one row per peer and file, the current one"
+        );
+    }
+
+    // A peer retrying a file left its finished row beside the queued one, and
+    // `serve` printed the two in turn on every poll until the peer was served.
+    #[test]
+    fn asking_again_for_a_finished_file_replaces_its_row() {
+        let (mut ctx, _) = context(1);
+        ctx.track_active_upload(
+            1,
+            active("amy", "a.mp3", UploadStatus::Failed("gone".to_string())),
+        );
+
+        ask(&mut ctx, "amy", "a.mp3");
+
+        assert!(
+            ctx.active_uploads.is_empty(),
+            "one row per peer and file, the current one"
+        );
+        assert_eq!(ctx.queued_uploads().len(), 1);
+        assert!(
+            ctx.take_upload_events().iter().any(|event| {
+                event.username == "amy"
+                    && event.filename == "a.mp3"
+                    && event.status == UploadStatus::Failed("gone".to_string())
+            }),
+            "how it ended still reaches a caller that had not sampled it"
         );
     }
 
