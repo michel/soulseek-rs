@@ -1,5 +1,6 @@
 use crate::api::SessionApi;
 use color_eyre::Result;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Where passwords live. The real implementation is the OS keychain
@@ -61,39 +62,76 @@ impl SecretStore for KeyringStore {
 /// works, and a command that exits before the server has stored it leaves the
 /// account as it was. `Ok` carries the store's complaint when the change was
 /// confirmed but the local copy could not be written.
+///
+/// `Timeout` means no confirmation came in time. One that still arrives in
+/// the minutes after is stored all the same, for as long as this process
+/// lives.
 pub fn change_password(
-    session: &dyn SessionApi,
-    secrets: &dyn SecretStore,
+    session: Arc<dyn SessionApi>,
+    secrets: Arc<dyn SecretStore>,
     password: &str,
 ) -> soulseek_rs::Result<Option<String>> {
-    change_password_within(session, secrets, password, CONFIRMATION_PATIENCE)
+    change_password_within(
+        session,
+        secrets,
+        password,
+        CONFIRMATION_PATIENCE,
+        LATE_CONFIRMATION_PATIENCE,
+    )
 }
 
-/// How long to wait for the server to confirm a password change. It answers
-/// as soon as it has stored the password.
+/// How long the caller waits for the server to confirm a password change. It
+/// answers as soon as it has stored the password.
 const CONFIRMATION_PATIENCE: Duration = Duration::from_secs(10);
 
+/// How long a confirmation is still watched for once the caller has been
+/// told it did not come. The session adopts a late one whenever it arrives,
+/// and a store left behind it fails the next start.
+const LATE_CONFIRMATION_PATIENCE: Duration = Duration::from_mins(5);
+
 pub(crate) fn change_password_within(
-    session: &dyn SessionApi,
-    secrets: &dyn SecretStore,
+    session: Arc<dyn SessionApi>,
+    secrets: Arc<dyn SecretStore>,
     password: &str,
     patience: Duration,
+    late_patience: Duration,
 ) -> soulseek_rs::Result<Option<String>> {
     session.change_password(password)?;
     if session.daemon_endpoint().is_some() {
         return Ok(None);
     }
+    if confirmed_within(session.as_ref(), password, patience) {
+        return Ok(secrets
+            .set(&session.username(), password)
+            .err()
+            .map(|e| e.to_string()));
+    }
+    let password = password.to_string();
+    std::thread::spawn(move || {
+        if confirmed_within(session.as_ref(), &password, late_patience)
+            && let Err(e) = secrets.set(&session.username(), &password)
+        {
+            soulseek_rs::warn!(
+                "Password changed, but not stored on this host: {e}"
+            );
+        }
+    });
+    Err(soulseek_rs::SoulseekRs::Timeout)
+}
+
+fn confirmed_within(
+    session: &dyn SessionApi,
+    password: &str,
+    patience: Duration,
+) -> bool {
     let deadline = Instant::now() + patience;
     while !session.password_change_confirmed(password) {
         if Instant::now() >= deadline {
-            return Err(soulseek_rs::SoulseekRs::Timeout);
+            return false;
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    Ok(secrets
-        .set(&session.username(), password)
-        .err()
-        .map(|e| e.to_string()))
+    true
 }
 
 /// Resolve the password with precedence: CLI/env > keychain > `password_cmd`.

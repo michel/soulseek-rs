@@ -5,6 +5,7 @@ use super::{Ctx, Session};
 use crate::cli::PasswordArgs;
 use crate::output::{AccountRecord, CliError, CliResult, Out};
 use crate::persist::secret::{KeyringStore, SecretStore};
+use std::sync::Arc;
 
 /// Change the account's password and store the new one, so the next start
 /// still logs in.
@@ -13,8 +14,8 @@ pub fn password(ctx: &Ctx, args: &PasswordArgs) -> CliResult {
     let session = Session::open(ctx)?;
     let user = session.client.username();
     let stored = crate::persist::secret::change_password(
-        session.client.as_ref(),
-        &KeyringStore,
+        Arc::clone(&session.client),
+        Arc::new(KeyringStore),
         &new,
     )
     .map_err(|e| {
