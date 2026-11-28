@@ -325,13 +325,13 @@ impl Seeder {
             Metrics::bump(&self.metrics.mocks_offline);
             return;
         };
-        let Some(port) = free_port() else {
-            Metrics::bump(&self.metrics.mocks_offline);
-            return;
-        };
         // All interfaces: soulfind reports the host's LAN address for a
         // loopback login, and the client dials that.
-        let Ok(listener) = TcpListener::bind(("0.0.0.0", port)) else {
+        let bound = TcpListener::bind(("0.0.0.0", 0)).and_then(|listener| {
+            let port = listener.local_addr()?.port();
+            Ok((listener, port))
+        });
+        let Ok((listener, port)) = bound else {
             Metrics::bump(&self.metrics.mocks_offline);
             return;
         };
@@ -653,13 +653,13 @@ impl Leecher {
             Metrics::bump(&self.metrics.mocks_offline);
             return;
         };
-        let Some(port) = free_port() else {
-            Metrics::bump(&self.metrics.mocks_offline);
-            return;
-        };
         // All interfaces: soulfind reports the host's LAN address for a
         // loopback login, and the client dials that.
-        let Ok(listener) = TcpListener::bind(("0.0.0.0", port)) else {
+        let bound = TcpListener::bind(("0.0.0.0", 0)).and_then(|listener| {
+            let port = listener.local_addr()?.port();
+            Ok((listener, port))
+        });
+        let Ok((listener, port)) = bound else {
             Metrics::bump(&self.metrics.mocks_offline);
             return;
         };
@@ -958,7 +958,10 @@ fn main() {
             .expect("write share");
     }
 
-    let client_port = free_port().expect("client port");
+    // Held until the client binds it: the swarm below opens hundreds of
+    // sockets, and any of them can take a port that was only looked up.
+    let reserved = TcpListener::bind("127.0.0.1:0").expect("client port");
+    let client_port = reserved.local_addr().expect("client port").port();
     let client_name = format!("stress_client_{run_id}");
     let client_addr = format!("127.0.0.1:{client_port}");
 
@@ -1039,7 +1042,13 @@ fn main() {
         accept_children: false,
         version: ClientVersion::default(),
     });
+    drop(reserved);
     client.connect().expect("client connect");
+    assert_eq!(
+        client.listen_port(),
+        Some(client_port),
+        "the client must listen where the mocks were told to dial"
+    );
     assert!(client.login().expect("client login"), "client login failed");
     client.set_upload_slots(cfg.upload_slots);
     std::thread::sleep(Duration::from_secs(1));
