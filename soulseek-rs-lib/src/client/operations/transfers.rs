@@ -7,8 +7,8 @@
 
 use super::{
     Arc, Client, ClientContext, ClientOperation, DownloadError, DownloadPeer,
-    DownloadStatus, MessageFactory, PeerMessage, RwLock, RwLockExt,
-    ServerMessage, debug, error, info, next_download_token, thread, trace,
+    MessageFactory, PeerMessage, RwLock, RwLockExt, ServerMessage, debug,
+    error, info, next_download_token, thread, trace,
 };
 
 impl Client {
@@ -87,13 +87,10 @@ impl Client {
                     }
                 };
 
-                let cancelled = context
+                let refusal = context
                     .downloads
-                    .get_by_file(&username, &transfer.filename)
-                    .is_some_and(|download| {
-                        matches!(download.status, DownloadStatus::Cancelled)
-                    });
-                if !cancelled {
+                    .refusal_of_offer(&username, &transfer.filename);
+                if refusal.is_none() {
                     context.downloads.rekey(
                         &username,
                         &transfer.filename,
@@ -111,15 +108,18 @@ impl Client {
                 let registry = context.peer_registry.clone();
                 drop(context);
                 if let Some(registry) = registry {
-                    let response = if cancelled {
-                        MessageFactory::build_transfer_denial_message(
-                            transfer.token,
-                            "Cancelled",
-                        )
-                    } else {
-                        MessageFactory::build_transfer_response_message(
-                            transfer,
-                        )
+                    let response = match refusal {
+                        Some(reason) => {
+                            MessageFactory::build_transfer_denial_message(
+                                transfer.token,
+                                reason,
+                            )
+                        }
+                        None => {
+                            MessageFactory::build_transfer_response_message(
+                                transfer,
+                            )
+                        }
                     };
                     let _ = registry.send_to_peer(
                         &username,

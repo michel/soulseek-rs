@@ -733,7 +733,15 @@ fn run_mock_uploader_offering_after(
 
     p.write_all(&transfer_request(cfg).get_buffer())?;
     p.flush()?;
-    let mut msg = expect_code(&mut p, 41, Duration::from_secs(10))?;
+    read_transfer_response(&mut p)
+}
+
+/// The next TransferResponse (peer code 41) on `peer`: whether it allows the
+/// transfer, and the reason when it does not.
+fn read_transfer_response(
+    peer: &mut TcpStream,
+) -> std::io::Result<(bool, String)> {
+    let mut msg = expect_code(peer, 41, Duration::from_secs(10))?;
     msg.set_pointer(8);
     let _token = msg.read_int32();
     let allowed = msg.read_bool();
@@ -1229,6 +1237,45 @@ fn a_cancelled_queued_download_declines_the_peers_offer() {
     }));
     assert!(std::fs::read_dir(&download_dir).unwrap().next().is_none());
     let _ = std::fs::remove_dir_all(&download_dir);
+}
+
+#[test]
+fn an_upload_offer_for_a_file_we_never_asked_for_is_refused() {
+    let server = server_or_skip!();
+
+    let listen_port = free_port().expect("free listen port");
+    let mut client = Client::with_settings(server.listening_settings(
+        "e2e_unasked_dl",
+        "pw",
+        listen_port,
+    ));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login"));
+
+    let mut peer = connect_retry(
+        &format!("127.0.0.1:{listen_port}"),
+        Duration::from_secs(5),
+    )
+    .expect("peer connection");
+    peer.set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("read timeout");
+    peer.write_all(&peer_init_bytes("e2e_unasked_peer", "P", 0))
+        .expect("peer init");
+    let mut offer = Message::new();
+    offer
+        .write_int32(40)
+        .write_int32(1)
+        .write_int32(77)
+        .write_string("music\\never_asked.mp3")
+        .write_int64(10);
+    peer.write_all(&offer.get_buffer()).expect("offer");
+    peer.flush().expect("flush");
+
+    assert_eq!(
+        read_transfer_response(&mut peer).expect("an answer to the offer"),
+        (false, "Cancelled".to_string())
+    );
+    assert!(client.get_all_downloads().is_empty());
 }
 
 fn refusal_fails_the_download_quickly(

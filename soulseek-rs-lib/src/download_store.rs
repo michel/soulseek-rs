@@ -83,6 +83,22 @@ impl DownloadStore {
             .min_by_key(|d| d.is_finished())
     }
 
+    /// The reason to turn down a peer's offer to send `filename`, or `None`
+    /// when a download is waiting for it. Accepting any other offer invites
+    /// a file connection no download can claim.
+    #[must_use]
+    pub fn refusal_of_offer(
+        &self,
+        username: &str,
+        filename: &str,
+    ) -> Option<&'static str> {
+        match self.get_by_file(username, filename).map(|d| &d.status) {
+            Some(DownloadStatus::Queued) => None,
+            Some(DownloadStatus::Completed) => Some("Complete"),
+            _ => Some("Cancelled"),
+        }
+    }
+
     #[must_use]
     pub fn tokens(&self) -> Vec<u32> {
         self.downloads.iter().map(|d| d.token).collect()
@@ -383,6 +399,32 @@ mod tests {
             store
                 .get_by_token(1000 + MAX_FINISHED_DOWNLOADS as u32 + extra - 1)
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn only_a_waiting_download_takes_a_peers_offer() {
+        let mut store = DownloadStore::new();
+        store.add(make_download(1, DownloadStatus::Queued));
+        store.add(make_download(2, DownloadStatus::Completed));
+        store.add(make_download(3, DownloadStatus::Cancelled));
+
+        assert_eq!(store.refusal_of_offer("peer", "file-1.mp3"), None);
+        assert_eq!(
+            store.refusal_of_offer("peer", "file-2.mp3"),
+            Some("Complete")
+        );
+        assert_eq!(
+            store.refusal_of_offer("peer", "file-3.mp3"),
+            Some("Cancelled")
+        );
+        assert_eq!(
+            store.refusal_of_offer("peer", "never-asked.mp3"),
+            Some("Cancelled")
+        );
+        assert_eq!(
+            store.refusal_of_offer("stranger", "file-1.mp3"),
+            Some("Cancelled")
         );
     }
 
