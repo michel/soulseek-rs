@@ -2918,14 +2918,15 @@ fn a_request_for_a_file_we_do_not_share_is_refused() {
     let _ = std::fs::remove_dir_all(share);
 }
 
-/// Take the file a sharer serves to a peer nobody can dial: answer the
-/// ConnectToPeer the server relays on `server` by connecting back to
-/// `listen_addr`, and read `size` bytes from the start.
-fn receive_brokered_file(
+/// Open the file connection a sharer brokers to a peer nobody can dial:
+/// answer the ConnectToPeer the server relays on `server` by connecting back
+/// to `listen_addr`, read past the transfer token, and ask for the file from
+/// `offset`.
+fn open_brokered_file_connection(
     server: &mut TcpStream,
     listen_addr: &str,
-    size: usize,
-) -> std::io::Result<Vec<u8>> {
+    offset: u64,
+) -> std::io::Result<TcpStream> {
     let mut ctp = expect_code(server, 18, Duration::from_secs(15))?;
     ctp.set_pointer(8);
     let _who = ctp.read_string();
@@ -2942,7 +2943,16 @@ fn receive_brokered_file(
     )?;
     let mut transfer_token = [0u8; 4];
     f.read_exact(&mut transfer_token)?;
-    f.write_all(&0u64.to_le_bytes())?;
+    f.write_all(&offset.to_le_bytes())?;
+    Ok(f)
+}
+
+fn receive_brokered_file(
+    server: &mut TcpStream,
+    listen_addr: &str,
+    size: usize,
+) -> std::io::Result<Vec<u8>> {
+    let mut f = open_brokered_file_connection(server, listen_addr, 0)?;
     let mut content = vec![0u8; size];
     f.read_exact(&mut content)?;
     Ok(content)
@@ -4124,6 +4134,49 @@ fn a_queued_peer_that_hung_up_is_dialled_when_its_slot_comes() {
     assert_eq!(offer.read_int32(), 1);
     let _token = offer.read_int32();
     assert_eq!(offer.read_string(), later_file);
+
+    let _ = std::fs::remove_dir_all(share);
+}
+
+#[test]
+fn an_upload_that_breaks_tells_the_downloader() {
+    let server = server_or_skip!();
+    let (share, folder) = queue_share("broken", &["broken.mp3"]);
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let (sharer, listen_addr) = sharing(&server, "e2e_broken_sharer", &share);
+
+    let wanted = format!("{folder}\\broken.mp3");
+    let mut asker =
+        queue_as(&server_addr, &listen_addr, "e2e_broken_asker", &wanted)
+            .expect("asker queues");
+    let mut offer = expect_code(&mut asker.peer, 40, Duration::from_secs(10))
+        .expect("the file is offered");
+    offer.set_pointer(8);
+    let _direction = offer.read_int32();
+    let token = offer.read_int32();
+    let mut accept = Message::new();
+    accept.write_int32(41).write_int32(token).write_bool(true);
+    asker.peer.write_all(&accept.get_buffer()).expect("accept");
+
+    let past_the_end = 4096 + 1;
+    let _f = open_brokered_file_connection(
+        &mut asker.server,
+        &listen_addr,
+        past_the_end,
+    )
+    .expect("file connection");
+
+    let mut failed = expect_code(&mut asker.peer, 46, Duration::from_secs(10))
+        .expect("an UploadFailed should come back");
+    failed.set_pointer(8);
+    assert_eq!(failed.read_string(), wanted);
+    assert!(
+        wait_for(|| sharer.uploads().iter().any(|upload| {
+            upload.username == "e2e_broken_asker"
+                && matches!(upload.status, UploadStatus::Failed(_))
+        })),
+        "the operator sees the upload fail"
+    );
 
     let _ = std::fs::remove_dir_all(share);
 }

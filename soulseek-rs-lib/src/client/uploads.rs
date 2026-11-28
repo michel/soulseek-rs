@@ -408,10 +408,15 @@ impl Client {
             }
         };
         let mut report = None;
+        let mut broken = None;
         if let Ok(mut ctx) = context.write_safe()
             && let Some(upload) = ctx.active_uploads.get_mut(&token)
         {
             let secs = upload.started.elapsed().as_secs_f64();
+            if matches!(status, UploadStatus::Failed(_)) {
+                broken =
+                    Some((upload.username.clone(), upload.filename.clone()));
+            }
             upload.status = status;
             if let Some(bytes) = streamed
                 && secs > 0.0
@@ -427,6 +432,11 @@ impl Client {
             let _ = server.send(ServerMessage::SendMessage(
                 MessageFactory::build_send_upload_speed(speed),
             ));
+        }
+        if let Some((downloader, filename)) = broken {
+            Self::reply_to_peer(context, &downloader, |_| {
+                MessageFactory::build_upload_failed_message(&filename)
+            });
         }
         // The slot this transfer held is free now, so whoever is next in
         // line gets it without waiting for another request to arrive.

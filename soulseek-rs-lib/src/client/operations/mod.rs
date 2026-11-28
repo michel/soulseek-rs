@@ -810,7 +810,7 @@ impl Client {
     }
 
     /// Answer a peer with the message `build` derives from the client state.
-    fn reply_to_peer(
+    pub(in crate::client) fn reply_to_peer(
         client_context: &Arc<RwLock<ClientContext>>,
         requester_key: &str,
         build: impl FnOnce(&ClientContext) -> crate::message::Message,
