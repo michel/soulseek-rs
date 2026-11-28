@@ -109,10 +109,9 @@ fn next_upload_token() -> u32 {
 
 /// Source of download tokens, kept in the low half of the space.
 ///
-/// A counter, not a hash of the filename: the download store is keyed by token
-/// and removes every entry matching one, so any two downloads sharing a token
-/// destroy each other — and the same filename from two peers is an ordinary
-/// thing to queue.
+/// A counter, not a hash of the filename: until a peer offers a file, this
+/// token is what tells its downloads apart, and the same filename from two
+/// peers is an ordinary thing to queue.
 static NEXT_DOWNLOAD_TOKEN: AtomicU32 = AtomicU32::new(1);
 
 fn next_download_token() -> u32 {

@@ -7,18 +7,21 @@ use super::*;
 use crate::message::Message;
 use crate::message::peer::PeerInfo;
 
-// The daemon logs back in by itself. It did so with the password it was
-// started with, so one `account.password` meant every reconnect after it was
-// refused until the daemon was restarted.
+// Losing one of these is a breaking change for anyone holding a `Client`,
+// and a private field is enough to do it.
 #[test]
-fn a_changed_password_is_sent_with_the_next_login() {
-    use crate::actor::ActorMessage;
-
+fn a_client_stays_shareable_and_unwind_safe() {
     fn assert_traits<
         T: Send + Sync + std::panic::UnwindSafe + std::panic::RefUnwindSafe,
     >() {
     }
     assert_traits::<Client>();
+}
+
+// The daemon logs back in by itself, with whatever password it holds.
+#[test]
+fn a_changed_password_is_sent_with_the_next_login() {
+    use crate::actor::ActorMessage;
 
     let mut client = Client::new("me", "first-pw");
     let (sender, receiver) = mpsc::channel();
@@ -228,8 +231,6 @@ fn forgetting_a_search_frees_its_place() {
     assert!(ctx.search_order.is_empty());
 }
 
-// The cap on finished downloads was only applied when one was added, so a
-// batch queued first and finished later stayed above it.
 #[test]
 fn a_finished_batch_is_capped_and_every_download_gets_its_terminal_status() {
     use crate::download_store::MAX_FINISHED_DOWNLOADS;

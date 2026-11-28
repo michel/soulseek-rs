@@ -25,9 +25,7 @@ impl ServerActor {
                 ServerMessage::ProcessRead | ServerMessage::Login { .. }
             )
         {
-            // Only a connection on its way up will ever send these. Held
-            // while offline they grew without limit, and went out ahead of
-            // the login on the next connection, where the server drops them.
+            // Only a connection on its way up will ever send these.
             if matches!(
                 self.connection_state,
                 ConnectionState::Connecting { .. }
@@ -413,12 +411,12 @@ impl ServerActor {
                 self.shared_file_count,
             ) {
                 self.send_message(msg);
-            }
-            // A write that failed has recorded the loss and dropped the
-            // connection. Calling that a session would clear the loss, and
-            // nothing would ever reconnect.
-            if connected && self.stream.is_none() {
-                return;
+                // A write that failed has recorded the loss and dropped the
+                // connection. Calling that a session would clear the loss
+                // the daemon reconnects on.
+                if connected && self.stream.is_none() {
+                    return;
+                }
             }
             self.session.clear();
             // The distributed stance is the leaf's to announce, and a new
