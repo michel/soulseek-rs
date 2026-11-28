@@ -480,13 +480,12 @@ impl SessionApi for RemoteSession {
     }
 
     fn session_loss(&self) -> Option<SessionLoss> {
-        // The pushed event is the prompt answer; the status call also covers a
-        // loss that happened before this client attached.
-        self.mirror.loss().or_else(|| {
-            self.status()
-                .and_then(|status| status.session_loss)
-                .map(Into::into)
-        })
+        // The daemon logs back in on its own, so what it says now outranks a
+        // loss it pushed earlier; the pushed one answers only when it cannot.
+        match self.status() {
+            Some(status) => status.session_loss.map(Into::into),
+            None => self.mirror.loss(),
+        }
     }
 
     fn search_with_cancel(
@@ -856,6 +855,106 @@ impl SessionApi for RemoteSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // An attached client kept the first loss it was told about for the rest
+    // of its life, so every later failure read as "the session ended".
+    #[test]
+    fn an_attached_session_reports_recovery_and_a_later_loss() {
+        use serde_json::json;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let endpoint =
+            Endpoint::Tcp(listener.local_addr().unwrap().to_string());
+        let daemon = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("a connection");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let reader = BufReader::new(stream.try_clone().unwrap());
+            let mut losses =
+                [json!("disconnected"), json!(null), json!("displaced")]
+                    .into_iter();
+            for line in reader.lines() {
+                let request: Request =
+                    serde_json::from_str(&line.unwrap()).unwrap();
+                let response = if request.method == Method::Auth.wire_name() {
+                    let event = Response::notification(
+                        Event::SessionLoss.wire_name(),
+                        json!({ "loss": "disconnected" }),
+                    );
+                    writeln!(
+                        stream,
+                        "{}",
+                        serde_json::to_string(&event).unwrap()
+                    )
+                    .unwrap();
+                    Response::result(
+                        request.id,
+                        json!({
+                            "protocol": PROTOCOL_VERSION,
+                            "daemon_version": "test",
+                            "username": "alice"
+                        }),
+                    )
+                } else {
+                    assert_eq!(
+                        request.method,
+                        Method::DaemonStatus.wire_name()
+                    );
+                    let Some(loss) = losses.next() else {
+                        let response = Response::failure(
+                            request.id,
+                            RpcError::new(
+                                CODE_APPLICATION,
+                                "status unavailable",
+                            ),
+                        );
+                        writeln!(
+                            stream,
+                            "{}",
+                            serde_json::to_string(&response).unwrap()
+                        )
+                        .unwrap();
+                        return;
+                    };
+                    Response::result(
+                        request.id,
+                        json!({
+                            "username": "alice",
+                            "server": "localhost:2242",
+                            "daemon_version": "test",
+                            "protocol": PROTOCOL_VERSION,
+                            "shared_folders": 0,
+                            "shared_files": 0,
+                            "download_dir": "/tmp/downloads",
+                            "session_loss": loss,
+                            "clients": 1,
+                            "uptime_secs": 0
+                        }),
+                    )
+                };
+                writeln!(
+                    stream,
+                    "{}",
+                    serde_json::to_string(&response).unwrap()
+                )
+                .unwrap();
+            }
+        });
+
+        let session = RemoteSession::connect(&endpoint, Some("token".into()))
+            .expect("an attached session");
+        assert_eq!(session.session_loss(), Some(SessionLoss::Disconnected));
+        assert_eq!(session.session_loss(), None, "the daemon has recovered");
+        assert_eq!(session.session_loss(), Some(SessionLoss::Displaced));
+        assert_eq!(
+            session.session_loss(),
+            Some(SessionLoss::Disconnected),
+            "the pushed event is a fallback when status is unavailable"
+        );
+        daemon.join().expect("the daemon answered every request");
+    }
 
     #[test]
     fn an_endpoint_tells_a_socket_path_from_a_host_and_port() {
