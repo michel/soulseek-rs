@@ -809,7 +809,7 @@ mod tests {
     /// The one room `SilentSession` claims to have joined.
     const STUB_ROOM: &str = "jazz";
 
-    fn daemon_with_token(token: &str) -> Daemon {
+    pub(super) fn daemon_with_token(token: &str) -> Daemon {
         daemon_with(token, Arc::new(SilentSession::default()))
     }
 

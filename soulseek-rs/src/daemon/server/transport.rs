@@ -28,6 +28,14 @@ const AUTH_FAILURE_DELAY: Duration = Duration::from_secs(1);
 /// stopped reading cannot make the daemon buffer without limit.
 const WRITE_QUEUE_DEPTH: usize = 1024;
 
+/// How long one write may make no progress. A client that has stopped
+/// reading would otherwise block its writer forever, and cleanup waits on the
+/// writer before it gives the connection slot back.
+#[cfg(not(test))]
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(test)]
+const WRITE_TIMEOUT: Duration = Duration::from_millis(500);
+
 /// The longest request line the daemon will read. Generous next to the largest
 /// real request (a `shares.set` naming every folder) and small enough that an
 /// unauthenticated peer cannot make the daemon allocate without bound.
@@ -78,6 +86,17 @@ impl Stream {
             Self::Unix(stream) => stream.set_read_timeout(timeout),
             Self::Tcp(stream) => stream.set_read_timeout(timeout),
         };
+    }
+
+    fn set_write_timeout(
+        &self,
+        timeout: Option<Duration>,
+    ) -> std::io::Result<()> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.set_write_timeout(timeout),
+            Self::Tcp(stream) => stream.set_write_timeout(timeout),
+        }
     }
 
     /// End the connection from another thread. This is what makes "a client
@@ -210,6 +229,7 @@ fn handle(stream: Stream, daemon: &Daemon) -> std::io::Result<()> {
 
     // A peer that connects and says nothing must not hold a thread forever.
     stream.set_read_timeout(Some(AUTH_TIMEOUT));
+    stream.set_write_timeout(Some(WRITE_TIMEOUT))?;
 
     let (out, outbox) = sync_channel::<Response>(WRITE_QUEUE_DEPTH);
     let writer = std::thread::spawn(move || write_loop(stream, &outbox));
@@ -413,6 +433,10 @@ fn write_loop(stream: Stream, outbox: &Receiver<Response>) {
             continue;
         };
         if writeln!(stream, "{line}").is_err() || stream.flush().is_err() {
+            // The reader is still waiting on this client. Closing the socket
+            // is what ends it, so the connection is cleaned up rather than
+            // left attached and deaf.
+            stream.shutdown();
             return;
         }
     }
@@ -463,5 +487,71 @@ fn remove_stale_socket(path: &std::path::Path) -> std::io::Result<()> {
             format!("a daemon is already listening on {}", path.display()),
         )),
         Err(_) => std::fs::remove_file(path),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::net::Shutdown;
+    use std::os::unix::net::UnixStream;
+    use std::time::Instant;
+
+    #[test]
+    fn a_client_that_stops_reading_releases_its_connection_slot() {
+        let discover = r#"{"jsonrpc":"2.0","id":2,"method":"rpc.discover"}"#;
+        // Past the reply queue's depth the handler never reaches the
+        // half-close, and a client that keeps its socket open sends no EOF.
+        for (requests, half_close) in
+            [(64, true), (WRITE_QUEUE_DEPTH + 64, true), (64, false)]
+        {
+            let daemon = Arc::new(super::super::tests::daemon_with_token("t"));
+            let connect = || {
+                let (client, server) = UnixStream::pair().expect("socket pair");
+                for timeout in [
+                    UnixStream::set_read_timeout,
+                    UnixStream::set_write_timeout,
+                ] {
+                    timeout(&client, Some(Duration::from_secs(1)))
+                        .expect("a timeout");
+                }
+                spawn_connection(Stream::Unix(server), Arc::clone(&daemon));
+                let mut client = BufReader::new(client);
+                writeln!(
+                    client.get_mut(),
+                    r#"{{"jsonrpc":"2.0","id":1,"method":"auth"}}"#
+                )
+                .expect("ask to authenticate");
+                let mut reply = String::new();
+                client.read_line(&mut reply).expect("an auth reply");
+                let reply: Value = serde_json::from_str(&reply).expect("JSON");
+                assert!(reply.get("result").is_some(), "{reply}");
+                client
+            };
+
+            let mut stalled = connect();
+            // The daemon may disconnect this client mid-send.
+            for _ in 0..requests {
+                if writeln!(stalled.get_mut(), "{discover}").is_err() {
+                    break;
+                }
+            }
+            if half_close {
+                let _ = stalled.get_ref().shutdown(Shutdown::Write);
+            }
+
+            let _healthy: Vec<_> =
+                (0..MAX_CONNECTIONS - 1).map(|_| connect()).collect();
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while daemon.open.load(Ordering::Relaxed) == MAX_CONNECTIONS {
+                assert!(
+                    Instant::now() < deadline,
+                    "the stalled client kept its slot after {requests} \
+                     requests (half-closed: {half_close})"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            connect();
+        }
     }
 }
