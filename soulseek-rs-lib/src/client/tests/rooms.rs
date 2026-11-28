@@ -101,6 +101,35 @@ fn room_member_stats_are_returned_sorted_and_scoped_to_their_room() {
 }
 
 #[test]
+fn leaving_a_room_drops_its_member_stats() {
+    use crate::types::{RoomUserStats, UserStatus};
+
+    let mut context = ClientContext::new();
+    context.apply_room_event(RoomEvent::Joined {
+        room: "jazz".to_string(),
+        users: vec!["alice".to_string()],
+    });
+    context.apply_room_member_stats(
+        "jazz".to_string(),
+        vec![RoomUserStats {
+            username: "alice".to_string(),
+            status: UserStatus::Online,
+            average_speed: 1,
+            shared_files: 2,
+            shared_folders: 3,
+            slots_full: false,
+            country: None,
+        }],
+    );
+    assert_eq!(context.room_member_stats("jazz").len(), 1);
+
+    context.apply_room_event(RoomEvent::Left {
+        room: "jazz".to_string(),
+    });
+    assert!(context.room_member_stats("jazz").is_empty());
+}
+
+#[test]
 fn rejoining_replaces_the_previous_member_stats() {
     use crate::types::{RoomUserStats, UserStatus};
     let stat = |username: &str| RoomUserStats {
