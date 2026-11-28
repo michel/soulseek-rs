@@ -217,6 +217,14 @@ impl Daemon {
                         .cancel_upload(&transfer.username, &transfer.filename),
                 })
             }
+            Method::UploadRemove => {
+                let transfer: TransferRef = parse(params)?;
+                ok(Ack {
+                    ok: self
+                        .session
+                        .remove_upload(&transfer.username, &transfer.filename),
+                })
+            }
             Method::UploadSlots => {
                 let slots: SlotsParams = parse(params)?;
                 self.session.set_upload_slots(slots.slots);
@@ -952,6 +960,9 @@ mod tests {
             Vec::new()
         }
         fn cancel_upload(&self, _username: &str, _filename: &str) -> bool {
+            false
+        }
+        fn remove_upload(&self, _username: &str, _filename: &str) -> bool {
             false
         }
         fn cancel_download(&self, _username: &str, _filename: &str) -> bool {

@@ -45,7 +45,8 @@ fn params_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         | Method::DownloadRemove
         | Method::DownloadRemoveQueued
         | Method::DownloadCancel
-        | Method::UploadCancel => schema_of::<TransferRef>(generator),
+        | Method::UploadCancel
+        | Method::UploadRemove => schema_of::<TransferRef>(generator),
         Method::DownloadSetDir => schema_of::<DirectoryParams>(generator),
         Method::AccountPassword => schema_of::<PasswordParams>(generator),
         Method::UploadSlots => schema_of::<SlotsParams>(generator),
@@ -116,6 +117,7 @@ fn result_schema(method: Method, generator: &mut SchemaGenerator) -> Value {
         | Method::DownloadSetDir
         | Method::AccountPassword
         | Method::UploadCancel
+        | Method::UploadRemove
         | Method::UploadSlots
         | Method::PrivilegesCheck
         | Method::RoomListRequest
@@ -186,6 +188,7 @@ fn summary(method: Method) -> &'static str {
             "Cancel an upload: drop it from the queue, or stop it if it is \
              being sent."
         }
+        Method::UploadRemove => "Forget a finished upload.",
         Method::UploadSlots => "How many uploads may run at once.",
         Method::PrivilegesCheck => {
             "Ask the server for this account's privilege time."

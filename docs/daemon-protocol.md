@@ -152,6 +152,8 @@ row and its place. Finished uploads stay listed as history, the newest 200.
 `upload.cancel` works at any stage — a queued or offered upload is removed and
 the peer told, one being sent stops — and answers `ok: false` only when
 nothing matched.
+`upload.remove` forgets finished uploads for a peer and file, leaves queued
+and streaming uploads alone, and answers `ok: false` when nothing was removed.
 
 ## Behaviour worth knowing
 

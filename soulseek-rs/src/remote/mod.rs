@@ -656,6 +656,10 @@ impl SessionApi for RemoteSession {
         self.ask(Method::UploadCancel, Self::transfer(username, filename))
     }
 
+    fn remove_upload(&self, username: &str, filename: &str) -> bool {
+        self.ask(Method::UploadRemove, Self::transfer(username, filename))
+    }
+
     fn set_upload_slots(&self, slots: usize) {
         let _ = self.tell(Method::UploadSlots, SlotsParams { slots });
     }

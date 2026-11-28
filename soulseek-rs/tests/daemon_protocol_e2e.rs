@@ -1095,6 +1095,80 @@ fn a_repeated_upload_request_keeps_one_row_and_can_be_cancelled() {
     );
 }
 
+const SERVED: &str = "music\\done.mp3";
+const FETCHER: &str = "cli_e2e_fetcher";
+
+/// The states the daemon lists for the upload of [`SERVED`] to [`FETCHER`].
+fn served_states(connection: &mut Connection) -> Vec<String> {
+    listed_uploads(connection)
+        .into_iter()
+        .filter(|(user, file, _)| user == FETCHER && file == SERVED)
+        .map(|(_, _, state)| state)
+        .collect()
+}
+
+/// A daemon that has served [`SERVED`] to [`FETCHER`] in full, with a
+/// connection to it.
+fn serve_one_upload() -> Option<(Daemon, Connection, TempDir)> {
+    let share = tempfile::tempdir().expect("a share root");
+    let music = share.path().join("music");
+    std::fs::create_dir(&music).expect("a shared folder");
+    let bytes = [7u8; 4096];
+    std::fs::write(music.join("done.mp3"), bytes).expect("a shared file");
+    let daemon = Daemon::start_with(
+        None,
+        &["--shared-dir", music.to_str().expect("utf-8 path")],
+    )?;
+
+    let fetcher = daemon.server.client(FETCHER, Vec::new());
+    common::settle();
+    let downloads = tempfile::tempdir().expect("downloads");
+    let (_download, _status) = fetcher
+        .download(
+            SERVED.to_string(),
+            "cli_e2e_proto".to_string(),
+            bytes.len() as u64,
+            downloads.path().display().to_string(),
+        )
+        .expect("start download");
+
+    let mut connection = daemon.connect_tcp().expect("tcp");
+    connection
+        .authenticate(Some(&daemon.token()))
+        .expect("an answer");
+    assert!(
+        wait_until(Duration::from_secs(30), || {
+            served_states(&mut connection) == ["completed"]
+        }),
+        "the upload never completed"
+    );
+    Some((daemon, connection, share))
+}
+
+#[test]
+fn a_finished_upload_is_removed_once_and_stays_gone() {
+    let Some((_daemon, mut connection, _share)) = serve_one_upload() else {
+        common::no_server("daemon protocol e2e");
+        return;
+    };
+
+    let remove = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 8,
+        "method": "upload.remove",
+        "params": { "username": FETCHER, "filename": SERVED },
+    })
+    .to_string();
+    let reply = connection.call(&remove).expect("an answer");
+    assert!(reply.contains(r#""ok":true"#), "got {reply}");
+    let again = connection.call(&remove).expect("an answer");
+    assert!(again.contains(r#""ok":false"#), "got {again}");
+    assert!(
+        served_states(&mut connection).is_empty(),
+        "the row must be gone"
+    );
+}
+
 /// A wrong or missing token is the CLI's problem to explain, not just the
 /// wire's: the user typed `--daemon-token`, so the failure has to come back
 /// as a connection error rather than a hang or a fallback to local defaults.

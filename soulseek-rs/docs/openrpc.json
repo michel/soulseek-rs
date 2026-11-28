@@ -2029,6 +2029,33 @@
       "summary": "Cancel an upload: drop it from the queue, or stop it if it is being sent."
     },
     {
+      "name": "upload.remove",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "filename",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "username",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ack"
+        }
+      },
+      "summary": "Forget a finished upload."
+    },
+    {
       "name": "upload.slots",
       "paramStructure": "by-name",
       "params": [
