@@ -104,6 +104,7 @@ impl ClientContext {
             }
             RoomEvent::Left { room } => {
                 self.room_members.remove(room);
+                self.room_member_stats.remove(room);
                 // A board for a room we are not in is stale; the server sends
                 // the whole board again on the next join.
                 self.room_tickers.remove(room);
