@@ -444,6 +444,7 @@ impl Client {
                                 );
                             }
                         }
+                        Self::send_held_offers(&client_context, &username);
                     }
                     operation @ ClientOperation::IncomingSearch { .. } => {
                         Self::on_search(

@@ -11,7 +11,8 @@
 //! than the one the rules ask for.
 
 use super::{
-    ActiveUpload, ClientContext, Duration, Instant, PeerRegistry, UploadJob,
+    ActiveUpload, ClientContext, Duration, Instant, Offer, PeerRegistry,
+    UploadJob,
 };
 use crate::types::{UploadInfo, UploadStatus};
 use std::collections::HashMap;
@@ -215,7 +216,7 @@ impl ClientContext {
                     virtual_path: job.virtual_path,
                     size: job.size,
                     deadline: Instant::now() + OFFER_TIMEOUT,
-                    answered: false,
+                    offer: Offer::Sent,
                 },
             );
         }
@@ -430,44 +431,41 @@ impl ClientContext {
     /// never got its file. Returns whether anything was dropped, which is the
     /// caller's cue to pump again.
     pub fn expire_stale_offers(&mut self, now: Instant) -> bool {
-        let stale: Vec<u32> = self
+        let stale: Vec<(u32, &str)> = self
             .uploads
             .iter()
             .filter(|(_, job)| now >= job.deadline)
-            .map(|(&token, _)| token)
+            .map(|(&token, job)| {
+                let reason = match job.offer {
+                    Offer::Unsent => "the peer could not be reached",
+                    Offer::Sent => "no answer to the transfer offer",
+                    Offer::Accepted => "the transfer never started",
+                };
+                (token, reason)
+            })
             .collect();
-        for token in &stale {
-            let Some(job) = self.retire_offer(*token) else {
-                continue;
-            };
-            let reason = if job.answered {
-                "the transfer never started"
-            } else {
-                "no answer to the transfer offer"
-            };
-            self.upload_events.push(UploadInfo {
-                username: job.downloader,
-                filename: job.virtual_path,
-                size: job.size,
-                bytes_sent: 0,
-                speed_bytes_per_sec: 0.0,
-                status: UploadStatus::Failed(reason.to_string()),
-            });
+        for &(token, reason) in &stale {
+            self.close_offer(token, UploadStatus::Failed(reason.to_string()));
         }
-        self.cap_upload_events();
         !stale.is_empty()
     }
 
     /// The peer turned down the offer for `token`, which frees its slot.
     /// Returns whether the offer was still open.
     pub fn refuse_offer(&mut self, token: u32, reason: Option<&str>) -> bool {
-        let Some(job) = self.uploads.remove(&token) else {
+        self.close_offer(
+            token,
+            match reason.map(str::trim) {
+                None | Some("" | "Cancelled") => UploadStatus::Cancelled,
+                Some(reason) => UploadStatus::Failed(reason.to_string()),
+            },
+        )
+    }
+
+    /// End the offer for `token` with no transfer, recording why.
+    fn close_offer(&mut self, token: u32, status: UploadStatus) -> bool {
+        let Some(job) = self.retire_offer(token) else {
             return false;
-        };
-        self.forget_pending_serve(&job.downloader, token);
-        let status = match reason {
-            None | Some("Cancelled") => UploadStatus::Cancelled,
-            Some(reason) => UploadStatus::Failed(reason.to_string()),
         };
         self.upload_events.push(UploadInfo {
             username: job.downloader,
@@ -487,9 +485,43 @@ impl ClientContext {
     /// lookup lost to a dropped session would otherwise hold the slot forever.
     pub fn mark_offer_answered(&mut self, token: u32) {
         if let Some(job) = self.uploads.get_mut(&token) {
-            job.answered = true;
+            job.offer = Offer::Accepted;
             job.deadline = Instant::now() + ACCEPTED_TIMEOUT;
         }
+    }
+
+    /// The connection to `downloader` is gone, or was never there: offers
+    /// it has not answered wait for the next one. Returns whether any do.
+    pub fn hold_offers(&mut self, downloader: &str) -> bool {
+        let mut held = false;
+        for job in self.uploads.values_mut().filter(|job| {
+            job.downloader == downloader && job.offer != Offer::Accepted
+        }) {
+            job.offer = Offer::Unsent;
+            held = true;
+        }
+        held
+    }
+
+    /// The offers waiting for a connection to `downloader`, to send now
+    /// that one is up. Their deadline stands: an offer that could be sent
+    /// again without limit would hold its slot without limit.
+    pub fn take_held_offers(&mut self, downloader: &str) -> Vec<UploadOffer> {
+        self.uploads
+            .iter_mut()
+            .filter(|(_, job)| {
+                job.downloader == downloader && job.offer == Offer::Unsent
+            })
+            .map(|(&token, job)| {
+                job.offer = Offer::Sent;
+                UploadOffer {
+                    requester_key: job.downloader.clone(),
+                    token,
+                    virtual_path: job.virtual_path.clone(),
+                    size: job.size,
+                }
+            })
+            .collect()
     }
 
     /// Forget everything `downloader` was waiting for or had been offered, and
@@ -1064,6 +1096,50 @@ mod context_tests {
         assert!(ctx.take_upload_events().iter().any(|event| {
             event.username == "gone"
                 && matches!(event.status, UploadStatus::Failed(_))
+        }));
+    }
+
+    #[test]
+    fn an_offer_with_no_connection_goes_out_once_when_one_comes_up() {
+        let (mut ctx, mut token) = context(2);
+        ask(&mut ctx, "hung_up", "f.mp3");
+        ask(&mut ctx, "accepted", "f.mp3");
+        offered(&mut ctx, &mut token);
+        ctx.mark_offer_answered(2);
+
+        assert!(ctx.hold_offers("hung_up"));
+        assert!(!ctx.hold_offers("accepted"), "an accepted offer is settled");
+        assert!(!ctx.hold_offers("stranger"));
+
+        assert!(ctx.take_held_offers("accepted").is_empty());
+        let held = ctx.take_held_offers("hung_up");
+        assert_eq!(held.len(), 1);
+        assert_eq!(
+            (held[0].token, held[0].virtual_path.as_str()),
+            (1, "f.mp3")
+        );
+        assert!(ctx.take_held_offers("hung_up").is_empty(), "sent once");
+        assert!(
+            ctx.expire_stale_offers(std::time::Instant::now() + OFFER_TIMEOUT),
+            "sending it again buys no more time"
+        );
+    }
+
+    #[test]
+    fn an_offer_whose_peer_is_never_reached_frees_its_slot() {
+        let (mut ctx, mut token) = context(1);
+        ask(&mut ctx, "unreachable", "f.mp3");
+        offered(&mut ctx, &mut token);
+        ctx.hold_offers("unreachable");
+
+        let later = std::time::Instant::now() + OFFER_TIMEOUT;
+        assert!(ctx.expire_stale_offers(later));
+        assert!(ctx.take_held_offers("unreachable").is_empty());
+        assert!(ctx.take_upload_events().iter().any(|event| {
+            event.status
+                == UploadStatus::Failed(
+                    "the peer could not be reached".to_string(),
+                )
         }));
     }
 

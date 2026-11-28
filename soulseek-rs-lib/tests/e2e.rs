@@ -2567,7 +2567,7 @@ fn the_server_reports_another_users_status_and_share_counts() {
 /// goes quiet. Returned so the caller can keep it alive: dropping the streams
 /// would release the slot it is holding.
 struct QueueingPeer {
-    _server: TcpStream,
+    server: TcpStream,
     peer: TcpStream,
 }
 
@@ -2602,10 +2602,7 @@ fn queue_as(
     queue.write_int32(43).write_string(filename);
     peer.write_all(&queue.get_buffer())?;
     peer.flush()?;
-    Ok(QueueingPeer {
-        _server: server,
-        peer,
-    })
+    Ok(QueueingPeer { server, peer })
 }
 
 /// Wait for `check` to hold, polling the client's view of its own queue.
@@ -3994,6 +3991,139 @@ fn a_refused_upload_offer_frees_its_slot_at_once() {
         }),
         "the operator sees the refused offer as cancelled"
     );
+
+    let _ = std::fs::remove_dir_all(share);
+}
+
+#[test]
+fn an_unanswered_offer_follows_its_peer_to_a_new_connection() {
+    let server = server_or_skip!();
+    let (share, folder) = queue_share("moved", &["moved.mp3"]);
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let (_sharer, listen_addr) = sharing(&server, "e2e_moved_sharer", &share);
+
+    let mut asker = queue_as(
+        &server_addr,
+        &listen_addr,
+        "e2e_moved_asker",
+        &format!("{folder}\\moved.mp3"),
+    )
+    .expect("asker queues");
+    let mut offer = expect_code(&mut asker.peer, 40, Duration::from_secs(10))
+        .expect("the file is offered");
+    offer.set_pointer(8);
+    let _direction = offer.read_int32();
+    let token = offer.read_int32();
+
+    let mut replacement = connect_retry(&listen_addr, Duration::from_secs(5))
+        .expect("second connection");
+    replacement
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("read timeout");
+    replacement
+        .write_all(&peer_init_bytes("e2e_moved_asker", "P", 0))
+        .expect("peer init");
+    replacement
+        .write_all(
+            &soulseek_rs::message::peer::build_user_info_request().get_buffer(),
+        )
+        .expect("ask over the new connection");
+    expect_code(&mut replacement, 16, Duration::from_secs(10))
+        .expect("the new connection is the one in use");
+
+    asker
+        .peer
+        .shutdown(std::net::Shutdown::Write)
+        .expect("close the first connection");
+
+    let mut offer = expect_code(&mut replacement, 40, Duration::from_secs(10))
+        .expect("the offer is made again where the peer now is");
+    offer.set_pointer(8);
+    let _direction = offer.read_int32();
+    assert_eq!(offer.read_int32(), token);
+
+    let _ = std::fs::remove_dir_all(share);
+}
+
+#[test]
+fn a_queued_peer_that_hung_up_is_dialled_when_its_slot_comes() {
+    let server = server_or_skip!();
+    let (share, folder) = queue_share("hungup", &["first.mp3", "later.mp3"]);
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let (sharer, listen_addr) = sharing(&server, "e2e_hungup_sharer", &share);
+    sharer.set_upload_slots(1);
+
+    let mut first = queue_as(
+        &server_addr,
+        &listen_addr,
+        "e2e_hungup_first",
+        &format!("{folder}\\first.mp3"),
+    )
+    .expect("first peer queues");
+    let mut offer = expect_code(&mut first.peer, 40, Duration::from_secs(10))
+        .expect("the first peer is offered the slot");
+    offer.set_pointer(8);
+    let _direction = offer.read_int32();
+    let token = offer.read_int32();
+
+    let later_file = format!("{folder}\\later.mp3");
+    let later_port = free_port().expect("later peer port");
+    let listener = std::net::TcpListener::bind(("0.0.0.0", later_port))
+        .expect("later peer listener");
+    let mut later =
+        queue_as(&server_addr, &listen_addr, "e2e_hungup_later", &later_file)
+            .expect("later peer queues");
+    later
+        .server
+        .write_all(
+            &MessageFactory::build_set_wait_port_message(later_port)
+                .get_buffer(),
+        )
+        .expect("announce the port");
+    later
+        .server
+        .write_all(
+            &MessageFactory::build_get_peer_address("e2e_hungup_later")
+                .get_buffer(),
+        )
+        .expect("ask for our own address");
+    expect_code(&mut later.server, 3, Duration::from_secs(5))
+        .expect("the server knows the port by the time it answers");
+    assert!(
+        wait_for(
+            || place_of(&sharer, "e2e_hungup_later", &later_file) == Some(1)
+        ),
+        "the later peer waits behind the first"
+    );
+    later
+        .peer
+        .shutdown(std::net::Shutdown::Write)
+        .expect("hang up");
+    assert_eq!(
+        later
+            .peer
+            .read(&mut [0u8; 1])
+            .expect("the sharer hangs up too"),
+        0
+    );
+
+    let mut refusal = Message::new();
+    refusal
+        .write_int32(41)
+        .write_int32(token)
+        .write_bool(false)
+        .write_string("Cancelled");
+    first.peer.write_all(&refusal.get_buffer()).expect("refuse");
+    first.peer.flush().expect("flush");
+
+    let mut dialled = accept_within(&listener, Duration::from_secs(15))
+        .expect("the sharer dials the peer whose slot came up");
+    let mut offer = expect_code(&mut dialled, 40, Duration::from_secs(10))
+        .expect("and offers the file over the new connection");
+    offer.set_pointer(8);
+    assert_eq!(offer.read_int32(), 1);
+    let _token = offer.read_int32();
+    assert_eq!(offer.read_string(), later_file);
 
     let _ = std::fs::remove_dir_all(share);
 }

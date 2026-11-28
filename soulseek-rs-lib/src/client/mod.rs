@@ -137,8 +137,18 @@ struct UploadJob {
     size: u64,
     /// When this job gives its slot back if it has not begun streaming.
     deadline: Instant,
-    /// Whether the peer has accepted the offer.
-    answered: bool,
+    offer: Offer,
+}
+
+/// How far the offer of an [`UploadJob`] has got.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Offer {
+    /// No connection to the peer has carried it yet.
+    Unsent,
+    /// Sent, and waiting for the peer's TransferResponse.
+    Sent,
+    /// The peer accepted it.
+    Accepted,
 }
 
 /// An upload waiting for its downloader to connect back to our listener while
