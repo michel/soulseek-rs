@@ -228,11 +228,9 @@ fn map_upnp(
     port: u16,
     quiet: bool,
 ) -> Option<(Backend, u32)> {
-    let options = SearchOptions {
-        bind_addr: SocketAddr::new(local_ip, 0),
-        timeout: Some(Duration::from_secs(5)),
-        ..SearchOptions::default()
-    };
+    let mut options = SearchOptions::default();
+    options.bind_addr = SocketAddr::new(local_ip, 0);
+    options.timeout = Some(Duration::from_secs(5));
     let gateway = search_gateway(options).ok()?;
     let local_addr = SocketAddr::new(local_ip, port);
     map_via_gateway(gateway, local_addr, port, quiet)
@@ -672,6 +670,8 @@ mod tests {
             control_url: "/ctl".to_string(),
             control_schema_url: format!("http://{igd_addr}/scpd.xml"),
             control_schema: igd_control_schema(),
+            service_type: "urn:schemas-upnp-org:service:WANIPConnection:1"
+                .to_string(),
         };
 
         let local_addr =
