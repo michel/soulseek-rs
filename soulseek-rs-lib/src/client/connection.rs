@@ -206,7 +206,8 @@ impl Client {
     /// connection, so a server that never completes the TCP handshake would
     /// otherwise block the caller forever. A caller that hits
     /// [`SoulseekRs::Timeout`] can retry or give up, but it always regains
-    /// control.
+    /// control. A connection that drops before the verdict answers at once
+    /// with [`SoulseekRs::NotConnected`].
     pub fn login(&self) -> Result<bool> {
         info!("Logging in as {}", self.username);
         let Some(handle) = &self.server_handle else {

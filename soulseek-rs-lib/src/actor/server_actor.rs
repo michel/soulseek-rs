@@ -638,6 +638,7 @@ impl ServerActor {
         self.reader = MessageReader::new();
         if let Ok(mut ctx) = self.context.write_safe() {
             ctx.logged_in = None;
+            ctx.connection_lost = true;
         }
     }
 

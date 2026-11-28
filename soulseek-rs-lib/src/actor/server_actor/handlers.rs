@@ -497,6 +497,7 @@ impl ServerActor {
         }
         if let Ok(mut ctx) = self.context.write_safe() {
             ctx.logged_in = None;
+            ctx.connection_lost = false;
         }
         self.queue_message(MessageFactory::build_login_message(
             &username, &password, version,
@@ -512,8 +513,8 @@ impl ServerActor {
                     break;
                 }
 
-                let logged_in = match context.read_safe() {
-                    Ok(ctx) => ctx.logged_in,
+                let (logged_in, connection_lost) = match context.read_safe() {
+                    Ok(ctx) => (ctx.logged_in, ctx.connection_lost),
                     Err(e) => {
                         let _ = response.send(Err(e));
                         break;
@@ -526,6 +527,10 @@ impl ServerActor {
                         Err(SoulseekRs::AuthenticationFailed)
                     };
                     let _ = response.send(result);
+                    break;
+                }
+                if connection_lost {
+                    let _ = response.send(Err(SoulseekRs::NotConnected));
                     break;
                 }
 

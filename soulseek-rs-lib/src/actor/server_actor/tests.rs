@@ -225,6 +225,44 @@ fn a_login_with_nobody_listening_is_refused_at_once() {
 }
 
 #[test]
+fn a_login_whose_connection_drops_before_the_verdict_is_answered_at_once() {
+    use std::io::Read;
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut actor = parked_actor(listener.local_addr().unwrap().port());
+    let (response, verdict) = std::sync::mpsc::channel();
+    actor.handle_login(
+        "u".into(),
+        "p".into(),
+        ClientVersion::default(),
+        response,
+    );
+    let (mut server_side, _) = listener.accept().unwrap();
+    actor.tick();
+    server_side
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut login = [0u8; 8];
+    server_side.read_exact(&mut login).unwrap();
+    drop(server_side);
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let answer = loop {
+        actor.tick();
+        match verdict.recv_timeout(Duration::from_millis(10)) {
+            Ok(answer) => break Some(answer),
+            Err(_) if Instant::now() < deadline => {}
+            Err(_) => break None,
+        }
+    };
+    assert!(
+        matches!(answer, Some(Err(SoulseekRs::NotConnected))),
+        "a login the connection died under must not wait out the verdict \
+         timeout, got {answer:?}"
+    );
+}
+
+#[test]
 fn a_cancelled_actor_never_writes_the_login_it_queued() {
     use std::io::Read;
 
