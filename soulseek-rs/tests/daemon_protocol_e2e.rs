@@ -946,6 +946,49 @@ fn a_queued_download_is_cancelled_and_listed_as_such() {
     assert!(listed.contains(r#""state":"cancelled""#), "got {listed}");
 }
 
+/// Every attached client tracks a download until it hears how it ended, so
+/// one that is removed from the queue has to be announced like any other end.
+#[test]
+fn removing_a_queued_download_is_announced_to_attached_clients() {
+    let daemon = daemon_or_skip!();
+    let _peer =
+        silent_peer("127.0.0.1", daemon.server.port(), "cli_e2e_silent_peer");
+    let stream = TcpStream::connect(("127.0.0.1", daemon.port)).expect("tcp");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("a read timeout");
+    let mut connection = Connection::from_parts(
+        Box::new(stream.try_clone().expect("a second handle")),
+        Box::new(stream),
+    );
+    connection
+        .authenticate(Some(&daemon.token()))
+        .expect("an answer");
+    let started = connection
+        .call(
+            r#"{"jsonrpc":"2.0","id":2,"method":"download.start","params":{"username":"cli_e2e_silent_peer","filename":"@@silent\\gone.mp3","size":10}}"#,
+        )
+        .expect("an answer");
+    assert!(!started.contains("error"), "got {started}");
+
+    connection
+        .send(
+            r#"{"jsonrpc":"2.0","id":3,"method":"download.remove_queued","params":{"username":"cli_e2e_silent_peer","filename":"@@silent\\gone.mp3"}}"#,
+        )
+        .expect("sent");
+    loop {
+        let line = connection
+            .read()
+            .expect("no cancelled event before the read timeout");
+        if line.contains("event.download_status")
+            && line.contains("gone.mp3")
+            && line.contains(r#""state":"cancelled""#)
+        {
+            break;
+        }
+    }
+}
+
 #[test]
 fn cancelling_an_unknown_download_is_answered_with_a_plain_no() {
     let daemon = daemon_or_skip!();

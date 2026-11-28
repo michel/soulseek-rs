@@ -278,7 +278,10 @@ impl DownloadStore {
             return false;
         };
 
-        self.downloads.remove(index);
+        // Told before it goes: whoever follows this download, here or
+        // through a daemon, would otherwise wait on it for good.
+        let removed = self.downloads.remove(index);
+        let _ = removed.sender.send(DownloadStatus::Cancelled);
         true
     }
 
@@ -638,6 +641,23 @@ mod tests {
         assert!(!store.remove_queued_by_file("peer", "active.mp3"));
         assert!(store.get_by_token(123).is_none());
         assert!(store.get_by_token(456).is_some());
+    }
+
+    #[test]
+    fn removing_a_queued_download_tells_its_waiter_it_was_cancelled() {
+        let mut store = DownloadStore::new();
+        let (tx, rx) = mpsc::channel();
+        let mut download = make_download(1, DownloadStatus::Queued);
+        download.sender = tx;
+        store.add(download);
+
+        assert!(store.remove_queued_by_file("peer", "file-1.mp3"));
+
+        assert!(store.get_by_token(1).is_none());
+        assert!(matches!(
+            rx.try_recv().expect("removal must notify the waiter"),
+            DownloadStatus::Cancelled
+        ));
     }
 
     #[test]
