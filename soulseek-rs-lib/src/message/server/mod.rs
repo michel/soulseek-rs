@@ -1,5 +1,6 @@
 mod admin_message;
 mod cant_connect_to_peer;
+mod change_password;
 mod connect_to_peer;
 mod distributed;
 mod excluded_search_phrases;
@@ -28,6 +29,7 @@ mod wish_list_interval;
 
 pub use admin_message::AdminMessageHandler;
 pub use cant_connect_to_peer::CantConnectToPeerHandler;
+pub(crate) use change_password::ChangePasswordHandler;
 pub use connect_to_peer::ConnectToPeerHandler;
 pub use distributed::{
     EmbeddedMessageHandler, PossibleParentsHandler, ResetDistributedHandler,

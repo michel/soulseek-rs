@@ -1,6 +1,6 @@
 use crate::actor::ActorHandle;
 use crate::actor::server_actor::{
-    PeerAddress, ServerActor, ServerMessage, UserMessage,
+    LoginPassword, PeerAddress, ServerActor, ServerMessage, UserMessage,
 };
 use crate::download_store::DownloadStore;
 use crate::types::{
@@ -715,7 +715,7 @@ pub struct Client {
     bound_port: Option<u16>,
     address: PeerAddress,
     username: String,
-    password: Mutex<String>,
+    password: Arc<Mutex<LoginPassword>>,
     version: ClientVersion,
     shared_directories: Vec<String>,
     server_handle: Option<ActorHandle<ServerMessage>>,
@@ -754,7 +754,9 @@ impl Client {
             address: settings.server_address,
             context: Arc::new(RwLock::new(context)),
             username: settings.username,
-            password: Mutex::new(settings.password),
+            password: Arc::new(Mutex::new(LoginPassword::new(
+                settings.password,
+            ))),
             version: settings.version,
             shared_directories: settings.shared_directories,
             server_handle: None,

@@ -118,6 +118,7 @@ impl Client {
         );
         server_actor.set_session_watch(self.session.clone());
         server_actor.set_cancel(self.cancel.clone());
+        server_actor.set_login_password(self.password.clone());
 
         self.server_handle = Some(ctx.actor_system.spawn_with_handle(
             server_actor,
@@ -218,7 +219,7 @@ impl Client {
         let (tx, rx) = std::sync::mpsc::channel();
         let _ = handle.send(ServerMessage::Login {
             username: self.username.clone(),
-            password: self.password.lock_safe()?.clone(),
+            password: self.password.lock_safe()?.current.clone(),
             version: self.version,
             response: tx,
         });

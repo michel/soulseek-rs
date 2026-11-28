@@ -170,8 +170,9 @@ without waiting for a restart.
 
 **A password change belongs to the daemon's account.** `account.password`
 changes the password of the account the daemon is logged in as, and stores the
-new one on the daemon's host so the next start still logs in. The server sends
-no verdict on the change, so the `{"ok":true}` means the request went out. The
+new one on the daemon's host so the next start still logs in. The reply does
+not wait for the server to confirm the change, so the `{"ok":true}` means the
+request went out. The
 password crosses the socket in plain text, exactly like the token: keep TCP
 behind an SSH tunnel.
 

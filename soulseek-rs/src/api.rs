@@ -186,8 +186,8 @@ pub trait SessionApi: Send + Sync {
 
     /// Make `password` this account's password on the server.
     ///
-    /// `Ok(())` means the request reached the server, not that it took it:
-    /// the protocol's own reply to a password change is not read back.
+    /// `Ok(())` means the request went out, not that the server took it:
+    /// the server confirms a change later, and this does not wait for that.
     // aislop-ignore-next-line complexity/function-too-long -- same scanner bug: bodyless signature measured to EOF. One line.
     fn change_password(&self, password: &str) -> Result<()>;
 }
