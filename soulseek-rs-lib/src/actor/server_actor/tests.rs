@@ -55,7 +55,7 @@ fn parked_actor_with_client(
 }
 
 #[test]
-fn dropping_the_connection_forgets_the_dispatcher_and_the_verdict() {
+fn dropping_the_connection_forgets_the_dispatcher_and_an_acceptance() {
     let mut actor = parked_actor(1);
     actor.initialize_dispatcher();
     actor.connection_state = ConnectionState::Connected;
@@ -72,7 +72,8 @@ fn dropping_the_connection_forgets_the_dispatcher_and_the_verdict() {
     assert_eq!(
         actor.context.read().unwrap().logged_in,
         None,
-        "the old verdict must not answer the next login"
+        "a login accepted on a line that then dropped must not report \
+         success"
     );
 }
 
@@ -224,6 +225,23 @@ fn a_login_with_nobody_listening_is_refused_at_once() {
     );
 }
 
+/// What a waiting login is told, with the actor ticking so it reads what
+/// the far end sent.
+fn verdict_while_ticking(
+    actor: &mut ServerActor,
+    verdict: &std::sync::mpsc::Receiver<Result<bool, SoulseekRs>>,
+) -> Option<Result<bool, SoulseekRs>> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        actor.tick();
+        match verdict.recv_timeout(Duration::from_millis(10)) {
+            Ok(answer) => return Some(answer),
+            Err(_) if Instant::now() < deadline => {}
+            Err(_) => return None,
+        }
+    }
+}
+
 #[test]
 fn a_login_whose_connection_drops_before_the_verdict_is_answered_at_once() {
     use std::io::Read;
@@ -246,19 +264,53 @@ fn a_login_whose_connection_drops_before_the_verdict_is_answered_at_once() {
     server_side.read_exact(&mut login).unwrap();
     drop(server_side);
 
-    let deadline = Instant::now() + Duration::from_secs(2);
-    let answer = loop {
-        actor.tick();
-        match verdict.recv_timeout(Duration::from_millis(10)) {
-            Ok(answer) => break Some(answer),
-            Err(_) if Instant::now() < deadline => {}
-            Err(_) => break None,
-        }
-    };
+    let answer = verdict_while_ticking(&mut actor, &verdict);
     assert!(
         matches!(answer, Some(Err(SoulseekRs::NotConnected))),
         "a login the connection died under must not wait out the verdict \
          timeout, got {answer:?}"
+    );
+}
+
+#[test]
+fn a_login_the_server_refuses_and_hangs_up_on_is_answered_with_the_refusal() {
+    use std::io::{Read, Write};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut actor = parked_actor(listener.local_addr().unwrap().port());
+    let (response, verdict) = std::sync::mpsc::channel();
+    actor.handle_login(
+        "u".into(),
+        "p".into(),
+        ClientVersion::default(),
+        response,
+    );
+    let (mut server_side, _) = listener.accept().unwrap();
+    actor.tick();
+    server_side
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut length = [0u8; 4];
+    server_side.read_exact(&mut length).unwrap();
+    let mut login = vec![0u8; u32::from_le_bytes(length) as usize];
+    server_side.read_exact(&mut login).unwrap();
+
+    let refusal = Message::new()
+        .write_int32(1)
+        .write_bool(false)
+        .write_string("INVALIDPASS")
+        .get_buffer();
+    server_side.write_all(&refusal).unwrap();
+    drop(server_side);
+
+    let answer = verdict_while_ticking(&mut actor, &verdict);
+    assert!(
+        matches!(
+            &answer,
+            Some(Err(SoulseekRs::LoginRejected { reason, .. }))
+                if reason == "INVALIDPASS"
+        ),
+        "the caller must hear the server's reason, got {answer:?}"
     );
 }
 
