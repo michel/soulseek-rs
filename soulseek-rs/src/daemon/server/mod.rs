@@ -367,8 +367,8 @@ impl Daemon {
                 // restarts, so a password it changed but never stored would
                 // lock it out of its own account.
                 let stored = crate::persist::secret::change_password(
-                    self.session.as_ref(),
-                    self.secrets.as_ref(),
+                    Arc::clone(&self.session),
+                    Arc::clone(&self.secrets),
                     &params.password,
                 )
                 .map_err(|e| {

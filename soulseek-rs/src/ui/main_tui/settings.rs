@@ -6,6 +6,7 @@ use super::MainTui;
 use crate::models::{AccountInfo, SettingsAction, SettingsState};
 use crate::persist::secret::KeyringStore;
 use ratatui::crossterm::event::KeyEvent;
+use std::sync::Arc;
 
 impl MainTui {
     pub(super) fn open_settings(&mut self) {
@@ -45,8 +46,8 @@ impl MainTui {
 
     fn change_password(&mut self, password: &str) {
         let status = match crate::persist::secret::change_password(
-            self.client.as_ref(),
-            &KeyringStore,
+            Arc::clone(&self.client),
+            Arc::new(KeyringStore),
             password,
         ) {
             Ok(None) => "Password changed".into(),

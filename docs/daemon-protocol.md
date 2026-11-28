@@ -173,7 +173,8 @@ changes the password of the account the daemon is logged in as, and stores the
 new one on the daemon's host so the next start still logs in. The daemon
 waits for the server to confirm the change before it stores the password, so
 `{"ok":true}` means the server has it; with no confirmation within ten seconds
-the call fails and nothing is stored. The
+the call fails and nothing is stored, unless the confirmation still arrives
+within five minutes, when the daemon stores the password after all. The
 password crosses the socket in plain text, exactly like the token: keep TCP
 behind an SSH tunnel.
 

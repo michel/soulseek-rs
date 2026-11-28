@@ -114,18 +114,14 @@ fn a_room_that_was_never_joined_has_no_member_stats() {
 
 #[test]
 fn a_password_the_server_never_confirmed_is_not_stored() {
-    let session = SilentSession {
-        never_confirms: true,
-        ..SilentSession::default()
-    };
-    let store = crate::persist::secret::MemoryStore::default();
-    store.set("tester", "the-one-that-works").expect("stored");
+    let (session, store) = an_unconfirming_session();
 
     let changed = crate::persist::secret::change_password_within(
-        &session,
-        &store,
+        Arc::clone(&session) as Arc<dyn SessionApi>,
+        Arc::clone(&store),
         "never-arrived",
         Duration::from_millis(60),
+        Duration::ZERO,
     );
 
     assert!(matches!(changed, Err(soulseek_rs::SoulseekRs::Timeout)));
@@ -134,6 +130,46 @@ fn a_password_the_server_never_confirmed_is_not_stored() {
         Some("the-one-that-works"),
         "the next start must still find the password that logs in"
     );
+}
+
+/// The session logs in with a password from the moment the server confirms
+/// it, however late; the store has to follow or the next start is locked
+/// out.
+#[test]
+fn a_confirmation_that_comes_after_the_caller_gave_up_is_still_stored() {
+    let (session, store) = an_unconfirming_session();
+
+    let changed = crate::persist::secret::change_password_within(
+        Arc::clone(&session) as Arc<dyn SessionApi>,
+        Arc::clone(&store),
+        "arrived-late",
+        Duration::ZERO,
+        Duration::from_secs(5),
+    );
+    assert!(matches!(changed, Err(soulseek_rs::SoulseekRs::Timeout)));
+
+    *session.late_confirmation.lock().expect("not poisoned") =
+        Some("arrived-late".to_string());
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while store.get("tester").expect("the store answers").as_deref()
+        != Some("arrived-late")
+    {
+        assert!(Instant::now() < deadline, "the late confirmation is stored");
+        std::thread::yield_now();
+    }
+}
+
+/// A session whose server has not confirmed any password change yet, and a
+/// store holding the password that still logs in.
+fn an_unconfirming_session() -> (Arc<SilentSession>, Arc<dyn SecretStore>) {
+    let session = Arc::new(SilentSession {
+        never_confirms: true,
+        ..SilentSession::default()
+    });
+    let store = crate::persist::secret::MemoryStore::default();
+    store.set("tester", "the-one-that-works").expect("stored");
+    (session, Arc::new(store))
 }
 
 /// The daemon owns the login, so a password it changes it also stores —
@@ -227,8 +263,10 @@ struct SilentSession {
     watched: Mutex<Vec<String>>,
     /// What `account.password` asked the session to set, if anything.
     password: Mutex<Option<String>>,
-    /// A server that never confirms a password change.
+    /// A server that confirms a password change only when the test says so,
+    /// through `late_confirmation`.
     never_confirms: bool,
+    late_confirmation: Mutex<Option<String>>,
 }
 
 /// The one room `SilentSession` claims to have joined.
@@ -269,8 +307,14 @@ impl SessionApi for SilentSession {
             Some(password.to_string());
         Ok(())
     }
-    fn password_change_confirmed(&self, _password: &str) -> bool {
+    fn password_change_confirmed(&self, password: &str) -> bool {
         !self.never_confirms
+            || self
+                .late_confirmation
+                .lock()
+                .expect("not poisoned")
+                .as_deref()
+                == Some(password)
     }
     fn listen_port(&self) -> Option<u16> {
         None
