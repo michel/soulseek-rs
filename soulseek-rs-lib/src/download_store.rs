@@ -112,6 +112,40 @@ impl DownloadStore {
             .min_by_key(|d| d.is_finished())
     }
 
+    /// Give the download of `filename` the token its peer offered it under.
+    ///
+    /// The peer's number may already be on another of its queued downloads,
+    /// as the token we gave that one before it was offered. Ours never
+    /// reaches the peer, so that download takes a new one from `fresh`
+    /// rather than answer to a file connection meant for this one.
+    pub fn rekey(
+        &mut self,
+        username: &str,
+        filename: &str,
+        token: u32,
+        size: u64,
+        mut fresh: impl FnMut() -> u32,
+    ) {
+        let holds = |download: &Download, number: u32| {
+            download.username == username && download.token == number
+        };
+        while let Some(index) = self.downloads.iter().position(|download| {
+            holds(download, token)
+                && download.filename != filename
+                && matches!(download.status, DownloadStatus::Queued)
+        }) {
+            let mut replacement = fresh();
+            while self.downloads.iter().any(|d| holds(d, replacement)) {
+                replacement = fresh();
+            }
+            self.downloads[index].token = replacement;
+        }
+        if let Some(download) = self.get_by_file_mut(username, filename) {
+            download.token = token;
+            download.size = size;
+        }
+    }
+
     pub fn remove_for_peer(&mut self, username: &str, token: u32) {
         self.downloads
             .retain(|d| !(d.token == token && d.username == username));
@@ -739,6 +773,36 @@ mod tests {
                 Some(DownloadStatus::Completed)
             ),
             "removing one peer's row leaves the other's"
+        );
+    }
+
+    #[test]
+    fn an_offered_token_already_on_the_peers_other_download_moves_aside() {
+        let mut store = DownloadStore::new();
+        for (token, filename) in [(5, "x.mp3"), (6, "y.mp3")] {
+            let mut download = make_download(token, DownloadStatus::Queued);
+            download.filename = filename.to_string();
+            store.add(download);
+        }
+
+        // The peer offers y under 5, the number x was queued with.
+        let mut next = 5;
+        store.rekey("peer", "y.mp3", 5, 200, || {
+            next += 1;
+            next
+        });
+
+        assert_eq!(
+            store.claim_for_peer(5, "peer").map(|d| d.filename),
+            Some("y.mp3".to_string()),
+            "the file connection for y must not be handed x"
+        );
+        let x = store.get_by_file("peer", "x.mp3").expect("x is kept").token;
+        assert_ne!(x, 5);
+        assert_eq!(
+            store.claim_for_peer(x, "peer").map(|d| d.filename),
+            Some("x.mp3".to_string()),
+            "x still waits for its own offer"
         );
     }
 }
