@@ -384,6 +384,7 @@ impl ServerActor {
         // never called). Advertises real shared counts and, when
         // listening, the port peers must connect to.
         if message {
+            let connected = self.stream.is_some();
             for msg in post_login_messages(
                 self.enable_listen,
                 self.listen_port,
@@ -391,6 +392,12 @@ impl ServerActor {
                 self.shared_file_count,
             ) {
                 self.send_message(msg);
+            }
+            // A write that failed has recorded the loss and dropped the
+            // connection. Calling that a session would clear the loss, and
+            // nothing would ever reconnect.
+            if connected && self.stream.is_none() {
+                return;
             }
             self.session.clear();
             // The distributed stance is the leaf's to announce, and a new
