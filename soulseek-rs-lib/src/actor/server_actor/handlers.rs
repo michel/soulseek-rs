@@ -13,6 +13,12 @@ use super::{
 
 impl ServerActor {
     pub(super) fn handle_message(&mut self, msg: ServerMessage) {
+        // Kept whatever the connection is doing: the next login announces
+        // these, and shares can change while there is no session.
+        if let ServerMessage::SharedCounts { folders, files } = msg {
+            self.shared_folder_count = folders;
+            self.shared_file_count = files;
+        }
         if !matches!(self.connection_state, ConnectionState::Connected)
             && !matches!(
                 &msg,
@@ -46,6 +52,13 @@ impl ServerActor {
             }
             ServerMessage::SendMessage(message) => {
                 self.send_message(message);
+            }
+            ServerMessage::SharedCounts { folders, files } => {
+                self.send_message(
+                    MessageFactory::build_shared_folders_message(
+                        folders, files,
+                    ),
+                );
             }
             ServerMessage::GetPeerAddress(username) => {
                 self.send_message(MessageFactory::build_get_peer_address(

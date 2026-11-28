@@ -81,6 +81,10 @@ pub enum ServerMessage {
     /// elsewhere.
     Relogged,
     SendMessage(Message),
+    SharedCounts {
+        folders: u32,
+        files: u32,
+    },
     Login {
         username: String,
         password: String,
