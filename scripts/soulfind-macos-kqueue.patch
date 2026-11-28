@@ -1,0 +1,18 @@
+diff --git a/src/server/conns.d b/src/server/conns.d
+index c398731..a9e21e9 100644
+--- a/src/server/conns.d
++++ b/src/server/conns.d
+@@ -82,7 +82,12 @@ final class UserConnections
+                     continue;
+                 }
+ 
+-                auto user = sock_users[ready_fd.fd];
++                // kqueue reports a socket once per filter, so a socket that
++                // is readable and writable appears twice in one batch, and
++                // the first event may already have closed the connection
++                auto user = ready_fd.fd in sock_users;
++                if (user is null)
++                    continue;
+                 user.refresh_state(current_time);
+                 user.handle_io_events(recv_ready, send_ready);
+             }
