@@ -27,7 +27,7 @@ use soulseek_rs::message::distributed;
 use soulseek_rs::message::server::MessageFactory;
 use soulseek_rs::{
     Client, ClientSettings, ClientVersion, ConnectionType, DownloadStatus,
-    PeerAddress, SessionLoss, UploadStatus,
+    PeerAddress, SessionLoss, SoulseekRs, UploadStatus,
 };
 
 /// Only one test at a time may drive a server.
@@ -460,6 +460,46 @@ fn wrong_password_is_rejected() {
     assert!(
         !matches!(second.login(), Ok(true)),
         "a mismatched password must not be accepted"
+    );
+}
+
+fn login_refusal(
+    server: &TestServer,
+    username: &str,
+    password: &str,
+) -> (String, Option<String>) {
+    let mut client = Client::with_settings(server.settings(username, password));
+    client.connect().expect("connect");
+    match client.login() {
+        Err(SoulseekRs::LoginRejected { reason, detail }) => (reason, detail),
+        other => panic!("expected a refusal with a reason, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_refused_login_says_why() {
+    let server = server_or_skip!();
+
+    let user = "e2e_reason_user";
+    let mut first = Client::with_settings(server.settings(user, "right"));
+    first.connect().expect("connect");
+    assert!(first.login().expect("registering login"));
+    drop(first);
+
+    assert_eq!(
+        login_refusal(&server, user, "wrong"),
+        ("INVALIDPASS".to_string(), None)
+    );
+    assert_eq!(
+        login_refusal(&server, "e2e_reason_other", ""),
+        ("EMPTYPASSWORD".to_string(), None)
+    );
+    assert_eq!(
+        login_refusal(&server, &"n".repeat(64), "pw"),
+        (
+            "INVALIDUSERNAME".to_string(),
+            Some("Nick too long.".to_string())
+        )
     );
 }
 
