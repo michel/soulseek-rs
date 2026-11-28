@@ -2,7 +2,7 @@ use crate::actor::ActorHandle;
 use crate::actor::server_actor::{
     PeerAddress, ServerActor, ServerMessage, UserMessage,
 };
-use crate::download_store::{DownloadStore, collect_failed_tokens};
+use crate::download_store::DownloadStore;
 use crate::types::{
     ClientVersion, DownloadMetadata, DownloadStatus, Recommendation, RoomEvent,
     RoomInfo, RoomTicker, RoomUserStats, SessionLoss, SessionWatch,

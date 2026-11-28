@@ -283,6 +283,50 @@ fn a_finished_batch_is_capped_and_every_download_gets_its_terminal_status() {
     assert_eq!(retained, vec![MAX_FINISHED_DOWNLOADS; 4]);
 }
 
+#[test]
+fn a_peer_leaving_with_a_long_queue_fails_all_of_it_and_keeps_the_cap() {
+    use crate::download_store::MAX_FINISHED_DOWNLOADS;
+
+    let client = Client::new("u", "p");
+    let mut waiting = Vec::new();
+    for token in 0..=(MAX_FINISHED_DOWNLOADS as u32) {
+        let (sender, receiver) = mpsc::channel();
+        client.context.write().unwrap().add_download(download(
+            "peer",
+            &format!("file-{token}.mp3"),
+            token,
+            DownloadStatus::Queued,
+            sender,
+        ));
+        waiting.push(receiver);
+    }
+    let (sender, bystander) = mpsc::channel();
+    client.context.write().unwrap().add_download(download(
+        "other",
+        "kept.mp3",
+        1,
+        DownloadStatus::Queued,
+        sender,
+    ));
+
+    Client::fail_queued_downloads(&client.context, "peer");
+
+    for receiver in waiting {
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(DownloadStatus::Failed(Some(reason)))
+                if reason == "The user went offline"
+        ));
+    }
+    assert!(
+        bystander.try_recv().is_err(),
+        "another peer's is left alone"
+    );
+    let downloads = client.get_all_downloads();
+    assert_eq!(downloads.len(), MAX_FINISHED_DOWNLOADS + 1);
+    assert!(downloads.iter().any(|d| d.username == "other"));
+}
+
 // Issue #120: an address was kept, and used, for as long as the process
 // lived; and every user the server mentioned got a snapshot.
 #[test]

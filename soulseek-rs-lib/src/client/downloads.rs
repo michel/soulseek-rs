@@ -195,24 +195,9 @@ impl Client {
                 return;
             }
         };
-        let doomed: Vec<(u32, Sender<DownloadStatus>)> = context
-            .get_downloads()
-            .iter()
-            .filter(|d| {
-                d.username == username
-                    && matches!(d.status, DownloadStatus::Queued)
-            })
-            .map(|d| (d.token, d.sender.clone()))
-            .collect();
-        for (token, sender) in doomed {
-            let reason = Some("The user went offline".to_string());
-            let _ = sender.send(DownloadStatus::Failed(reason.clone()));
-            context.downloads.update_status(
-                username,
-                token,
-                DownloadStatus::Failed(reason),
-            );
-        }
+        context
+            .downloads
+            .fail_queued(username, "The user went offline");
     }
 }
 

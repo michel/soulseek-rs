@@ -146,11 +146,6 @@ impl DownloadStore {
         }
     }
 
-    pub fn remove_for_peer(&mut self, username: &str, token: u32) {
-        self.downloads
-            .retain(|d| !(d.token == token && d.username == username));
-    }
-
     pub fn update_status(
         &mut self,
         username: &str,
@@ -176,6 +171,47 @@ impl DownloadStore {
             self.prune_finished(MAX_FINISHED_DOWNLOADS);
         }
         true
+    }
+
+    /// Fail every queued download of `username` and tell each one's waiter.
+    ///
+    /// One pass and one prune: a peer can go away with thousands queued, and
+    /// applying the cap row by row is quadratic under the store's lock.
+    pub fn fail_queued(&mut self, username: &str, reason: &str) {
+        for download in &mut self.downloads {
+            if download.username != username
+                || !matches!(download.status, DownloadStatus::Queued)
+            {
+                continue;
+            }
+            let failed = DownloadStatus::Failed(Some(reason.to_string()));
+            let _ = download.sender.send(failed.clone());
+            download.status = failed;
+        }
+        self.prune_finished(MAX_FINISHED_DOWNLOADS);
+    }
+
+    /// Tell the waiters of `username`'s queued downloads (all of them, or
+    /// the one for `filename`) that the upload failed, and forget those
+    /// downloads. One pass under one lock: nothing can claim a download
+    /// between its being told and its being gone.
+    pub fn fail_and_forget_queued(
+        &mut self,
+        username: &str,
+        filename: Option<&str>,
+    ) {
+        self.downloads.retain(|download| {
+            if download.username != username
+                || filename.is_some_and(|name| download.filename != name)
+                || !matches!(download.status, DownloadStatus::Queued)
+            {
+                return true;
+            }
+            let _ = download.sender.send(DownloadStatus::Failed(Some(
+                "The upload failed on the other side".to_string(),
+            )));
+            false
+        });
     }
 
     /// Atomically reserve a queued download for the peer that owns it.
@@ -302,33 +338,6 @@ impl DownloadStore {
         let _ = download.sender.send(resumed_status);
         true
     }
-}
-
-/// Returns the tokens of queued downloads matching `username` (and optionally
-/// a `filename`) after notifying their senders of `Failed`.
-///
-/// Caller is responsible for then calling `update_status` and `remove` for
-/// each token, typically under a write lock.
-#[must_use]
-pub fn collect_failed_tokens(
-    store: &DownloadStore,
-    username: &str,
-    filename: Option<&str>,
-) -> Vec<u32> {
-    store
-        .list()
-        .iter()
-        .filter(|d| {
-            d.username == username && filename.is_none_or(|f| d.filename == *f)
-        })
-        .filter(|d| matches!(d.status, DownloadStatus::Queued))
-        .map(|d| {
-            let _ = d.sender.send(DownloadStatus::Failed(Some(
-                "The upload failed on the other side".to_string(),
-            )));
-            d.token
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -654,7 +663,7 @@ mod tests {
     }
 
     #[test]
-    fn collect_failed_tokens_collects_only_queued_downloads() {
+    fn failing_a_peers_queue_leaves_started_and_finished_downloads() {
         let mut store = DownloadStore::new();
         let (tx_active, rx_active) = mpsc::channel();
         let (tx_paused, rx_paused) = mpsc::channel();
@@ -691,9 +700,13 @@ mod tests {
         store.add(completed);
         store.add(queued);
 
-        let tokens = collect_failed_tokens(&store, "peer", None);
+        store.fail_and_forget_queued("peer", None);
 
-        assert_eq!(tokens, vec![4], "only the queued download may fail");
+        assert_eq!(
+            store.tokens(),
+            vec![1, 2, 3],
+            "only the queued download may fail"
+        );
         assert!(
             rx_active.try_recv().is_err(),
             "an in-progress transfer must not be notified of failure"
@@ -709,7 +722,7 @@ mod tests {
     }
 
     #[test]
-    fn collect_failed_tokens_notifies_and_lists_matching() {
+    fn failing_one_queued_file_tells_its_waiter_and_forgets_only_it() {
         let mut store = DownloadStore::new();
         let (tx_match, rx_match) = mpsc::channel();
         let (tx_other_user, _rx_other_user) = mpsc::channel();
@@ -734,9 +747,9 @@ mod tests {
         store.add(b);
         store.add(c);
 
-        let tokens = collect_failed_tokens(&store, "peer", Some("song.mp3"));
+        store.fail_and_forget_queued("peer", Some("song.mp3"));
 
-        assert_eq!(tokens, vec![1]);
+        assert_eq!(store.tokens(), vec![2, 3]);
         assert!(matches!(
             rx_match.try_recv().unwrap(),
             DownloadStatus::Failed(_)
@@ -762,15 +775,6 @@ mod tests {
             store.claim_for_peer(7, "bob").map(|d| d.username),
             Some("bob".to_string()),
             "a finished row with the same token must not stand in the way"
-        );
-
-        store.remove_for_peer("bob", 7);
-        assert!(
-            matches!(
-                store.get("alice", 7).map(|d| &d.status),
-                Some(DownloadStatus::Completed)
-            ),
-            "removing one peer's row leaves the other's"
         );
     }
 
