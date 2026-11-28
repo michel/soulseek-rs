@@ -19,7 +19,15 @@ impl ServerActor {
                 ServerMessage::ProcessRead | ServerMessage::Login { .. }
             )
         {
-            self.queued_messages.push(msg);
+            // Only a connection on its way up will ever send these. Held
+            // while offline they grew without limit, and went out ahead of
+            // the login on the next connection, where the server drops them.
+            if matches!(
+                self.connection_state,
+                ConnectionState::Connecting { .. }
+            ) {
+                self.queued_messages.push(msg);
+            }
             return;
         }
 
