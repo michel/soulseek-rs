@@ -196,6 +196,70 @@ fn an_expired_broker_connect_fails_the_queued_downloads() {
     );
 }
 
+// A peer that repeats its offer names the token the download already has.
+// Re-keying then removed the row it had just written, and the peer was still
+// told to go ahead with a transfer nothing was waiting for.
+#[test]
+fn a_repeated_transfer_offer_keeps_the_download_listed_and_claimable() {
+    let client = Client::new("u", "p");
+    let (sender, _receiver) = mpsc::channel();
+    client.context.write().unwrap().add_download(download(
+        "peer",
+        "f.mp3",
+        9,
+        DownloadStatus::Queued,
+        sender,
+    ));
+
+    let (ops_tx, ops_rx) = mpsc::channel();
+    Client::listen_to_client_operations(
+        ops_rx,
+        client.context.clone(),
+        "u".to_string(),
+    );
+    let offer = Transfer {
+        direction: 1,
+        token: 7,
+        filename: "f.mp3".to_string(),
+        size: 200,
+    };
+
+    for attempt in 1..=2 {
+        ops_tx
+            .send(ClientOperation::UpdateDownloadTokens(
+                offer.clone(),
+                "peer".to_string(),
+            ))
+            .unwrap();
+        ops_tx
+            .send(ClientOperation::OwnPrivileges(attempt))
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while client.own_privilege_seconds() != Some(attempt) {
+            assert!(Instant::now() < deadline, "ops loop never caught up");
+            thread::yield_now();
+        }
+
+        let downloads = client.get_all_downloads();
+        assert_eq!(downloads.len(), 1, "after offer {attempt}");
+        assert_eq!(downloads[0].username, "peer");
+        assert_eq!(downloads[0].filename, "f.mp3");
+        assert_eq!(downloads[0].token, 7);
+        assert_eq!(downloads[0].size, 200);
+        assert!(matches!(downloads[0].status, DownloadStatus::Queued));
+    }
+
+    let claimed = client
+        .context
+        .write()
+        .unwrap()
+        .downloads
+        .claim_for_peer(7, "peer")
+        .expect("the repeated offer must leave the download claimable");
+    assert_eq!(claimed.filename, "f.mp3");
+    assert_eq!(claimed.size, 200);
+}
+
 #[test]
 fn a_replayed_transfer_response_does_not_start_a_second_transfer() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
