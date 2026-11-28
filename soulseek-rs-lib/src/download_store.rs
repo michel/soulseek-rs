@@ -83,6 +83,22 @@ impl DownloadStore {
             .min_by_key(|d| d.is_finished())
     }
 
+    /// The reason to turn down a peer's offer to send `filename`, or `None`
+    /// when a download is waiting for it. Accepting any other offer invites
+    /// a file connection no download can claim.
+    #[must_use]
+    pub fn refusal_of_offer(
+        &self,
+        username: &str,
+        filename: &str,
+    ) -> Option<&'static str> {
+        match self.get_by_file(username, filename).map(|d| &d.status) {
+            Some(DownloadStatus::Queued) => None,
+            Some(DownloadStatus::Completed) => Some("Complete"),
+            _ => Some("Cancelled"),
+        }
+    }
+
     #[must_use]
     pub fn tokens(&self) -> Vec<u32> {
         self.downloads.iter().map(|d| d.token).collect()
@@ -192,13 +208,14 @@ impl DownloadStore {
     }
 
     /// Tell the waiters of `username`'s queued downloads (all of them, or
-    /// the one for `filename`) that the upload failed, and forget those
-    /// downloads. One pass under one lock: nothing can claim a download
-    /// between its being told and its being gone.
+    /// the one for `filename`) that the upload failed for `reason`, and
+    /// forget those downloads. One pass under one lock: nothing can claim a
+    /// download between its being told and its being gone.
     pub fn fail_and_forget_queued(
         &mut self,
         username: &str,
         filename: Option<&str>,
+        reason: &str,
     ) {
         self.downloads.retain(|download| {
             if download.username != username
@@ -207,9 +224,9 @@ impl DownloadStore {
             {
                 return true;
             }
-            let _ = download.sender.send(DownloadStatus::Failed(Some(
-                "The upload failed on the other side".to_string(),
-            )));
+            let _ = download
+                .sender
+                .send(DownloadStatus::Failed(Some(reason.to_string())));
             false
         });
     }
@@ -383,6 +400,32 @@ mod tests {
             store
                 .get_by_token(1000 + MAX_FINISHED_DOWNLOADS as u32 + extra - 1)
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn only_a_waiting_download_takes_a_peers_offer() {
+        let mut store = DownloadStore::new();
+        store.add(make_download(1, DownloadStatus::Queued));
+        store.add(make_download(2, DownloadStatus::Completed));
+        store.add(make_download(3, DownloadStatus::Cancelled));
+
+        assert_eq!(store.refusal_of_offer("peer", "file-1.mp3"), None);
+        assert_eq!(
+            store.refusal_of_offer("peer", "file-2.mp3"),
+            Some("Complete")
+        );
+        assert_eq!(
+            store.refusal_of_offer("peer", "file-3.mp3"),
+            Some("Cancelled")
+        );
+        assert_eq!(
+            store.refusal_of_offer("peer", "never-asked.mp3"),
+            Some("Cancelled")
+        );
+        assert_eq!(
+            store.refusal_of_offer("stranger", "file-1.mp3"),
+            Some("Cancelled")
         );
     }
 
@@ -720,7 +763,7 @@ mod tests {
         store.add(completed);
         store.add(queued);
 
-        store.fail_and_forget_queued("peer", None);
+        store.fail_and_forget_queued("peer", None, "gone");
 
         assert_eq!(
             store.tokens(),
@@ -767,12 +810,12 @@ mod tests {
         store.add(b);
         store.add(c);
 
-        store.fail_and_forget_queued("peer", Some("song.mp3"));
+        store.fail_and_forget_queued("peer", Some("song.mp3"), "gone");
 
         assert_eq!(store.tokens(), vec![2, 3]);
         assert!(matches!(
             rx_match.try_recv().unwrap(),
-            DownloadStatus::Failed(_)
+            DownloadStatus::Failed(Some(reason)) if reason == "gone"
         ));
     }
 

@@ -64,6 +64,7 @@ pub struct Context {
     /// The connection dropped. A login waiting on it is never sent again, so
     /// its waiter answers now rather than at the verdict timeout.
     pub connection_lost: bool,
+    pub rejection: Option<(String, Option<String>)>,
 }
 
 impl Context {

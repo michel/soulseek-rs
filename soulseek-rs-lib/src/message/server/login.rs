@@ -16,7 +16,14 @@ impl MessageHandler<ServerMessage> for LoginHandler {
         let response = message.read_int8();
 
         if response != 1 {
-            let _ = sender.send(ServerMessage::LoginStatus(false));
+            let reason = message.read_string();
+            let detail = (message.get_pointer() < message.get_size())
+                .then(|| message.read_string());
+            let _ = sender.send(if reason.is_empty() {
+                ServerMessage::LoginStatus(false)
+            } else {
+                ServerMessage::LoginRejected { reason, detail }
+            });
             return;
         }
 

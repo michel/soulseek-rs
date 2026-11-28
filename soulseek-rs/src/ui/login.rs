@@ -311,6 +311,9 @@ fn verdict(login: soulseek_rs::Result<bool>) -> Result<(), LoginPhase> {
                     .to_string(),
             ))
         }
+        Err(e @ SoulseekRs::LoginRejected { .. }) => {
+            Err(LoginPhase::Rejected(e.to_string()))
+        }
         Err(e) => Err(LoginPhase::Failed(format!("Login failed: {e}"))),
     }
 }
@@ -602,6 +605,16 @@ mod tests {
         for rejected in [Ok(false), Err(SoulseekRs::AuthenticationFailed)] {
             assert!(matches!(verdict(rejected), Err(LoginPhase::Rejected(_))));
         }
+        assert_eq!(
+            verdict(Err(SoulseekRs::LoginRejected {
+                reason: "INVALIDUSERNAME".into(),
+                detail: Some("Nick too long.".into()),
+            })),
+            Err(LoginPhase::Rejected(
+                "Login rejected: the username is not allowed (Nick too long.)"
+                    .into()
+            ))
+        );
         for failed in [Err(SoulseekRs::Timeout), Err(SoulseekRs::NotConnected)]
         {
             assert!(matches!(verdict(failed), Err(LoginPhase::Failed(_))));

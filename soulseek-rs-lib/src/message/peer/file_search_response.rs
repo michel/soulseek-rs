@@ -43,7 +43,9 @@ pub fn build_file_search_response(
     payload
         .write_int8(slots)
         .write_int32(speed)
-        .write_int32(queue_length);
+        .write_int32(queue_length)
+        .write_int32(0) // unknown
+        .write_int32(0); // number of private results
 
     let compressed = deflate(&payload.get_data());
     Message::new()
@@ -150,4 +152,6 @@ fn the_trailer_carries_slots_speed_and_queue_length() {
         (body.read_int8(), body.read_int32(), body.read_int32()),
         (0, 900, 7)
     );
+    assert_eq!(body.get_size() - body.get_pointer(), 8);
+    assert_eq!((body.read_int32(), body.read_int32()), (0, 0));
 }

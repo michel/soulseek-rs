@@ -111,6 +111,7 @@ impl Client {
                     operation @ (ClientOperation::DownloadFromPeer(..)
                     | ClientOperation::UpdateDownloadTokens(..)
                     | ClientOperation::StartUpload { .. }
+                    | ClientOperation::UploadRefused { .. }
                     | ClientOperation::QueueUpload { .. }) => {
                         Self::on_transfers(
                             operation,
@@ -233,11 +234,16 @@ impl Client {
                             );
                         }
                     }
-                    ClientOperation::UploadFailed(username, filename) => {
+                    ClientOperation::UploadFailed {
+                        username,
+                        filename,
+                        reason,
+                    } => {
                         Self::process_failed_uploads(
                             client_context.clone(),
                             &username,
                             Some(&filename),
+                            reason.as_deref(),
                         );
                     }
                     ClientOperation::PlaceInQueueUpdate {
@@ -438,6 +444,7 @@ impl Client {
                                 );
                             }
                         }
+                        Self::send_held_offers(&client_context, &username);
                     }
                     operation @ ClientOperation::IncomingSearch { .. } => {
                         Self::on_search(
@@ -803,7 +810,7 @@ impl Client {
     }
 
     /// Answer a peer with the message `build` derives from the client state.
-    fn reply_to_peer(
+    pub(in crate::client) fn reply_to_peer(
         client_context: &Arc<RwLock<ClientContext>>,
         requester_key: &str,
         build: impl FnOnce(&ClientContext) -> crate::message::Message,

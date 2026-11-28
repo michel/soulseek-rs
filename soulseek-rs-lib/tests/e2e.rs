@@ -27,7 +27,7 @@ use soulseek_rs::message::distributed;
 use soulseek_rs::message::server::MessageFactory;
 use soulseek_rs::{
     Client, ClientSettings, ClientVersion, ConnectionType, DownloadStatus,
-    PeerAddress, SessionLoss, UploadStatus,
+    PeerAddress, SessionLoss, SoulseekRs, UploadStatus,
 };
 
 /// Only one test at a time may drive a server.
@@ -463,6 +463,46 @@ fn wrong_password_is_rejected() {
     );
 }
 
+fn login_refusal(
+    server: &TestServer,
+    username: &str,
+    password: &str,
+) -> (String, Option<String>) {
+    let mut client = Client::with_settings(server.settings(username, password));
+    client.connect().expect("connect");
+    match client.login() {
+        Err(SoulseekRs::LoginRejected { reason, detail }) => (reason, detail),
+        other => panic!("expected a refusal with a reason, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_refused_login_says_why() {
+    let server = server_or_skip!();
+
+    let user = "e2e_reason_user";
+    let mut first = Client::with_settings(server.settings(user, "right"));
+    first.connect().expect("connect");
+    assert!(first.login().expect("registering login"));
+    drop(first);
+
+    assert_eq!(
+        login_refusal(&server, user, "wrong"),
+        ("INVALIDPASS".to_string(), None)
+    );
+    assert_eq!(
+        login_refusal(&server, "e2e_reason_other", ""),
+        ("EMPTYPASSWORD".to_string(), None)
+    );
+    assert_eq!(
+        login_refusal(&server, &"n".repeat(64), "pw"),
+        (
+            "INVALIDUSERNAME".to_string(),
+            Some("Nick too long.".to_string())
+        )
+    );
+}
+
 #[test]
 fn registered_username_can_relogin_with_same_password() {
     let server = server_or_skip!();
@@ -693,7 +733,15 @@ fn run_mock_uploader_offering_after(
 
     p.write_all(&transfer_request(cfg).get_buffer())?;
     p.flush()?;
-    let mut msg = expect_code(&mut p, 41, Duration::from_secs(10))?;
+    read_transfer_response(&mut p)
+}
+
+/// The next TransferResponse (peer code 41) on `peer`: whether it allows the
+/// transfer, and the reason when it does not.
+fn read_transfer_response(
+    peer: &mut TcpStream,
+) -> std::io::Result<(bool, String)> {
+    let mut msg = expect_code(peer, 41, Duration::from_secs(10))?;
     msg.set_pointer(8);
     let _token = msg.read_int32();
     let allowed = msg.read_bool();
@@ -1191,9 +1239,48 @@ fn a_cancelled_queued_download_declines_the_peers_offer() {
     let _ = std::fs::remove_dir_all(&download_dir);
 }
 
+#[test]
+fn an_upload_offer_for_a_file_we_never_asked_for_is_refused() {
+    let server = server_or_skip!();
+
+    let listen_port = free_port().expect("free listen port");
+    let mut client = Client::with_settings(server.listening_settings(
+        "e2e_unasked_dl",
+        "pw",
+        listen_port,
+    ));
+    client.connect().expect("connect");
+    assert!(client.login().expect("login"));
+
+    let mut peer = connect_retry(
+        &format!("127.0.0.1:{listen_port}"),
+        Duration::from_secs(5),
+    )
+    .expect("peer connection");
+    peer.set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("read timeout");
+    peer.write_all(&peer_init_bytes("e2e_unasked_peer", "P", 0))
+        .expect("peer init");
+    let mut offer = Message::new();
+    offer
+        .write_int32(40)
+        .write_int32(1)
+        .write_int32(77)
+        .write_string("music\\never_asked.mp3")
+        .write_int64(10);
+    peer.write_all(&offer.get_buffer()).expect("offer");
+    peer.flush().expect("flush");
+
+    assert_eq!(
+        read_transfer_response(&mut peer).expect("an answer to the offer"),
+        (false, "Cancelled".to_string())
+    );
+}
+
 fn refusal_fails_the_download_quickly(
     peer_username: &str,
     build_refusal: impl FnOnce(&str) -> Message,
+    reason: &str,
 ) {
     let server = server_or_skip!();
 
@@ -1239,11 +1326,11 @@ fn refusal_fails_the_download_quickly(
         .expect("start download");
 
     let deadline = Instant::now() + Duration::from_secs(10);
-    let mut failed = false;
+    let mut failure = None;
     while Instant::now() < deadline {
         match status_rx.recv_timeout(Duration::from_millis(500)) {
-            Ok(DownloadStatus::Failed(_)) => {
-                failed = true;
+            Ok(DownloadStatus::Failed(reason)) => {
+                failure = Some(reason);
                 break;
             }
             Ok(DownloadStatus::Completed) => {
@@ -1255,28 +1342,39 @@ fn refusal_fails_the_download_quickly(
     let _ = uploader.join();
     let _ = std::fs::remove_dir_all(&download_dir);
 
-    assert!(failed, "the peer's refusal should fail the download fast");
+    assert_eq!(
+        failure.expect("the peer's refusal should fail the download fast"),
+        Some(reason.to_string())
+    );
 }
 
 #[test]
 fn an_upload_failed_reply_fails_the_download_quickly() {
-    refusal_fails_the_download_quickly("e2e_failing_peer", |filename| {
-        let mut refusal = Message::new();
-        refusal.write_int32(46).write_string(filename);
-        refusal
-    });
+    refusal_fails_the_download_quickly(
+        "e2e_failing_peer",
+        |filename| {
+            let mut refusal = Message::new();
+            refusal.write_int32(46).write_string(filename);
+            refusal
+        },
+        "The upload failed on the other side",
+    );
 }
 
 #[test]
-fn an_upload_denied_reply_fails_the_download_quickly() {
-    refusal_fails_the_download_quickly("e2e_denying_peer", |filename| {
-        let mut refusal = Message::new();
-        refusal
-            .write_int32(50)
-            .write_string(filename)
-            .write_string("File not shared.");
-        refusal
-    });
+fn an_upload_denied_reply_fails_the_download_with_the_peers_reason() {
+    refusal_fails_the_download_quickly(
+        "e2e_denying_peer",
+        |filename| {
+            let mut refusal = Message::new();
+            refusal
+                .write_int32(50)
+                .write_string(filename)
+                .write_string("Too many files");
+            refusal
+        },
+        "Too many files",
+    );
 }
 
 #[test]
@@ -2468,7 +2566,7 @@ fn the_server_reports_another_users_status_and_share_counts() {
 /// goes quiet. Returned so the caller can keep it alive: dropping the streams
 /// would release the slot it is holding.
 struct QueueingPeer {
-    _server: TcpStream,
+    server: TcpStream,
     peer: TcpStream,
 }
 
@@ -2487,6 +2585,37 @@ impl QueueingPeer {
         let _ = self.peer.set_read_timeout(Some(timeout));
         read_until_code(&mut self.peer, 40, timeout).is_some()
     }
+
+    /// Wait for the upload offer and return the token it carries.
+    fn offered_token(&mut self) -> u32 {
+        let mut offer =
+            expect_code(&mut self.peer, 40, Duration::from_secs(10))
+                .expect("an upload offer");
+        offer.set_pointer(8);
+        let _direction = offer.read_int32();
+        offer.read_int32()
+    }
+
+    fn answer_offer(&mut self, token: u32, refusal: Option<&str>) {
+        self.peer
+            .write_all(&transfer_response(token, refusal).get_buffer())
+            .expect("answer the offer");
+        self.peer.flush().expect("flush");
+    }
+}
+
+/// A TransferResponse (peer code 41) allowing the transfer under `token`, or
+/// refusing it for the reason given.
+fn transfer_response(token: u32, refusal: Option<&str>) -> Message {
+    let mut response = Message::new();
+    response
+        .write_int32(41)
+        .write_int32(token)
+        .write_bool(refusal.is_none());
+    if let Some(reason) = refusal {
+        response.write_string(reason);
+    }
+    response
 }
 
 fn queue_as(
@@ -2503,10 +2632,7 @@ fn queue_as(
     queue.write_int32(43).write_string(filename);
     peer.write_all(&queue.get_buffer())?;
     peer.flush()?;
-    Ok(QueueingPeer {
-        _server: server,
-        peer,
-    })
+    Ok(QueueingPeer { server, peer })
 }
 
 /// Wait for `check` to hold, polling the client's view of its own queue.
@@ -2781,6 +2907,148 @@ fn a_peer_asking_where_it_sits_is_answered_with_its_place() {
     answer.set_pointer(8);
     assert_eq!(answer.read_string(), asker_file);
     assert_eq!(answer.read_int32(), 1, "and it should carry the real place");
+
+    let _ = std::fs::remove_dir_all(share);
+}
+
+/// A logged-in client sharing `share`, and the address its listener is on.
+fn sharing(
+    server: &TestServer,
+    username: &str,
+    share: &std::path::Path,
+) -> (Client, String) {
+    let port = free_port().expect("sharer port");
+    let mut sharer = Client::with_settings(ClientSettings {
+        shared_directories: vec![share.display().to_string()],
+        ..server.listening_settings(username, "pw", port)
+    });
+    sharer.connect().expect("sharer connect");
+    assert!(sharer.login().expect("sharer login"));
+    (sharer, format!("127.0.0.1:{port}"))
+}
+
+#[test]
+fn a_request_for_a_file_we_do_not_share_is_refused() {
+    let server = server_or_skip!();
+    let (share, folder) = queue_share("unshared", &["here.mp3"]);
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let (_sharer, listen_addr) = sharing(&server, "e2e_q_nsharer", &share);
+
+    let missing = format!("{folder}\\gone.mp3");
+    let mut asker =
+        queue_as(&server_addr, &listen_addr, "e2e_q_nasker", &missing)
+            .expect("asker queues");
+
+    let mut refusal = expect_code(&mut asker.peer, 50, Duration::from_secs(10))
+        .expect("an UploadDenied should come back");
+    refusal.set_pointer(8);
+    assert_eq!(refusal.read_string(), missing);
+    assert_eq!(refusal.read_string(), "File not shared.");
+
+    let _ = std::fs::remove_dir_all(share);
+}
+
+/// Open the file connection a sharer brokers to a peer nobody can dial:
+/// answer the ConnectToPeer the server relays on `server` by connecting back
+/// to `listen_addr`, read past the transfer token, and ask for the file from
+/// `offset`.
+fn open_brokered_file_connection(
+    server: &mut TcpStream,
+    listen_addr: &str,
+    offset: u64,
+) -> std::io::Result<TcpStream> {
+    let mut ctp = expect_code(server, 18, Duration::from_secs(15))?;
+    ctp.set_pointer(8);
+    let _who = ctp.read_string();
+    let _conn_type = ctp.read_string();
+    let _ip = ctp.read_int32();
+    let _port = ctp.read_int32();
+    let connect_token = ctp.read_int32();
+
+    let mut f = connect_retry(listen_addr, Duration::from_secs(5))?;
+    f.set_read_timeout(Some(Duration::from_secs(10)))?;
+    f.write_all(
+        &MessageFactory::build_pierce_firewall_message(connect_token)
+            .get_buffer(),
+    )?;
+    let mut transfer_token = [0u8; 4];
+    f.read_exact(&mut transfer_token)?;
+    f.write_all(&offset.to_le_bytes())?;
+    Ok(f)
+}
+
+fn legacy_transfer_request(token: u32, filename: &str) -> Message {
+    let mut request = Message::new();
+    request
+        .write_int32(40)
+        .write_int32(0)
+        .write_int32(token)
+        .write_string(filename);
+    request
+}
+
+#[test]
+fn a_file_asked_for_with_a_transfer_request_is_queued_and_served() {
+    let server = server_or_skip!();
+    let (share, folder) = queue_share("legacy", &["old.mp3"]);
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let (_sharer, listen_addr) = sharing(&server, "e2e_legacy_sharer", &share);
+
+    let mut asker_server =
+        login_raw(&server_addr, "e2e_legacy_asker", "pw").expect("login");
+    let mut peer = connect_retry(&listen_addr, Duration::from_secs(5))
+        .expect("peer connection");
+    peer.set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("read timeout");
+    peer.write_all(&peer_init_bytes("e2e_legacy_asker", "P", 0))
+        .expect("peer init");
+
+    let missing = format!("{folder}\\gone.mp3");
+    peer.write_all(&legacy_transfer_request(30, &missing).get_buffer())
+        .expect("request");
+    assert_eq!(
+        read_transfer_response(&mut peer).expect("an answer"),
+        (false, "File not shared.".to_string())
+    );
+
+    let wanted = format!("{folder}\\old.mp3");
+    peer.write_all(&legacy_transfer_request(31, &wanted).get_buffer())
+        .expect("request");
+    let mut answer =
+        expect_code(&mut peer, 41, Duration::from_secs(10)).expect("an answer");
+    answer.set_pointer(8);
+    assert_eq!(
+        answer.read_int32(),
+        31,
+        "the answer quotes the asker's token"
+    );
+    assert!(!answer.read_bool());
+    assert_eq!(answer.read_string(), "Queued");
+
+    let mut offer = expect_code(&mut peer, 40, Duration::from_secs(10))
+        .expect("the file is offered once a slot is free");
+    offer.set_pointer(8);
+    assert_eq!(offer.read_int32(), 1);
+    let token = offer.read_int32();
+    assert_eq!(offer.read_string(), wanted);
+    assert_eq!(offer.read_int64(), 4096);
+
+    peer.write_all(&legacy_transfer_request(32, &wanted).get_buffer())
+        .expect("ask again");
+    assert_eq!(
+        read_transfer_response(&mut peer).expect("an answer"),
+        (false, "Queued".to_string()),
+        "asking again for a file already offered changes nothing"
+    );
+
+    peer.write_all(&transfer_response(token, None).get_buffer())
+        .expect("accept");
+    let mut file =
+        open_brokered_file_connection(&mut asker_server, &listen_addr, 0)
+            .expect("file connection");
+    let mut content = vec![0u8; 4096];
+    file.read_exact(&mut content).expect("the file");
+    assert_eq!(content, vec![9u8; 4096]);
 
     let _ = std::fs::remove_dir_all(share);
 }
@@ -3482,6 +3750,8 @@ fn a_third_party_client_reads_our_user_info() {
     assert_eq!(upload_slots, 3, "the configured slot count");
     assert_eq!(queue_size, 0, "nobody is waiting");
     assert!(slots_free, "nothing is uploading");
+    assert_eq!(reply.get_size() - reply.get_pointer(), 4);
+    assert_eq!(reply.read_int32(), 0, "nobody may send us files unasked");
 
     let _ = std::fs::remove_dir_all(share_dir);
 }
@@ -3695,6 +3965,211 @@ fn an_unanswered_upload_offer_frees_its_slot() {
                 && matches!(event.status, UploadStatus::Failed(_))
         }),
         "the operator sees the unanswered offer fail"
+    );
+
+    let _ = std::fs::remove_dir_all(share);
+}
+
+#[test]
+fn a_refused_upload_offer_frees_its_slot_at_once() {
+    let server = server_or_skip!();
+    let (share, folder) = queue_share("refused", &["unwanted.mp3", "next.mp3"]);
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let (sharer, listen_addr) = sharing(&server, "e2e_refused_sharer", &share);
+    sharer.set_upload_slots(1);
+
+    let mut refuser = queue_as(
+        &server_addr,
+        &listen_addr,
+        "e2e_refused_refuser",
+        &format!("{folder}\\unwanted.mp3"),
+    )
+    .expect("refuser queues");
+    let token = refuser.offered_token();
+
+    let mut next = queue_as(
+        &server_addr,
+        &listen_addr,
+        "e2e_refused_next",
+        &format!("{folder}\\next.mp3"),
+    )
+    .expect("next peer queues");
+    assert!(
+        wait_for(|| place_of(
+            &sharer,
+            "e2e_refused_next",
+            &format!("{folder}\\next.mp3")
+        ) == Some(1)),
+        "the next peer waits while the offer is out"
+    );
+
+    refuser.answer_offer(token, Some("Cancelled"));
+
+    assert!(
+        next.takes_a_slot_within(Duration::from_secs(5)),
+        "the slot must not wait out the offer timeout"
+    );
+    assert!(
+        sharer.take_upload_events().iter().any(|event| {
+            event.username == "e2e_refused_refuser"
+                && event.status == UploadStatus::Cancelled
+        }),
+        "the operator sees the refused offer as cancelled"
+    );
+
+    let _ = std::fs::remove_dir_all(share);
+}
+
+#[test]
+fn an_unanswered_offer_follows_its_peer_to_a_new_connection() {
+    let server = server_or_skip!();
+    let (share, folder) = queue_share("moved", &["moved.mp3"]);
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let (_sharer, listen_addr) = sharing(&server, "e2e_moved_sharer", &share);
+
+    let mut asker = queue_as(
+        &server_addr,
+        &listen_addr,
+        "e2e_moved_asker",
+        &format!("{folder}\\moved.mp3"),
+    )
+    .expect("asker queues");
+    let token = asker.offered_token();
+
+    let mut replacement = connect_retry(&listen_addr, Duration::from_secs(5))
+        .expect("second connection");
+    replacement
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("read timeout");
+    replacement
+        .write_all(&peer_init_bytes("e2e_moved_asker", "P", 0))
+        .expect("peer init");
+    replacement
+        .write_all(
+            &soulseek_rs::message::peer::build_user_info_request().get_buffer(),
+        )
+        .expect("ask over the new connection");
+    expect_code(&mut replacement, 16, Duration::from_secs(10))
+        .expect("the new connection is the one in use");
+
+    asker
+        .peer
+        .shutdown(std::net::Shutdown::Write)
+        .expect("close the first connection");
+
+    let mut offer = expect_code(&mut replacement, 40, Duration::from_secs(10))
+        .expect("the offer is made again where the peer now is");
+    offer.set_pointer(8);
+    let _direction = offer.read_int32();
+    assert_eq!(offer.read_int32(), token);
+
+    let _ = std::fs::remove_dir_all(share);
+}
+
+#[test]
+fn a_queued_peer_that_hung_up_is_dialled_when_its_slot_comes() {
+    let server = server_or_skip!();
+    let (share, folder) = queue_share("hungup", &["first.mp3", "later.mp3"]);
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let (sharer, listen_addr) = sharing(&server, "e2e_hungup_sharer", &share);
+    sharer.set_upload_slots(1);
+
+    let mut first = queue_as(
+        &server_addr,
+        &listen_addr,
+        "e2e_hungup_first",
+        &format!("{folder}\\first.mp3"),
+    )
+    .expect("first peer queues");
+    let token = first.offered_token();
+
+    let later_file = format!("{folder}\\later.mp3");
+    let later_port = free_port().expect("later peer port");
+    let listener = std::net::TcpListener::bind(("0.0.0.0", later_port))
+        .expect("later peer listener");
+    let mut later =
+        queue_as(&server_addr, &listen_addr, "e2e_hungup_later", &later_file)
+            .expect("later peer queues");
+    later
+        .server
+        .write_all(
+            &MessageFactory::build_set_wait_port_message(later_port)
+                .get_buffer(),
+        )
+        .expect("announce the port");
+    later
+        .server
+        .write_all(
+            &MessageFactory::build_get_peer_address("e2e_hungup_later")
+                .get_buffer(),
+        )
+        .expect("ask for our own address");
+    expect_code(&mut later.server, 3, Duration::from_secs(5))
+        .expect("the server knows the port by the time it answers");
+    assert!(
+        wait_for(
+            || place_of(&sharer, "e2e_hungup_later", &later_file) == Some(1)
+        ),
+        "the later peer waits behind the first"
+    );
+    later
+        .peer
+        .shutdown(std::net::Shutdown::Write)
+        .expect("hang up");
+    assert_eq!(
+        later
+            .peer
+            .read(&mut [0u8; 1])
+            .expect("the sharer hangs up too"),
+        0
+    );
+
+    first.answer_offer(token, Some("Cancelled"));
+
+    let mut dialled = accept_within(&listener, Duration::from_secs(15))
+        .expect("the sharer dials the peer whose slot came up");
+    let mut offer = expect_code(&mut dialled, 40, Duration::from_secs(10))
+        .expect("and offers the file over the new connection");
+    offer.set_pointer(8);
+    assert_eq!(offer.read_int32(), 1);
+    let _token = offer.read_int32();
+    assert_eq!(offer.read_string(), later_file);
+
+    let _ = std::fs::remove_dir_all(share);
+}
+
+#[test]
+fn an_upload_that_breaks_tells_the_downloader() {
+    let server = server_or_skip!();
+    let (share, folder) = queue_share("broken", &["broken.mp3"]);
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let (sharer, listen_addr) = sharing(&server, "e2e_broken_sharer", &share);
+
+    let wanted = format!("{folder}\\broken.mp3");
+    let mut asker =
+        queue_as(&server_addr, &listen_addr, "e2e_broken_asker", &wanted)
+            .expect("asker queues");
+    let token = asker.offered_token();
+    asker.answer_offer(token, None);
+
+    let past_the_end = 4096 + 1;
+    let _f = open_brokered_file_connection(
+        &mut asker.server,
+        &listen_addr,
+        past_the_end,
+    )
+    .expect("file connection");
+
+    let mut failed = expect_code(&mut asker.peer, 46, Duration::from_secs(10))
+        .expect("an UploadFailed should come back");
+    failed.set_pointer(8);
+    assert_eq!(failed.read_string(), wanted);
+    assert!(
+        wait_for(|| sharer.uploads().iter().any(|upload| {
+            upload.username == "e2e_broken_asker"
+                && matches!(upload.status, UploadStatus::Failed(_))
+        })),
+        "the operator sees the upload fail"
     );
 
     let _ = std::fs::remove_dir_all(share);

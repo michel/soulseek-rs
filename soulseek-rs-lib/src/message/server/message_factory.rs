@@ -293,6 +293,16 @@ impl MessageFactory {
             .clone()
     }
 
+    /// `UploadFailed` (peer code 46): the upload of `filename` broke off, and
+    /// the peer may ask for it again.
+    #[must_use]
+    pub fn build_upload_failed_message(filename: &str) -> Message {
+        Message::new()
+            .write_int32(46)
+            .write_string(filename)
+            .clone()
+    }
+
     /// `UploadDenied` (peer code 50): we will not be sending `filename`, and
     /// why.
     #[must_use]

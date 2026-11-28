@@ -137,8 +137,18 @@ struct UploadJob {
     size: u64,
     /// When this job gives its slot back if it has not begun streaming.
     deadline: Instant,
-    /// Whether the peer has accepted the offer.
-    answered: bool,
+    offer: Offer,
+}
+
+/// How far the offer of an [`UploadJob`] has got.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Offer {
+    /// No connection to the peer has carried it yet.
+    Unsent,
+    /// Sent, and waiting for the peer's TransferResponse.
+    Sent,
+    /// The peer accepted it.
+    Accepted,
 }
 
 /// An upload waiting for its downloader to connect back to our listener while
@@ -325,7 +335,11 @@ pub enum ClientOperation {
         obfuscation_type: u32,
         obfuscated_port: u16,
     },
-    UploadFailed(String, String),
+    UploadFailed {
+        username: String,
+        filename: String,
+        reason: Option<String>,
+    },
     PlaceInQueueUpdate {
         username: String,
         filename: String,
@@ -371,10 +385,19 @@ pub enum ClientOperation {
     QueueUpload {
         requester_key: String,
         filename: String,
+        /// The token of a download-direction `TransferRequest`, when the peer
+        /// asked that way instead of with `QueueUpload`: clients built on
+        /// Soulseek.NET do, and wait for a `TransferResponse` quoting it.
+        transfer_token: Option<u32>,
     },
     /// The peer accepted our upload offer for `token`; start streaming.
     StartUpload {
         token: u32,
+    },
+    /// The peer turned down our upload offer for `token`.
+    UploadRefused {
+        token: u32,
+        reason: Option<String>,
     },
     /// A peer asked to browse our shared files; send our SharedFileListResponse.
     ShareListRequested {

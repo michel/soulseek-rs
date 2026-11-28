@@ -470,6 +470,11 @@ pub struct UserInterests {
 }
 
 impl Transfer {
+    /// The sender wants the file from us.
+    pub const DOWNLOAD: u32 = 0;
+    /// The sender has the file ready to send to us.
+    pub const UPLOAD: u32 = 1;
+
     pub fn new_from_message(message: &mut Message) -> Self {
         let direction = message.read_int32();
         let token = message.read_int32();

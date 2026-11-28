@@ -7,8 +7,8 @@
 
 use super::{
     Arc, Client, ClientContext, ClientOperation, DownloadError, DownloadPeer,
-    DownloadStatus, MessageFactory, PeerMessage, RwLock, RwLockExt,
-    ServerMessage, debug, error, info, next_download_token, thread, trace,
+    MessageFactory, PeerMessage, RwLock, RwLockExt, ServerMessage, debug,
+    error, info, next_download_token, thread, trace,
 };
 
 impl Client {
@@ -87,13 +87,10 @@ impl Client {
                     }
                 };
 
-                let cancelled = context
+                let refusal = context
                     .downloads
-                    .get_by_file(&username, &transfer.filename)
-                    .is_some_and(|download| {
-                        matches!(download.status, DownloadStatus::Cancelled)
-                    });
-                if !cancelled {
+                    .refusal_of_offer(&username, &transfer.filename);
+                if refusal.is_none() {
                     context.downloads.rekey(
                         &username,
                         &transfer.filename,
@@ -111,15 +108,18 @@ impl Client {
                 let registry = context.peer_registry.clone();
                 drop(context);
                 if let Some(registry) = registry {
-                    let response = if cancelled {
-                        MessageFactory::build_transfer_denial_message(
-                            transfer.token,
-                            "Cancelled",
-                        )
-                    } else {
-                        MessageFactory::build_transfer_response_message(
-                            transfer,
-                        )
+                    let response = match refusal {
+                        Some(reason) => {
+                            MessageFactory::build_transfer_denial_message(
+                                transfer.token,
+                                reason,
+                            )
+                        }
+                        None => {
+                            MessageFactory::build_transfer_response_message(
+                                transfer,
+                            )
+                        }
                     };
                     let _ = registry.send_to_peer(
                         &username,
@@ -167,35 +167,61 @@ impl Client {
                     }
                 }
             }
+            ClientOperation::UploadRefused { token, reason } => {
+                let freed = client_context.write_safe().is_ok_and(|mut ctx| {
+                    ctx.refuse_offer(token, reason.as_deref())
+                });
+                if freed {
+                    Self::pump_upload_queue(client_context);
+                }
+            }
             ClientOperation::QueueUpload {
                 requester_key,
                 filename,
+                transfer_token,
             } => {
-                // The peer served next may not be this one.
-                match client_context.write_safe() {
-                    Ok(mut ctx) => {
-                        let Some(file) = ctx.shares.get(&filename) else {
-                            debug!(
-                                "[client] QueueUpload for unknown file {}",
-                                filename
-                            );
-                            return;
-                        };
-                        let size = file.size;
-                        let real_path = file.real_path.clone();
-                        ctx.enqueue_upload(
-                            &requester_key,
-                            &filename,
-                            real_path,
-                            size,
-                        );
-                    }
+                let shared = match client_context.write_safe() {
+                    Ok(mut ctx) => ctx
+                        .shares
+                        .get(&filename)
+                        .map(|file| (file.real_path.clone(), file.size))
+                        .map(|(real_path, size)| {
+                            ctx.enqueue_upload(
+                                &requester_key,
+                                &filename,
+                                real_path,
+                                size,
+                            )
+                        })
+                        .is_some(),
                     Err(e) => {
                         error!("[client] QueueUpload write: {}", e);
                         return;
                     }
+                };
+                let refusal = (!shared).then_some("File not shared.");
+                let answer = match transfer_token {
+                    Some(token) => {
+                        Some(MessageFactory::build_transfer_denial_message(
+                            token,
+                            refusal.unwrap_or("Queued"),
+                        ))
+                    }
+                    None => refusal.map(|reason| {
+                        MessageFactory::build_upload_denied_message(
+                            &filename, reason,
+                        )
+                    }),
+                };
+                if let Some(answer) = answer {
+                    Self::reply_to_peer(client_context, &requester_key, |_| {
+                        answer
+                    });
                 }
-                Self::pump_upload_queue(client_context);
+                if shared {
+                    // The peer served next may not be this one.
+                    Self::pump_upload_queue(client_context);
+                }
             }
             // The dispatch loop routes only the variants above to here.
             _ => {}

@@ -57,8 +57,11 @@ impl Client {
                         client_context.clone(),
                         &username,
                         None,
+                        None,
                     );
                     Self::release_upload_slots(client_context, &username);
+                } else {
+                    Self::resend_unanswered_offers(client_context, &username);
                 }
             }
             ClientOperation::PeerConnectFailed(

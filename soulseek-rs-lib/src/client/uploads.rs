@@ -1,8 +1,10 @@
+use super::upload_queue::UploadOffer;
 use super::{
     ActiveUpload, Arc, BrokeredUpload, Client, ClientContext, PeerMessage,
     RwLock, RwLockExt, ServerMessage, debug, error, next_connect_token,
     next_upload_token, thread,
 };
+use crate::actor::peer_registry::PeerRegistry;
 use crate::message::server::MessageFactory;
 use crate::peer::{ConnectionType, upload_peer};
 use crate::types::UploadStatus;
@@ -145,8 +147,20 @@ impl Client {
             let _ = registry
                 .send_to_peer(&downloader, PeerMessage::WithdrawOffer(token));
         }
+        Self::send_offers(client_context, &registry, offers);
+    }
+
+    /// Send each offer to its peer. A peer with no connection to send on
+    /// keeps its offers held, and the server is asked where it is so that
+    /// one gets made.
+    fn send_offers(
+        client_context: &Arc<RwLock<ClientContext>>,
+        registry: &PeerRegistry,
+        offers: Vec<UploadOffer>,
+    ) {
+        let mut unreachable = Vec::new();
         for offer in offers {
-            let _ = registry.send_to_peer(
+            let sent = registry.send_to_peer(
                 &offer.requester_key,
                 PeerMessage::ServeUpload {
                     token: offer.token,
@@ -154,6 +168,52 @@ impl Client {
                     size: offer.size,
                 },
             );
+            if sent.is_err() && !unreachable.contains(&offer.requester_key) {
+                unreachable.push(offer.requester_key);
+            }
+        }
+        for username in unreachable {
+            let sender = match client_context.write_safe() {
+                Ok(mut ctx) => {
+                    ctx.hold_offers(&username);
+                    ctx.server_sender.clone()
+                }
+                Err(_) => continue,
+            };
+            if let Some(sender) = sender {
+                let _ = sender.send(ServerMessage::GetPeerAddress(username));
+            }
+        }
+    }
+
+    /// The connection `username` was offered uploads on has closed: send
+    /// the offers they had not answered again, on the connection that
+    /// replaced it or on the next one made.
+    pub(crate) fn resend_unanswered_offers(
+        client_context: &Arc<RwLock<ClientContext>>,
+        username: &str,
+    ) {
+        let held = client_context
+            .write_safe()
+            .is_ok_and(|mut ctx| ctx.hold_offers(username));
+        if held {
+            Self::send_held_offers(client_context, username);
+        }
+    }
+
+    /// A connection to `username` is up: send the offers held for them.
+    pub(crate) fn send_held_offers(
+        client_context: &Arc<RwLock<ClientContext>>,
+        username: &str,
+    ) {
+        let (registry, offers) = match client_context.write_safe() {
+            Ok(mut ctx) => {
+                (ctx.peer_registry.clone(), ctx.take_held_offers(username))
+            }
+            Err(_) => return,
+        };
+        if let Some(registry) = registry {
+            Self::send_offers(client_context, &registry, offers);
         }
     }
 
@@ -348,10 +408,15 @@ impl Client {
             }
         };
         let mut report = None;
+        let mut broken = None;
         if let Ok(mut ctx) = context.write_safe()
             && let Some(upload) = ctx.active_uploads.get_mut(&token)
         {
             let secs = upload.started.elapsed().as_secs_f64();
+            if matches!(status, UploadStatus::Failed(_)) {
+                broken =
+                    Some((upload.username.clone(), upload.filename.clone()));
+            }
             upload.status = status;
             if let Some(bytes) = streamed
                 && secs > 0.0
@@ -368,6 +433,11 @@ impl Client {
                 MessageFactory::build_send_upload_speed(speed),
             ));
         }
+        if let Some((downloader, filename)) = broken {
+            Self::reply_to_peer(context, &downloader, |_| {
+                MessageFactory::build_upload_failed_message(&filename)
+            });
+        }
         // The slot this transfer held is free now, so whoever is next in
         // line gets it without waiting for another request to arrive.
         Self::pump_upload_queue(context);
@@ -377,10 +447,15 @@ impl Client {
         client_context: Arc<RwLock<ClientContext>>,
         username: &str,
         filename: Option<&str>,
+        reason: Option<&str>,
     ) {
         match client_context.write_safe() {
             Ok(mut context) => {
-                context.downloads.fail_and_forget_queued(username, filename);
+                context.downloads.fail_and_forget_queued(
+                    username,
+                    filename,
+                    reason.unwrap_or("The upload failed on the other side"),
+                );
             }
             Err(e) => {
                 error!("[client] process_failed_uploads write: {}", e);

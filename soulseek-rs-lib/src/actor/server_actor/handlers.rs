@@ -51,6 +51,12 @@ impl ServerActor {
             ServerMessage::LoginStatus(message) => {
                 self.handle_login_status(message);
             }
+            ServerMessage::LoginRejected { reason, detail } => {
+                if let Ok(mut ctx) = self.context.write_safe() {
+                    ctx.rejection = Some((reason, detail));
+                }
+                self.handle_login_status(false);
+            }
             ServerMessage::Relogged => self.handle_relogged(),
             ServerMessage::PasswordChanged(_) => {}
             ServerMessage::PierceFirewall(token) => {
@@ -508,6 +514,7 @@ impl ServerActor {
         if let Ok(mut ctx) = self.context.write_safe() {
             ctx.logged_in = None;
             ctx.connection_lost = false;
+            ctx.rejection = None;
         }
         self.queue_message(MessageFactory::build_login_message(
             &username, &password, version,
@@ -523,18 +530,25 @@ impl ServerActor {
                     break;
                 }
 
-                let (logged_in, connection_lost) = match context.read_safe() {
-                    Ok(ctx) => (ctx.logged_in, ctx.connection_lost),
-                    Err(e) => {
-                        let _ = response.send(Err(e));
-                        break;
-                    }
-                };
+                let (logged_in, connection_lost, rejection) =
+                    match context.read_safe() {
+                        Ok(ctx) => (
+                            ctx.logged_in,
+                            ctx.connection_lost,
+                            ctx.rejection.clone(),
+                        ),
+                        Err(e) => {
+                            let _ = response.send(Err(e));
+                            break;
+                        }
+                    };
                 if let Some(logged_in) = logged_in {
-                    let result = if logged_in {
-                        Ok(true)
-                    } else {
-                        Err(SoulseekRs::AuthenticationFailed)
+                    let result = match (logged_in, rejection) {
+                        (true, _) => Ok(true),
+                        (false, Some((reason, detail))) => {
+                            Err(SoulseekRs::LoginRejected { reason, detail })
+                        }
+                        (false, None) => Err(SoulseekRs::AuthenticationFailed),
                     };
                     let _ = response.send(result);
                     break;

@@ -27,7 +27,11 @@ pub enum PeerMessage {
     SendMessage(Message),
     FileSearchResult(SearchResult),
     TransferRequest(Transfer),
-    UploadFailed(String, String),
+    /// A peer will not send `filename`, for the `reason` it gave if any.
+    UploadFailed {
+        filename: String,
+        reason: Option<String>,
+    },
     TransferResponse {
         token: u32,
         allowed: bool,
@@ -377,8 +381,12 @@ impl PeerActor {
             PeerMessage::ProcessRead => {
                 self.process_read();
             }
-            PeerMessage::UploadFailed(_, filename) => {
-                self.handle_upload_failed(filename);
+            PeerMessage::UploadFailed { filename, reason } => {
+                self.forward(ClientOperation::UploadFailed {
+                    username: self.peer_username(),
+                    filename,
+                    reason,
+                });
             }
         }
     }
@@ -396,8 +404,9 @@ impl PeerActor {
         }
     }
 
-    /// A peer offers us a file. Record the peer's transfer token with the
-    /// client, and let *that* step send the TransferResponse.
+    /// A peer asks for one of our files, or offers us one it has ready. For
+    /// an offer, record the peer's transfer token with the client, and let
+    /// *that* step send the TransferResponse.
     ///
     /// The response is what invites the peer's file connection, and that
     /// connection is matched by the peer's token — so replying here would race
@@ -408,15 +417,21 @@ impl PeerActor {
         let username = self.peer_username();
         debug!("[peer:{}] TransferRequest for {}", username, transfer.token);
 
-        if let Err(e) =
-            self.client_channel
-                .send(ClientOperation::UpdateDownloadTokens(
-                    transfer,
-                    username.clone(),
-                ))
-        {
+        let operation = match transfer.direction {
+            Transfer::DOWNLOAD => ClientOperation::QueueUpload {
+                requester_key: username.clone(),
+                filename: transfer.filename,
+                transfer_token: Some(transfer.token),
+            },
+            Transfer::UPLOAD => ClientOperation::UpdateDownloadTokens(
+                transfer,
+                username.clone(),
+            ),
+            _ => return,
+        };
+        if let Err(e) = self.client_channel.send(operation) {
             error!(
-                "[peer:{}] failed to send UpdateDownloadTokens: {}",
+                "[peer:{}] failed to forward TransferRequest: {}",
                 username, e
             );
         }
@@ -438,11 +453,11 @@ impl PeerActor {
         // our offer — start streaming. This leaves the download path
         // (every other token) byte-for-byte unchanged.
         if self.serving_tokens.remove(&token) {
-            if allowed {
-                let _ = self
-                    .client_channel
-                    .send(ClientOperation::StartUpload { token });
-            }
+            self.forward(if allowed {
+                ClientOperation::StartUpload { token }
+            } else {
+                ClientOperation::UploadRefused { token, reason }
+            });
             return;
         }
 
@@ -512,6 +527,7 @@ impl PeerActor {
         if let Err(e) = self.client_channel.send(ClientOperation::QueueUpload {
             requester_key,
             filename,
+            transfer_token: None,
         }) {
             error!("[peer_actor] forward IncomingQueueUpload: {}", e);
         }
@@ -528,16 +544,6 @@ impl PeerActor {
     fn forward(&self, operation: ClientOperation) {
         if let Err(e) = self.client_channel.send(operation) {
             error!("[peer_actor] forward to client: {}", e);
-        }
-    }
-
-    fn handle_upload_failed(&self, filename: String) {
-        let username = self.peer_username();
-        if let Err(e) = self
-            .client_channel
-            .send(ClientOperation::UploadFailed(username, filename))
-        {
-            error!("[peer_actor] failed to forward UploadFailed: {}", e);
         }
     }
 

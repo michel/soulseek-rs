@@ -6,6 +6,12 @@ pub enum SoulseekRs {
     NetworkError(std::io::Error),
     /// Authentication failed during login
     AuthenticationFailed,
+    /// The server refused the login with `reason`, such as `INVALIDPASS`.
+    /// Only `INVALIDUSERNAME` carries a `detail`.
+    LoginRejected {
+        reason: String,
+        detail: Option<String>,
+    },
     /// Error parsing messages or data
     ParseError(String),
     /// Operation timed out
@@ -30,6 +36,26 @@ impl fmt::Display for SoulseekRs {
             }
             Self::AuthenticationFailed => {
                 write!(f, "Authentication failed")
+            }
+            Self::LoginRejected { reason, detail } => {
+                let meaning = match reason.as_str() {
+                    "INVALIDPASS" => "wrong password, or the username is taken",
+                    "INVALIDUSERNAME" => "the username is not allowed",
+                    "EMPTYPASSWORD" => "the password is empty",
+                    "INVALIDVERSION" => {
+                        "the server refuses this client version"
+                    }
+                    "SVRFULL" => "the server is full",
+                    "SVRPRIVATE" => "the server is private",
+                    other => other,
+                };
+                write!(f, "Login rejected: {meaning}")?;
+                match detail.as_deref() {
+                    Some(detail) if !detail.is_empty() => {
+                        write!(f, " ({detail})")
+                    }
+                    _ => Ok(()),
+                }
             }
             Self::ParseError(msg) => write!(f, "Parse error: {msg}"),
             Self::Timeout => write!(f, "Operation timed out"),

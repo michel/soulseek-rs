@@ -94,6 +94,7 @@ pub fn build_user_info(
         .write_int32(upload_slots)
         .write_int32(queue_size)
         .write_bool(slots_free)
+        .write_int32(0) // who may send us files unasked: no one
         .clone()
 }
 
