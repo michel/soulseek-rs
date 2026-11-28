@@ -411,12 +411,12 @@ impl ServerActor {
                 self.shared_file_count,
             ) {
                 self.send_message(msg);
-            }
-            // A write that failed has recorded the loss and dropped the
-            // connection. Calling that a session would clear the loss the
-            // daemon reconnects on.
-            if connected && self.stream.is_none() {
-                return;
+                // A write that failed has recorded the loss and dropped the
+                // connection. Calling that a session would clear the loss
+                // the daemon reconnects on.
+                if connected && self.stream.is_none() {
+                    return;
+                }
             }
             self.session.clear();
             // The distributed stance is the leaf's to announce, and a new
