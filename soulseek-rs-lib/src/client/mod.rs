@@ -534,6 +534,10 @@ pub struct ClientContext {
     /// Correlation tokens for server-brokered (firewalled) connections, mapping
     /// a token we sent in a ConnectToPeer to the peer we expect back.
     pending_connect_tokens: HashMap<u32, (String, Instant)>,
+    /// Peers the latest queue poll looked up because it held no connection
+    /// to them while they held queued downloads of ours. Failing to reach one
+    /// leaves those downloads queued: the next poll looks it up again.
+    poll_lookups: HashSet<String>,
     max_peers: Arc<AtomicUsize>,
     pub(crate) download_speed_limit: Arc<RateLimit>,
     /// Files we share with peers (read-only after connect).

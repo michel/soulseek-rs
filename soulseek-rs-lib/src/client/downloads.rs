@@ -184,6 +184,7 @@ impl Client {
 
     /// Fail every still-`Queued` download for `username`, both on the caller's
     /// status channel (so a blocked `Receiver` unblocks) and in the store.
+    /// A peer the queue poll is looking up keeps its downloads queued.
     pub(crate) fn fail_queued_downloads(
         client_context: &Arc<RwLock<ClientContext>>,
         username: &str,
@@ -195,6 +196,11 @@ impl Client {
                 return;
             }
         };
+        // One failed attempt to reach an uploader is no evidence it has
+        // dropped the request, and the next poll looks it up again.
+        if context.poll_lookups.contains(username) {
+            return;
+        }
         context
             .downloads
             .fail_queued(username, "The user went offline");

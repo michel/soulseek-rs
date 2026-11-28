@@ -429,3 +429,279 @@ fn cancel_download_marks_the_store_and_answers_whether_it_matched() {
         DownloadStatus::Cancelled
     ));
 }
+
+// An uploader that restarts, or drops an idle connection together with its
+// in-memory queue, no longer knows what we asked it for. The queue poll is
+// what asks again.
+
+/// A client running its operations loop, with a peer registry reporting to
+/// that loop and the server played by the returned receiver.
+fn client_with_server()
+-> (Client, Sender<ClientOperation>, Receiver<ServerMessage>) {
+    let client = Client::new("me", "pw");
+    let (ops, ops_rx) = mpsc::channel();
+    let (server, server_rx) = mpsc::channel();
+    {
+        let mut ctx = client.context.write().unwrap();
+        ctx.peer_registry = Some(PeerRegistry::new(
+            ctx.actor_system.clone(),
+            ops.clone(),
+            "me".to_string(),
+        ));
+        ctx.server_sender = Some(server);
+    }
+    Client::listen_to_client_operations(
+        ops_rx,
+        client.context.clone(),
+        "me".to_string(),
+    );
+    (client, ops, server_rx)
+}
+
+/// Return once the operations loop has handled everything sent before.
+fn caught_up(client: &Client, ops: &Sender<ClientOperation>) {
+    let fence = client.own_privilege_seconds().unwrap_or(0) + 1;
+    ops.send(ClientOperation::OwnPrivileges(fence)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while client.own_privilege_seconds() != Some(fence) {
+        assert!(Instant::now() < deadline, "ops loop never caught up");
+        thread::yield_now();
+    }
+}
+
+fn address_of(username: &str, host: &str, port: u32) -> ClientOperation {
+    ClientOperation::GetPeerAddressResponse {
+        username: username.to_string(),
+        host: host.to_string(),
+        port,
+        obfuscation_type: 0,
+        obfuscated_port: 0,
+    }
+}
+
+fn looked_up(server: &Receiver<ServerMessage>) -> Option<String> {
+    match server.try_recv() {
+        Ok(ServerMessage::GetPeerAddress(username)) => Some(username),
+        _ => None,
+    }
+}
+
+/// The file named by the next QueueUpload (peer code 43) read from `stream`.
+fn next_queue_request(stream: &mut TcpStream) -> String {
+    use std::io::Read;
+    stream.set_nonblocking(false).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    loop {
+        let mut length = [0u8; 4];
+        stream
+            .read_exact(&mut length)
+            .expect("a QueueUpload in time");
+        let mut frame = length.to_vec();
+        frame.resize(4 + u32::from_le_bytes(length) as usize, 0);
+        stream.read_exact(&mut frame[4..]).unwrap();
+        let mut message = crate::message::Message::new_with_data(frame);
+        if message.get_message_code() == 43 {
+            message.set_pointer(8);
+            return message.read_string();
+        }
+    }
+}
+
+fn idle_port() -> u32 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    u32::from(listener.local_addr().unwrap().port())
+}
+
+/// Register an inbound control connection from `username`, returning the
+/// peer's end of it.
+fn connected_peer(client: &Client, username: &str) -> TcpStream {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let ours = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    ours.set_nonblocking(true).unwrap();
+    let peer = Peer::new(
+        username.to_string(),
+        ConnectionType::P,
+        "127.0.0.1".to_string(),
+        0,
+        None,
+        0,
+        0,
+        0,
+    );
+    let registry = client.context.read().unwrap().peer_registry.clone();
+    registry
+        .unwrap()
+        .register_peer(peer, Some(ours), None)
+        .unwrap();
+    listener.accept().unwrap().0
+}
+
+/// Queue `f.mp3` with `username`, returning its status channel.
+fn queue_with(client: &Client, username: &str) -> Receiver<DownloadStatus> {
+    let (sender, status) = mpsc::channel();
+    client.context.write().unwrap().add_download(download(
+        username,
+        "f.mp3",
+        1,
+        DownloadStatus::Queued,
+        sender,
+    ));
+    status
+}
+
+/// The token of the broker request (ConnectToPeer, code 18) sent next.
+fn broker_request(server: &Receiver<ServerMessage>) -> u32 {
+    let Ok(ServerMessage::SendMessage(mut request)) =
+        server.recv_timeout(Duration::from_secs(5))
+    else {
+        panic!("expected a broker request");
+    };
+    assert_eq!(request.read_int32(), 18, "ConnectToPeer");
+    request.read_int32()
+}
+
+fn assert_still_queued(client: &Client, status: &Receiver<DownloadStatus>) {
+    assert!(status.try_recv().is_err(), "nothing failed the download");
+    assert!(matches!(
+        client.get_all_downloads()[0].status,
+        DownloadStatus::Queued
+    ));
+}
+
+#[test]
+fn the_queue_poll_looks_up_each_peer_it_holds_no_connection_to() {
+    let (client, _ops, server) = client_with_server();
+    let _here = connected_peer(&client, "here");
+    for (username, filename, token) in [
+        ("gone", "a.mp3", 1),
+        ("gone", "b.mp3", 2),
+        ("here", "c.mp3", 3),
+    ] {
+        client.context.write().unwrap().add_download(download(
+            username,
+            filename,
+            token,
+            DownloadStatus::Queued,
+            mpsc::channel().0,
+        ));
+    }
+
+    Client::poll_queue_positions(&client.context);
+
+    let sent: Vec<ServerMessage> = server.try_iter().collect();
+    assert!(
+        matches!(
+            sent.as_slice(),
+            [ServerMessage::GetPeerAddress(username)] if username == "gone"
+        ),
+        "one lookup for the peer we lost, none for the one we hold, got {sent:?}"
+    );
+}
+
+#[test]
+fn a_queued_download_is_requested_again_after_its_uploader_hangs_up() {
+    let (client, ops, server) = client_with_server();
+    let mut first = connected_peer(&client, "uploader");
+    let _ = client
+        .download(
+            "f.mp3".to_string(),
+            "uploader".to_string(),
+            100,
+            "test".to_string(),
+        )
+        .unwrap();
+    assert_eq!(next_queue_request(&mut first), "f.mp3");
+
+    drop(first);
+    let registry = client.context.read().unwrap().peer_registry.clone();
+    let registry = registry.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while registry.contains("uploader") {
+        assert!(Instant::now() < deadline, "the hang-up was never noticed");
+        thread::yield_now();
+    }
+
+    let uploader = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    uploader.set_nonblocking(true).unwrap();
+    let port = u32::from(uploader.local_addr().unwrap().port());
+    Client::poll_queue_positions(&client.context);
+    assert_eq!(looked_up(&server).as_deref(), Some("uploader"));
+    ops.send(address_of("uploader", "127.0.0.1", port)).unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut second = loop {
+        match uploader.accept() {
+            Ok((stream, _)) => break stream,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(
+                    Instant::now() < deadline,
+                    "the uploader was never dialled again"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => panic!("accept: {e}"),
+        }
+    };
+    assert_eq!(
+        next_queue_request(&mut second),
+        "f.mp3",
+        "the new connection carries the queue request again"
+    );
+}
+
+#[test]
+fn a_peer_offline_at_the_queue_poll_keeps_its_downloads_queued() {
+    let (client, ops, server) = client_with_server();
+    let status = queue_with(&client, "ghost");
+
+    Client::poll_queue_positions(&client.context);
+    assert_eq!(looked_up(&server).as_deref(), Some("ghost"));
+    // The server's answer for a user who is not logged in.
+    ops.send(address_of("ghost", "0.0.0.0", 0)).unwrap();
+
+    let broker = server.recv_timeout(Duration::from_secs(1));
+    assert!(
+        broker.is_err(),
+        "an offline peer is not dialled, so no broker request follows, got {broker:?}"
+    );
+    caught_up(&client, &ops);
+    assert_still_queued(&client, &status);
+}
+
+#[test]
+fn a_peer_the_queue_poll_cannot_reach_keeps_its_downloads_queued() {
+    let (client, ops, server) = client_with_server();
+    let status = queue_with(&client, "walled");
+
+    Client::poll_queue_positions(&client.context);
+    assert_eq!(looked_up(&server).as_deref(), Some("walled"));
+    ops.send(address_of("walled", "127.0.0.1", idle_port()))
+        .unwrap();
+    // The dial is refused, so the server is asked to broker it, and the peer
+    // cannot connect back either.
+    let token = broker_request(&server);
+    ops.send(ClientOperation::CantConnectToPeer { token })
+        .unwrap();
+
+    caught_up(&client, &ops);
+    assert_still_queued(&client, &status);
+}
+
+#[test]
+fn an_offline_peer_still_fails_a_download_the_poll_never_looked_up() {
+    let (client, ops, server) = client_with_server();
+    let status = queue_with(&client, "ghost");
+
+    ops.send(address_of("ghost", "0.0.0.0", 0)).unwrap();
+    // What the server answers when the user it is to broker is offline.
+    let token = broker_request(&server);
+    ops.send(ClientOperation::CantConnectToPeer { token })
+        .unwrap();
+
+    assert!(matches!(
+        status.recv_timeout(Duration::from_secs(5)),
+        Ok(DownloadStatus::Failed(_))
+    ));
+}
