@@ -779,6 +779,18 @@ SOULFIND_BIN=/path/to/soulfind/bin/soulfind \
 > the suite reports as a skip. Run the tests with
 > `DYLD_LIBRARY_PATH=/opt/homebrew/opt/sqlite/lib` so soulfind picks up
 > Homebrew's SQLite instead; no patching needed.
+>
+> soulfind's own event loop does need a patch on macOS. Its kqueue selector
+> lists a socket once for reading and once for writing, and when the first of
+> the two closes the connection the second finds it gone: the server exits
+> with `RangeError@…/conns.d(85)`, and the test that was talking to it fails
+> with `NotConnected` or `Timeout`. Linux, and so CI, is unaffected. Apply the
+> fix, made against soulfind 27b577d, before building:
+>
+> ```bash
+> git -C /path/to/soulfind apply "$PWD/scripts/soulfind-macos-kqueue.patch"
+> dub build :server --root /path/to/soulfind
+> ```
 
 Set `SOULSEEK_E2E_REQUIRED=1` to turn a missing server into a hard failure
 instead of a skip. CI sets it, so the e2e suite runs against a freshly built
