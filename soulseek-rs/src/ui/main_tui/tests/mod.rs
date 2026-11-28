@@ -51,6 +51,7 @@ struct TalkativeSession {
     download_dirs: std::sync::Mutex<Vec<String>>,
     download_cancelled: std::sync::Mutex<Vec<(String, String)>>,
     upload_cancelled: std::sync::Mutex<Vec<(String, String)>>,
+    upload_removed: std::sync::Mutex<Vec<(String, String)>>,
     download_removed: std::sync::Mutex<Vec<(String, String)>>,
 }
 
@@ -211,6 +212,13 @@ impl SessionApi for TalkativeSession {
     }
     fn cancel_upload(&self, u: &str, f: &str) -> bool {
         self.upload_cancelled
+            .lock()
+            .expect("not poisoned")
+            .push((u.to_string(), f.to_string()));
+        true
+    }
+    fn remove_upload(&self, u: &str, f: &str) -> bool {
+        self.upload_removed
             .lock()
             .expect("not poisoned")
             .push((u.to_string(), f.to_string()));

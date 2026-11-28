@@ -90,7 +90,7 @@ const HELP_RIGHT: &[(&str, &[(&str, &str)])] = &[
             ("p", "pause / resume"),
             ("x", "cancel"),
             ("r", "retry a failed one"),
-            ("d", "delete a queued or finished one"),
+            ("d", "delete a queued download or a finished one"),
             ("c", "clear every finished one"),
             ("C", "clear every one, cancelling the live ones"),
             ("b", "browse that user"),

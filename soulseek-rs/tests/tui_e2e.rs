@@ -14,16 +14,20 @@
 
 mod common;
 
-use common::{Soulfind, settle};
+use common::{CLI_ENV_VARS, Soulfind, free_port, settle};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use soulseek_rs::Client;
+use soulseek_rs::{Client, DownloadStatus, UploadStatus};
 use soulseek_rs_tui::MainTui;
+use soulseek_rs_tui::api::SessionApi;
 use soulseek_rs_tui::models::SearchStatus;
 use soulseek_rs_tui::persist::state::StateStore;
+use soulseek_rs_tui::remote::{Endpoint, RemoteSession};
 use std::path::Path;
+use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
+use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 /// How long a search collects for. Short, because every run here has to wait
@@ -52,7 +56,11 @@ struct Window {
 impl Window {
     /// Open the window as the terminal would on start-up, over `state` — the
     /// directory a previous run left its search list in.
-    fn open(client: Arc<Client>, state: &Path, downloads: &Path) -> Self {
+    fn open(
+        client: Arc<dyn SessionApi>,
+        state: &Path,
+        downloads: &Path,
+    ) -> Self {
         let tui = MainTui::new(
             client,
             downloads.display().to_string(),
@@ -231,4 +239,158 @@ fn shift_s_runs_a_restored_query_again_and_the_answers_land_on_screen() {
         "the same answer, once, not the old set with the new one on top"
     );
     assert_eq!(window.tui.state().searches.len(), 1, "still one row");
+}
+
+/// Short enough that the Downloads pane shows the whole name in its row.
+const SERVED: &str = "up_qzvw.bin";
+
+fn share_one_file() -> tempfile::TempDir {
+    let share = tempfile::tempdir().expect("share dir");
+    std::fs::write(share.path().join(SERVED), [5u8; 2048]).expect("share file");
+    share
+}
+
+/// `leecher` downloads the one file `sharer` offers. The transfer runs for as
+/// long as the returned channel lives.
+fn fetch(
+    leecher: &Client,
+    sharer: &str,
+    into: &Path,
+) -> Receiver<DownloadStatus> {
+    let file = leecher
+        .search("qzvw", SEARCH_WINDOW)
+        .expect("search")
+        .into_iter()
+        .filter(|reply| reply.username == sharer)
+        .flat_map(|reply| reply.files)
+        .find(|file| file.name.contains(SERVED))
+        .expect("the leecher should find the served file");
+    leecher
+        .download(
+            file.name,
+            sharer.to_string(),
+            file.size,
+            into.display().to_string(),
+        )
+        .expect("start download")
+        .1
+}
+
+fn shows_a_finished_upload(tui: &MainTui, screen: &str) -> bool {
+    tui.state()
+        .uploads
+        .iter()
+        .any(|upload| upload.status == UploadStatus::Completed)
+        && screen.contains(SERVED)
+}
+
+fn c_clears_the_finished_upload(window: &mut Window) {
+    window.press(KeyCode::Char('3'));
+    window.run_until(
+        Duration::from_secs(20),
+        "the finished upload should be listed",
+        shows_a_finished_upload,
+    );
+
+    window.press(KeyCode::Char('c'));
+    for _ in 0..20 {
+        let screen = window.frame();
+        assert!(
+            window.tui.state().uploads.is_empty() && !screen.contains(SERVED),
+            "the cleared upload should stay gone:\n{screen}"
+        );
+    }
+}
+
+#[test]
+fn c_clears_a_finished_upload_for_good() {
+    let server = server_or_skip!();
+    let share = share_one_file();
+    let state = tempfile::tempdir().expect("state dir");
+    let downloads = tempfile::tempdir().expect("download dir");
+    let me =
+        Arc::new(server.client(
+            "tui_e2e_uploader",
+            vec![share.path().display().to_string()],
+        ));
+    let mut window = Window::open(me, state.path(), downloads.path());
+
+    let leecher = server.client("tui_e2e_leecher", Vec::new());
+    settle();
+    let _transfer = fetch(&leecher, "tui_e2e_uploader", downloads.path());
+
+    c_clears_the_finished_upload(&mut window);
+}
+
+/// A `soulseek-rs daemon` process, killed when dropped.
+struct Daemon(Child);
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Start a daemon logged in as `user` and sharing `share`, and attach to it.
+fn attach_to_daemon(
+    server: &Soulfind,
+    user: &str,
+    share: &Path,
+    state: &Path,
+) -> (Daemon, RemoteSession) {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_soulseek-rs"));
+    for name in CLI_ENV_VARS {
+        command.env_remove(name);
+    }
+    let listener_port = free_port().expect("listener port").to_string();
+    let daemon = Daemon(
+        command
+            .env("SOULSEEK_STATE_DIR", state)
+            .current_dir(state)
+            .args(["--no-config", "--server", &server.address()])
+            .args(["--username", user, "--password", "pw"])
+            .args(["--listener-port", &listener_port])
+            .arg("--shared-dir")
+            .arg(share)
+            .arg("--download-dir")
+            .arg(state.join("downloads"))
+            .arg("daemon")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("the daemon should start"),
+    );
+    let socket = Endpoint::Socket(state.join("daemon.sock"));
+    let deadline = Instant::now() + Duration::from_secs(45);
+    loop {
+        if let Ok(session) = RemoteSession::connect(&socket, None) {
+            return (daemon, session);
+        }
+        assert!(Instant::now() <= deadline, "the daemon never answered");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn c_clears_a_finished_upload_the_daemon_served_for_good() {
+    let server = server_or_skip!();
+    let share = share_one_file();
+    let daemon_state = tempfile::tempdir().expect("daemon state dir");
+    let state = tempfile::tempdir().expect("state dir");
+    let downloads = tempfile::tempdir().expect("download dir");
+    let (_daemon, session) = attach_to_daemon(
+        &server,
+        "tui_e2e_daemon",
+        share.path(),
+        daemon_state.path(),
+    );
+    let mut window =
+        Window::open(Arc::new(session), state.path(), downloads.path());
+
+    let leecher = server.client("tui_e2e_daemon_leecher", Vec::new());
+    settle();
+    let _transfer = fetch(&leecher, "tui_e2e_daemon", downloads.path());
+
+    c_clears_the_finished_upload(&mut window);
 }

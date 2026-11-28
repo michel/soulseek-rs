@@ -9,7 +9,7 @@ use crate::output::{
     CliError, CliResult, DownloadRecord, Exit, Out, SearchRecord,
 };
 use soulseek_rs::utils::path::expand_tilde;
-use soulseek_rs::{DownloadStatus, SearchResult};
+use soulseek_rs::{DownloadStatus, SearchResult, types::Download};
 use std::collections::{HashMap, VecDeque};
 use std::io::BufRead;
 use std::path::PathBuf;
@@ -618,6 +618,39 @@ pub fn cancel(ctx: &Ctx, user: &str, path: &str) -> CliResult {
     Err(CliError::no_results(format!(
         "no download or upload of {path} with {user}"
     )))
+}
+
+pub fn clear(ctx: &Ctx) -> CliResult {
+    if ctx.daemon.is_none() {
+        ctx.out.status(
+            "nothing to clear: only a daemon keeps finished transfers past \
+             one command",
+        );
+        return Ok(());
+    }
+    let session = Session::open(ctx)?;
+    let client = &session.client;
+    let downloads = client
+        .get_all_downloads()
+        .into_iter()
+        .filter(Download::is_finished)
+        .filter(|download| {
+            client.remove_download(&download.username, &download.filename)
+        })
+        .count();
+    let uploads = client
+        .uploads()
+        .into_iter()
+        .filter(|upload| upload.status.is_terminal())
+        .filter(|upload| {
+            client.remove_upload(&upload.username, &upload.filename)
+        })
+        .count();
+    ctx.out.status(&format!(
+        "finished transfers cleared: {}",
+        downloads + uploads
+    ));
+    Ok(())
 }
 
 /// Parse `search`/`browse` output back into download requests.

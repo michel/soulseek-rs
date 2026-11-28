@@ -121,6 +121,7 @@ pub trait SessionApi: Send + Sync {
     fn uploads(&self) -> Vec<UploadInfo>;
     fn take_upload_events(&self) -> Vec<UploadInfo>;
     fn cancel_upload(&self, username: &str, filename: &str) -> bool;
+    fn remove_upload(&self, username: &str, filename: &str) -> bool;
     fn set_upload_slots(&self, slots: usize);
     fn check_privileges(&self) -> Result<()>;
     fn own_privilege_seconds(&self) -> Option<u32>;
@@ -327,6 +328,10 @@ impl SessionApi for Client {
 
     fn cancel_upload(&self, username: &str, filename: &str) -> bool {
         Self::cancel_upload(self, username, filename)
+    }
+
+    fn remove_upload(&self, username: &str, filename: &str) -> bool {
+        Self::remove_upload(self, username, filename)
     }
 
     fn set_upload_slots(&self, slots: usize) {

@@ -3765,6 +3765,32 @@ fn daemon_status_and_stop_without_a_daemon_are_connection_errors() {
     }
 }
 
+/// Finished transfers only outlive a command inside a daemon, so without one
+/// there is nothing to clear and no reason to log in: it succeeds even though
+/// the server cannot be reached.
+#[test]
+fn transfer_clear_without_a_daemon_does_nothing_and_succeeds() {
+    let output = run(&[
+        "--no-config",
+        "--no-daemon",
+        "--username",
+        "u",
+        "--password",
+        "p",
+        "--server",
+        "127.0.0.1:1",
+        "transfer",
+        "clear",
+    ]);
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("nothing to clear"),
+        "it should say why, got: {}",
+        stderr(&output)
+    );
+    assert!(stdout(&output).is_empty(), "stdout must stay data-only");
+}
+
 /// `--sort size` leads with the largest file, which is what a script that
 /// wants "the full album rip, not the sample" branches on.
 #[test]

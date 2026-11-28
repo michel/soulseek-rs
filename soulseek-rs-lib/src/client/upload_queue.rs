@@ -136,6 +136,26 @@ impl ClientContext {
         if self.is_upload_pending(downloader, filename) {
             return false;
         }
+        // The new request is this peer's row for the file from here on; a
+        // finished one left beside it would list the same upload twice. How
+        // that one ended goes to the events, for a caller that samples the
+        // list and has not seen it yet.
+        let finished = self.active_uploads.values().filter(|upload| {
+            upload.username == downloader
+                && upload.filename == filename
+                && upload.status.is_terminal()
+        });
+        self.upload_events.extend(finished.map(|upload| UploadInfo {
+            username: upload.username.clone(),
+            filename: upload.filename.clone(),
+            size: upload.size,
+            bytes_sent:
+                upload.bytes_sent.load(std::sync::atomic::Ordering::Relaxed),
+            speed_bytes_per_sec: 0.0,
+            status: upload.status.clone(),
+        }));
+        self.cap_upload_events();
+        self.remove_upload(downloader, filename);
         self.upload_seq += 1;
         self.upload_queue.push(QueuedUpload {
             downloader: downloader.to_string(),
@@ -264,6 +284,18 @@ impl ClientContext {
             .enumerate()
             .map(|(place, index)| queued_info(&self.upload_queue[index], place))
             .collect()
+    }
+
+    /// Forget the finished uploads of `filename` to `downloader`. One still
+    /// streaming stays, because it holds a slot until its thread ends.
+    pub fn remove_upload(&mut self, downloader: &str, filename: &str) -> bool {
+        let before = self.active_uploads.len();
+        self.active_uploads.retain(|_, upload| {
+            upload.username != downloader
+                || upload.filename != filename
+                || !upload.status.is_terminal()
+        });
+        self.active_uploads.len() != before
     }
 
     /// Withdraw everything `downloader` is waiting for or has been offered
@@ -796,6 +828,22 @@ mod context_tests {
     }
 
     #[test]
+    fn removing_a_finished_upload_preserves_a_matching_stream() {
+        let (mut ctx, _) = context(2);
+        ctx.active_uploads
+            .insert(1, active("amy", "a.mp3", UploadStatus::Completed));
+        ctx.active_uploads
+            .insert(2, active("amy", "a.mp3", UploadStatus::InProgress));
+
+        assert!(!ctx.remove_upload("bob", "a.mp3"));
+        assert!(!ctx.remove_upload("amy", "b.mp3"));
+        assert!(ctx.remove_upload("amy", "a.mp3"));
+        assert!(!ctx.active_uploads.contains_key(&1));
+        assert_eq!(ctx.active_uploads[&2].status, UploadStatus::InProgress);
+        assert!(!ctx.remove_upload("amy", "a.mp3"));
+    }
+
+    #[test]
     fn finished_uploads_are_kept_only_up_to_a_limit() {
         let (mut ctx, _) = context(2);
         let served = FINISHED_UPLOADS_KEPT as u32 + 50;
@@ -837,6 +885,33 @@ mod context_tests {
             ctx.active_uploads.keys().copied().collect::<Vec<_>>(),
             [2],
             "one row per peer and file, the current one"
+        );
+    }
+
+    // A peer retrying a file left its finished row beside the queued one, and
+    // `serve` printed the two in turn on every poll until the peer was served.
+    #[test]
+    fn asking_again_for_a_finished_file_replaces_its_row() {
+        let (mut ctx, _) = context(1);
+        ctx.track_active_upload(
+            1,
+            active("amy", "a.mp3", UploadStatus::Failed("gone".to_string())),
+        );
+
+        ask(&mut ctx, "amy", "a.mp3");
+
+        assert!(
+            ctx.active_uploads.is_empty(),
+            "one row per peer and file, the current one"
+        );
+        assert_eq!(ctx.queued_uploads().len(), 1);
+        assert!(
+            ctx.take_upload_events().iter().any(|event| {
+                event.username == "amy"
+                    && event.filename == "a.mp3"
+                    && event.status == UploadStatus::Failed("gone".to_string())
+            }),
+            "how it ended still reaches a caller that had not sampled it"
         );
     }
 

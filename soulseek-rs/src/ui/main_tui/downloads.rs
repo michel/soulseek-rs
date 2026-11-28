@@ -46,7 +46,7 @@ impl MainTui {
         // filename) shadows the retry and its completion is misrouted, leaving
         // the retried download stuck showing "Queued".
         self.state.downloads.remove(index);
-        self.select_download_after_removal(index);
+        self.select_transfer_after_removal(index);
         let _ = self.client.remove_download(&username, &filename);
 
         thread::spawn(move || {
@@ -59,8 +59,7 @@ impl MainTui {
         });
     }
 
-    /// Remove all completed / failed / timed-out downloads from the list.
-    pub(super) fn clear_finished_downloads(&mut self) {
+    pub(super) fn clear_finished_transfers(&mut self) {
         // Forget them in the session too. The list is a view of what the
         // session holds, so dropping them only here would last until the next
         // poll put them straight back.
@@ -75,25 +74,21 @@ impl MainTui {
         self.state
             .downloads
             .retain(|entry| !entry.download.is_finished());
-        let len = self.state.downloads.len();
-        if len == 0 {
-            self.state.downloads_table_state.select(None);
-        } else {
-            let selected = self
-                .state
-                .downloads_table_state
-                .selected()
-                .unwrap_or(0)
-                .min(len - 1);
-            self.state.downloads_table_state.select(Some(selected));
-        }
+        self.state.uploads.retain(|upload| {
+            if !upload.status.is_terminal() {
+                return true;
+            }
+            self.client
+                .remove_upload(&upload.username, &upload.filename);
+            false
+        });
+        let selected = self.state.downloads_table_state.selected().unwrap_or(0);
+        self.select_transfer_after_removal(selected);
     }
 
-    /// Empty the whole transfer list: every live download is cancelled and
-    /// every row — live or finished — is forgotten by the session too, so a
-    /// shared queue empties for every window rather than only this one.
-    /// Uploads still streaming are cancelled; finished ones are the
-    /// session's history and refresh back from it regardless.
+    /// Cancel and forget every download, in the session too so every window
+    /// empties. Finished uploads are forgotten, streaming ones are cancelled
+    /// and stay listed as cancelled until cleared, and queued ones are kept.
     pub(super) fn clear_all_transfers(&mut self) {
         for entry in &self.state.downloads {
             let download = &entry.download;
@@ -111,6 +106,7 @@ impl MainTui {
             }
         }
         self.state.downloads.clear();
+        self.clear_finished_transfers();
         self.state.downloads_table_state.select(None);
     }
 
@@ -138,14 +134,29 @@ impl MainTui {
         }
     }
 
-    /// Drop the selected transfer: a queued one leaves the queue, a finished
-    /// one leaves the list.
-    pub(super) fn remove_selected_download(&mut self) {
+    pub(super) fn remove_selected_transfer(&mut self) {
         let Some(index) = self.state.downloads_table_state.selected() else {
             return;
         };
-        let Some(download_entry) = self.state.downloads.get(index) else {
-            return;
+        let download_entry = match selected_transfer(
+            Some(index),
+            &self.state.downloads,
+            &self.state.uploads,
+        ) {
+            Some(InfoSubject::Download(entry)) => entry,
+            Some(InfoSubject::Upload(upload)) => {
+                if !upload.status.is_terminal() {
+                    return;
+                }
+                self.client
+                    .remove_upload(&upload.username, &upload.filename);
+                self.state
+                    .uploads
+                    .remove(index - self.state.downloads.len());
+                self.select_transfer_after_removal(index);
+                return;
+            }
+            Some(InfoSubject::Result(_)) | None => return,
         };
 
         let download = &download_entry.download;
@@ -168,16 +179,17 @@ impl MainTui {
         }
 
         self.state.downloads.remove(index);
-        self.select_download_after_removal(index);
+        self.select_transfer_after_removal(index);
     }
 
-    fn select_download_after_removal(&mut self, removed_index: usize) {
-        if self.state.downloads.is_empty() {
+    fn select_transfer_after_removal(&mut self, removed_index: usize) {
+        let len = self.state.downloads.len() + self.state.uploads.len();
+        if len == 0 {
             self.state.downloads_table_state.select(None);
             return;
         }
 
-        let next_index = removed_index.min(self.state.downloads.len() - 1);
+        let next_index = removed_index.min(len - 1);
         self.state.downloads_table_state.select(Some(next_index));
     }
 

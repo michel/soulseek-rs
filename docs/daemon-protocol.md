@@ -148,10 +148,13 @@ from `upload.list` if you display the queue.
 
 `upload.list` holds one row per peer and file: a peer asking again for a file
 it is already waiting for, has been offered or is receiving keeps its existing
-row and its place. Finished uploads stay listed as history, the newest 200.
+row and its place. Finished uploads stay listed as history, the newest 200,
+until the peer asks for the same file again.
 `upload.cancel` works at any stage — a queued or offered upload is removed and
 the peer told, one being sent stops — and answers `ok: false` only when
 nothing matched.
+`upload.remove` forgets finished uploads for a peer and file, leaves queued
+and streaming uploads alone, and answers `ok: false` when nothing was removed.
 
 ## Behaviour worth knowing
 

@@ -189,7 +189,7 @@ pub enum Commands {
     /// Download files by user and remote path
     Download(DownloadArgs),
 
-    /// Transfers in flight
+    /// Cancel transfers or clear finished ones
     #[command(subcommand)]
     Transfer(TransferCommand),
 
@@ -648,6 +648,10 @@ pub enum TransferCommand {
         /// Remote path exactly as printed by `search`, `browse`, or `serve`
         path: String,
     },
+
+    /// Forget every finished download and upload; only a daemon keeps them
+    /// past one command
+    Clear,
 }
 
 /// Watching only lasts as long as the session doing it, so these are aimed at

@@ -529,6 +529,13 @@ pub enum UploadStatus {
     Failed(String),
 }
 
+impl UploadStatus {
+    #[must_use]
+    pub const fn is_terminal(&self) -> bool {
+        matches!(self, Self::Completed | Self::Cancelled | Self::Failed(_))
+    }
+}
+
 /// A snapshot of one upload for display purposes.
 #[derive(Debug, Clone)]
 pub struct UploadInfo {

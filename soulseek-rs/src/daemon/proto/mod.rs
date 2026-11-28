@@ -94,6 +94,7 @@ wire_vocabulary! {
         DownloadSetDir => "download.set_dir",
         UploadList => "upload.list",
         UploadCancel => "upload.cancel",
+        UploadRemove => "upload.remove",
         UploadSlots => "upload.slots",
         PrivilegesCheck => "privileges.check",
         PrivilegesOwn => "privileges.own",

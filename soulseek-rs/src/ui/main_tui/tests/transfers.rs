@@ -62,6 +62,10 @@ fn shift_c_clears_the_whole_transfer_list() {
         receiver: None,
     });
     tui.state.uploads.push(uploading("alice", "served.mp3"));
+    tui.state.uploads.push(soulseek_rs::UploadInfo {
+        status: soulseek_rs::types::UploadStatus::Completed,
+        ..uploading("eve", "done.mp3")
+    });
     tui.state.downloads_table_state.select(Some(0));
     tui.state.focused_pane = FocusedPane::Downloads;
 
@@ -89,6 +93,127 @@ fn shift_c_clears_the_whole_transfer_list() {
         *session.upload_cancelled.lock().expect("not poisoned"),
         vec![("alice".to_string(), "served.mp3".to_string())],
         "a streaming upload is cancelled too"
+    );
+    assert_eq!(
+        *session.upload_removed.lock().expect("not poisoned"),
+        vec![("eve".to_string(), "done.mp3".to_string())]
+    );
+    assert_eq!(tui.state.uploads.len(), 1);
+    assert_eq!(tui.state.uploads[0].filename, "served.mp3");
+}
+
+#[test]
+fn d_forgets_finished_uploads_and_leaves_live_uploads() {
+    use soulseek_rs::types::UploadStatus;
+
+    for status in [
+        UploadStatus::Completed,
+        UploadStatus::Cancelled,
+        UploadStatus::Failed("disconnected".to_string()),
+    ] {
+        let session = Arc::new(TalkativeSession::default());
+        let mut tui = attach(session.clone());
+        tui.state.downloads.push(crate::models::DownloadEntry {
+            download: queued("bob", "waiting.mp3"),
+            receiver: None,
+        });
+        tui.state.uploads = vec![
+            uploading("alice", "live.mp3"),
+            soulseek_rs::UploadInfo {
+                status: UploadStatus::Queued(1),
+                ..uploading("carol", "queued.mp3")
+            },
+            soulseek_rs::UploadInfo {
+                status,
+                ..uploading("dave", "finished.mp3")
+            },
+        ];
+        tui.state.downloads_table_state.select(Some(3));
+        tui.state.focused_pane = FocusedPane::Downloads;
+
+        tui.handle_key_event(key('d'));
+
+        assert_eq!(
+            *session.upload_removed.lock().expect("not poisoned"),
+            vec![("dave".to_string(), "finished.mp3".to_string())]
+        );
+        assert_eq!(tui.state.downloads.len(), 1);
+        assert_eq!(tui.state.downloads_table_state.selected(), Some(2));
+
+        tui.handle_key_event(key('d'));
+        tui.state.downloads_table_state.select(Some(1));
+        tui.handle_key_event(key('d'));
+
+        assert_eq!(tui.state.uploads.len(), 2);
+        assert_eq!(tui.state.uploads[0].filename, "live.mp3");
+        assert_eq!(tui.state.uploads[1].filename, "queued.mp3");
+        assert_eq!(
+            session.upload_removed.lock().expect("not poisoned").len(),
+            1
+        );
+        assert!(
+            session
+                .upload_cancelled
+                .lock()
+                .expect("not poisoned")
+                .is_empty()
+        );
+    }
+}
+
+#[test]
+fn c_forgets_finished_uploads_and_leaves_live_uploads() {
+    use soulseek_rs::types::UploadStatus;
+
+    let session = Arc::new(TalkativeSession::default());
+    let mut tui = attach(session.clone());
+    tui.state.downloads.push(crate::models::DownloadEntry {
+        download: completed("bob", "done.mp3"),
+        receiver: None,
+    });
+    tui.state.uploads = vec![
+        soulseek_rs::UploadInfo {
+            status: UploadStatus::Completed,
+            ..uploading("alice", "completed.mp3")
+        },
+        soulseek_rs::UploadInfo {
+            status: UploadStatus::Cancelled,
+            ..uploading("alice", "cancelled.mp3")
+        },
+        soulseek_rs::UploadInfo {
+            status: UploadStatus::Failed("disconnected".to_string()),
+            ..uploading("alice", "failed.mp3")
+        },
+        uploading("alice", "live.mp3"),
+        soulseek_rs::UploadInfo {
+            status: UploadStatus::Queued(1),
+            ..uploading("alice", "queued.mp3")
+        },
+    ];
+    tui.state.downloads_table_state.select(Some(5));
+    tui.state.focused_pane = FocusedPane::Downloads;
+
+    tui.handle_key_event(key('c'));
+
+    assert_eq!(
+        *session.upload_removed.lock().expect("not poisoned"),
+        vec![
+            ("alice".to_string(), "completed.mp3".to_string()),
+            ("alice".to_string(), "cancelled.mp3".to_string()),
+            ("alice".to_string(), "failed.mp3".to_string()),
+        ]
+    );
+    assert!(tui.state.downloads.is_empty());
+    assert_eq!(tui.state.uploads.len(), 2);
+    assert_eq!(tui.state.uploads[0].filename, "live.mp3");
+    assert_eq!(tui.state.uploads[1].filename, "queued.mp3");
+    assert_eq!(tui.state.downloads_table_state.selected(), Some(1));
+    assert!(
+        session
+            .upload_cancelled
+            .lock()
+            .expect("not poisoned")
+            .is_empty()
     );
 }
 

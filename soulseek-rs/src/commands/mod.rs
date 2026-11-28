@@ -307,6 +307,7 @@ fn dispatch(ctx: &Ctx, command: Commands) -> CliResult {
         Commands::Transfer(TransferCommand::Cancel { user, path }) => {
             transfer::cancel(ctx, &user, &path)
         }
+        Commands::Transfer(TransferCommand::Clear) => transfer::clear(ctx),
         Commands::Get(args) => transfer::get(ctx, &args),
         Commands::Browse(args) => social::browse(ctx, &args),
         Commands::Room(RoomCommand::List { timeout }) => {
