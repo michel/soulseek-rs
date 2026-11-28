@@ -21,11 +21,6 @@ const CONNECT_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 /// long queue is not pestered.
 const QUEUE_POSITION_INTERVAL: Duration = Duration::from_mins(5);
 
-/// How long a write to a child may block. The relay runs under the client
-/// context lock, so an unbounded write would freeze every other operation
-/// behind one child that stopped reading.
-const CHILD_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
-
 impl Client {
     pub(crate) fn listen_to_client_operations(
         reader: Receiver<ClientOperation>,

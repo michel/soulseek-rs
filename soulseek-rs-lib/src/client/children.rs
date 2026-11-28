@@ -135,7 +135,8 @@ impl Children {
     }
 
     /// Take on `username` as a child. Refused when we serve no children, have
-    /// nothing to relay, are full, or already carry that user.
+    /// nothing to relay, are full, already carry that user, or cannot make
+    /// its socket non-blocking.
     pub fn accept(&mut self, username: &str, stream: TcpStream) -> bool {
         if !self.has_room() {
             return false;
@@ -148,6 +149,12 @@ impl Children {
                 "[distributed] refusing child {}: already carried",
                 username
             );
+            return false;
+        }
+        // Relays run under the client context lock, so a write must never
+        // wait on a child: one that cannot take a frame at once is so far
+        // behind that it loses its slot instead.
+        if stream.set_nonblocking(true).is_err() {
             return false;
         }
         self.links.insert(username.to_string(), stream);
@@ -180,8 +187,9 @@ impl Children {
         }
     }
 
-    /// Send one frame to every child, dropping those whose write fails: a
-    /// child that has gone away must not keep its slot.
+    /// Send one frame to every child, dropping those whose write fails or
+    /// would block: a child that has gone away or stopped reading must not
+    /// keep its slot.
     pub fn broadcast(&mut self, message: &Message) {
         let bytes = message.get_buffer();
         let mut dead = Vec::new();
@@ -413,6 +421,57 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         assert!(children.is_empty(), "a dead child is dropped");
+    }
+
+    /// Write to `stream` until the kernel will take no more, leaving it in
+    /// blocking mode as a child's link arrives. Loopback frees space in
+    /// bursts for a moment after the first refusal, so the buffer counts as
+    /// full only once it has refused every write for a while; even then the
+    /// kernel can free a little more later.
+    fn fill_send_buffer(stream: &TcpStream) {
+        stream.set_nonblocking(true).expect("nonblocking");
+        let chunk = vec![0u8; 64 * 1024];
+        let mut full_since = std::time::Instant::now();
+        while full_since.elapsed() < std::time::Duration::from_millis(100) {
+            match (&*stream).write(&chunk) {
+                Ok(_) => full_since = std::time::Instant::now(),
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::yield_now();
+                }
+                Err(e) => panic!("filling the send buffer: {e}"),
+            }
+        }
+        stream.set_nonblocking(false).expect("blocking");
+    }
+
+    #[test]
+    fn a_child_that_stopped_reading_is_dropped_without_stalling_the_relay() {
+        let mut children = serving();
+        let (_stalled, ours) = pair();
+        fill_send_buffer(&ours);
+        assert!(children.accept("stalled", ours));
+        let (mut healthy, theirs) = pair();
+        assert!(children.accept("healthy", theirs));
+
+        // Relay until the stalled child's buffer refuses a frame, which
+        // takes the first search unless the kernel freed a little space.
+        let (done, relayed) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut searches = 0;
+            while searches < 10_000 && children.len() == 2 {
+                children.broadcast_search("seeker", 7, "jazz");
+                searches += 1;
+            }
+            let _ = done.send((children, searches));
+        });
+        let (children, searches) = relayed
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("the relay waited on a child that stopped reading");
+
+        assert_eq!(children.usernames(), vec!["healthy".to_string()]);
+        let frame = distributed::build_search("seeker", 7, "jazz").get_buffer();
+        let expected = frame.repeat(searches);
+        assert_eq!(read_frames(&mut healthy, expected.len()), expected);
     }
 
     #[test]
