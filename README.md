@@ -594,6 +594,12 @@ renamed only once whole, so re-running the same `download` with the same size
 asks the peer to start at the offset already on disk. Partial files
 are never offered to peers, and deleting the `.part` starts over.
 
+Clearing or removing a failed download leaves its `.part`, and nothing deletes
+it afterwards, so asking for the file again picks up where it stopped. While a
+failed download is still listed, a long-running session deletes its `.part` in
+two cases: the download drops out of the last 1,000 finished ones, or the same
+file is requested again at a different size or into a different directory.
+
 ### Configuration
 
 Every setting can come from a flag, an environment variable, or the config
