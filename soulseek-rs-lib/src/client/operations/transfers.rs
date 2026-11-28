@@ -170,44 +170,50 @@ impl Client {
             ClientOperation::QueueUpload {
                 requester_key,
                 filename,
+                transfer_token,
             } => {
                 let shared = match client_context.write_safe() {
-                    Ok(mut ctx) => {
-                        let file = ctx
-                            .shares
-                            .get(&filename)
-                            .map(|file| (file.real_path.clone(), file.size));
-                        let shared = file.is_some();
-                        if let Some((real_path, size)) = file {
+                    Ok(mut ctx) => ctx
+                        .shares
+                        .get(&filename)
+                        .map(|file| (file.real_path.clone(), file.size))
+                        .map(|(real_path, size)| {
                             ctx.enqueue_upload(
                                 &requester_key,
                                 &filename,
                                 real_path,
                                 size,
-                            );
-                        }
-                        shared
-                    }
+                            )
+                        })
+                        .is_some(),
                     Err(e) => {
                         error!("[client] QueueUpload write: {}", e);
                         return;
                     }
                 };
-                if !shared {
-                    debug!(
-                        "[client] QueueUpload for unknown file {}",
-                        filename
-                    );
-                    Self::reply_to_peer(client_context, &requester_key, |_| {
+                let refusal = (!shared).then_some("File not shared.");
+                let answer = match transfer_token {
+                    Some(token) => {
+                        Some(MessageFactory::build_transfer_denial_message(
+                            token,
+                            refusal.unwrap_or("Queued"),
+                        ))
+                    }
+                    None => refusal.map(|reason| {
                         MessageFactory::build_upload_denied_message(
-                            &filename,
-                            "File not shared.",
+                            &filename, reason,
                         )
+                    }),
+                };
+                if let Some(answer) = answer {
+                    Self::reply_to_peer(client_context, &requester_key, |_| {
+                        answer
                     });
-                    return;
                 }
-                // The peer served next may not be this one.
-                Self::pump_upload_queue(client_context);
+                if shared {
+                    // The peer served next may not be this one.
+                    Self::pump_upload_queue(client_context);
+                }
             }
             // The dispatch loop routes only the variants above to here.
             _ => {}

@@ -396,8 +396,9 @@ impl PeerActor {
         }
     }
 
-    /// A peer offers us a file. Record the peer's transfer token with the
-    /// client, and let *that* step send the TransferResponse.
+    /// A peer asks for one of our files, or offers us one it has ready. For
+    /// an offer, record the peer's transfer token with the client, and let
+    /// *that* step send the TransferResponse.
     ///
     /// The response is what invites the peer's file connection, and that
     /// connection is matched by the peer's token — so replying here would race
@@ -408,15 +409,21 @@ impl PeerActor {
         let username = self.peer_username();
         debug!("[peer:{}] TransferRequest for {}", username, transfer.token);
 
-        if let Err(e) =
-            self.client_channel
-                .send(ClientOperation::UpdateDownloadTokens(
-                    transfer,
-                    username.clone(),
-                ))
-        {
+        let operation = match transfer.direction {
+            Transfer::DOWNLOAD => ClientOperation::QueueUpload {
+                requester_key: username.clone(),
+                filename: transfer.filename,
+                transfer_token: Some(transfer.token),
+            },
+            Transfer::UPLOAD => ClientOperation::UpdateDownloadTokens(
+                transfer,
+                username.clone(),
+            ),
+            _ => return,
+        };
+        if let Err(e) = self.client_channel.send(operation) {
             error!(
-                "[peer:{}] failed to send UpdateDownloadTokens: {}",
+                "[peer:{}] failed to forward TransferRequest: {}",
                 username, e
             );
         }
@@ -512,6 +519,7 @@ impl PeerActor {
         if let Err(e) = self.client_channel.send(ClientOperation::QueueUpload {
             requester_key,
             filename,
+            transfer_token: None,
         }) {
             error!("[peer_actor] forward IncomingQueueUpload: {}", e);
         }

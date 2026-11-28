@@ -2909,6 +2909,104 @@ fn a_request_for_a_file_we_do_not_share_is_refused() {
     let _ = std::fs::remove_dir_all(share);
 }
 
+/// Take the file a sharer serves to a peer nobody can dial: answer the
+/// ConnectToPeer the server relays on `server` by connecting back to
+/// `listen_addr`, and read `size` bytes from the start.
+fn receive_brokered_file(
+    server: &mut TcpStream,
+    listen_addr: &str,
+    size: usize,
+) -> std::io::Result<Vec<u8>> {
+    let mut ctp = expect_code(server, 18, Duration::from_secs(15))?;
+    ctp.set_pointer(8);
+    let _who = ctp.read_string();
+    let _conn_type = ctp.read_string();
+    let _ip = ctp.read_int32();
+    let _port = ctp.read_int32();
+    let connect_token = ctp.read_int32();
+
+    let mut f = connect_retry(listen_addr, Duration::from_secs(5))?;
+    f.set_read_timeout(Some(Duration::from_secs(10)))?;
+    f.write_all(
+        &MessageFactory::build_pierce_firewall_message(connect_token)
+            .get_buffer(),
+    )?;
+    let mut transfer_token = [0u8; 4];
+    f.read_exact(&mut transfer_token)?;
+    f.write_all(&0u64.to_le_bytes())?;
+    let mut content = vec![0u8; size];
+    f.read_exact(&mut content)?;
+    Ok(content)
+}
+
+fn legacy_transfer_request(token: u32, filename: &str) -> Message {
+    let mut request = Message::new();
+    request
+        .write_int32(40)
+        .write_int32(0)
+        .write_int32(token)
+        .write_string(filename);
+    request
+}
+
+#[test]
+fn a_file_asked_for_with_a_transfer_request_is_queued_and_served() {
+    let server = server_or_skip!();
+    let (share, folder) = queue_share("legacy", &["old.mp3"]);
+    let server_addr = format!("{}:{}", server.host, server.port);
+    let (_sharer, listen_addr) = sharing(&server, "e2e_legacy_sharer", &share);
+
+    let mut asker_server =
+        login_raw(&server_addr, "e2e_legacy_asker", "pw").expect("login");
+    let mut peer = connect_retry(&listen_addr, Duration::from_secs(5))
+        .expect("peer connection");
+    peer.set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("read timeout");
+    peer.write_all(&peer_init_bytes("e2e_legacy_asker", "P", 0))
+        .expect("peer init");
+
+    let missing = format!("{folder}\\gone.mp3");
+    peer.write_all(&legacy_transfer_request(30, &missing).get_buffer())
+        .expect("request");
+    assert_eq!(
+        read_transfer_response(&mut peer).expect("an answer"),
+        (false, "File not shared.".to_string())
+    );
+
+    let wanted = format!("{folder}\\old.mp3");
+    peer.write_all(&legacy_transfer_request(31, &wanted).get_buffer())
+        .expect("request");
+    let mut answer =
+        expect_code(&mut peer, 41, Duration::from_secs(10)).expect("an answer");
+    answer.set_pointer(8);
+    assert_eq!(
+        answer.read_int32(),
+        31,
+        "the answer quotes the asker's token"
+    );
+    assert!(!answer.read_bool());
+    assert_eq!(answer.read_string(), "Queued");
+
+    let mut offer = expect_code(&mut peer, 40, Duration::from_secs(10))
+        .expect("the file is offered once a slot is free");
+    offer.set_pointer(8);
+    assert_eq!(offer.read_int32(), 1);
+    let token = offer.read_int32();
+    assert_eq!(offer.read_string(), wanted);
+    assert_eq!(offer.read_int64(), 4096);
+
+    let mut accept = Message::new();
+    accept.write_int32(41).write_int32(token).write_bool(true);
+    peer.write_all(&accept.get_buffer()).expect("accept");
+    assert_eq!(
+        receive_brokered_file(&mut asker_server, &listen_addr, 4096)
+            .expect("the file"),
+        vec![9u8; 4096]
+    );
+
+    let _ = std::fs::remove_dir_all(share);
+}
+
 #[test]
 fn the_server_answers_how_much_privilege_time_we_have() {
     let server = server_or_skip!();

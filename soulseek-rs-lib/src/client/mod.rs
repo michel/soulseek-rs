@@ -371,6 +371,10 @@ pub enum ClientOperation {
     QueueUpload {
         requester_key: String,
         filename: String,
+        /// The token of a download-direction `TransferRequest`, when the peer
+        /// asked that way instead of with `QueueUpload`: clients built on
+        /// Soulseek.NET do, and wait for a `TransferResponse` quoting it.
+        transfer_token: Option<u32>,
     },
     /// The peer accepted our upload offer for `token`; start streaming.
     StartUpload {
