@@ -3,6 +3,7 @@ use crate::client::{CancelHandle, ClientOperation};
 use crate::dispatcher::MessageDispatcher;
 use crate::message::server::AdminMessageHandler;
 use crate::message::server::CantConnectToPeerHandler;
+use crate::message::server::ChangePasswordHandler;
 use crate::message::server::CheckPrivilegesHandler;
 use crate::message::server::ConnectToPeerHandler;
 use crate::message::server::EmbeddedMessageHandler;
@@ -49,19 +50,19 @@ use crate::types::{
     ClientVersion, Recommendation, RoomEvent, RoomInfo, RoomUserStats,
     SessionLoss, SessionWatch, SimilarUser, UserInterests,
 };
-use crate::utils::lock::RwLockExt;
+use crate::utils::lock::{MutexExt, RwLockExt};
 
 use std::io::{self, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use crate::{SoulseekRs, debug, error, trace, warn};
 
 mod handlers;
 mod types;
-pub use types::{Context, PeerAddress, UserMessage};
+pub use types::{Context, LoginPassword, PeerAddress, UserMessage};
 
 /// Ceiling on the wait for the server's login verdict. A loaded server can
 /// take seconds to answer, so this stays inside the caller's own 45s bound
@@ -80,6 +81,8 @@ pub enum ServerMessage {
     /// The server is closing this connection: the same username logged in
     /// elsewhere.
     Relogged,
+    /// The server stored the password we asked to change to (code 142).
+    PasswordChanged(String),
     SendMessage(Message),
     SharedCounts {
         folders: u32,
@@ -293,6 +296,7 @@ pub struct ServerActor {
     shared_file_count: u32,
     session: SessionWatch,
     cancel: CancelHandle,
+    login_password: Arc<Mutex<LoginPassword>>,
 }
 
 /// The messages a client sends right after a successful login: its shared-file
@@ -346,12 +350,20 @@ impl ServerActor {
             shared_file_count,
             session: SessionWatch::default(),
             cancel: CancelHandle::new(),
+            login_password: Arc::default(),
         }
     }
 
     /// Share the client's view of whether this session is still alive.
     pub fn set_session_watch(&mut self, session: SessionWatch) {
         self.session = session;
+    }
+
+    /// Share the password the client logs in with. A change is written here
+    /// in the order the server's messages arrive, so a session loss that
+    /// follows the confirmation always finds the new password.
+    pub fn set_login_password(&mut self, password: Arc<Mutex<LoginPassword>>) {
+        self.login_password = password;
     }
 
     pub fn set_cancel(&mut self, cancel: CancelHandle) {
@@ -412,6 +424,7 @@ impl ServerActor {
 
         handlers.register_handler(LoginHandler);
         handlers.register_handler(ReloggedHandler);
+        handlers.register_handler(ChangePasswordHandler);
         handlers.register_handler(AdminMessageHandler);
         handlers.register_handler(PossibleParentsHandler);
         handlers.register_handler(ResetDistributedHandler);

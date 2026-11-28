@@ -4456,6 +4456,7 @@ fn a_changed_password_is_what_the_next_login_needs() {
     // change if our session closes first. The session stays until a login
     // with the new password shows it landed; a refused one leaves it alone.
     let deadline = Instant::now() + Duration::from_secs(10);
+    let mut refused = false;
     loop {
         let mut fresh =
             Client::with_settings(server.settings(user, "second-pw"));
@@ -4463,11 +4464,25 @@ fn a_changed_password_is_what_the_next_login_needs() {
         if matches!(fresh.login(), Ok(true)) {
             break;
         }
+        refused = true;
         assert!(
             Instant::now() < deadline,
             "the new password must be accepted"
         );
         std::thread::sleep(Duration::from_millis(100));
+    }
+    // soulfind echoes the change to the original session before the new
+    // password works anywhere, and the client logs in with it from then on.
+    // The login that worked displaced that session, its Relogged coming after
+    // the echo, unless a refused one went first: soulfind drops a username
+    // from its registry when any login under it ends, so the original is
+    // still up and answering in order.
+    if refused {
+        fence(&client, "e2e_pwchange_fence");
+    } else {
+        assert!(wait_for(
+            || client.session_loss() == Some(SessionLoss::Displaced)
+        ));
     }
     client.disconnect();
     client.connect().expect("reconnect the original client");

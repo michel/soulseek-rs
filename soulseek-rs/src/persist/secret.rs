@@ -55,9 +55,10 @@ impl SecretStore for KeyringStore {
 /// window or a command borrowing a daemon's session owns neither, and the
 /// daemon writes its own host's store when it serves the request.
 ///
-/// `Ok` means the request reached the server, not that the server took it —
-/// Soulseek answers a password change with nothing at all — and carries the
-/// store's complaint when the change went out but the local copy did not.
+/// `Ok` means the request went out, not that the server took it: the server
+/// echoes a change back once it has stored it, and the local copy is written
+/// without waiting for that. It carries the store's complaint when the change
+/// went out but the local copy did not.
 pub fn change_password(
     session: &dyn SessionApi,
     secrets: &dyn SecretStore,

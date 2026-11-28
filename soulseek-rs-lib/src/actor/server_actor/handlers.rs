@@ -6,9 +6,9 @@
 
 use super::{
     ClientOperation, ClientVersion, ConnectionState, ConnectionType, Duration,
-    LOGIN_VERDICT_TIMEOUT, MessageFactory, Peer, RoomEvent, RwLockExt,
-    ServerActor, ServerMessage, SoulseekRs, UserMessage, debug, error,
-    post_login_messages,
+    LOGIN_VERDICT_TIMEOUT, MessageFactory, MutexExt, Peer, RoomEvent,
+    RwLockExt, ServerActor, ServerMessage, SoulseekRs, UserMessage, debug,
+    error, post_login_messages,
 };
 
 impl ServerActor {
@@ -18,6 +18,15 @@ impl ServerActor {
         if let ServerMessage::SharedCounts { folders, files } = msg {
             self.shared_folder_count = folders;
             self.shared_file_count = files;
+        }
+        // Kept even when a write earlier in the same batch has just cost us
+        // the connection: the server stored the password before it said so,
+        // and the old one no longer logs in.
+        if let ServerMessage::PasswordChanged(echoed) = &msg {
+            match self.login_password.lock_safe() {
+                Ok(mut login) => login.confirm(echoed),
+                Err(e) => error!("[server] PasswordChanged: {}", e),
+            }
         }
         if !matches!(self.connection_state, ConnectionState::Connected)
             && !matches!(
@@ -43,6 +52,7 @@ impl ServerActor {
                 self.handle_login_status(message);
             }
             ServerMessage::Relogged => self.handle_relogged(),
+            ServerMessage::PasswordChanged(_) => {}
             ServerMessage::PierceFirewall(token) => {
                 self.send_message(
                     MessageFactory::build_pierce_firewall_message(token),

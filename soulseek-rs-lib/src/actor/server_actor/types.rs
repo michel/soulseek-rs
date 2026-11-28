@@ -30,6 +30,34 @@ impl std::fmt::Display for PeerAddress {
     }
 }
 
+/// The password the client logs in with, and the one it has asked the server
+/// to change it to. Only an echo of that request is taken as its
+/// confirmation: an echo of anything else would put a password of the
+/// sender's choosing into every later login.
+#[derive(Debug, Default)]
+pub struct LoginPassword {
+    pub current: String,
+    pub requested: Option<String>,
+}
+
+impl LoginPassword {
+    #[must_use]
+    pub const fn new(current: String) -> Self {
+        Self {
+            current,
+            requested: None,
+        }
+    }
+
+    pub fn confirm(&mut self, echoed: &str) {
+        if self.requested.as_deref() != Some(echoed) {
+            return;
+        }
+        self.current = echoed.to_string();
+        self.requested = None;
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Context {
     pub logged_in: Option<bool>,

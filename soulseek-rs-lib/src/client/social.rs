@@ -518,21 +518,25 @@ impl Client {
         ))
     }
 
-    /// Change our account password (code 142).
+    /// Change our account password (code 142). Later logins use the new
+    /// password once the server echoes it back, which it does after storing
+    /// it; `Ok` only means the request went out.
     ///
     /// # Errors
     /// [`crate::SoulseekRs::NotConnected`] when there is no server connection.
     pub fn change_password(&self, password: &str) -> Result<()> {
-        // A change the server never hears would leave us logging in with a
-        // password it does not have.
+        // A change made while the session is down is dropped, and a caller
+        // that stores the password on `Ok` must not store that one.
         if self.session.loss().is_some() {
             return Err(SoulseekRs::NotConnected);
         }
-        let mut current_password = self.password.lock_safe()?;
+        // Held across the send, so the echo cannot be read before the
+        // request it answers is on record.
+        let mut login = self.password.lock_safe()?;
         self.send_server_message(MessageFactory::build_change_password(
             password,
         ))?;
-        password.clone_into(&mut current_password);
+        login.requested = Some(password.to_string());
         Ok(())
     }
 

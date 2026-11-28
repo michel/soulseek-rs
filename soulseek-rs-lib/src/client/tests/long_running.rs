@@ -18,47 +18,93 @@ fn a_client_stays_shareable_and_unwind_safe() {
     assert_traits::<Client>();
 }
 
-// The daemon logs back in by itself, with whatever password it holds.
+// The daemon logs back in by itself, with whatever password it holds. The
+// server stores a change before it echoes it back (code 142), so a change
+// lost on a dying connection leaves the old password the one that works.
 #[test]
-fn a_changed_password_is_sent_with_the_next_login() {
-    use crate::actor::ActorMessage;
+fn the_next_login_sends_a_changed_password_only_once_the_server_confirms_it() {
+    use crate::message::{MessageReader, server::MessageFactory};
+    use std::io::Write;
 
-    let mut client = Client::new("me", "first-pw");
-    let (sender, receiver) = mpsc::channel();
-    client.server_handle = Some(ActorHandle { sender });
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut settings = ClientSettings::new("me", "first-pw");
+    settings.server_address = PeerAddress::new(
+        "127.0.0.1".to_string(),
+        listener.local_addr().unwrap().port(),
+    );
+    settings.enable_listen = false;
+    let mut client = Client::with_settings(settings);
+    client.connect().expect("connect");
+    let (mut server, _) = listener.accept().unwrap();
+    server
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let writer = server.try_clone().unwrap();
+    let mut reader = MessageReader::new();
+    let mut next_frame = |code: u32| {
+        loop {
+            match reader.extract_message().unwrap() {
+                Some(frame) if frame.get_message_code() != code => {}
+                Some(mut frame) => {
+                    frame.set_pointer(8);
+                    return frame;
+                }
+                None => reader.read_from_socket(&mut server).unwrap(),
+            }
+        }
+    };
 
     client
         .change_password("second-pw")
         .expect("change password");
-    let ActorMessage::UserMessage(ServerMessage::SendMessage(mut change)) =
-        receiver
-            .recv_timeout(Duration::from_secs(5))
-            .expect("password change")
-    else {
-        panic!("expected a password change");
-    };
-    assert_eq!(change.read_int32(), 142);
-    assert_eq!(change.read_string(), "second-pw");
+    assert_eq!(next_frame(142).read_string(), "second-pw");
 
-    thread::scope(|scope| {
-        let login = scope.spawn(|| client.login());
-        let ActorMessage::UserMessage(ServerMessage::Login {
-            password,
-            response,
-            ..
-        }) = receiver
-            .recv_timeout(Duration::from_secs(5))
-            .expect("login request")
-        else {
-            panic!("expected a login request");
-        };
-        response.send(Ok(true)).expect("login verdict");
-        assert!(login.join().expect("login thread").expect("login"));
-        assert_eq!(
-            password, "second-pw",
-            "the next login uses the changed password"
-        );
-    });
+    let refusal = Message::new().write_int32(1).write_int8(0).get_buffer();
+    let mut login_password = || {
+        thread::scope(|scope| {
+            let login = scope.spawn(|| client.login());
+            let mut frame = next_frame(1);
+            frame.read_string();
+            let password = frame.read_string();
+            (&writer).write_all(&refusal).unwrap();
+            assert!(login.join().unwrap().is_err(), "the server refused it");
+            password
+        })
+    };
+    assert_eq!(
+        login_password(),
+        "first-pw",
+        "a change the server never confirmed is not what the next login sends"
+    );
+
+    // The client handles frames as they arrive, so once a privileges reply
+    // is in, the echo written before it has been read.
+    let echo = |password: &str, fence: u32| {
+        let echo = MessageFactory::build_change_password(password);
+        (&writer).write_all(&echo.get_buffer()).unwrap();
+        let fenced = Message::new()
+            .write_int32(92)
+            .write_int32(fence)
+            .get_buffer();
+        (&writer).write_all(&fenced).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while client.own_privilege_seconds() != Some(fence) {
+            assert!(Instant::now() < deadline, "the echo was never read");
+            thread::yield_now();
+        }
+    };
+    echo("not-what-we-asked-for", 1);
+    assert_eq!(
+        login_password(),
+        "first-pw",
+        "an echo of a change we never asked for is not a confirmation"
+    );
+    echo("second-pw", 2);
+    assert_eq!(
+        login_password(),
+        "second-pw",
+        "a change the server confirmed is what the next login sends"
+    );
 
     client.session.record(SessionLoss::Disconnected);
     assert!(
