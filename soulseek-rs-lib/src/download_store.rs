@@ -93,12 +93,37 @@ impl DownloadStore {
         &self.downloads
     }
 
+    /// The row a peer means by `token`. A token is only unique to the peer
+    /// that chose it, and peers count from the same small numbers, so a
+    /// lookup by token alone finds whichever row was added first: another
+    /// peer's, or one that finished long ago.
+    #[must_use]
+    pub fn get(&self, username: &str, token: u32) -> Option<&Download> {
+        self.downloads
+            .iter()
+            .filter(|d| d.token == token && d.username == username)
+            .min_by_key(|d| d.is_finished())
+    }
+
+    fn get_mut(&mut self, username: &str, token: u32) -> Option<&mut Download> {
+        self.downloads
+            .iter_mut()
+            .filter(|d| d.token == token && d.username == username)
+            .min_by_key(|d| d.is_finished())
+    }
+
+    pub fn remove_for_peer(&mut self, username: &str, token: u32) {
+        self.downloads
+            .retain(|d| !(d.token == token && d.username == username));
+    }
+
     pub fn update_status(
         &mut self,
+        username: &str,
         token: u32,
         status: DownloadStatus,
     ) -> bool {
-        let Some(download) = self.get_by_token_mut(token) else {
+        let Some(download) = self.get_mut(username, token) else {
             return false;
         };
         if download.status.is_terminal()
@@ -128,10 +153,8 @@ impl DownloadStore {
         token: u32,
         username: &str,
     ) -> Option<Download> {
-        let download = self.get_by_token_mut(token)?;
-        if download.username != username
-            || !matches!(download.status, DownloadStatus::Queued)
-        {
+        let download = self.get_mut(username, token)?;
+        if !matches!(download.status, DownloadStatus::Queued) {
             return None;
         }
 
@@ -419,6 +442,7 @@ mod tests {
         store.add(make_download(1, DownloadStatus::Queued));
         assert!(store.cancel_by_file("peer", "file-1.mp3").is_some());
         assert!(!store.update_status(
+            "peer",
             1,
             DownloadStatus::InProgress {
                 bytes_downloaded: 0,
@@ -426,10 +450,11 @@ mod tests {
                 speed_bytes_per_sec: 0.0,
             },
         ));
-        assert!(
-            !store
-                .update_status(1, DownloadStatus::Failed(Some("late".into())))
-        );
+        assert!(!store.update_status(
+            "peer",
+            1,
+            DownloadStatus::Failed(Some("late".into()))
+        ));
         assert!(matches!(
             store.get_by_token(1).unwrap().status,
             DownloadStatus::Cancelled
@@ -513,6 +538,7 @@ mod tests {
         ));
 
         assert!(!store.update_status(
+            "peer",
             1,
             DownloadStatus::InProgress {
                 bytes_downloaded: 50,
@@ -681,5 +707,38 @@ mod tests {
             rx_match.try_recv().unwrap(),
             DownloadStatus::Failed(_)
         ));
+    }
+
+    // Peers pick their own transfer tokens and count from the same small
+    // numbers. Looked up by token alone, the first row with that number
+    // answered for everyone: a second peer's file connection was refused,
+    // and failing one peer's download removed the other's.
+    #[test]
+    fn two_peers_using_the_same_token_keep_their_own_downloads() {
+        let mut store = DownloadStore::new();
+        let (alice_tx, _alice_rx) = mpsc::channel();
+        let (bob_tx, _bob_rx) = mpsc::channel();
+        for (username, sender) in [("alice", alice_tx), ("bob", bob_tx)] {
+            let mut download = make_download(7, DownloadStatus::Queued);
+            download.username = username.to_string();
+            download.sender = sender;
+            store.add(download);
+        }
+
+        assert!(store.update_status("alice", 7, DownloadStatus::Completed));
+        assert_eq!(
+            store.claim_for_peer(7, "bob").map(|d| d.username),
+            Some("bob".to_string()),
+            "a finished row with the same token must not stand in the way"
+        );
+
+        store.remove_for_peer("bob", 7);
+        assert!(
+            matches!(
+                store.get("alice", 7).map(|d| &d.status),
+                Some(DownloadStatus::Completed)
+            ),
+            "removing one peer's row leaves the other's"
+        );
     }
 }

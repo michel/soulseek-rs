@@ -172,7 +172,8 @@ impl Client {
             let _ = download
                 .sender
                 .send(DownloadStatus::Failed(Some(reason.to_string())));
-            self.context.write_safe()?.update_download_with_status(
+            self.context.write_safe()?.downloads.update_status(
+                &username,
                 token,
                 DownloadStatus::Failed(Some(reason.to_string())),
             );
@@ -206,7 +207,8 @@ impl Client {
         for (token, sender) in doomed {
             let reason = Some("The user went offline".to_string());
             let _ = sender.send(DownloadStatus::Failed(reason.clone()));
-            context.update_download_with_status(
+            context.downloads.update_status(
+                username,
                 token,
                 DownloadStatus::Failed(reason),
             );

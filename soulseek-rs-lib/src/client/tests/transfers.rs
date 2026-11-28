@@ -260,6 +260,59 @@ fn a_repeated_transfer_offer_keeps_the_download_listed_and_claimable() {
     assert_eq!(claimed.size, 200);
 }
 
+// The token we give a download before it is offered and the token a peer
+// chose for another one are drawn from the same small numbers. Re-keying by
+// "remove the old token" took the other peer's download with it.
+#[test]
+fn an_offer_re_keys_its_own_download_and_leaves_the_rest() {
+    let client = Client::new("u", "p");
+    let (sender, _receiver) = mpsc::channel();
+    for (username, filename) in [("alice", "a.mp3"), ("bob", "b.mp3")] {
+        client.context.write().unwrap().add_download(download(
+            username,
+            filename,
+            7,
+            DownloadStatus::Queued,
+            sender.clone(),
+        ));
+    }
+
+    let (ops_tx, ops_rx) = mpsc::channel();
+    Client::listen_to_client_operations(
+        ops_rx,
+        client.context.clone(),
+        "u".to_string(),
+    );
+    ops_tx
+        .send(ClientOperation::UpdateDownloadTokens(
+            Transfer {
+                direction: 1,
+                token: 99,
+                filename: "b.mp3".to_string(),
+                size: 200,
+            },
+            "bob".to_string(),
+        ))
+        .unwrap();
+    ops_tx.send(ClientOperation::OwnPrivileges(1)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while client.own_privilege_seconds() != Some(1) {
+        assert!(Instant::now() < deadline, "ops loop never caught up");
+        thread::yield_now();
+    }
+
+    let mut tokens: Vec<(String, u32)> = client
+        .get_all_downloads()
+        .into_iter()
+        .map(|download| (download.username, download.token))
+        .collect();
+    tokens.sort();
+    assert_eq!(
+        tokens,
+        vec![("alice".to_string(), 7), ("bob".to_string(), 99)]
+    );
+}
+
 #[test]
 fn a_replayed_transfer_response_does_not_start_a_second_transfer() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

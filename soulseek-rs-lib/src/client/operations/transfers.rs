@@ -6,9 +6,9 @@
 //! rather than have every line that clones it rewritten.
 
 use super::{
-    Arc, Client, ClientContext, ClientOperation, Download, DownloadError,
-    DownloadPeer, DownloadStatus, MessageFactory, PeerMessage, RwLock,
-    RwLockExt, ServerMessage, debug, error, info, thread, trace,
+    Arc, Client, ClientContext, ClientOperation, DownloadError, DownloadPeer,
+    DownloadStatus, MessageFactory, PeerMessage, RwLock, RwLockExt,
+    ServerMessage, debug, error, info, thread, trace,
 };
 
 impl Client {
@@ -87,30 +87,18 @@ impl Client {
                     }
                 };
 
-                let download_to_update = context
+                // Re-keyed in place: the offered token belongs to this
+                // peer alone, and removing "the old token" took whatever
+                // other row happened to carry the same number.
+                let download = context
                     .downloads
-                    .get_by_file(&username, &transfer.filename)
-                    .map(|d| (d.token, d.clone()));
-
-                let cancelled =
-                    download_to_update.as_ref().is_some_and(|(_, d)| {
-                        matches!(d.status, DownloadStatus::Cancelled)
-                    });
-                if !cancelled
-                    && let Some((old_token, download)) = download_to_update
-                    && old_token != transfer.token
-                {
-                    trace!(
-                        "[client] UpdateDownloadTokens found {old_token}, transfer: {:?}",
-                        transfer
-                    );
-
-                    context.add_download(Download {
-                        token: transfer.token,
-                        size: transfer.size,
-                        ..download
-                    });
-                    context.remove_download(old_token);
+                    .get_by_file_mut(&username, &transfer.filename);
+                let cancelled = download.as_ref().is_some_and(|download| {
+                    matches!(download.status, DownloadStatus::Cancelled)
+                });
+                if !cancelled && let Some(download) = download {
+                    download.token = transfer.token;
+                    download.size = transfer.size;
                 }
 
                 // Only now invite the file connection: it is

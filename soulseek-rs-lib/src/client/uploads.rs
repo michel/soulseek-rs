@@ -387,12 +387,13 @@ impl Client {
             Ok(mut context) => {
                 for token in failed_tokens {
                     context.downloads.update_status(
+                        username,
                         token,
                         DownloadStatus::Failed(Some(
                             "The upload failed on the other side".to_string(),
                         )),
                     );
-                    context.downloads.remove(token);
+                    context.downloads.remove_for_peer(username, token);
                 }
             }
             Err(e) => {
