@@ -1,3 +1,4 @@
+use crate::peer::part_path_of;
 use crate::types::{Download, DownloadStatus};
 
 /// How many finished downloads stay listed. Finished entries are history;
@@ -10,6 +11,17 @@ pub struct DownloadStore {
     downloads: Vec<Download>,
 }
 
+/// What names a download's partial: two downloads that agree on all of it
+/// write to, and resume from, the same file.
+fn partial_of(download: &Download) -> (&str, &str, u64, &str) {
+    (
+        &download.username,
+        &download.filename,
+        download.size,
+        &download.download_directory,
+    )
+}
+
 impl DownloadStore {
     #[must_use]
     pub fn new() -> Self {
@@ -17,12 +29,16 @@ impl DownloadStore {
     }
 
     pub fn add(&mut self, download: Download) {
-        self.downloads.retain(|d| {
-            !(d.is_finished()
-                && d.username == download.username
-                && d.filename == download.filename)
-        });
+        let replaced: Vec<Download> = self
+            .downloads
+            .extract_if(.., |d| {
+                d.is_finished()
+                    && d.username == download.username
+                    && d.filename == download.filename
+            })
+            .collect();
         self.downloads.push(download);
+        self.forget_partials(&replaced);
         self.prune_finished(MAX_FINISHED_DOWNLOADS);
     }
 
@@ -36,13 +52,38 @@ impl DownloadStore {
         if excess == 0 {
             return;
         }
-        self.downloads.retain(|d| {
-            if excess > 0 && d.is_finished() {
-                excess -= 1;
-                return false;
+        let evicted: Vec<Download> = self
+            .downloads
+            .extract_if(.., |d| {
+                let evict = excess > 0 && d.is_finished();
+                excess -= usize::from(evict);
+                evict
+            })
+            .collect();
+        self.forget_partials(&evicted);
+    }
+
+    /// Delete the partials of failed downloads that have just left the list.
+    /// A failed transfer keeps its partial so a retry can resume it; once no
+    /// listed download would, nothing accounts for the file any more and a
+    /// daemon would collect them for as long as it runs.
+    fn forget_partials(&self, forgotten: &[Download]) {
+        let mut failed = forgotten
+            .iter()
+            .filter(|d| matches!(d.status, DownloadStatus::Failed(_)))
+            .peekable();
+        if failed.peek().is_none() {
+            return;
+        }
+        let listed: std::collections::HashSet<_> =
+            self.downloads.iter().map(partial_of).collect();
+        for download in failed {
+            if !listed.contains(&partial_of(download))
+                && let Some(partial) = part_path_of(download)
+            {
+                let _ = std::fs::remove_file(partial);
             }
-            true
-        });
+        }
     }
 
     pub fn remove(&mut self, token: u32) {
@@ -869,5 +910,84 @@ mod tests {
             Some("x.mp3".to_string()),
             "x still waits for its own offer"
         );
+    }
+
+    /// A store whose downloads land in a directory of this test's own, and
+    /// a failed download in it with a partial on disk.
+    fn failed_with_a_partial(
+        test: &str,
+        token: u32,
+    ) -> (Download, std::path::PathBuf) {
+        let dir = std::env::temp_dir()
+            .join(format!("soulseek-{test}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut download = make_download(token, DownloadStatus::Failed(None));
+        download.download_directory = dir.display().to_string();
+        let partial = part_path_of(&download).expect("a part path");
+        std::fs::write(&partial, b"half").unwrap();
+        (download, std::path::PathBuf::from(partial))
+    }
+
+    fn finish(store: &mut DownloadStore, downloads: usize) {
+        for token in 10..(10 + downloads as u32) {
+            store.add(make_download(token, DownloadStatus::Completed));
+        }
+    }
+
+    fn clean_up(partial: &std::path::Path) {
+        let _ = std::fs::remove_dir_all(partial.parent().expect("a folder"));
+    }
+
+    #[test]
+    fn a_failed_download_takes_its_partial_with_it_when_it_is_forgotten() {
+        let (oldest, forgotten) = failed_with_a_partial("evicted", 1);
+        let (newest, kept) = failed_with_a_partial("evicted", 2);
+
+        let mut store = DownloadStore::new();
+        store.add(oldest);
+        finish(&mut store, MAX_FINISHED_DOWNLOADS - 1);
+        store.add(newest);
+
+        assert!(store.get_by_token(1).is_none(), "the oldest is evicted");
+        assert!(!forgotten.exists(), "and its partial goes with it");
+        assert!(kept.exists(), "a failed download still listed can resume");
+        clean_up(&kept);
+    }
+
+    #[test]
+    fn a_partial_another_listed_download_resumes_outlives_the_forgotten_one() {
+        let (failed, partial) = failed_with_a_partial("shared", 1);
+        let mut resuming = make_download(2, DownloadStatus::Queued);
+        resuming.filename.clone_from(&failed.filename);
+        resuming
+            .download_directory
+            .clone_from(&failed.download_directory);
+
+        let mut store = DownloadStore::new();
+        store.add(failed);
+        store.add(resuming);
+        finish(&mut store, MAX_FINISHED_DOWNLOADS);
+
+        assert!(store.get_by_token(1).is_none(), "the failed one is evicted");
+        assert!(partial.exists(), "the queued one still resumes from it");
+        clean_up(&partial);
+    }
+
+    #[test]
+    fn a_retry_for_a_different_size_drops_the_partial_it_cannot_resume() {
+        let (failed, stale) = failed_with_a_partial("resized", 1);
+        let mut retry = make_download(2, DownloadStatus::Queued);
+        retry.filename.clone_from(&failed.filename);
+        retry
+            .download_directory
+            .clone_from(&failed.download_directory);
+        retry.size = failed.size + 1;
+
+        let mut store = DownloadStore::new();
+        store.add(failed);
+        store.add(retry);
+
+        assert!(!stale.exists(), "no download would ever pick it up again");
+        clean_up(&stale);
     }
 }
