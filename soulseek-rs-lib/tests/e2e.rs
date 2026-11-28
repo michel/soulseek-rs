@@ -3723,6 +3723,8 @@ fn a_third_party_client_reads_our_user_info() {
     assert_eq!(upload_slots, 3, "the configured slot count");
     assert_eq!(queue_size, 0, "nobody is waiting");
     assert!(slots_free, "nothing is uploading");
+    assert_eq!(reply.get_size() - reply.get_pointer(), 4);
+    assert_eq!(reply.read_int32(), 0, "nobody may send us files unasked");
 
     let _ = std::fs::remove_dir_all(share_dir);
 }
