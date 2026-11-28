@@ -11,6 +11,7 @@ use crate::client::ClientContext;
 use crate::message::server::MessageFactory;
 use crate::trace;
 use crate::types::{Download, DownloadStatus};
+use crate::utils::md5;
 use crate::utils::path::{PART_SUFFIX, expand_tilde};
 
 /// Read in 64 KiB slices: an eighth of the syscalls of the 8 KiB reads before,
@@ -78,14 +79,27 @@ fn extract_filename_from_path(full_path: &str) -> &str {
         .unwrap_or(full_path)
 }
 
-fn part_path(final_path: &str) -> String {
-    format!("{final_path}{PART_SUFFIX}")
+/// Named for its transfer, not only its basename: names like `01.flac` and
+/// `cover.jpg` recur, and resuming another download's partial would put its
+/// bytes at the front of this file.
+fn part_path(final_path: &str, download: &Download) -> String {
+    // Length prefixes keep field boundaries unambiguous for remote names.
+    let identity = format!(
+        "{}:{}:{}:{}:{}",
+        download.username.len(),
+        download.username,
+        download.filename.len(),
+        download.filename,
+        download.size
+    );
+    let digest = md5(&identity);
+    format!("{final_path}.{}{PART_SUFFIX}", &digest[..8])
 }
 
 pub fn part_path_of(download: &Download) -> Option<String> {
     resolve_download_path(download)
         .ok()
-        .map(|path| part_path(&path))
+        .map(|path| part_path(&path, download))
 }
 
 /// Where a download's bytes end up: its configured directory (falling back
@@ -128,6 +142,7 @@ fn resolve_download_path(download: &Download) -> Result<String, DownloadError> {
 /// behind what it managed to fetch and the next attempt can pick up from there.
 struct PartFile {
     file: File,
+    path: PathBuf,
     final_path: String,
     written: u64,
     expected: u64,
@@ -136,16 +151,15 @@ struct PartFile {
 impl PartFile {
     fn open(download: &Download) -> Result<Self, DownloadError> {
         let final_path = resolve_download_path(download)?;
-        let path = PathBuf::from(part_path(&final_path));
+        let path = PathBuf::from(part_path(&final_path, download));
 
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .map_err(DownloadError::FileWriteError)?;
         }
 
-        // A `.part` at or beyond the advertised size is restarted. We do not
-        // persist its username, full remote path, or prior expected size, so
-        // equality alone cannot prove that its bytes belong to this transfer.
+        // A partial at or past the full size is not a resume point: nothing
+        // is left to ask the peer for.
         let on_disk = fs::metadata(&path).map_or(0, |m| m.len());
         let written = if on_disk < download.size { on_disk } else { 0 };
 
@@ -158,6 +172,7 @@ impl PartFile {
 
         Ok(Self {
             file,
+            path,
             final_path,
             written,
             expected: download.size,
@@ -183,7 +198,7 @@ impl PartFile {
 
     fn discard(self) {
         drop(self.file);
-        let _ = fs::remove_file(part_path(&self.final_path));
+        let _ = fs::remove_file(self.path);
     }
 
     /// A short transfer is a failure, and the `.part` stays put so the next
@@ -196,7 +211,7 @@ impl PartFile {
             });
         }
         drop(self.file);
-        fs::rename(part_path(&self.final_path), &self.final_path)
+        fs::rename(self.path, &self.final_path)
             .map_err(DownloadError::FileWriteError)?;
         Ok(self.final_path)
     }
@@ -620,6 +635,7 @@ impl DownloadPeer {
 mod tests {
     use super::{
         DownloadError, DownloadPeer, PartFile, extract_filename_from_path,
+        part_path_of,
     };
     use crate::client::ClientContext;
     use crate::types::{Download, DownloadMetadata, DownloadStatus};
@@ -631,6 +647,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn part_of(download: &Download) -> std::path::PathBuf {
+        part_path_of(download).expect("a part path").into()
     }
 
     fn download_into(dir: &std::path::Path, size: u64) -> Download {
@@ -660,9 +680,7 @@ mod tests {
         resumed.write(b"1234").unwrap();
         let final_path = resumed.finish().unwrap();
         assert_eq!(std::fs::read(&final_path).unwrap(), b"data1234");
-        assert!(
-            !std::path::PathBuf::from(format!("{final_path}.part")).exists()
-        );
+        assert!(!part_of(&download).exists());
         let _ = std::fs::remove_dir_all(dir.ancestors().nth(2).unwrap());
     }
 
@@ -671,7 +689,7 @@ mod tests {
         let dir = scratch_dir("discard");
         let mut part = PartFile::open(&download_into(&dir, 8)).unwrap();
         part.write(b"data").unwrap();
-        let path = dir.join("file.bin.part");
+        let path = part_of(&download_into(&dir, 8));
         assert!(path.exists());
 
         part.discard();
@@ -827,7 +845,7 @@ mod tests {
                 .status,
             DownloadStatus::Failed(_)
         ));
-        assert_eq!(std::fs::read(dir.join("file.bin.part")).unwrap(), b"0123");
+        assert_eq!(std::fs::read(part_of(&download)).unwrap(), b"0123");
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -868,7 +886,7 @@ mod tests {
             worker.join().unwrap(),
             Err(DownloadError::TokenNotFound(1))
         ));
-        assert!(!dir.join("file.bin.part").exists());
+        assert!(!part_of(&download).exists());
         assert!(matches!(
             context
                 .read()
@@ -893,12 +911,13 @@ mod tests {
             std::net::TcpStream::connect(listener.local_addr().unwrap())
                 .unwrap();
         let _peer = listener.accept().unwrap();
+        let path = part_of(&download);
 
         let outcome =
             DownloadPeer::start_transfer(download, &mut stream, &context);
 
         assert!(matches!(outcome, Err(DownloadError::Cancelled)));
-        assert!(!dir.join("file.bin.part").exists(), "no .part is opened");
+        assert!(!path.exists(), "no .part is opened");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -922,37 +941,87 @@ mod tests {
     #[test]
     fn a_partial_file_sets_the_resume_offset() {
         let dir = scratch_dir("resume");
-        std::fs::write(dir.join("file.bin.part"), b"0123").unwrap();
+        let download = download_into(&dir, 10);
+        let path = part_of(&download);
+        std::fs::write(&path, b"0123").unwrap();
 
-        let mut part = PartFile::open(&download_into(&dir, 10)).unwrap();
+        let mut part = PartFile::open(&download).unwrap();
         assert_eq!(part.written, 4, "resume from what is already on disk");
 
         part.write(b"456789").unwrap();
         let final_path = part.finish().unwrap();
 
         assert_eq!(std::fs::read(&final_path).unwrap(), b"0123456789");
-        assert!(
-            !dir.join("file.bin.part").exists(),
-            "the .part is renamed, not left behind"
+        assert!(!path.exists(), "the .part is renamed, not left behind");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_partial_file_resumes_only_for_the_same_transfer() {
+        let dir = scratch_dir("transfer-identity");
+        let mut original = download_into(&dir, 8);
+        original.filename = "album-a\\file.bin".into();
+        let mut first = PartFile::open(&original).unwrap();
+        first.write(b"AAAA").unwrap();
+        drop(first);
+
+        for (username, filename, content) in [
+            ("other-peer", "album-a\\file.bin", b"BBBBBBBB".as_slice()),
+            ("peer", "album-b\\file.bin", b"CCCCCCCC".as_slice()),
+            ("peer", "album-a\\file.bin", b"DDDDDDDDDD".as_slice()),
+        ] {
+            let mut other = original.clone();
+            other.username = username.into();
+            other.filename = filename.into();
+            other.size = content.len() as u64;
+
+            let mut part = PartFile::open(&other).unwrap();
+            assert_eq!(
+                part.written, 0,
+                "a different transfer must not inherit the original prefix"
+            );
+            part.write(content).unwrap();
+            assert_eq!(std::fs::read(part.finish().unwrap()).unwrap(), content);
+        }
+
+        original.token = 2;
+        let mut resumed = PartFile::open(&original).unwrap();
+        assert_eq!(resumed.written, 4);
+        resumed.write(b"1234").unwrap();
+        assert_eq!(
+            std::fs::read(resumed.finish().unwrap()).unwrap(),
+            b"AAAA1234"
         );
         let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
-    fn an_unidentified_exact_size_partial_restarts_from_zero() {
-        // With no persisted transfer identity, length alone cannot distinguish
-        // a final write awaiting rename from unrelated same-sized content.
-        let dir = scratch_dir("complete");
-        std::fs::write(dir.join("file.bin.part"), b"0123456789").unwrap();
+    fn a_legacy_partial_does_not_supply_bytes_to_a_new_transfer() {
+        let dir = scratch_dir("legacy");
+        std::fs::write(dir.join("file.bin.part"), b"AAAA").unwrap();
 
-        let mut part = PartFile::open(&download_into(&dir, 10)).unwrap();
+        let mut part = PartFile::open(&download_into(&dir, 8)).unwrap();
+        assert_eq!(part.written, 0);
+        part.write(b"BBBBBBBB").unwrap();
+        assert_eq!(std::fs::read(part.finish().unwrap()).unwrap(), b"BBBBBBBB");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_exact_size_partial_restarts_from_zero() {
+        let dir = scratch_dir("complete");
+        let download = download_into(&dir, 10);
+        let path = part_of(&download);
+        std::fs::write(&path, b"0123456789").unwrap();
+
+        let mut part = PartFile::open(&download).unwrap();
         assert_eq!(part.written, 0);
         assert!(!part.is_complete());
 
         part.write(b"abcdefghij").unwrap();
         let final_path = part.finish().unwrap();
         assert_eq!(std::fs::read(final_path).unwrap(), b"abcdefghij");
-        assert!(!dir.join("file.bin.part").exists());
+        assert!(!path.exists());
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -993,17 +1062,17 @@ mod tests {
             worker.join().unwrap(),
             Err(DownloadError::Cancelled)
         ));
-        assert!(!dir.join("file.bin.part").exists());
+        assert!(!part_of(&download).exists());
         let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn an_oversized_partial_file_restarts_from_zero() {
-        // Left over from a different transfer — not a valid resume point.
         let dir = scratch_dir("stale");
-        std::fs::write(dir.join("file.bin.part"), vec![9u8; 40]).unwrap();
+        let download = download_into(&dir, 10);
+        std::fs::write(part_of(&download), vec![9u8; 40]).unwrap();
 
-        let mut part = PartFile::open(&download_into(&dir, 10)).unwrap();
+        let mut part = PartFile::open(&download).unwrap();
         assert_eq!(part.written, 0);
 
         part.write(&(0..10).collect::<Vec<u8>>()).unwrap();
@@ -1029,7 +1098,7 @@ mod tests {
             })
         ));
         assert_eq!(
-            std::fs::read(dir.join("file.bin.part")).unwrap(),
+            std::fs::read(part_of(&download_into(&dir, 10))).unwrap(),
             b"01234",
             "the partial stays on disk for the next attempt"
         );

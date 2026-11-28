@@ -281,7 +281,6 @@ fn an_actual_short_transfer_resumes_opaque_bytes() {
     let content = binary_payload(3 * 64 * 1024 + 257);
     let filename = "opaque.bin";
     let interrupt_at = 64 * 1024 + 1;
-    let part_path = destination.path().join(format!("{filename}.part"));
     let final_path = destination.path().join(filename);
 
     assert!(content.contains(&0));
@@ -312,6 +311,12 @@ fn an_actual_short_transfer_resumes_opaque_bytes() {
         matches!(status, DownloadStatus::Failed(_))
     });
     assert!(!final_path.exists());
+    let part_path = fs::read_dir(destination.path())
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
     assert_eq!(
         fs::read(&part_path).expect("read retained partial file"),
         content[..interrupt_at]
@@ -349,7 +354,6 @@ fn a_live_download_pauses_and_resumes_on_the_same_connection() {
     let destination = ScratchDir::new("pause-resume");
     let filename = "paused.bin";
     let content = binary_payload(5 * 64 * 1024 + 257);
-    let part_path = destination.path().join(format!("{filename}.part"));
 
     let (statuses, mut peer, offset) = start_download(
         &subject,
@@ -374,6 +378,12 @@ fn a_live_download_pauses_and_resumes_on_the_same_connection() {
         )
     });
 
+    let part_path = fs::read_dir(destination.path())
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
     assert!(subject.client.pause_download(&control.username, filename));
     let _ = wait_for_status(&statuses, "Paused", |status| {
         matches!(status, DownloadStatus::Paused { .. })

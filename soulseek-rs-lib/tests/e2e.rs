@@ -1052,11 +1052,16 @@ fn cancel_mid_transfer(peer_username: &str, stall_after: Option<usize>) {
         )
         .expect("start download");
 
-    let part = download_dir.join(format!("{filename}.part"));
-    assert!(
-        wait_for(|| part.exists()),
-        "the transfer should be streaming"
-    );
+    let partial_exists = || {
+        std::fs::read_dir(&download_dir).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .path()
+                .extension()
+                .is_some_and(|ext| ext == "part")
+        })
+    };
+    assert!(wait_for(partial_exists), "the transfer should be streaming");
     if stall_after.is_some() {
         std::thread::sleep(Duration::from_secs(2));
     }
@@ -1076,7 +1081,7 @@ fn cancel_mid_transfer(peer_username: &str, stall_after: Option<usize>) {
         }
     }
     assert!(cancelled, "the status channel should report the cancel");
-    assert!(wait_for(|| !part.exists()), "the partial file should go");
+    assert!(wait_for(|| !partial_exists()), "the partial file should go");
     assert!(!download_dir.join(filename).exists());
     assert!(client.get_all_downloads().iter().any(|d| {
         d.filename == filename && matches!(d.status, DownloadStatus::Cancelled)
@@ -1174,7 +1179,7 @@ fn a_cancelled_queued_download_declines_the_peers_offer() {
     assert!(client.get_all_downloads().iter().any(|d| {
         d.filename == filename && matches!(d.status, DownloadStatus::Cancelled)
     }));
-    assert!(!download_dir.join(format!("{filename}.part")).exists());
+    assert!(std::fs::read_dir(&download_dir).unwrap().next().is_none());
     let _ = std::fs::remove_dir_all(&download_dir);
 }
 
@@ -1284,13 +1289,14 @@ fn an_interrupted_download_resumes_from_its_partial_file() {
     let size = content.len() as u64;
     let already_have = 800usize;
     let download_dir = unique_download_dir();
+    // The digest is of this peer, remote path and size. Spelled out, so a
+    // change to how partials are named shows up here: it would strand every
+    // partial already on a user's disk.
+    let part_path = download_dir.join("resumed_file.bin.25caf4da.part");
 
     // Stand in for a transfer that died after 800 of 2000 bytes.
-    std::fs::write(
-        download_dir.join(format!("{filename}.part")),
-        &content[..already_have],
-    )
-    .expect("seed the partial file");
+    std::fs::write(&part_path, &content[..already_have])
+        .expect("seed the partial file");
 
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();
     let cfg = MockUpload {
@@ -1340,7 +1346,7 @@ fn an_interrupted_download_resumes_from_its_partial_file() {
         "the resumed prefix and the fetched tail should form the whole file"
     );
     assert!(
-        !download_dir.join(format!("{filename}.part")).exists(),
+        !part_path.exists(),
         "the .part should be renamed away once complete"
     );
 

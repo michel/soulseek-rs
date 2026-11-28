@@ -586,8 +586,9 @@ daemon's shares and listener are the ones peers reach.
 
 Downloads run under `--timeout` (300s) and `--max-concurrent-downloads` at a
 time, so an unattended run always ends. An interrupted one resumes: bytes stream
-into `<file>.part` and it is renamed only once whole, so re-running the same
-`download` asks the peer to start at the offset already on disk. Partial files
+into `<file>.<digest>.part`, keyed by user, full remote path, and size. It is
+renamed only once whole, so re-running the same `download` with the same size
+asks the peer to start at the offset already on disk. Partial files
 are never offered to peers, and deleting the `.part` starts over.
 
 ### Configuration

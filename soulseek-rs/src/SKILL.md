@@ -105,12 +105,12 @@ anything.
 **`download <user> <path> [--size N]`** or **`download --stdin`** — one object
 per finished transfer: `user`, `path`, `size`, `file` (the local path written).
 `--stdin` consumes `search --json` output as-is. A transfer that fails leaves a
-`<file>.part` behind; re-running the same command resumes from it rather than
-starting over, so retrying a failed download is cheap.
+`<file>.<digest>.part` behind. The digest identifies the user, full remote path,
+and size; re-running the same command with the same size resumes from it.
 
 **`transfer cancel <user> <path>`** — stop a download (queued or in progress;
-its `<file>.part` is deleted) or an upload being served. Prints nothing; exit 0
-is the confirmation, exit 4 means nothing by that name was in flight. Only
+its `<file>.<digest>.part` is deleted) or an upload being served. Prints nothing;
+exit 0 is the confirmation, exit 4 means nothing by that name was in flight. Only
 useful against a daemon, since a one-shot `download` ends with its own run.
 
 **`get <query>`** — search, pick, and download in one step. `--pick
