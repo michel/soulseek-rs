@@ -470,9 +470,11 @@ impl DownloadPeer {
         status: DownloadStatus,
     ) {
         let applied = client_context.write().is_ok_and(|mut context| {
-            context
-                .downloads
-                .update_status(download.token, status.clone())
+            context.downloads.update_status(
+                &download.username,
+                download.token,
+                status.clone(),
+            )
         });
         if applied {
             let _ = download.sender.send(status);
@@ -494,7 +496,8 @@ impl DownloadPeer {
                 .write()
                 .map_err(|_| DownloadError::LockPoisoned)?;
             let status = context
-                .get_download_by_token(download.token)
+                .downloads
+                .get(&download.username, download.token)
                 .map(|download| download.status.clone())
                 .ok_or(DownloadError::TokenNotFound(download.token))?;
 
@@ -517,10 +520,11 @@ impl DownloadPeer {
             }
 
             let final_path = part.finish()?;
-            if !context
-                .downloads
-                .update_status(download.token, DownloadStatus::Completed)
-            {
+            if !context.downloads.update_status(
+                &download.username,
+                download.token,
+                DownloadStatus::Completed,
+            ) {
                 return Err(DownloadError::TokenNotFound(download.token));
             }
             drop(context);
@@ -538,7 +542,8 @@ impl DownloadPeer {
             let status = client_context
                 .read()
                 .map_err(|_| DownloadError::LockPoisoned)?
-                .get_download_by_token(download.token)
+                .downloads
+                .get(&download.username, download.token)
                 .map(|download| download.status.clone())
                 .ok_or(DownloadError::TokenNotFound(download.token))?;
 

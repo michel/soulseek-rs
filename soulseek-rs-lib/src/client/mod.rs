@@ -693,7 +693,14 @@ impl ClientContext {
         token: u32,
         status: DownloadStatus,
     ) {
-        self.downloads.update_status(token, status);
+        let Some(username) = self
+            .downloads
+            .get_by_token(token)
+            .map(|download| download.username.clone())
+        else {
+            return;
+        };
+        self.downloads.update_status(&username, token, status);
     }
 }
 
