@@ -1,6 +1,7 @@
 use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::{
     Mutex, Once,
     atomic::{AtomicBool, AtomicU8, Ordering},
@@ -36,7 +37,54 @@ pub fn log_level() -> LogLevel {
 
 static BUFFER: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static BUFFERING: AtomicBool = AtomicBool::new(false);
-static LOG_FILE: Mutex<Option<File>> = Mutex::new(None);
+static LOG_FILE: Mutex<Option<LogFile>> = Mutex::new(None);
+const MAX_LOG_FILE_SIZE: u64 = 16 * 1024 * 1024;
+
+struct LogFile {
+    file: File,
+    path: PathBuf,
+    size: u64,
+}
+
+impl LogFile {
+    fn open(path: &Path) -> std::io::Result<Self> {
+        let file = OpenOptions::new().create(true).append(true).open(path)?;
+        let size = file.metadata()?.len();
+        Ok(Self {
+            file,
+            path: path.to_path_buf(),
+            size,
+        })
+    }
+
+    fn write_line(&mut self, line: &str, limit: u64) {
+        if self.size > limit {
+            let _ = self.rotate();
+        }
+        let _ = writeln!(self.file, "{line}");
+        // Count attempted bytes so partial write failures cannot hide growth.
+        self.size = self
+            .size
+            .saturating_add(line.len() as u64)
+            .saturating_add(1);
+        let _ = self.file.flush();
+    }
+
+    fn rotate(&mut self) -> std::io::Result<()> {
+        let mut previous = self.path.as_os_str().to_os_string();
+        previous.push(".1");
+        // A file that is no longer at its path was moved aside from outside:
+        // that is a rotation already, and only the fresh file is missing.
+        match std::fs::rename(&self.path, previous) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(e);
+            }
+            _ => {}
+        }
+        *self = Self::open(&self.path)?;
+        Ok(())
+    }
+}
 
 pub fn init() {
     INIT.call_once(|| {
@@ -55,11 +103,7 @@ pub fn init() {
 
         // Initialize log file if LOG_FILE env var is set
         if let Ok(log_file_path) = env::var("LOG_FILE") {
-            match OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log_file_path)
-            {
+            match LogFile::open(Path::new(&log_file_path)) {
                 Ok(file) => {
                     if let Ok(mut log_file) = LOG_FILE.lock() {
                         *log_file = Some(file);
@@ -173,9 +217,10 @@ pub fn log(level: LogLevel, message: &str) {
                     if let Ok(mut log_file) = LOG_FILE.lock()
                         && let Some(file) = log_file.as_mut()
                     {
-                        let _ =
-                            writeln!(file, "[{timestamp}] [{name}] {message}");
-                        let _ = file.flush();
+                        file.write_line(
+                            &format!("[{timestamp}] [{name}] {message}"),
+                            MAX_LOG_FILE_SIZE,
+                        );
                     }
                 }
                 LogSink::Buffer => {
@@ -253,7 +298,79 @@ macro_rules! trace {
 
 #[cfg(test)]
 mod tests {
-    use super::{LogLevel, LogSink, choose_sink, log_level, set_log_level};
+    use super::{
+        LogFile, LogLevel, LogSink, choose_sink, log_level, set_log_level,
+    };
+
+    fn log_directory(test: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir()
+            .join(format!("soulseek-log-{test}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_log_file_keeps_only_two_bounded_generations_and_the_newest_line() {
+        let dir = log_directory("rotation");
+        let path = dir.join("daemon.log");
+        let mut file = LogFile::open(&path).unwrap();
+        for n in 0..100 {
+            file.write_line(&format!("line {n:03}"), 64);
+        }
+        drop(file);
+
+        let live = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            live.len() <= 64 + "line 099\n".len(),
+            "the live log must be bounded, got {} bytes",
+            live.len()
+        );
+        assert!(live.ends_with("line 099\n"));
+        let previous =
+            std::fs::read_to_string(dir.join("daemon.log.1")).unwrap();
+        assert!(!previous.is_empty());
+        assert!(previous.len() <= 64 + "line 099\n".len());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_log_moved_aside_from_outside_stops_growing_at_the_limit() {
+        let dir = log_directory("moved-aside");
+        let path = dir.join("daemon.log");
+        let mut file = LogFile::open(&path).unwrap();
+        file.write_line("before the move", 8);
+        std::fs::rename(&path, dir.join("daemon.log.old")).unwrap();
+        file.write_line("after the move", 8);
+        drop(file);
+
+        assert_eq!(
+            std::fs::read_to_string(dir.join("daemon.log.old")).unwrap(),
+            "before the move\n",
+            "past the limit the moved file is left alone"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "after the move\n");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_rotation_keeps_writing_to_the_current_log() {
+        let dir = log_directory("failed-rotation");
+        let path = dir.join("daemon.log");
+        std::fs::create_dir(dir.join("daemon.log.1")).unwrap();
+        std::fs::write(&path, "existing log\n").unwrap();
+        let mut file = LogFile::open(&path).unwrap();
+        file.write_line("first new line", 8);
+        file.write_line("newest line", 8);
+        drop(file);
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "existing log\nfirst new line\nnewest line\n"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn the_level_can_be_changed_while_running() {

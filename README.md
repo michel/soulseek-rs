@@ -620,6 +620,9 @@ file, in that order of precedence. Flags work before or after the subcommand.
 | `--log-file`                   | `SOULSEEK_LOG_FILE`                 | not a config key             | stderr                    |
 
 Boolean environment variables accept `1`/`0`/`true`/`false`/`yes`/`no`.
+
+A log file is capped: past 16 MiB it is moved to `<file>.1`, replacing the
+previous one, and a fresh file is started.
 `--config <FILE>` (or `SOULSEEK_CONFIG`) reads a different file, `--no-config`
 ignores it entirely, and `SOULSEEK_CONFIG_DIR` and `SOULSEEK_STATE_DIR` relocate
 the config and state directories wholesale. The file lives at
