@@ -860,8 +860,6 @@ impl SessionApi for RemoteSession {
 mod tests {
     use super::*;
 
-    // An attached client kept the first loss it was told about for the rest
-    // of its life, so every later failure read as "the session ended".
     #[test]
     fn an_attached_session_reports_recovery_and_a_later_loss() {
         use serde_json::json;
@@ -876,74 +874,56 @@ mod tests {
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();
             let reader = BufReader::new(stream.try_clone().unwrap());
-            let mut losses =
-                [json!("disconnected"), json!(null), json!("displaced")]
-                    .into_iter();
+            let mut send = |response: Response| {
+                let line = serde_json::to_string(&response).unwrap();
+                writeln!(stream, "{line}").unwrap();
+            };
+            let pushed = |loss: &str| {
+                Response::notification(
+                    Event::SessionLoss.wire_name(),
+                    json!({ "loss": loss }),
+                )
+            };
+            let mut losses = [json!("disconnected"), json!(null)].into_iter();
             for line in reader.lines() {
                 let request: Request =
                     serde_json::from_str(&line.unwrap()).unwrap();
-                let response = if request.method == Method::Auth.wire_name() {
-                    let event = Response::notification(
-                        Event::SessionLoss.wire_name(),
-                        json!({ "loss": "disconnected" }),
-                    );
-                    writeln!(
-                        stream,
-                        "{}",
-                        serde_json::to_string(&event).unwrap()
-                    )
-                    .unwrap();
-                    Response::result(
+                if request.method == Method::Auth.wire_name() {
+                    send(pushed("disconnected"));
+                    send(Response::result(
                         request.id,
                         json!({
                             "protocol": PROTOCOL_VERSION,
                             "daemon_version": "test",
                             "username": "alice"
                         }),
-                    )
-                } else {
-                    assert_eq!(
-                        request.method,
-                        Method::DaemonStatus.wire_name()
-                    );
-                    let Some(loss) = losses.next() else {
-                        let response = Response::failure(
-                            request.id,
-                            RpcError::new(
-                                CODE_APPLICATION,
-                                "status unavailable",
-                            ),
-                        );
-                        writeln!(
-                            stream,
-                            "{}",
-                            serde_json::to_string(&response).unwrap()
-                        )
-                        .unwrap();
-                        return;
-                    };
-                    Response::result(
+                    ));
+                    continue;
+                }
+                assert_eq!(request.method, Method::DaemonStatus.wire_name());
+                let Some(loss) = losses.next() else {
+                    send(pushed("displaced"));
+                    send(Response::failure(
                         request.id,
-                        json!({
-                            "username": "alice",
-                            "server": "localhost:2242",
-                            "daemon_version": "test",
-                            "protocol": PROTOCOL_VERSION,
-                            "shared_folders": 0,
-                            "shared_files": 0,
-                            "download_dir": "/tmp/downloads",
-                            "session_loss": loss,
-                            "clients": 1,
-                            "uptime_secs": 0
-                        }),
-                    )
+                        RpcError::new(CODE_APPLICATION, "status unavailable"),
+                    ));
+                    return;
                 };
-                writeln!(
-                    stream,
-                    "{}",
-                    serde_json::to_string(&response).unwrap()
-                )
-                .unwrap();
+                send(Response::result(
+                    request.id,
+                    json!({
+                        "username": "alice",
+                        "server": "localhost:2242",
+                        "daemon_version": "test",
+                        "protocol": PROTOCOL_VERSION,
+                        "shared_folders": 0,
+                        "shared_files": 0,
+                        "download_dir": "/tmp/downloads",
+                        "session_loss": loss,
+                        "clients": 1,
+                        "uptime_secs": 0
+                    }),
+                ));
             }
         });
 
@@ -951,11 +931,10 @@ mod tests {
             .expect("an attached session");
         assert_eq!(session.session_loss(), Some(SessionLoss::Disconnected));
         assert_eq!(session.session_loss(), None, "the daemon has recovered");
-        assert_eq!(session.session_loss(), Some(SessionLoss::Displaced));
         assert_eq!(
             session.session_loss(),
-            Some(SessionLoss::Disconnected),
-            "the pushed event is a fallback when status is unavailable"
+            Some(SessionLoss::Displaced),
+            "with status unavailable, the most recent pushed loss answers"
         );
         daemon.join().expect("the daemon answered every request");
     }

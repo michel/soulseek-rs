@@ -93,9 +93,10 @@ impl Mirror {
             }
             Event::SessionLoss => {
                 if let Ok(loss) = parse::<SessionLossEvent>(event, params) {
-                    // The first loss is the one worth keeping: a displaced
-                    // session also drops its socket a moment later.
-                    buffers.loss.get_or_insert_with(|| loss.loss.into());
+                    // The daemon reports one loss per session, the first,
+                    // so the most recent one pushed is the one to answer
+                    // with.
+                    buffers.loss = Some(loss.loss.into());
                 }
             }
         }
@@ -302,16 +303,16 @@ mod tests {
     }
 
     #[test]
-    fn the_first_session_loss_is_the_one_reported() {
+    fn the_latest_pushed_session_loss_is_the_one_reported() {
         let mirror = Mirror::default();
         assert!(mirror.loss().is_none());
-        mirror.apply(Event::SessionLoss, json!({ "loss": "displaced" }));
         mirror.apply(Event::SessionLoss, json!({ "loss": "disconnected" }));
+        mirror.apply(Event::SessionLoss, json!({ "loss": "displaced" }));
         assert_eq!(
             mirror.loss(),
             Some(SessionLoss::Displaced),
-            "being displaced is the reason worth reporting; the dropped socket \
-             is its consequence"
+            "an outage the daemon recovered from must not hide what ended \
+             the session after it"
         );
     }
 
