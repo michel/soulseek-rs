@@ -112,6 +112,30 @@ fn a_room_that_was_never_joined_has_no_member_stats() {
     assert_eq!(stats["members"], json!([]));
 }
 
+#[test]
+fn a_password_the_server_never_confirmed_is_not_stored() {
+    let session = SilentSession {
+        never_confirms: true,
+        ..SilentSession::default()
+    };
+    let store = crate::persist::secret::MemoryStore::default();
+    store.set("tester", "the-one-that-works").expect("stored");
+
+    let changed = crate::persist::secret::change_password_within(
+        &session,
+        &store,
+        "never-arrived",
+        Duration::from_millis(60),
+    );
+
+    assert!(matches!(changed, Err(soulseek_rs::SoulseekRs::Timeout)));
+    assert_eq!(
+        store.get("tester").expect("the store answers").as_deref(),
+        Some("the-one-that-works"),
+        "the next start must still find the password that logs in"
+    );
+}
+
 /// The daemon owns the login, so a password it changes it also stores —
 /// its next start logs in from that store, not from the client that
 /// asked.
@@ -203,6 +227,8 @@ struct SilentSession {
     watched: Mutex<Vec<String>>,
     /// What `account.password` asked the session to set, if anything.
     password: Mutex<Option<String>>,
+    /// A server that never confirms a password change.
+    never_confirms: bool,
 }
 
 /// The one room `SilentSession` claims to have joined.
@@ -242,6 +268,9 @@ impl SessionApi for SilentSession {
         *self.password.lock().expect("not poisoned") =
             Some(password.to_string());
         Ok(())
+    }
+    fn password_change_confirmed(&self, _password: &str) -> bool {
+        !self.never_confirms
     }
     fn listen_port(&self) -> Option<u16> {
         None

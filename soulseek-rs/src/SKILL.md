@@ -161,8 +161,9 @@ server did not answer — those are different facts, so do not treat null as 0.
 **`account password --new-password <PASSWORD>`** (or
 `--new-password-stdin`, which reads the first line of stdin and keeps the
 password out of `ps`) — one object: `user`, `action` (`password-changed`).
-The command does not wait for the server to confirm the change, so exit 0
-means the request went out. The new password is stored in this machine's keychain, or the daemon's
+The command waits for the server to confirm the change, so exit 0 means the
+server stored it; without a confirmation within ten seconds it fails and
+stores nothing. The new password is stored in this machine's keychain, or the daemon's
 when the run is routed to one.
 
 **`account logout`** — one object: `user`, `action` (`logged-out`). Forgets

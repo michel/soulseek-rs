@@ -1,5 +1,6 @@
 use crate::api::SessionApi;
 use color_eyre::Result;
+use std::time::{Duration, Instant};
 
 /// Where passwords live. The real implementation is the OS keychain
 /// ([`KeyringStore`]); tests use an in-memory fake. Passwords are never
@@ -55,18 +56,39 @@ impl SecretStore for KeyringStore {
 /// window or a command borrowing a daemon's session owns neither, and the
 /// daemon writes its own host's store when it serves the request.
 ///
-/// `Ok` means the request went out, not that the server took it: the server
-/// echoes a change back once it has stored it, and the local copy is written
-/// without waiting for that. It carries the store's complaint when the change
-/// went out but the local copy did not.
+/// The local copy is written once the server has confirmed the change: a
+/// change that was lost on the way must not replace the password that still
+/// works, and a command that exits before the server has stored it leaves the
+/// account as it was. `Ok` carries the store's complaint when the change was
+/// confirmed but the local copy could not be written.
 pub fn change_password(
     session: &dyn SessionApi,
     secrets: &dyn SecretStore,
     password: &str,
 ) -> soulseek_rs::Result<Option<String>> {
+    change_password_within(session, secrets, password, CONFIRMATION_PATIENCE)
+}
+
+/// How long to wait for the server to confirm a password change. It answers
+/// as soon as it has stored the password.
+const CONFIRMATION_PATIENCE: Duration = Duration::from_secs(10);
+
+pub(crate) fn change_password_within(
+    session: &dyn SessionApi,
+    secrets: &dyn SecretStore,
+    password: &str,
+    patience: Duration,
+) -> soulseek_rs::Result<Option<String>> {
     session.change_password(password)?;
     if session.daemon_endpoint().is_some() {
         return Ok(None);
+    }
+    let deadline = Instant::now() + patience;
+    while !session.password_change_confirmed(password) {
+        if Instant::now() >= deadline {
+            return Err(soulseek_rs::SoulseekRs::Timeout);
+        }
+        std::thread::sleep(Duration::from_millis(20));
     }
     Ok(secrets
         .set(&session.username(), password)
