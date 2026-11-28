@@ -654,7 +654,13 @@ impl ServerActor {
         self.queued_messages.clear();
         self.reader = MessageReader::new();
         if let Ok(mut ctx) = self.context.write_safe() {
-            ctx.logged_in = None;
+            // A login accepted on a line that then dropped must not report
+            // success. A refusal outlives its connection: a server may close
+            // right behind it, and the login still waiting has to hear why
+            // rather than that the line dropped.
+            if ctx.logged_in == Some(true) {
+                ctx.logged_in = None;
+            }
             ctx.connection_lost = true;
         }
     }
