@@ -601,6 +601,38 @@ fn the_queue_poll_looks_up_each_peer_it_holds_no_connection_to() {
 }
 
 #[test]
+fn a_queue_poll_looks_up_a_fixed_number_and_the_next_takes_the_rest() {
+    use crate::client::operations::QUEUE_POLL_LOOKUPS;
+
+    let (client, _ops, server) = client_with_server();
+    let lost = QUEUE_POLL_LOOKUPS as u32 * 3 / 2;
+    for peer in 0..lost {
+        client.context.write().unwrap().add_download(download(
+            &format!("gone-{peer}"),
+            "f.mp3",
+            peer,
+            DownloadStatus::Queued,
+            mpsc::channel().0,
+        ));
+    }
+    let mut asked = std::collections::HashSet::new();
+    let mut poll = || {
+        Client::poll_queue_positions(&client.context);
+        let lookups: Vec<ServerMessage> = server.try_iter().collect();
+        for lookup in &lookups {
+            if let ServerMessage::GetPeerAddress(username) = lookup {
+                asked.insert(username.clone());
+            }
+        }
+        lookups.len()
+    };
+
+    assert_eq!(poll(), QUEUE_POLL_LOOKUPS);
+    assert_eq!(poll(), QUEUE_POLL_LOOKUPS);
+    assert_eq!(asked.len(), lost as usize, "two polls reach all of them");
+}
+
+#[test]
 fn a_queued_download_is_requested_again_after_its_uploader_hangs_up() {
     let (client, ops, server) = client_with_server();
     let mut first = connected_peer(&client, "uploader");

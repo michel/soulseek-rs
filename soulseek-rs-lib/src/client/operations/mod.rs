@@ -21,6 +21,12 @@ const CONNECT_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 /// long queue is not pestered.
 const QUEUE_POSITION_INTERVAL: Duration = Duration::from_mins(5);
 
+/// How many lost uploaders one queue poll asks the server about. A long
+/// queue spans hundreds of them, and that many lookups in one burst, each
+/// followed by a dial, is what a server throttles and what fills the peer
+/// registry with connections it may not drop.
+pub(super) const QUEUE_POLL_LOOKUPS: usize = 64;
+
 impl Client {
     pub(crate) fn listen_to_client_operations(
         reader: Receiver<ClientOperation>,
@@ -769,13 +775,18 @@ impl Client {
         let Ok(mut ctx) = client_context.write_safe() else {
             return;
         };
+        // Those the last poll did not get to go first, so a long list is
+        // worked through rather than sampled.
+        let mut lookups: Vec<String> = lookups.into_iter().collect();
+        lookups.sort_by_key(|username| ctx.poll_lookups.contains(username));
+        lookups.truncate(QUEUE_POLL_LOOKUPS);
         if let Some(sender) = &ctx.server_sender {
             for username in &lookups {
                 let _ = sender
                     .send(ServerMessage::GetPeerAddress(username.clone()));
             }
         }
-        ctx.poll_lookups = lookups;
+        ctx.poll_lookups = lookups.into_iter().collect();
     }
 
     /// Tell the server whether we would take another child right now
