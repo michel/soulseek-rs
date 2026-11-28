@@ -394,3 +394,20 @@ fn c_clears_a_finished_upload_the_daemon_served_for_good() {
 
     c_clears_the_finished_upload(&mut window);
 }
+
+/// The tests here run in parallel, each with clients whose listeners land on
+/// whatever port is free, so one of them can take the port a soulfind was
+/// handed before that soulfind binds it.
+#[test]
+fn a_soulfind_whose_port_a_client_listener_holds_is_not_reported_up() {
+    let mut server = server_or_skip!();
+    server.stop();
+    let _squatter = std::net::TcpListener::bind(("0.0.0.0", server.port()))
+        .expect("the port soulfind let go of");
+
+    assert!(
+        server.restart().is_none(),
+        "soulfind cannot bind a port another listener holds, so nobody can \
+         log in there"
+    );
+}

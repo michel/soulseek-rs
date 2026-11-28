@@ -99,12 +99,15 @@ impl TestServer {
                 .ok()?;
 
             // A child that has exited is never taken as up: soulfind exits
-            // when its port is gone, and whoever took it may answer instead.
+            // when its port is gone, and whoever took it may accept a
+            // connection, but only a Soulseek server answers a login.
             let deadline = Instant::now() + Duration::from_secs(10);
             while Instant::now() < deadline
                 && child.try_wait().ok().flatten().is_none()
             {
-                if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                if answers_login(port)
+                    && child.try_wait().ok().flatten().is_none()
+                {
                     return Some(Self {
                         host: "127.0.0.1".to_string(),
                         port,
@@ -181,6 +184,11 @@ fn soulfind_binary() -> Option<PathBuf> {
 fn free_port() -> Option<u16> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").ok()?;
     listener.local_addr().ok().map(|addr| addr.port())
+}
+
+/// Whether whatever listens on `port` answers a login the way soulfind does.
+fn answers_login(port: u16) -> bool {
+    login_raw(&format!("127.0.0.1:{port}"), "e2e_probe", "pw").is_ok()
 }
 
 fn wait_until_listening(
