@@ -39,7 +39,7 @@ pub enum SettingsRow {
     ChangePassword,
     Logout,
     UseUsernameDirs,
-    UseRemoteDirs,
+    PreserveRemoteDirs,
     DownloadDir,
     /// Share path at this index.
     Share(usize),
@@ -128,7 +128,7 @@ impl SettingsState {
             rows.push(SettingsRow::Logout);
         }
         rows.push(SettingsRow::UseUsernameDirs);
-        rows.push(SettingsRow::UseRemoteDirs);
+        rows.push(SettingsRow::PreserveRemoteDirs);
         rows.push(SettingsRow::DownloadDir);
         rows.extend((0..self.share_dirs.len()).map(SettingsRow::Share));
         rows
@@ -205,7 +205,7 @@ impl SettingsState {
                 self.use_username_dirs = !self.use_username_dirs;
                 return SettingsAction::Apply;
             }
-            SettingsRow::UseRemoteDirs => {
+            SettingsRow::PreserveRemoteDirs => {
                 self.preserve_remote_dirs = !self.preserve_remote_dirs;
                 return SettingsAction::Apply;
             }
@@ -521,7 +521,7 @@ mod tests {
             vec![
                 SettingsRow::ChangePassword,
                 SettingsRow::UseUsernameDirs,
-                SettingsRow::UseRemoteDirs,
+                SettingsRow::PreserveRemoteDirs,
                 SettingsRow::DownloadDir,
                 SettingsRow::Share(0),
             ]
@@ -531,7 +531,7 @@ mod tests {
         s.handle_key(key(KeyCode::Down));
         assert_eq!(s.selected_row(), SettingsRow::UseUsernameDirs);
         s.handle_key(key(KeyCode::Down));
-        assert_eq!(s.selected_row(), SettingsRow::UseRemoteDirs);
+        assert_eq!(s.selected_row(), SettingsRow::PreserveRemoteDirs);
         assert_eq!(s.handle_key(key(KeyCode::Enter)), SettingsAction::Apply);
         assert!(s.preserve_remote_dirs);
         s.handle_key(key(KeyCode::Down));

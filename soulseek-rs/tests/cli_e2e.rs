@@ -3993,16 +3993,20 @@ fn download_with_layout(
     Some((target, json_record(&fetched)))
 }
 
-/// The local path `download_path_for` should give the record's remote path.
+/// The local path a finished download lands at: folders sanitized the way
+/// `download_path_for` does, filename the peer's raw one, matching what the
+/// library writes and the record reports.
 fn preserved(root: &Path, remote: &str) -> PathBuf {
+    let parts: Vec<&str> = remote
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .collect();
+    let Some((filename, folders)) = parts.split_last() else {
+        return root.to_path_buf();
+    };
     let mut path = root.to_path_buf();
-    path.extend(
-        remote
-            .split(['/', '\\'])
-            .filter(|part| !part.is_empty())
-            .map(|part| part.replace(':', "_")),
-    );
-    path
+    path.extend(folders.iter().map(|part| part.replace(':', "_")));
+    path.join(filename)
 }
 
 fn assert_saved_at(record: &serde_json::Value, expected: &Path) {

@@ -5,6 +5,7 @@ use crate::api::SessionApi;
 use crate::cli::{
     DownloadArgs, FilterArgs, GetArgs, Pick, SearchArgs, SortKey,
 };
+use crate::directories::Destination;
 use crate::output::{
     CliError, CliResult, DownloadRecord, Exit, Out, SearchRecord,
 };
@@ -322,9 +323,12 @@ fn collect(
 ///
 /// Two collisions are possible and both lose data silently: the library keys
 /// downloads by a hash of the remote path, so the same path from two peers
-/// shadows itself, and two different paths sharing a basename would be written
-/// to the same local file. Keep the first (best-ranked) of each and say what
-/// was dropped rather than transferring less than asked.
+/// shadows itself, and two different paths landing on the same local file
+/// would overwrite each other. Keep the first (best-ranked) of each and say
+/// what was dropped rather than transferring less than asked.
+///
+/// The collision key is the file the library will write, which pairs the
+/// sanitized folders (peer names made safe) with the peer's raw filename.
 fn dedupe(
     requests: impl IntoIterator<Item = Request>,
     download_dir: &str,
@@ -335,13 +339,14 @@ fn dedupe(
     let mut targets: HashMap<PathBuf, Request> = HashMap::new();
     let mut kept = Vec::new();
     for request in requests {
-        let target = crate::directories::download_path_for(
+        let target = crate::directories::destination_for(
             download_dir,
             &request.user,
             &request.path,
             use_username_dirs,
             preserve_remote_dirs,
-        );
+        )
+        .file;
         if let Some(queued) = targets.get(&target) {
             let collision = if queued.path == request.path {
                 format!("same remote path already queued from {}", queued.user)
@@ -472,7 +477,7 @@ fn download_all(
                         client.as_ref(),
                         &ctx.out,
                         &request,
-                        ctx.path_for(&request.user, &request.path),
+                        ctx.destination_for(&request.user, &request.path),
                         timeout,
                     );
                     if sender.send((request, outcome)).is_err() {
@@ -519,18 +524,14 @@ fn download_one(
     client: &dyn SessionApi,
     out: &Out,
     request: &Request,
-    destination: PathBuf,
+    destination: Destination,
     timeout: Duration,
 ) -> CliResult<DownloadRecord> {
     // Clear any earlier attempt: entries are keyed by a hash of the remote
     // path, so a stale one would shadow this transfer.
     let _ = client.remove_download(&request.user, &request.path);
 
-    let directory = destination
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .display()
-        .to_string();
+    let Destination { directory, file } = destination;
     let (_download, updates) = client
         .download(
             request.path.clone(),
@@ -558,7 +559,6 @@ fn download_one(
         }
         match updates.recv_timeout(remaining.min(Duration::from_millis(250))) {
             Ok(DownloadStatus::Completed) => {
-                let file = destination;
                 return Ok(DownloadRecord {
                     user: request.user.clone(),
                     path: request.path.clone(),
@@ -1116,6 +1116,40 @@ mod tests {
             ),
             PathBuf::from("/music/@@share/Artist A/Album/track.flac")
         );
+    }
+
+    #[test]
+    fn filenames_that_differ_only_after_sanitizing_are_kept_apart() {
+        // The library names the file itself, with the peer's raw basename, so
+        // `a?b.mp3` and `a_b.mp3` are two files on disk and neither loses.
+        let out = Out::new(false, true);
+        let kept = dedupe(
+            vec![request("a", "a?b.mp3"), request("b", "a_b.mp3")],
+            "/music",
+            false,
+            false,
+            &out,
+        );
+        assert_eq!(kept.len(), 2);
+    }
+
+    #[test]
+    fn folders_that_sanitize_alike_still_collide() {
+        // Peer folder names *are* sanitized, so these two land on the same
+        // file and the second would clobber the first.
+        let out = Out::new(false, true);
+        let kept = dedupe(
+            vec![
+                request("a", "Artist: One\\track.flac"),
+                request("b", "Artist_ One\\track.flac"),
+            ],
+            "/music",
+            false,
+            true,
+            &out,
+        );
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].user, "a");
     }
 
     #[test]
