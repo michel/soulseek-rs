@@ -5,9 +5,8 @@
 //! rather than have every line that clones it rewritten.
 
 use super::{
-    Arc, CHILD_WRITE_TIMEOUT, Client, ClientContext, ClientOperation,
-    ConnectionType, RwLock, RwLockExt, ServerMessage, debug, error,
-    next_connect_token, warn,
+    Arc, Client, ClientContext, ClientOperation, ConnectionType, RwLock,
+    RwLockExt, ServerMessage, debug, error, next_connect_token, warn,
 };
 
 impl Client {
@@ -156,14 +155,7 @@ impl Client {
                 if !ctx.children.has_room() {
                     return;
                 }
-                // A child that stops reading must not wedge us: the
-                // relay writes under the context lock, so the write
-                // is bounded and a child that hits it loses its slot.
-                if stream.set_nodelay(true).is_err()
-                    || stream
-                        .set_write_timeout(Some(CHILD_WRITE_TIMEOUT))
-                        .is_err()
-                {
+                if stream.set_nodelay(true).is_err() {
                     return;
                 }
                 if username == own_username {
