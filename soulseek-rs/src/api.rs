@@ -186,10 +186,17 @@ pub trait SessionApi: Send + Sync {
 
     /// Make `password` this account's password on the server.
     ///
-    /// `Ok(())` means the request went out, not that the server took it:
-    /// the server confirms a change later, and this does not wait for that.
-    // aislop-ignore-next-line complexity/function-too-long -- same scanner bug: bodyless signature measured to EOF. One line.
+    /// Locally `Ok(())` means the request went out, and
+    /// [`Self::password_change_confirmed`] says when the server has taken
+    /// it. A daemon's session answers once the daemon has that confirmation
+    /// and has stored the password.
     fn change_password(&self, password: &str) -> Result<()>;
+
+    /// Whether the server has confirmed `password` as this account's. A
+    /// session that cannot tell says yes.
+    fn password_change_confirmed(&self, _password: &str) -> bool {
+        true
+    }
 }
 
 /// The local session: the library client itself, so `Arc<Client>` is already an
@@ -439,5 +446,9 @@ impl SessionApi for Client {
 
     fn change_password(&self, password: &str) -> Result<()> {
         Self::change_password(self, password)
+    }
+
+    fn password_change_confirmed(&self, password: &str) -> bool {
+        Self::password_change_confirmed(self, password)
     }
 }

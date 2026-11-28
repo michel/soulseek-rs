@@ -679,8 +679,10 @@ pass show soulseek-new | soulseek-rs account password --new-password-stdin
 soulseek-rs account logout          # drop this machine's stored password
 ```
 
-The command does not wait for the server to confirm a password change, so
-exit 0 means the request went out. The new password replaces the stored one — the daemon's, when the
+The command waits for the server to confirm a password change, so exit 0
+means the server stored it. With no confirmation within ten seconds it fails
+and stores nothing; a confirmation that arrives later still takes effect on
+the server, so check the login before trusting either password. The new password replaces the stored one — the daemon's, when the
 run is routed to a daemon, since that is the login that has to work after a
 restart. `account logout` leaves the account untouched and only clears what
 this machine kept, so the next start asks again.

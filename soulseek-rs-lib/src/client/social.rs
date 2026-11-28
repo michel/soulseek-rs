@@ -540,6 +540,15 @@ impl Client {
         Ok(())
     }
 
+    /// Whether `password` is the one the server has confirmed: the password
+    /// this client now logs in with.
+    #[must_use]
+    pub fn password_change_confirmed(&self, password: &str) -> bool {
+        self.password
+            .lock_safe()
+            .is_ok_and(|login| login.current == password)
+    }
+
     /// Send one private message to several users at once (code 149). Each
     /// recipient receives it as an ordinary private message.
     ///

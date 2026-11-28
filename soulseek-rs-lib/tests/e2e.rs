@@ -4959,6 +4959,10 @@ fn a_changed_password_is_what_the_next_login_needs() {
             || client.session_loss() == Some(SessionLoss::Displaced)
         ));
     }
+    assert!(
+        client.password_change_confirmed("second-pw"),
+        "the server's echo is what confirms the change"
+    );
     client.disconnect();
     client.connect().expect("reconnect the original client");
     assert!(
