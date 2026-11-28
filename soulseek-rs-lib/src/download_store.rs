@@ -113,6 +113,9 @@ impl DownloadStore {
             return false;
         }
         download.status = status;
+        if download.is_finished() {
+            self.prune_finished(MAX_FINISHED_DOWNLOADS);
+        }
         true
     }
 
@@ -151,7 +154,9 @@ impl DownloadStore {
         }
         download.status = DownloadStatus::Cancelled;
         let _ = download.sender.send(DownloadStatus::Cancelled);
-        Some(download.clone())
+        let cancelled = download.clone();
+        self.prune_finished(MAX_FINISHED_DOWNLOADS);
+        Some(cancelled)
     }
 
     pub fn update_queue_position(

@@ -228,6 +228,60 @@ fn forgetting_a_search_frees_its_place() {
     assert!(ctx.search_order.is_empty());
 }
 
+// The cap on finished downloads was only applied when one was added, so a
+// batch queued first and finished later stayed above it.
+#[test]
+fn a_finished_batch_is_capped_and_every_download_gets_its_terminal_status() {
+    use crate::download_store::MAX_FINISHED_DOWNLOADS;
+
+    let mut retained = Vec::new();
+    for status in [
+        DownloadStatus::Completed,
+        DownloadStatus::Failed(None),
+        DownloadStatus::TimedOut,
+        DownloadStatus::Cancelled,
+    ] {
+        let client = Client::new("u", "p");
+        let mut batch = Vec::new();
+        for token in 0..=(MAX_FINISHED_DOWNLOADS as u32) {
+            let (sender, receiver) = mpsc::channel();
+            let download = download(
+                "peer",
+                &format!("file-{token}.mp3"),
+                token,
+                DownloadStatus::Queued,
+                sender,
+            );
+            client
+                .context
+                .write()
+                .unwrap()
+                .add_download(download.clone());
+            batch.push((download, receiver));
+        }
+
+        // The oldest finishes last, so pruning evicts the row being notified.
+        for (download, receiver) in batch.into_iter().rev() {
+            if matches!(status, DownloadStatus::Cancelled) {
+                assert!(client.cancel_download("peer", &download.filename));
+            } else {
+                DownloadPeer::send_download_status(
+                    &client.context,
+                    &download,
+                    status.clone(),
+                );
+            }
+            assert_eq!(
+                std::mem::discriminant(&receiver.try_recv().unwrap()),
+                std::mem::discriminant(&status),
+                "an evicted download is still told how it ended"
+            );
+        }
+        retained.push(client.get_all_downloads().len());
+    }
+    assert_eq!(retained, vec![MAX_FINISHED_DOWNLOADS; 4]);
+}
+
 // Issue #120: an address was kept, and used, for as long as the process
 // lived; and every user the server mentioned got a snapshot.
 #[test]
