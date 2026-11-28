@@ -83,11 +83,13 @@ impl Soulfind {
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline {
             // A child that has exited is never taken as up: soulfind exits
-            // when its port is gone, and whoever took it may answer instead.
+            // when its port is gone, and whoever took it may accept a
+            // connection, but only a Soulseek server answers a login.
             if child.try_wait().ok().flatten().is_some() {
                 return None;
             }
-            if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            if answers_login(port) && child.try_wait().ok().flatten().is_none()
+            {
                 return Some(child);
             }
             std::thread::sleep(Duration::from_millis(100));
@@ -170,35 +172,52 @@ pub fn silent_peer(host: &str, port: u16, user: &str) -> SilentPeer {
     let listener = TcpListener::bind("0.0.0.0:0").expect("silent listener");
     let wait_port = listener.local_addr().expect("listener address").port();
     let mut session = TcpStream::connect((host, port)).expect("server");
-    let login = MessageFactory::build_login_message(
-        user,
-        "pw",
-        soulseek_rs::ClientVersion::default(),
-    );
-    session
-        .write_all(&login.get_buffer())
-        .expect("silent login");
-    // soulfind drops everything but a login until the login has landed, so a
-    // port announced any sooner is announced to nobody.
     session
         .set_read_timeout(Some(Duration::from_secs(10)))
         .expect("read timeout");
-    loop {
-        let mut len = [0; 4];
-        session.read_exact(&mut len).expect("login reply");
-        let mut body = vec![0; u32::from_le_bytes(len) as usize];
-        session.read_exact(&mut body).expect("login reply");
-        if body[..4] == 1u32.to_le_bytes() {
-            assert_eq!(body[4], 1, "{user} should log in");
-            break;
-        }
-    }
+    // soulfind drops everything but a login until the login has landed, so a
+    // port announced any sooner is announced to nobody.
+    assert!(
+        log_in(&mut session, user).expect("login reply"),
+        "{user} should log in"
+    );
     let wait = MessageFactory::build_set_wait_port_message(wait_port);
     session.write_all(&wait.get_buffer()).expect("wait port");
     settle();
     SilentPeer {
         _session: session,
         _listener: listener,
+    }
+}
+
+/// Whether whatever listens on `port` answers a login the way soulfind does.
+fn answers_login(port: u16) -> bool {
+    let Ok(mut session) = TcpStream::connect(("127.0.0.1", port)) else {
+        return false;
+    };
+    session
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .is_ok()
+        && log_in(&mut session, "soulfind_probe").unwrap_or(false)
+}
+
+/// Log `session` in as `user` and read up to the server's answer, whether it
+/// let them in.
+fn log_in(session: &mut TcpStream, user: &str) -> std::io::Result<bool> {
+    let login = MessageFactory::build_login_message(
+        user,
+        "pw",
+        soulseek_rs::ClientVersion::default(),
+    );
+    session.write_all(&login.get_buffer())?;
+    loop {
+        let mut len = [0; 4];
+        session.read_exact(&mut len)?;
+        let mut body = vec![0; u32::from_le_bytes(len) as usize];
+        session.read_exact(&mut body)?;
+        if body.get(..4) == Some(&1u32.to_le_bytes()[..]) {
+            return Ok(body.get(4) == Some(&1));
+        }
     }
 }
 
