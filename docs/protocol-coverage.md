@@ -14,7 +14,7 @@ Message names and codes follow the Soulseek protocol as implemented by
 
 | Code | Message | State | Covered by |
 | --- | --- | --- | --- |
-| 1 | Login | yes | e2e — login, wrong password, re-login |
+| 1 | Login | yes | e2e — login, re-login, and a refusal with its reason |
 | 2 | SetWaitPort | yes | e2e — the port a listening client reports |
 | 3 | GetPeerAddress | yes | e2e — direct download, browse |
 | 5 | WatchUser | yes | e2e — watching a user, and an unknown one |
@@ -95,12 +95,12 @@ ParentIP (73), UserPrivileged (122), NotifyPrivileges (124), AckNotifyPrivileges
 | 9 | FileSearchResponse | yes | e2e — searching, in both directions |
 | 15 / 16 | UserInfoRequest and its reply | yes | e2e — asking a peer about itself, and answering |
 | 36 / 37 | FolderContentsRequest and its reply | yes | e2e — one folder of a peer's shares |
-| 40 | TransferRequest | yes | e2e — downloads and uploads |
-| 41 | TransferResponse | yes | e2e — downloads, cancellations, refusals |
-| 43 | QueueUpload | yes | e2e — queueing, slots, privileged peers |
+| 40 | TransferRequest | yes | e2e — downloads and uploads, and a file asked for with one, as Soulseek.NET does |
+| 41 | TransferResponse | yes | e2e — downloads, cancellations, and refusals in both directions |
+| 43 | QueueUpload | yes | e2e — queueing, slots, privileged peers, a peer that hung up while waiting |
 | 44 | PlaceInQueueResponse | yes | e2e — answering, and asking |
-| 46 | UploadFailed | yes | e2e — the download fails promptly |
-| 50 | UploadDenied | yes | e2e — the download fails promptly |
+| 46 | UploadFailed | yes | e2e — the download fails promptly; an upload of ours that breaks sends it |
+| 50 | UploadDenied | yes | e2e — the download fails with the peer's reason; a file we do not share is refused |
 | 51 | PlaceInQueueRequest | yes | e2e — both directions |
 
 ## Distributed messages
@@ -117,7 +117,7 @@ Serving children is off by default; see `accept_children` in the README.
 ## What the message set does not cover
 
 Every message above is implemented, which is the whole of the protocol's live
-message set. Three things in the protocol are not messages of their own and are
+message set. Five things in the protocol are not messages of their own and are
 still open, so "complete" means the message set rather than every byte the
 protocol describes:
 
@@ -130,3 +130,9 @@ protocol describes:
 - **Adopting a firewalled child.** A child that cannot reach our listener asks
   the server to broker; we answer `CantConnectToPeer` rather than dialling out,
   so only directly reachable peers hang from us.
+- **A profile.** `UserInfoResponse` carries a description and a picture. We
+  read a peer's description and send neither of our own.
+- **Refusing by policy.** The only refusal we send for a queue request is
+  `File not shared.`. The reasons other clients give for a per-user queue
+  limit or a ban (`Too many files`, `Too many megabytes`, `Banned`) reach a
+  download that receives them, but nothing here sends them.
