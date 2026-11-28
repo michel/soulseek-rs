@@ -145,7 +145,11 @@ impl ActorSystem {
         let mut tick_count = 0;
 
         loop {
-            match receiver.recv_timeout(tick_interval) {
+            // Wait only until the next tick is due: a mailbox that never goes
+            // quiet for a whole interval would otherwise never tick at all,
+            // and ticking is where an actor reads its socket.
+            let until_tick = tick_interval.saturating_sub(last_tick.elapsed());
+            match receiver.recv_timeout(until_tick) {
                 Ok(ActorMessage::UserMessage(msg)) => {
                     message_count += 1;
                     actor.handle(msg);
@@ -156,19 +160,18 @@ impl ActorSystem {
                     );
                     break;
                 }
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                    if last_tick.elapsed() >= tick_interval {
-                        tick_count += 1;
-                        actor.tick();
-                        last_tick = Instant::now();
-                    }
-                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                     trace!(
                         "[actor_system] Channel disconnected, breaking loop"
                     );
                     break;
                 }
+            }
+            if last_tick.elapsed() >= tick_interval {
+                tick_count += 1;
+                actor.tick();
+                last_tick = Instant::now();
             }
         }
         trace!(
@@ -229,6 +232,41 @@ mod tests {
 
         // Give actor time to process the stop message
         std::thread::sleep(Duration::from_millis(100));
+    }
+
+    struct TickCounter {
+        ticks: Arc<AtomicUsize>,
+    }
+
+    impl Actor for TickCounter {
+        type Message = ();
+
+        fn handle(&mut self, (): Self::Message) {}
+
+        fn tick(&mut self) {
+            self.ticks.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    // An actor reads its socket on the tick. A mailbox that never went quiet
+    // for a whole interval used to put the tick off for good: a busy session
+    // stopped hearing the server, and its downloads sat queued.
+    #[test]
+    fn a_busy_mailbox_does_not_starve_the_tick() {
+        let ticks = Arc::new(AtomicUsize::new(0));
+        let handle = ActorSystem::new().spawn(TickCounter {
+            ticks: ticks.clone(),
+        });
+
+        let busy_until = Instant::now() + Duration::from_millis(600);
+        while Instant::now() < busy_until {
+            handle.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let ticked = ticks.load(Ordering::SeqCst);
+        handle.stop().unwrap();
+
+        assert!(ticked >= 3, "ticked {ticked} times in 600ms of traffic");
     }
 
     // Actors must not be capped by a worker count: every peer runs one, and a
